@@ -1,0 +1,114 @@
+export const SCHEMA = /* sql */ `
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  phone TEXT NOT NULL UNIQUE,
+  nickname TEXT NOT NULL,
+  invite_code TEXT NOT NULL UNIQUE,
+  invited_by INTEGER REFERENCES users(id),
+  cashback_balance INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sms_codes (
+  phone TEXT PRIMARY KEY,
+  code TEXT NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS cards (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id),
+  paid_total INTEGER NOT NULL DEFAULT 0,
+  free_used INTEGER NOT NULL DEFAULT 0,
+  seq INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS voucher_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  value INTEGER NOT NULL,
+  valid_days INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS vouchers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  template_id INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  value INTEGER NOT NULL,
+  expires_day INTEGER NOT NULL,
+  used_at INTEGER,
+  receipt_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_vouchers_user ON vouchers(user_id);
+
+CREATE TABLE IF NOT EXISTS stores (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  address TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS devices (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  store_id INTEGER NOT NULL REFERENCES stores(id),
+  name TEXT NOT NULL,
+  public_key TEXT,
+  token_hash TEXT,
+  enroll_code TEXT,
+  revoked INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS receipts (
+  id TEXT PRIMARY KEY,
+  device_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  dp INTEGER NOT NULL,
+  df INTEGER NOT NULL,
+  dcb INTEGER NOT NULL DEFAULT 0,
+  amount INTEGER NOT NULL,
+  ts INTEGER NOT NULL,
+  raw TEXT NOT NULL,
+  applied_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS cashback_ledger (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  beneficiary_id INTEGER NOT NULL REFERENCES users(id),
+  from_user_id INTEGER NOT NULL REFERENCES users(id),
+  receipt_id TEXT NOT NULL,
+  amount INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cashback_ben ON cashback_ledger(beneficiary_id);
+
+CREATE TABLE IF NOT EXISTS disputes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL,
+  user_id INTEGER,
+  receipt_id TEXT,
+  details TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS products (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  price INTEGER NOT NULL,
+  emoji TEXT NOT NULL DEFAULT '☕',
+  available INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS promos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  emoji TEXT NOT NULL DEFAULT '🎉',
+  sponsor TEXT,
+  starts_at INTEGER NOT NULL,
+  ends_at INTEGER NOT NULL
+);
+`
