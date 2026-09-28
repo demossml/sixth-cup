@@ -41,7 +41,7 @@ export default function DevPage() {
   async function refreshPending() { setPending((await allReceipts()).filter((r) => !r.uploaded).length) }
 
   if (!isDev) {
-    return <div className="p-4 text-muted">Режим разработчика доступен только в dev-сборке (NODE_ENV != production).</div>
+    return <div className="p-4 text-ink-tertiary">Режим разработчика доступен только в dev-сборке (NODE_ENV != production).</div>
   }
 
   const customer = users.find((u) => u.phone === CUSTOMER_PHONE)
@@ -120,7 +120,7 @@ export default function DevPage() {
           <button className="btn" onClick={() => loginAs(CUSTOMER_PHONE)}>Войти как Демо Клиент</button>
           <button className="btn" onClick={() => loginAs(FRIEND_PHONE)}>Войти как Друг</button>
         </div>
-        <p className="text-muted text-xs mt-2">Текущий: {me ? `${me.nickname} №${me.id}` : 'не авторизован'}</p>
+        <p className="text-ink-tertiary text-xs mt-2">Текущий: {me ? `${me.nickname} №${me.id}` : 'не авторизован'}</p>
       </section>
 
       <section className="card">
@@ -134,7 +134,7 @@ export default function DevPage() {
         <h2 className="font-semibold">Симуляция покупки клиента</h2>
         {best ? (
           <>
-            <div className="text-sm text-muted mt-1">Прогресс: {best.state.p % (dir?.cupsForFree ?? 5)}/{dir?.cupsForFree ?? 5} · кэшбэк {best.state.cb} ₽</div>
+            <div className="text-sm text-ink-tertiary mt-1">Прогресс: {best.state.p % (dir?.cupsForFree ?? 5)}/{dir?.cupsForFree ?? 5} · кэшбэк {best.state.cb} ₽</div>
             <div className="grid grid-cols-2 gap-2 mt-2">
               <label className="text-sm">Стаканов<input className="input" type="number" value={cups} onChange={(e) => setCups(Math.max(0, Number(e.target.value)))} /></label>
               <label className="text-sm">Сумма, ₽<input className="input" type="number" value={amount} onChange={(e) => setAmount(Math.max(0, Number(e.target.value)))} /></label>
@@ -153,14 +153,14 @@ export default function DevPage() {
             <label className="flex items-center gap-2 mt-2 text-sm"><input type="checkbox" checked={useFree} onChange={(e) => setUseFree(e.target.checked)} /> Выдать бесплатный стакан</label>
             <button className="btn mt-3" onClick={simCustomer}>Создать чек и обновить карту</button>
           </>
-        ) : <p className="text-muted text-sm mt-1">Войдите как демо-клиент, чтобы симулировать покупку.</p>}
+        ) : <p className="text-ink-tertiary text-sm mt-1">Войдите как демо-клиент, чтобы симулировать покупку.</p>}
       </section>
 
       <section className="card">
         <h2 className="font-semibold">Реферальный кэшбэк 3%</h2>
         <label className="text-sm">Сумма покупки друга, ₽<input className="input" type="number" value={friendAmount} onChange={(e) => setFriendAmount(Math.max(0, Number(e.target.value)))} /></label>
         <button className="btn mt-2" onClick={simFriend}>Симулировать покупку друга</button>
-        <p className="text-muted text-xs mt-2">Друг (№{friend?.id ?? '—'}) покупает → сервер начислит {Math.floor(friendAmount * 0.03)} ₽ демо-клиенту.</p>
+        <p className="text-ink-tertiary text-xs mt-2">Друг (№{friend?.id ?? '—'}) покупает → сервер начислит {Math.floor(friendAmount * 0.03)} ₽ демо-клиенту.</p>
       </section>
 
       <section className="card">
@@ -170,7 +170,7 @@ export default function DevPage() {
           <button className="btn-ghost" onClick={doResetLocal}>Сброс локально</button>
           <button className="btn-ghost" onClick={doResetServer}>Сброс на сервере</button>
         </div>
-        <p className="text-muted text-xs mt-2">Неотправленных чеков: {pending}</p>
+        <p className="text-ink-tertiary text-xs mt-2">Неотправленных чеков: {pending}</p>
       </section>
 
       <section className="card">

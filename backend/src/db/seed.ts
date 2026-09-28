@@ -57,13 +57,14 @@ export function seedIfEmpty() {
     db.prepare('INSERT INTO stores(name,address) VALUES(?,?)').run('Кофейня на Ленина', 'ул. Ленина, 1')
     db.prepare('INSERT INTO stores(name,address) VALUES(?,?)').run('Кофейня у вокзала', 'Привокзальная пл., 3')
 
+    // emoji column stores lucide icon key (not emoji)
     const pr = db.prepare('INSERT INTO products(name,price,emoji) VALUES(?,?,?)')
-    pr.run('Американо', 150, '☕')
-    pr.run('Капучино', 190, '🥛')
-    pr.run('Латте', 210, '🥛')
-    pr.run('Флэт уайт', 220, '☕')
-    pr.run('Чай с лимоном', 120, '🍋')
-    pr.run('Круассан', 130, '🥐')
+    pr.run('Американо', 150, 'Coffee')
+    pr.run('Капучино', 190, 'CupSoda')
+    pr.run('Латте', 210, 'Milk')
+    pr.run('Флэт уайт', 220, 'Coffee')
+    pr.run('Чай с лимоном', 120, 'Leaf')
+    pr.run('Круассан', 130, 'Croissant')
 
     const vt = db.prepare('INSERT INTO voucher_templates(code,title,kind,value,valid_days) VALUES(?,?,?,?,?)')
     vt.run('WELCOME', 'Скидка 10% на первую покупку', 'percent', 10, 30)
@@ -71,9 +72,9 @@ export function seedIfEmpty() {
 
     const now = Math.floor(Date.now() / 1000)
     const pm = db.prepare('INSERT INTO promos(title,body,emoji,sponsor,starts_at,ends_at) VALUES(?,?,?,?,?,?)')
-    pm.run('Каждый 6-й стакан бесплатно', 'Копите стаканы — подарок получите автоматически.', '🎁', null, now, now + 365 * 86_400)
-    pm.run('Приведи друга — получай 3%', 'За каждую покупку друга тебе 3% кэшбэком. Навсегда.', '🤝', null, now, now + 365 * 86_400)
-    pm.run('Круассан к кофе −20%', 'Предложение партнёра — пекарни «Хлебный дом».', '🥐', 'Пекарня «Хлебный дом»', now, now + 30 * 86_400)
+    pm.run('Каждый 6-й стакан бесплатно', 'Копите стаканы — подарок получите автоматически.', 'Gift', null, now, now + 365 * 86_400)
+    pm.run('Приведи друга — получай 3%', 'За каждую покупку друга тебе 3% кэшбэком. Навсегда.', 'Users', null, now, now + 365 * 86_400)
+    pm.run('Круассан к кофе −20%', 'Предложение партнёра — пекарни «Хлебный дом».', 'Croissant', 'Пекарня «Хлебный дом»', now, now + 30 * 86_400)
 
     if (config.isDev) {
       db.prepare('INSERT INTO devices(store_id,name,enroll_code,created_at) VALUES(?,?,?,?)')

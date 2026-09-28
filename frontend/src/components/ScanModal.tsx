@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import jsQR from 'jsqr'
+import { Camera, X } from '../lib/icons'
 
 export default function ScanModal({ title, onResult, onClose }: {
   title: string; onResult: (text: string) => void; onClose: () => void
@@ -41,17 +42,24 @@ export default function ScanModal({ title, onResult, onClose }: {
   }, [])
 
   return (
-    <div className="fixed inset-0 bg-black/45 flex items-end justify-center z-10" onClick={onClose}>
-      <div className="bg-white w-full max-w-[480px] rounded-t-2xl p-4 max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-        <h1 className="text-xl font-semibold mb-3">{title}</h1>
-        <video ref={video} className="w-full rounded-xl bg-black aspect-square object-cover" muted />
+    <div className="fixed inset-0 bg-black/50 flex items-end justify-center z-30" onClick={onClose}>
+      <div className="bg-white w-full max-w-[480px] rounded-t-3xl p-4 max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-3">
+          <h1 className="text-lg font-semibold text-ink flex items-center gap-2">
+            <Camera size={20} className="text-brand" /> {title}
+          </h1>
+          <button type="button" onClick={onClose} className="p-1 text-ink-tertiary" aria-label="Закрыть">
+            <X size={22} />
+          </button>
+        </div>
+        <video ref={video} className="w-full rounded-2xl bg-black aspect-square object-cover" muted />
         {error && <p className="text-bad text-sm mt-2">{error}</p>}
         <details className="mt-3">
-          <summary className="text-muted text-sm cursor-pointer">Ввести код вручную</summary>
+          <summary className="text-ink-tertiary text-sm cursor-pointer">Ввести код вручную</summary>
           <textarea className="input mt-2" value={manual} onChange={(e) => setManual(e.target.value)} rows={3} />
           <button className="btn btn-sm" onClick={() => manual.trim() && onResult(manual.trim())}>Применить</button>
         </details>
-        <button className="btn-ghost mt-2" onClick={onClose}>Закрыть</button>
+        <button className="btn-ghost mt-3" onClick={onClose}>Закрыть</button>
       </div>
     </div>
   )

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, setJwt, unwrap } from '../api'
 import { useApp } from '../lib/app'
+import { Coffee } from '../lib/icons'
 
 export default function LoginPage() {
   const nav = useNavigate()
@@ -37,27 +38,39 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="p-4">
-      <div className="text-center pt-8 pb-6">
-        <div className="text-5xl mb-2">☕</div>
-        <h1 className="text-2xl font-bold text-brand">Шестой стакан</h1>
-        <p className="text-muted text-sm mt-2">Каждый 6-й стакан — бесплатно.<br />Приведи друга — получай 3% с его покупок.</p>
+    <div className="min-h-screen flex flex-col">
+      <div className="bg-brand px-6 pt-14 pb-10 text-white rounded-b-3xl">
+        <div className="w-14 h-14 rounded-2xl bg-white/15 flex items-center justify-center mb-4">
+          <Coffee size={32} className="text-white" strokeWidth={1.5} />
+        </div>
+        <h1 className="text-2xl font-bold tracking-tight">Шестой стакан</h1>
+        <p className="text-white/80 text-sm mt-2 leading-relaxed">
+          Каждый 6-й стакан бесплатно.<br />
+          Приведи друга — получай 3% с его покупок.
+        </p>
       </div>
-      <input className="input" placeholder="Телефон, например 79001234567" value={phone} onChange={(e) => setPhone(e.target.value)} />
-      {!sent ? (
-        <>
-          <input className="input" placeholder="Код приглашения (если есть)" value={invite} onChange={(e) => setInvite(e.target.value)} />
-          <button className="btn" onClick={send}>Получить код</button>
-        </>
-      ) : (
-        <>
-          {hint && <p className="text-muted text-sm mb-2">Режим разработки: код <b>{hint}</b></p>}
-          <input className="input" placeholder="Код из SMS" value={code} onChange={(e) => setCode(e.target.value)} />
-          <button className="btn" onClick={verify}>Войти</button>
-        </>
-      )}
-      {error && <p className="text-bad text-sm mt-2">{error}</p>}
-      <p className="text-muted text-xs text-center mt-6">Работает и без интернета после первого входа</p>
+
+      <div className="px-4 pt-6 flex-1">
+        <input className="input" placeholder="Телефон, например 79001234567" value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" />
+        {!sent ? (
+          <>
+            <input className="input" placeholder="Код приглашения (если есть)" value={invite} onChange={(e) => setInvite(e.target.value)} />
+            <button className="btn" onClick={send}>Получить код</button>
+          </>
+        ) : (
+          <>
+            {hint && (
+              <div className="card bg-brand-soft border-brand/20 text-sm text-brand mb-3">
+                Режим разработки: код <b className="tracking-widest">{hint}</b>
+              </div>
+            )}
+            <input className="input" placeholder="Код из SMS" value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" maxLength={4} />
+            <button className="btn" onClick={verify}>Войти</button>
+          </>
+        )}
+        {error && <p className="text-bad text-sm mt-3">{error}</p>}
+        <p className="text-ink-tertiary text-xs text-center mt-8">После первого входа работает без интернета</p>
+      </div>
     </div>
   )
 }
