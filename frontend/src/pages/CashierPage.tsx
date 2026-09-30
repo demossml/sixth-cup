@@ -67,10 +67,13 @@ function Sale({ creds, dir }: { creds: DeviceCreds; dir: Directory }) {
   const [cashbackUse, setCashbackUse] = useState(0)
   const [amount, setAmount] = useState(0)
   const [result, setResult] = useState<{ token: string; payload: ReceiptPayload } | null>(null)
+  const [lastScan, setLastScan] = useState<{ userId: number; at: number } | null>(null)
+  const [confirmAgain, setConfirmAgain] = useState<string | null>(null)
 
   async function onScan(text: string) {
     setError('')
     setStale(null)
+    setConfirmAgain(null)
     const v = verifyProof(text, dir)
     if (!v) {
       setError('Код не распознан или подпись неверна.')
@@ -83,6 +86,13 @@ function Sale({ creds, dir }: { creds: DeviceCreds; dir: Directory }) {
       setStage('idle')
       return
     }
+    // Защита от повторного скана той же карты в течение 12 секунд
+    if (lastScan && lastScan.userId === v.payload.u && Date.now() - lastScan.at < 12_000) {
+      setConfirmAgain(text)
+      setStage('idle')
+      return
+    }
+    setLastScan({ userId: v.payload.u, at: Date.now() })
     setState(v.payload)
     setCups(1)
     setUseFree(false)
@@ -221,6 +231,16 @@ function Sale({ creds, dir }: { creds: DeviceCreds; dir: Directory }) {
       <button className="btn flex items-center justify-center gap-2" onClick={() => setStage('scan')}>
         <ScanLine size={18} /> Сканировать карту клиента
       </button>
+      {confirmAgain && (
+        <div className="card mt-3 border-amber-200 bg-amber-50">
+          <b className="text-sm text-amber-900">Эта карта уже пробита только что</b>
+          <p className="text-xs text-amber-800 mt-1">Точно провести ещё раз?</p>
+          <div className="flex gap-2 mt-2">
+            <button className="btn btn-sm" onClick={() => { setLastScan(null); void onScan(confirmAgain) }}>Да, ещё раз</button>
+            <button className="btn-ghost btn-sm" onClick={() => setConfirmAgain(null)}>Отмена</button>
+          </div>
+        </div>
+      )}
       {error && <p className="text-bad text-sm mt-2">{error}</p>}
       {stale && (
         <div className="card mt-3">

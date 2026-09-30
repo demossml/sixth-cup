@@ -9,7 +9,8 @@ const phone = z.string().regex(/^\+?\d{10,15}$/, 'Телефон: 10–15 циф
 
 export const authRoutes = new Hono()
   .post('/send-code', zValidator('json', z.object({ phone })), (c) => {
-    const code = sendCode(c.req.valid('json').phone)
+    const ip = c.req.header('x-forwarded-for')?.split(',')[0]?.trim() || c.req.header('x-real-ip') || 'unknown'
+    const code = sendCode(c.req.valid('json').phone, ip)
     return c.json({ ok: true, devCode: config.isDev ? code : undefined })
   })
   .post('/verify',

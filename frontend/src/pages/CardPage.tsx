@@ -40,7 +40,7 @@ export default function CardPage() {
         {dir?.promos[0] && (
           <div className="card flex gap-3 items-start border-0 shadow-soft">
             <div className="w-10 h-10 rounded-xl bg-brand-soft flex items-center justify-center shrink-0">
-              <AppIcon name={dir.promos[0].emoji || 'Sparkles'} size={20} className="text-brand" />
+              <AppIcon name={dir.promos[0].icon || 'Sparkles'} size={20} className="text-brand" />
             </div>
             <div className="min-w-0">
               <b className="text-sm text-ink">{dir.promos[0].title}</b>
@@ -57,20 +57,22 @@ export default function CardPage() {
           </div>
         ) : (
           <>
-            <div className="card mt-2">
-              <div className="flex gap-2 justify-center py-2">
+            <div className="card mt-2 bg-gradient-to-br from-brand to-brand-dark border-0 text-white shadow-soft overflow-hidden relative">
+              <div className="absolute top-0 right-0 w-24 h-24 bg-white/5 rounded-full -mr-8 -mt-8" />
+              <div className="text-white/70 text-xs mb-1 relative">Карта участника · №{me?.id}</div>
+              <div className="flex gap-2 justify-center py-2 relative">
                 {Array.from({ length: N }, (_, i) => (
                   <div
                     key={i}
                     className={`w-11 h-11 rounded-full flex items-center justify-center border-2 ${
-                      i < progress(best.state, N) ? 'border-brand bg-brand-soft text-brand' : 'border-dashed border-line text-ink-tertiary'
+                      i < progress(best.state, N) ? 'border-white bg-white/20 text-white' : 'border-dashed border-white/40 text-white/40'
                     }`}
                   >
                     {i < progress(best.state, N) ? <AppIcon name="Coffee" size={18} /> : null}
                   </div>
                 ))}
                 <div className={`w-11 h-11 rounded-full flex items-center justify-center border-2 ${
-                  freeAvailable(best.state, N) > 0 ? 'border-accent-gold bg-amber-50 text-accent-gold' : 'border-dashed border-line text-ink-tertiary'
+                  freeAvailable(best.state, N) > 0 ? 'border-accent-gold bg-amber-400/30 text-accent-gold' : 'border-dashed border-white/40 text-white/40'
                 }`}>
                   <Gift size={18} />
                 </div>
@@ -80,7 +82,7 @@ export default function CardPage() {
                   Следующий стакан бесплатно · доступно: {freeAvailable(best.state, N)}
                 </div>
               ) : (
-                <p className="text-ink-tertiary text-center text-sm mt-1">
+                <p className="text-white/70 text-center text-sm mt-1">
                   До бесплатного: {N - progress(best.state, N)}
                 </p>
               )}

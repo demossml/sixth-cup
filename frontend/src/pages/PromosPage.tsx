@@ -15,7 +15,7 @@ export default function PromosPage() {
         {dir?.promos.map((p) => (
           <div key={p.id} className="card flex gap-3">
             <div className="w-11 h-11 rounded-xl bg-brand-soft flex items-center justify-center shrink-0">
-              <AppIcon name={p.emoji || 'Sparkles'} size={22} className="text-brand" />
+              <AppIcon name={p.icon || 'Sparkles'} size={22} className="text-brand" />
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-start justify-between gap-2">

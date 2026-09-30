@@ -70,13 +70,17 @@ export default function ProfilePage() {
         <h2 className="text-sm font-semibold text-ink mt-6 mb-2 flex items-center gap-1.5">
           <Store size={16} className="text-brand" /> Для сотрудников
         </h2>
-        <Link to="/cashier" className="card flex items-center justify-between no-underline text-ink !mb-0">
+        <Link to="/cashier" className="card flex items-center justify-between no-underline text-ink">
           <span className="text-sm font-medium">Режим кассы</span>
+          <ChevronLeft size={18} className="rotate-180 text-ink-tertiary" />
+        </Link>
+        <Link to="/admin" className="card flex items-center justify-between no-underline text-ink !mb-0">
+          <span className="text-sm font-medium">Админ-панель</span>
           <ChevronLeft size={18} className="rotate-180 text-ink-tertiary" />
         </Link>
         {isDev && (
           <Link to="/dev" className="card flex items-center justify-between no-underline text-ink !mb-0 mt-2.5">
-            <span className="text-sm font-medium">🧪 Режим разработчика</span>
+            <span className="text-sm font-medium">Режим разработчика</span>
             <ChevronLeft size={18} className="rotate-180 text-ink-tertiary" />
           </Link>
         )}

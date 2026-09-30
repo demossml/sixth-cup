@@ -38,7 +38,7 @@ export default function MenuPage() {
           {dir.products.map((p) => (
             <div key={p.id} className="card !mb-0 flex flex-col items-start">
               <div className="w-12 h-12 rounded-xl bg-brand-soft flex items-center justify-center mb-2.5">
-                <AppIcon name={p.emoji || 'Coffee'} size={24} className="text-brand" />
+                <AppIcon name={p.icon || 'Coffee'} size={24} className="text-brand" />
               </div>
               <b className="text-sm text-ink leading-snug">{p.name}</b>
               <div className="text-brand font-bold text-base mt-1">{p.price} ₽</div>

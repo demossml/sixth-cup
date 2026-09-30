@@ -57,8 +57,8 @@ export function seedIfEmpty() {
     db.prepare('INSERT INTO stores(name,address) VALUES(?,?)').run('Кофейня на Ленина', 'ул. Ленина, 1')
     db.prepare('INSERT INTO stores(name,address) VALUES(?,?)').run('Кофейня у вокзала', 'Привокзальная пл., 3')
 
-    // emoji column stores lucide icon key (not emoji)
-    const pr = db.prepare('INSERT INTO products(name,price,emoji) VALUES(?,?,?)')
+    // icon column stores a lucide icon key (no emoji anywhere)
+    const pr = db.prepare('INSERT INTO products(name,price,icon) VALUES(?,?,?)')
     pr.run('Американо', 150, 'Coffee')
     pr.run('Капучино', 190, 'CupSoda')
     pr.run('Латте', 210, 'Milk')
@@ -71,7 +71,7 @@ export function seedIfEmpty() {
     vt.run('WEEK15', 'Скидка 15% на этой неделе', 'percent', 15, 7)
 
     const now = Math.floor(Date.now() / 1000)
-    const pm = db.prepare('INSERT INTO promos(title,body,emoji,sponsor,starts_at,ends_at) VALUES(?,?,?,?,?,?)')
+    const pm = db.prepare('INSERT INTO promos(title,body,icon,sponsor,starts_at,ends_at) VALUES(?,?,?,?,?,?)')
     pm.run('Каждый 6-й стакан бесплатно', 'Копите стаканы — подарок получите автоматически.', 'Gift', null, now, now + 365 * 86_400)
     pm.run('Приведи друга — получай 3%', 'За каждую покупку друга тебе 3% кэшбэком. Навсегда.', 'Users', null, now, now + 365 * 86_400)
     pm.run('Круассан к кофе −20%', 'Предложение партнёра — пекарни «Хлебный дом».', 'Croissant', 'Пекарня «Хлебный дом»', now, now + 30 * 86_400)

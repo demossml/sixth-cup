@@ -17,8 +17,8 @@ export type Directory = {
   generatedAt: number
   devices: { id: number; pub: string; revoked: boolean }[]
   stores: { id: number; name: string; address: string }[]
-  products: { id: number; name: string; price: number; emoji: string }[]
-  promos: { id: number; title: string; body: string; emoji: string; sponsor: string | null; endsAt: number }[]
+  products: { id: number; name: string; price: number; icon: string }[]
+  promos: { id: number; title: string; body: string; icon: string; sponsor: string | null; endsAt: number }[]
 }
 
 export type Me = { id: number; nickname: string; inviteCode: string; cashbackBalance: number }

@@ -67,7 +67,7 @@ export default function DevPage() {
     const r = await createReceipt(creds, best.state, { cups, useFree, voucherId, cashbackUse, amount })
     await reload()
     await refreshPending()
-    setMsg(`✅ Чек клиента: +${r.payload.dp} стакан${r.payload.df ? ', выдан бесплатный' : ''}, списано кэшбэка ${r.payload.dcb} ₽, сумма ${r.payload.a} ₽`)
+    setMsg(`Чек клиента: +${r.payload.dp} стакан${r.payload.df ? ', выдан бесплатный' : ''}, списано кэшбэка ${r.payload.dcb} ₽, сумма ${r.payload.a} ₽`)
   }
 
   async function simFriend() {
@@ -79,7 +79,7 @@ export default function DevPage() {
     await reload()
     await loadUsers()
     await refreshPending()
-    setMsg(`✅ Покупка друга на ${friendAmount} ₽ → сервер начислил 3% демо-клиенту. Проверьте кэшбэк на карте.`)
+    setMsg(`Покупка друга на ${friendAmount} ₽ → сервер начислил 3% демо-клиенту. Проверьте кэшбэк на карте.`)
   }
 
   async function syncAll() {
@@ -110,7 +110,7 @@ export default function DevPage() {
   return (
     <div className="p-4 pb-10">
       <div className="flex items-center justify-between mb-3">
-        <h1 className="text-xl font-bold">🧪 Режим разработчика</h1>
+        <h1 className="text-xl font-bold">Режим разработчика</h1>
         <button className="btn-ghost !w-auto px-3" onClick={() => nav('/')}>←</button>
       </div>
 
@@ -166,7 +166,7 @@ export default function DevPage() {
       <section className="card">
         <h2 className="font-semibold">Управление</h2>
         <div className="flex flex-wrap gap-2 mt-2">
-          <button className="btn" onClick={syncAll}>🔄 Синхронизировать</button>
+          <button className="btn" onClick={syncAll}>Синхронизировать</button>
           <button className="btn-ghost" onClick={doResetLocal}>Сброс локально</button>
           <button className="btn-ghost" onClick={doResetServer}>Сброс на сервере</button>
         </div>

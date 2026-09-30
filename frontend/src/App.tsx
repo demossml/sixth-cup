@@ -1,10 +1,12 @@
 import { NavLink, Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import { getJwt } from './api'
+import AdminPage from './pages/AdminPage'
 import CardPage from './pages/CardPage'
 import CashierPage from './pages/CashierPage'
 import DevPage from './pages/DevPage'
 import LoginPage from './pages/LoginPage'
 import MenuPage from './pages/MenuPage'
+import OnboardingPage from './pages/OnboardingPage'
 import ProfilePage from './pages/ProfilePage'
 import PromosPage from './pages/PromosPage'
 import { Home, LayoutGrid, Megaphone, User } from './lib/icons'
@@ -44,11 +46,19 @@ function Layout() {
   )
 }
 
+function LoginGate() {
+  if (!localStorage.getItem('sc-onboarded')) return <Navigate to="/onboarding" replace />
+  if (getJwt()) return <Navigate to="/" replace />
+  return <LoginPage />
+}
+
 export default function App() {
   return (
     <Routes>
-      <Route path="/login" element={<div className="max-w-[480px] mx-auto min-h-screen bg-page"><LoginPage /></div>} />
+      <Route path="/onboarding" element={<OnboardingPage />} />
+      <Route path="/login" element={<div className="max-w-[480px] mx-auto min-h-screen bg-page"><LoginGate /></div>} />
       <Route path="/cashier" element={<div className="max-w-[480px] mx-auto min-h-screen bg-page"><CashierPage /></div>} />
+      <Route path="/admin" element={<AdminPage />} />
       <Route path="/dev" element={<div className="max-w-[480px] mx-auto min-h-screen bg-page"><DevPage /></div>} />
       <Route element={<Layout />}>
         <Route path="/" element={<CardPage />} />
