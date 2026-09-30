@@ -1,85 +1,156 @@
+import { sign } from 'hono/jwt'
 import { config } from '../config'
-import { grantVoucher } from '../modules/vouchers/service'
 import { db } from './index'
+import { ensureCard } from '../modules/loyalty/proof'
+import { grantVoucher } from '../modules/vouchers/service'
 
-export const DEMO_CUSTOMER_PHONE = '79000000001'
-export const DEMO_FRIEND_PHONE = '79000000002'
+export const DEMO_CUSTOMER_PHONE = '+79001112233'
+export const DEMO_FRIEND_PHONE = '+79004445566'
 
-export function seedDemoUsers() {
-  db.transaction(() => {
-    db.prepare(`INSERT OR IGNORE INTO users(phone,nickname,invite_code,invited_by,cashback_balance,created_at)
-                VALUES(?,?,?,?,?,?)`)
-      .run(DEMO_CUSTOMER_PHONE, 'Демо Клиент', 'DEMO0001', null, 47, Date.now())
-    db.prepare(`INSERT OR IGNORE INTO users(phone,nickname,invite_code,invited_by,cashback_balance,created_at)
-                VALUES(?,?,?,?,?,?)`)
-      .run(DEMO_FRIEND_PHONE, 'Друг Демо', 'DEMO0002', null, 0, Date.now())
-
-    const customer = db.prepare('SELECT id FROM users WHERE phone=?').get(DEMO_CUSTOMER_PHONE) as { id: number }
-    const friend = db.prepare('SELECT id FROM users WHERE phone=?').get(DEMO_FRIEND_PHONE) as { id: number }
-    db.prepare('UPDATE users SET invited_by=? WHERE id=?').run(customer.id, friend.id)
-
-    db.prepare('INSERT OR IGNORE INTO cards(user_id,paid_total,free_used,seq,updated_at) VALUES(?,?,?,?,?)')
-      .run(customer.id, 4, 0, 0, Date.now())
-    db.prepare('INSERT OR IGNORE INTO cards(user_id,paid_total,free_used,seq,updated_at) VALUES(?,?,?,?,?)')
-      .run(friend.id, 0, 0, 0, Date.now())
-
-    grantVoucher(customer.id, 'WELCOME')
-  })()
+function now() {
+  return Date.now()
 }
 
-export function resetDemo() {
-  const customer = db.prepare('SELECT id FROM users WHERE phone=?').get(DEMO_CUSTOMER_PHONE) as { id: number } | undefined
-  const friend = db.prepare('SELECT id FROM users WHERE phone=?').get(DEMO_FRIEND_PHONE) as { id: number } | undefined
-  if (!customer || !friend) {
-    seedDemoUsers()
-    return
-  }
-  db.transaction(() => {
-    for (const [id, paid, cb] of [[customer.id, 4, 47], [friend.id, 0, 0]] as const) {
-      db.prepare('UPDATE cards SET paid_total=?, free_used=0, seq=0, updated_at=? WHERE user_id=?')
-        .run(paid, Date.now(), id)
-      db.prepare('UPDATE users SET cashback_balance=? WHERE id=?').run(cb, id)
-      db.prepare('DELETE FROM vouchers WHERE user_id=?').run(id)
-      db.prepare('DELETE FROM receipts WHERE user_id=?').run(id)
-    }
-    db.prepare('DELETE FROM cashback_ledger WHERE beneficiary_id IN (?,?) OR from_user_id IN (?,?)')
-      .run(customer.id, friend.id, customer.id, friend.id)
-    db.prepare('DELETE FROM disputes WHERE user_id IN (?,?)').run(customer.id, friend.id)
-    grantVoucher(customer.id, 'WELCOME')
-  })()
+function ensureDefaultOrganization(): number {
+  const existing = db.prepare('SELECT id FROM organizations WHERE inn=?').get('0000000000') as { id: number } | undefined
+  if (existing) return existing.id
+  const t = now()
+  const r = db.prepare(`
+    INSERT INTO organizations(name, legal_name, inn, kpp, tax_regime, vat_rate, active, created_at, updated_at)
+    VALUES(?,?,?,?,?,?,1,?,?)
+  `).run('Демо ООО', 'ООО «Шестой стакан»', '0000000000', null, 'usn_income', 0, t, t)
+  return Number(r.lastInsertRowid)
 }
 
 export function seedIfEmpty() {
+  const orgId = ensureDefaultOrganization()
+
+  // Link any store without organization
+  db.prepare('UPDATE stores SET organization_id=? WHERE organization_id IS NULL').run(orgId)
+
   const { n } = db.prepare('SELECT COUNT(*) AS n FROM stores').get() as { n: number }
-  if (n > 0) return
+  if (n === 0) {
+    db.prepare('INSERT INTO stores(name,address,organization_id) VALUES(?,?,?)')
+      .run('Кофейня на Ленина', 'ул. Ленина, 1', orgId)
+    db.prepare('INSERT INTO stores(name,address,organization_id) VALUES(?,?,?)')
+      .run('Кофейня у вокзала', 'Привокзальная пл., 3', orgId)
+  }
 
-  db.transaction(() => {
-    db.prepare('INSERT INTO stores(name,address) VALUES(?,?)').run('Кофейня на Ленина', 'ул. Ленина, 1')
-    db.prepare('INSERT INTO stores(name,address) VALUES(?,?)').run('Кофейня у вокзала', 'Привокзальная пл., 3')
+  const catCount = (db.prepare('SELECT COUNT(*) AS n FROM categories').get() as { n: number }).n
+  if (catCount === 0) {
+    const t = now()
+    const ins = db.prepare(
+      'INSERT INTO categories(name, sort_order, available, created_at, updated_at) VALUES(?,?,1,?,?)'
+    )
+    ins.run('Напитки', 0, t, t)
+    ins.run('Еда', 1, t, t)
+    ins.run('Другое', 2, t, t)
+  }
 
-    // icon column stores a lucide icon key (no emoji anywhere)
-    const pr = db.prepare('INSERT INTO products(name,price,icon) VALUES(?,?,?)')
-    pr.run('Американо', 150, 'Coffee')
-    pr.run('Капучино', 190, 'CupSoda')
-    pr.run('Латте', 210, 'Milk')
-    pr.run('Флэт уайт', 220, 'Coffee')
-    pr.run('Чай с лимоном', 120, 'Leaf')
-    pr.run('Круассан', 130, 'Croissant')
-
-    const vt = db.prepare('INSERT INTO voucher_templates(code,title,kind,value,valid_days) VALUES(?,?,?,?,?)')
-    vt.run('WELCOME', 'Скидка 10% на первую покупку', 'percent', 10, 30)
-    vt.run('WEEK15', 'Скидка 15% на этой неделе', 'percent', 15, 7)
-
-    const now = Math.floor(Date.now() / 1000)
-    const pm = db.prepare('INSERT INTO promos(title,body,icon,sponsor,starts_at,ends_at) VALUES(?,?,?,?,?,?)')
-    pm.run('Каждый 6-й стакан бесплатно', 'Копите стаканы — подарок получите автоматически.', 'Gift', null, now, now + 365 * 86_400)
-    pm.run('Приведи друга — получай 3%', 'За каждую покупку друга тебе 3% кэшбэком. Навсегда.', 'Users', null, now, now + 365 * 86_400)
-    pm.run('Круассан к кофе −20%', 'Предложение партнёра — пекарни «Хлебный дом».', 'Croissant', 'Пекарня «Хлебный дом»', now, now + 30 * 86_400)
-
-    if (config.isDev) {
-      db.prepare('INSERT INTO devices(store_id,name,enroll_code,created_at) VALUES(?,?,?,?)')
-        .run(1, 'Demo tablet', 'DEMO1234', Date.now())
-      seedDemoUsers()
+  const prodCount = (db.prepare('SELECT COUNT(*) AS n FROM products').get() as { n: number }).n
+  if (prodCount === 0) {
+    const drinks = db.prepare(`SELECT id FROM categories WHERE name='Напитки'`).get() as { id: number }
+    const food = db.prepare(`SELECT id FROM categories WHERE name='Еда'`).get() as { id: number }
+    const t = now()
+    const pr = db.prepare(`
+      INSERT INTO products(name,price,icon,available,description,category_id,sort_order,created_at,updated_at)
+      VALUES(?,?,?,1,?,?,?,?,?)
+    `)
+    pr.run('Американо', 150, 'Coffee', 'Классический чёрный кофе', drinks.id, 0, t, t)
+    pr.run('Капучино', 190, 'CupSoda', null, drinks.id, 1, t, t)
+    pr.run('Латте', 210, 'Milk', null, drinks.id, 2, t, t)
+    pr.run('Флэт уайт', 220, 'Coffee', null, drinks.id, 3, t, t)
+    pr.run('Чай с лимоном', 120, 'Leaf', null, drinks.id, 4, t, t)
+    pr.run('Круассан', 130, 'Croissant', null, food.id, 0, t, t)
+  } else {
+    // Backfill timestamps / default category for old rows
+    const drinks = db.prepare(`SELECT id FROM categories WHERE name='Напитки'`).get() as { id: number } | undefined
+    if (drinks) {
+      db.prepare('UPDATE products SET category_id=? WHERE category_id IS NULL').run(drinks.id)
     }
-  })()
+    const t = now()
+    db.prepare('UPDATE products SET created_at=? WHERE created_at IS NULL').run(t)
+    db.prepare('UPDATE products SET updated_at=? WHERE updated_at IS NULL').run(t)
+  }
+
+  const vt = (db.prepare('SELECT COUNT(*) AS n FROM voucher_templates').get() as { n: number }).n
+  if (vt === 0) {
+    const ins = db.prepare(
+      'INSERT INTO voucher_templates(code,title,kind,value,valid_days) VALUES(?,?,?,?,?)'
+    )
+    ins.run('WELCOME', 'Скидка 10% на первую покупку', 'percent', 10, 30)
+    ins.run('WEEK15', 'Скидка 15% на этой неделе', 'percent', 15, 7)
+  }
+
+  const pm = (db.prepare('SELECT COUNT(*) AS n FROM promos').get() as { n: number }).n
+  if (pm === 0) {
+    const ts = Math.floor(Date.now() / 1000)
+    const ins = db.prepare(
+      'INSERT INTO promos(title,body,icon,sponsor,starts_at,ends_at) VALUES(?,?,?,?,?,?)'
+    )
+    ins.run(
+      'Каждый 6-й стакан бесплатно',
+      'Копите стаканы — подарок получите автоматически.',
+      'Gift',
+      null,
+      ts,
+      ts + 365 * 86_400
+    )
+    ins.run(
+      'Приведи друга — получай 3%',
+      'За каждую покупку друга тебе 3% кэшбэком. Навсегда.',
+      'Users',
+      null,
+      ts,
+      ts + 365 * 86_400
+    )
+  }
+
+  if (config.isDev) {
+    const dev = db.prepare(`SELECT id FROM devices WHERE enroll_code='DEMO1234'`).get()
+    if (!dev) {
+      const store = db.prepare('SELECT id FROM stores ORDER BY id LIMIT 1').get() as { id: number }
+      db.prepare('INSERT INTO devices(store_id,name,enroll_code,created_at) VALUES(?,?,?,?)').run(
+        store.id,
+        'Demo tablet',
+        'DEMO1234',
+        Date.now()
+      )
+    }
+    seedDemoUsers()
+  }
+}
+
+function seedDemoUsers() {
+  const exists = db.prepare('SELECT id FROM users WHERE phone=?').get(DEMO_CUSTOMER_PHONE)
+  if (exists) return
+  const t = Date.now()
+  const inv = db
+    .prepare('INSERT INTO users(phone,nickname,invite_code,invited_by,created_at) VALUES(?,?,?,?,?)')
+    .run(DEMO_CUSTOMER_PHONE, 'Демо Клиент', 'DEMOHOST', null, t)
+  const hostId = Number(inv.lastInsertRowid)
+  ensureCard(hostId)
+  grantVoucher(hostId, 'WELCOME')
+  const fr = db
+    .prepare('INSERT INTO users(phone,nickname,invite_code,invited_by,created_at) VALUES(?,?,?,?,?)')
+    .run(DEMO_FRIEND_PHONE, 'Демо Друг', 'DEMOFRND', hostId, t)
+  ensureCard(Number(fr.lastInsertRowid))
+}
+
+export function resetDemo() {
+  db.exec(`
+    DELETE FROM cashback_ledger;
+    DELETE FROM disputes;
+    DELETE FROM receipts;
+    DELETE FROM vouchers;
+    DELETE FROM cards;
+    DELETE FROM users;
+    DELETE FROM sms_codes;
+  `)
+  seedDemoUsers()
+}
+
+export async function demoToken(phone = DEMO_CUSTOMER_PHONE) {
+  const u = db.prepare('SELECT id FROM users WHERE phone=?').get(phone) as { id: number }
+  return sign({ sub: u.id, exp: Math.floor(Date.now() / 1000) + 86400 * 180 }, config.jwtSecret)
 }

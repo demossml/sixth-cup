@@ -1,0 +1,15 @@
+CREATE TABLE IF NOT EXISTS categories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  available INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+ALTER TABLE products ADD COLUMN description TEXT;
+ALTER TABLE products ADD COLUMN category_id INTEGER REFERENCES categories(id);
+ALTER TABLE products ADD COLUMN image_url TEXT;
+ALTER TABLE products ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE products ADD COLUMN created_at INTEGER;
+ALTER TABLE products ADD COLUMN updated_at INTEGER;

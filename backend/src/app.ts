@@ -10,6 +10,7 @@ import { devRoutes } from './modules/dev/routes'
 import { deviceRoutes } from './modules/devices/routes'
 import { directoryRoutes } from './modules/directory/routes'
 import { syncRoutes } from './modules/sync/routes'
+import { uploadRoutes } from './modules/upload/routes'
 
 const app = new Hono()
 app.use('*', logger())
@@ -23,6 +24,26 @@ app.onError((err, c) => {
 
 app.get('/health', (c) => c.json({ ok: true }))
 
+// Product images — local disk (safe filename only)
+app.get('/uploads/:file', async (c) => {
+  const file = c.req.param('file')
+  if (!/^[a-zA-Z0-9._-]+$/.test(file)) return c.notFound()
+  const { readFileSync, existsSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const path = join(config.uploadsDir, file)
+  if (!existsSync(path)) return c.notFound()
+  const ext = file.split('.').pop()?.toLowerCase()
+  const type = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg'
+  const data = readFileSync(path)
+  return new Response(data, {
+    headers: {
+      'Content-Type': type,
+      'Cache-Control': 'public, max-age=86400',
+    },
+  })
+})
+
+// Local product images (storage abstraction: disk now, S3/R2 later)
 const routes = app
   .route('/api/auth', authRoutes)
   .route('/api/directory', directoryRoutes)
@@ -30,6 +51,7 @@ const routes = app
   .route('/api/devices', deviceRoutes)
   .route('/api/dev', devRoutes)
   .route('/api/admin', adminRoutes)
+  .route('/api/admin/upload', uploadRoutes)
 
 export type AppType = typeof routes
 export { app }

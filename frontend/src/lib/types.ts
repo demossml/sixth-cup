@@ -16,8 +16,18 @@ export type Directory = {
   currency: string
   generatedAt: number
   devices: { id: number; pub: string; revoked: boolean }[]
-  stores: { id: number; name: string; address: string }[]
-  products: { id: number; name: string; price: number; icon: string }[]
+  stores: { id: number; name: string; address: string; organizationId?: number | null }[]
+  organizations?: {
+    id: number; name: string; legalName: string; taxRegime: string; vatRate: number
+  }[]
+  categories?: { id: number; name: string; sortOrder: number }[]
+  products: {
+    id: number; name: string; price: number; icon: string
+    description?: string | null
+    categoryId?: number | null
+    imageUrl?: string | null
+    sortOrder?: number
+  }[]
   promos: { id: number; title: string; body: string; icon: string; sponsor: string | null; endsAt: number }[]
 }
 

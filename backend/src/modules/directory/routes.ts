@@ -3,13 +3,44 @@ import { config } from '../../config'
 import { db } from '../../db'
 import { serverPub } from '../../lib/crypto'
 
+/**
+ * Public directory for PWA + future Android cashier.
+ * Keeps legacy fields; adds organizations, categories, tax, product extras.
+ */
 export const directoryRoutes = new Hono().get('/', (c) => {
   const now = Math.floor(Date.now() / 1000)
   const devices = db.prepare('SELECT id, public_key AS pub, revoked FROM devices WHERE public_key IS NOT NULL')
     .all() as { id: number; pub: string; revoked: number }[]
-  const stores = db.prepare('SELECT id, name, address FROM stores').all() as { id: number; name: string; address: string }[]
-  const products = db.prepare('SELECT id, name, price, icon FROM products WHERE available=1')
-    .all() as { id: number; name: string; price: number; icon: string }[]
+
+  const stores = db.prepare(`
+    SELECT s.id, s.name, s.address, s.organization_id AS organizationId
+    FROM stores s
+  `).all() as { id: number; name: string; address: string; organizationId: number | null }[]
+
+  const organizations = db.prepare(`
+    SELECT id, name, legal_name AS legalName, tax_regime AS taxRegime, vat_rate AS vatRate, active
+    FROM organizations WHERE active=1
+  `).all() as {
+    id: number; name: string; legalName: string; taxRegime: string; vatRate: number; active: number
+  }[]
+
+  // No INN/KPP in public directory (sensitive-ish); taxRegime + vatRate needed for cashier
+  const categories = db.prepare(`
+    SELECT id, name, sort_order AS sortOrder
+    FROM categories WHERE available=1 ORDER BY sort_order, id
+  `).all() as { id: number; name: string; sortOrder: number }[]
+
+  const products = db.prepare(`
+    SELECT id, name, price, icon, description, category_id AS categoryId,
+           image_url AS imageUrl, sort_order AS sortOrder
+    FROM products WHERE available=1
+    ORDER BY sort_order, id
+  `).all() as {
+    id: number; name: string; price: number; icon: string
+    description: string | null; categoryId: number | null
+    imageUrl: string | null; sortOrder: number
+  }[]
+
   const promos = db.prepare(`SELECT id, title, body, icon, sponsor, ends_at AS endsAt FROM promos
                              WHERE starts_at<=? AND ends_at>=? ORDER BY id DESC`)
     .all(now, now) as { id: number; title: string; body: string; icon: string; sponsor: string | null; endsAt: number }[]
@@ -21,6 +52,31 @@ export const directoryRoutes = new Hono().get('/', (c) => {
     currency: config.currency,
     generatedAt: now,
     devices: devices.map((d) => ({ id: d.id, pub: d.pub, revoked: !!d.revoked })),
-    stores, products, promos,
+    stores: stores.map((s) => ({
+      id: s.id,
+      name: s.name,
+      address: s.address,
+      organizationId: s.organizationId,
+    })),
+    organizations: organizations.map((o) => ({
+      id: o.id,
+      name: o.name,
+      legalName: o.legalName,
+      taxRegime: o.taxRegime,
+      vatRate: o.vatRate,
+    })),
+    categories,
+    // legacy shape: id, name, price, icon — plus optional extras (backward compatible)
+    products: products.map((p) => ({
+      id: p.id,
+      name: p.name,
+      price: p.price,
+      icon: p.icon,
+      description: p.description,
+      categoryId: p.categoryId,
+      imageUrl: p.imageUrl,
+      sortOrder: p.sortOrder ?? 0,
+    })),
+    promos,
   })
 })

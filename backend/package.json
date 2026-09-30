@@ -4,13 +4,18 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": { "types": "./src/app.ts", "default": "./src/app.ts" }
+    ".": {
+      "types": "./src/app.ts",
+      "default": "./src/app.ts"
+    }
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsup src/index.ts --format esm --clean",
     "start": "NODE_ENV=production node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.0",
@@ -25,6 +30,7 @@
     "@types/node": "^22.0.0",
     "tsup": "^8.3.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.9"
   }
 }
