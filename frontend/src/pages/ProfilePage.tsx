@@ -1,10 +1,9 @@
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import Qr from '../components/Qr'
 import { setJwt } from '../api'
 import { useApp } from '../lib/app'
 import { clearUserData } from '../lib/db'
-import { isDev } from '../lib/dev'
-import { ChevronLeft, LogOut, RefreshCw, Share2, Store, Users, Wallet } from '../lib/icons'
+import { LogOut, RefreshCw, Share2, Users, Wallet } from '../lib/icons'
 
 export default function ProfilePage() {
   const { me, lastSync, syncing, sync, reload } = useApp()
@@ -50,39 +49,7 @@ export default function ProfilePage() {
           <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />
           Синхронизировать
         </button>
-
-        <h2 className="text-sm font-semibold text-ink mt-6 mb-2 flex items-center gap-1.5">
-          <Users size={16} className="text-brand" /> Приведи друга — 3%
-        </h2>
-        <p className="text-ink-secondary text-sm mb-3 leading-relaxed">
-          Друг регистрируется по ссылке или QR. С каждой его покупки тебе начисляется 3% кэшбэком. Навсегда.
-        </p>
-        {link && (
-          <div className="card text-center">
-            <Qr value={link} />
-            <input className="input text-xs mt-2" readOnly value={link} onFocus={(e) => e.target.select()} />
-            <button className="btn flex items-center justify-center gap-2" onClick={share}>
-              <Share2 size={16} /> Поделиться
-            </button>
-          </div>
-        )}
-
-        <h2 className="text-sm font-semibold text-ink mt-6 mb-2 flex items-center gap-1.5">
-          <Store size={16} className="text-brand" /> Для сотрудников
-        </h2>
-        <Link to="/cashier" className="card flex items-center justify-between no-underline text-ink">
-          <span className="text-sm font-medium">Режим кассы</span>
-          <ChevronLeft size={18} className="rotate-180 text-ink-tertiary" />
-        </Link>
-        <p className="text-ink-tertiary text-xs mt-2">Кабинет владельца: отдельный адрес admin.*</p>
-        {isDev && (
-          <Link to="/dev" className="card flex items-center justify-between no-underline text-ink !mb-0 mt-2.5">
-            <span className="text-sm font-medium">Режим разработчика</span>
-            <ChevronLeft size={18} className="rotate-180 text-ink-tertiary" />
-          </Link>
-        )}
-
-        <button className="btn-danger mt-8 flex items-center justify-center gap-2" onClick={logout}>
+<button className="btn-danger mt-8 flex items-center justify-center gap-2" onClick={logout}>
           <LogOut size={16} /> Выйти
         </button>
       </div>

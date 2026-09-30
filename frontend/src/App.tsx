@@ -1,8 +1,6 @@
 import { NavLink, Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import { getJwt } from './api'
 import CardPage from './pages/CardPage'
-import CashierPage from './pages/CashierPage'
-import DevPage from './pages/DevPage'
 import LoginPage from './pages/LoginPage'
 import MenuPage from './pages/MenuPage'
 import OnboardingPage from './pages/OnboardingPage'
@@ -51,14 +49,16 @@ function LoginGate() {
   return <LoginPage />
 }
 
-/** Клиентское приложение (app.*). Админки здесь нет. */
+/**
+ * Клиентское приложение (app.*).
+ * Только гость: карта, меню, акции, профиль.
+ * Нет /admin, /cashier, /dev.
+ */
 export default function App() {
   return (
     <Routes>
       <Route path="/onboarding" element={<OnboardingPage />} />
       <Route path="/login" element={<div className="max-w-[480px] mx-auto min-h-screen bg-page"><LoginGate /></div>} />
-      <Route path="/cashier" element={<div className="max-w-[480px] mx-auto min-h-screen bg-page"><CashierPage /></div>} />
-      <Route path="/dev" element={<div className="max-w-[480px] mx-auto min-h-screen bg-page"><DevPage /></div>} />
       <Route element={<Layout />}>
         <Route path="/" element={<CardPage />} />
         <Route path="/menu" element={<MenuPage />} />
