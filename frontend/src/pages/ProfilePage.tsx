@@ -13,7 +13,7 @@ export default function ProfilePage() {
   async function share() {
     if (navigator.share) {
       await navigator.share({
-        title: 'Шестой стакан',
+        title: '6.7 Coffee',
         text: 'Копи стаканы — каждый 6-й бесплатно. И получай 3% с покупок друзей.',
         url: link,
       })

@@ -43,7 +43,7 @@ export default function LoginPage() {
         <div className="w-14 h-14 rounded-2xl bg-white/15 flex items-center justify-center mb-4">
           <Coffee size={32} className="text-white" strokeWidth={1.5} />
         </div>
-        <h1 className="text-2xl font-bold tracking-tight">Шестой стакан</h1>
+        <h1 className="text-2xl font-bold tracking-tight">6.7 Coffee</h1>
         <p className="text-white/80 text-sm mt-2 leading-relaxed">
           Каждый 6-й стакан бесплатно.<br />
           Приведи друга — получай 3% с его покупок.

@@ -18,7 +18,7 @@ function ensureDefaultOrganization(): number {
   const r = db.prepare(`
     INSERT INTO organizations(name, legal_name, inn, kpp, tax_regime, vat_rate, active, created_at, updated_at)
     VALUES(?,?,?,?,?,?,1,?,?)
-  `).run('Демо ООО', 'ООО «Шестой стакан»', '0000000000', null, 'usn_income', 0, t, t)
+  `).run('Демо ООО', 'ООО «6.7 Coffee»', '0000000000', null, 'usn_income', 0, t, t)
   return Number(r.lastInsertRowid)
 }
 
@@ -89,7 +89,7 @@ export function seedIfEmpty() {
       'INSERT INTO promos(title,body,icon,sponsor,starts_at,ends_at) VALUES(?,?,?,?,?,?)'
     )
     ins.run(
-      'Каждый 6-й стакан бесплатно',
+      'Каждый 6.7 Coffee бесплатно',
       'Копите стаканы — подарок получите автоматически.',
       'Gift',
       null,

@@ -9,8 +9,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       devOptions: { enabled: true },
       manifest: {
-        name: 'Шестой стакан',
-        short_name: '6-й стакан',
+        name: '6.7 Coffee',
+        short_name: '6.7 Coffee',
         lang: 'ru',
         display: 'standalone',
         start_url: '/',
