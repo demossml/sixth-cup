@@ -11,6 +11,8 @@ export const config = {
   keysPath: process.env.KEYS_PATH ?? './data/keys.json',
   uploadsDir: process.env.UPLOADS_DIR ?? resolve('./data/uploads'),
   publicBaseUrl: process.env.PUBLIC_BASE_URL ?? '',
+  /** Optional exact host for admin UI, e.g. admin.example.com */
+  adminHost: process.env.ADMIN_HOST ?? '',
   cupsForFree: 5,
   referralCashbackPercent: 3,
   currency: 'RUB',

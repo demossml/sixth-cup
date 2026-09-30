@@ -74,10 +74,7 @@ export default function ProfilePage() {
           <span className="text-sm font-medium">Режим кассы</span>
           <ChevronLeft size={18} className="rotate-180 text-ink-tertiary" />
         </Link>
-        <Link to="/admin" className="card flex items-center justify-between no-underline text-ink !mb-0">
-          <span className="text-sm font-medium">Админ-панель</span>
-          <ChevronLeft size={18} className="rotate-180 text-ink-tertiary" />
-        </Link>
+        <p className="text-ink-tertiary text-xs mt-2">Кабинет владельца: отдельный адрес admin.*</p>
         {isDev && (
           <Link to="/dev" className="card flex items-center justify-between no-underline text-ink !mb-0 mt-2.5">
             <span className="text-sm font-medium">Режим разработчика</span>

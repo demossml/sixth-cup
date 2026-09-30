@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { ChevronLeft, RefreshCw } from '../lib/icons'
+
+import { ChevronLeft, RefreshCw } from './icons'
 
 const TOKEN_KEY = 'sc-admin-token'
 
@@ -158,9 +158,7 @@ export default function AdminPage() {
   if (!token || !stats) {
     return (
       <div className="max-w-[480px] mx-auto min-h-screen bg-page p-4">
-        <Link to="/" className="text-brand text-sm flex items-center gap-1 mb-6">
-          <ChevronLeft size={16} /> Назад
-        </Link>
+        <p className="text-ink-tertiary text-sm mb-6">Вход только для владельца · admin.*</p>
         <h1 className="text-xl font-bold mb-4">Админ</h1>
         {error && <p className="text-red-600 text-sm mb-2">{error}</p>}
         <input className="input mb-3" placeholder="ADMIN_TOKEN" value={input} onChange={(e) => setInput(e.target.value)} />
@@ -173,9 +171,7 @@ export default function AdminPage() {
     <div className="max-w-[480px] mx-auto min-h-screen bg-page pb-24">
       <div className="bg-brand text-white px-4 pt-10 pb-3">
         <div className="flex items-center justify-between">
-          <Link to="/" className="text-white/80 text-sm flex items-center gap-1">
-            <ChevronLeft size={16} /> Выйти в приложение
-          </Link>
+          <span className="text-white/80 text-sm">Кабинет владельца</span>
           <button type="button" className="text-white/90" onClick={() => void load(token)} aria-label="Обновить">
             <RefreshCw size={18} />
           </button>

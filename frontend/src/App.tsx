@@ -1,6 +1,5 @@
 import { NavLink, Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import { getJwt } from './api'
-import AdminPage from './pages/AdminPage'
 import CardPage from './pages/CardPage'
 import CashierPage from './pages/CashierPage'
 import DevPage from './pages/DevPage'
@@ -52,13 +51,13 @@ function LoginGate() {
   return <LoginPage />
 }
 
+/** Клиентское приложение (app.*). Админки здесь нет. */
 export default function App() {
   return (
     <Routes>
       <Route path="/onboarding" element={<OnboardingPage />} />
       <Route path="/login" element={<div className="max-w-[480px] mx-auto min-h-screen bg-page"><LoginGate /></div>} />
       <Route path="/cashier" element={<div className="max-w-[480px] mx-auto min-h-screen bg-page"><CashierPage /></div>} />
-      <Route path="/admin" element={<AdminPage />} />
       <Route path="/dev" element={<div className="max-w-[480px] mx-auto min-h-screen bg-page"><DevPage /></div>} />
       <Route element={<Layout />}>
         <Route path="/" element={<CardPage />} />
@@ -66,6 +65,7 @@ export default function App() {
         <Route path="/promos" element={<PromosPage />} />
         <Route path="/me" element={<ProfilePage />} />
       </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
 }

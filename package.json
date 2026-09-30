@@ -2,7 +2,11 @@
   "name": "sixth-cup",
   "private": true,
   "packageManager": "npm@10.8.2",
-  "workspaces": ["backend", "frontend"],
+  "workspaces": [
+    "backend",
+    "frontend",
+    "frontend-admin"
+  ],
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
