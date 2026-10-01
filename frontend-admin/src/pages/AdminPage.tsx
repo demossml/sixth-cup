@@ -18,7 +18,7 @@ async function adminFetch<T>(path: string, token: string, init?: RequestInit): P
   return body as T
 }
 
-type Tab = 'overview' | 'orgs' | 'stores' | 'categories' | 'products' | 'devices' | 'promos' | 'disputes'
+type Tab = 'overview' | 'orgs' | 'stores' | 'categories' | 'products' | 'modifiers' | 'schemes' | 'devices' | 'promos' | 'disputes'
 
 type Stats = {
   users: number; receipts: number; receiptsToday: number; freeCups: number
@@ -36,8 +36,12 @@ type Category = { id: number; name: string; sortOrder: number; available: number
 type Product = {
   id: number; name: string; price: number; icon: string; available: number
   description: string | null; categoryId: number | null; imageUrl: string | null
-  sortOrder: number; categoryName?: string
+  sortOrder: number; categoryName?: string | null
+  modifierSchemeId?: number | null; recipeText?: string | null
+  recipeCostRub?: number | null; recipeSeconds?: number | null
 }
+type Modifier = { id: number; name: string; price: number; groupKey: string; available: number | boolean }
+type Scheme = { id: number; name: string; items: { modifierId: number }[] }
 type Device = {
   id: number; name: string; storeId: number; storeName: string; revoked: number
   enrollCode: string | null; enrolled: number
@@ -49,6 +53,8 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'stores', label: 'Точки' },
   { id: 'categories', label: 'Категории' },
   { id: 'products', label: 'Товары' },
+  { id: 'modifiers', label: 'Добавки' },
+  { id: 'schemes', label: 'Схемы' },
   { id: 'devices', label: 'Кассы' },
   { id: 'promos', label: 'Акции' },
   { id: 'disputes', label: 'Споры' },
@@ -71,6 +77,10 @@ export default function AdminPage() {
   const [stores, setStores] = useState<Store[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [products, setProducts] = useState<Product[]>([])
+  const [modifiers, setModifiers] = useState<Modifier[]>([])
+  const [schemes, setSchemes] = useState<Scheme[]>([])
+  const [modForm, setModForm] = useState({ name: '', price: 40, groupKey: 'syrup' })
+  const [schemeForm, setSchemeForm] = useState({ name: '', modifierIds: [] as number[], copyFrom: 0 })
   const [devices, setDevices] = useState<Device[]>([])
   const [promos, setPromos] = useState<Array<{ id: number; title: string; body: string; endsAt: number }>>([])
   const [disputes, setDisputes] = useState<Array<{ id: number; kind: string; details: string; created_at: number }>>([])
@@ -81,6 +91,7 @@ export default function AdminPage() {
   const [catForm, setCatForm] = useState({ name: '', sortOrder: 0 })
   const [prodForm, setProdForm] = useState({
     name: '', price: 0, icon: 'Coffee', categoryId: 0, description: '', imageUrl: '', sortOrder: 0,
+    modifierSchemeId: 0, recipeText: '', recipeCostRub: 0, recipeSeconds: 0,
   })
   const [deviceName, setDeviceName] = useState('')
   const [deviceStoreId, setDeviceStoreId] = useState(0)
@@ -94,12 +105,14 @@ export default function AdminPage() {
   const load = useCallback(async (t: string) => {
     setError('')
     try {
-      const [s, o, st, cat, p, d, pr, di] = await Promise.all([
+      const [s, o, st, cat, p, mod, sch, d, pr, di] = await Promise.all([
         adminFetch<Stats>('/stats', t),
         adminFetch<{ organizations: Org[] }>('/organizations', t),
         adminFetch<{ stores: Store[] }>('/stores', t),
         adminFetch<{ categories: Category[] }>('/categories', t),
         adminFetch<{ products: Product[] }>('/products', t),
+        adminFetch<{ modifiers: Modifier[] }>('/modifiers', t).catch(() => ({ modifiers: [] as Modifier[] })),
+        adminFetch<{ schemes: Scheme[] }>('/modifier-schemes', t).catch(() => ({ schemes: [] as Scheme[] })),
         adminFetch<{ devices: Device[] }>('/devices', t),
         adminFetch<{ promos: typeof promos }>('/promos', t),
         adminFetch<{ disputes: typeof disputes }>('/disputes', t),
@@ -109,6 +122,8 @@ export default function AdminPage() {
       setStores(st.stores)
       setCategories(cat.categories)
       setProducts(p.products)
+      setModifiers(mod.modifiers)
+      setSchemes(sch.schemes)
       setDevices(d.devices)
       setPromos(pr.promos)
       setDisputes(di.disputes)
@@ -377,6 +392,10 @@ export default function AdminPage() {
                         description: p.description ?? '',
                         imageUrl: p.imageUrl ?? '',
                         sortOrder: p.sortOrder ?? 0,
+                        modifierSchemeId: p.modifierSchemeId ?? 0,
+                        recipeText: p.recipeText ?? '',
+                        recipeCostRub: p.recipeCostRub ?? 0,
+                        recipeSeconds: p.recipeSeconds ?? 0,
                       })
                     }}
                   >
@@ -401,6 +420,19 @@ export default function AdminPage() {
               </select>
               <input className="input" placeholder="Lucide icon (Coffee)" value={prodForm.icon}
                 onChange={(e) => setProdForm({ ...prodForm, icon: e.target.value })} />
+              <label className="text-xs text-ink-secondary block">Схема добавок</label>
+              <select className="input" value={prodForm.modifierSchemeId ?? 0}
+                onChange={(e) => setProdForm({ ...prodForm, modifierSchemeId: Number(e.target.value) })}>
+                <option value={0}>— без добавок —</option>
+                {schemes.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <label className="text-xs text-ink-secondary block">Рецепт для бариста</label>
+              <textarea className="input min-h-[80px]" placeholder="Как готовить…"
+                value={prodForm.recipeText ?? ''}
+                onChange={(e) => setProdForm({ ...prodForm, recipeText: e.target.value })} />
+              <input className="input" type="number" placeholder="Себес ₽ (только касса)"
+                value={prodForm.recipeCostRub ?? 0}
+                onChange={(e) => setProdForm({ ...prodForm, recipeCostRub: Number(e.target.value) })} />
               <label className="text-xs text-ink-secondary block">
                 Фото (jpeg/png/webp, до 2 МБ)
                 <input type="file" accept="image/jpeg,image/png,image/webp" className="block mt-1 text-xs w-full"
@@ -440,12 +472,17 @@ export default function AdminPage() {
                         imageUrl: prodForm.imageUrl || null,
                         sortOrder: prodForm.sortOrder,
                         available: true,
+                        modifierSchemeId: prodForm.modifierSchemeId || null,
+                        recipeText: prodForm.recipeText || null,
+                        recipeCostRub: prodForm.recipeCostRub || null,
+                        recipeSeconds: prodForm.recipeSeconds || null,
                       }),
                     })
                     setEditingId(null)
                     setProdForm({
                       name: '', price: 0, icon: 'Coffee', categoryId: categories[0]?.id ?? 0,
                       description: '', imageUrl: '', sortOrder: 0,
+                      modifierSchemeId: 0, recipeText: '', recipeCostRub: 0, recipeSeconds: 0,
                     })
                     await load(token)
                   } catch (e) {
@@ -463,11 +500,101 @@ export default function AdminPage() {
                   setProdForm({
                     name: '', price: 0, icon: 'Coffee', categoryId: categories[0]?.id ?? 0,
                     description: '', imageUrl: '', sortOrder: 0,
+                    modifierSchemeId: 0, recipeText: '', recipeCostRub: 0, recipeSeconds: 0,
                   })
                 }}>Отмена редактирования</button>
               )}
             </div>
           </>
+        )}
+
+        {tab === 'modifiers' && (
+          <div className="space-y-3">
+            <p className="text-sm text-ink-secondary">Сиропы, топпинги, молоко — справочник добавок.</p>
+            {modifiers.map((m) => (
+              <div key={m.id} className="card flex justify-between items-center">
+                <span className="text-sm">{m.name} · {m.price} ₽ · {m.groupKey}</span>
+                <button type="button" className="text-xs text-red-600" onClick={async () => {
+                  await adminFetch(`/modifiers/${m.id}`, token, { method: 'DELETE' })
+                  void load(token)
+                }}>Удалить</button>
+              </div>
+            ))}
+            <div className="card space-y-2">
+              <input className="input" placeholder="Название" value={modForm.name}
+                onChange={(e) => setModForm({ ...modForm, name: e.target.value })} />
+              <input className="input" type="number" placeholder="Цена ₽" value={modForm.price}
+                onChange={(e) => setModForm({ ...modForm, price: Number(e.target.value) })} />
+              <select className="input" value={modForm.groupKey}
+                onChange={(e) => setModForm({ ...modForm, groupKey: e.target.value })}>
+                <option value="syrup">Сироп</option>
+                <option value="topping">Топпинг</option>
+                <option value="milk">Молоко</option>
+                <option value="other">Другое</option>
+              </select>
+              <button type="button" className="btn" onClick={async () => {
+                await adminFetch('/modifiers', token, { method: 'POST', body: JSON.stringify(modForm) })
+                setModForm({ name: '', price: 40, groupKey: 'syrup' })
+                void load(token)
+              }}>Добавить добавку</button>
+            </div>
+          </div>
+        )}
+
+        {tab === 'schemes' && (
+          <div className="space-y-3">
+            <p className="text-sm text-ink-secondary">Схема = набор добавок. Один набор можно повесить на капучино и латте.</p>
+            {schemes.map((s) => (
+              <div key={s.id} className="card">
+                <div className="flex justify-between">
+                  <b className="text-sm">{s.name}</b>
+                  <button type="button" className="text-xs text-red-600" onClick={async () => {
+                    await adminFetch(`/modifier-schemes/${s.id}`, token, { method: 'DELETE' })
+                    void load(token)
+                  }}>Удалить</button>
+                </div>
+                <p className="text-xs text-ink-secondary mt-1">
+                  Добавок: {s.items?.length ?? 0} · id схемы {s.id} (укажите в товаре)
+                </p>
+              </div>
+            ))}
+            <div className="card space-y-2">
+              <input className="input" placeholder="Имя схемы" value={schemeForm.name}
+                onChange={(e) => setSchemeForm({ ...schemeForm, name: e.target.value })} />
+              <p className="text-xs">Отметьте добавки или скопируйте существующую схему:</p>
+              <select className="input" value={schemeForm.copyFrom}
+                onChange={(e) => setSchemeForm({ ...schemeForm, copyFrom: Number(e.target.value) })}>
+                <option value={0}>— не копировать —</option>
+                {schemes.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <div className="max-h-40 overflow-y-auto space-y-1">
+                {modifiers.map((m) => (
+                  <label key={m.id} className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={schemeForm.modifierIds.includes(m.id)}
+                      onChange={(e) => {
+                        const ids = e.target.checked
+                          ? [...schemeForm.modifierIds, m.id]
+                          : schemeForm.modifierIds.filter((x) => x !== m.id)
+                        setSchemeForm({ ...schemeForm, modifierIds: ids })
+                      }} />
+                    {m.name} ({m.price} ₽)
+                  </label>
+                ))}
+              </div>
+              <button type="button" className="btn" onClick={async () => {
+                await adminFetch('/modifier-schemes', token, {
+                  method: 'POST',
+                  body: JSON.stringify({
+                    name: schemeForm.name || 'Схема',
+                    modifierIds: schemeForm.modifierIds,
+                    copyFromSchemeId: schemeForm.copyFrom || undefined,
+                  }),
+                })
+                setSchemeForm({ name: '', modifierIds: [], copyFrom: 0 })
+                void load(token)
+              }}>Создать схему</button>
+            </div>
+          </div>
         )}
 
 {tab === 'devices' && (

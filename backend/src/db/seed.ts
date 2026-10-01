@@ -118,8 +118,48 @@ export function seedIfEmpty() {
       )
     }
     seedDemoUsers()
+    seedModifiers()
   }
 }
+
+function seedModifiers() {
+  const n = (db.prepare('SELECT COUNT(*) AS n FROM modifiers').get() as { n: number }).n
+  if (n > 0) return
+  const t = Date.now()
+  const ins = db.prepare(
+    'INSERT INTO modifiers(name,price,group_key,available,sort_order,created_at,updated_at) VALUES(?,?,?,1,?,?,?)'
+  )
+  const mods = [
+    ['Ваниль', 40, 'syrup', 0],
+    ['Карамель', 40, 'syrup', 1],
+    ['Лесной орех', 40, 'syrup', 2],
+    ['Корица', 20, 'topping', 0],
+    ['Взбитые сливки', 50, 'topping', 1],
+    ['Овсяное молоко', 50, 'milk', 0],
+    ['Кокосовое молоко', 50, 'milk', 1],
+  ]
+  const ids: number[] = []
+  for (const [name, price, gk, sort] of mods) {
+    const r = ins.run(name, price, gk, sort, t, t)
+    ids.push(Number(r.lastInsertRowid))
+  }
+  const sch = db.prepare('INSERT INTO modifier_schemes(name,created_at,updated_at) VALUES(?,?,?)')
+    .run('Кофе стандарт', t, t)
+  const schemeId = Number(sch.lastInsertRowid)
+  const link = db.prepare(
+    'INSERT INTO modifier_scheme_items(scheme_id,modifier_id,required,max_count) VALUES(?,?,0,2)'
+  )
+  for (const id of ids) link.run(schemeId, id)
+  // attach to drink-like products without scheme
+  db.prepare(`
+    UPDATE products SET modifier_scheme_id=?
+    WHERE modifier_scheme_id IS NULL AND (
+      lower(name) LIKE '%капуч%' OR lower(name) LIKE '%латте%' OR lower(name) LIKE '%амер%'
+      OR lower(name) LIKE '%флэт%' OR lower(name) LIKE '%эспр%' OR icon='Coffee'
+    )
+  `).run(schemeId)
+}
+
 
 function seedDemoUsers() {
   const exists = db.prepare('SELECT id FROM users WHERE phone=?').get(DEMO_CUSTOMER_PHONE)

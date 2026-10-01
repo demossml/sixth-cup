@@ -3,10 +3,6 @@ import { config } from '../../config'
 import { db } from '../../db'
 import { serverPub } from '../../lib/crypto'
 
-/**
- * Public directory for PWA + future Android cashier.
- * Keeps legacy fields; adds organizations, categories, tax, product extras.
- */
 export const directoryRoutes = new Hono().get('/', (c) => {
   const now = Math.floor(Date.now() / 1000)
   const devices = db.prepare('SELECT id, public_key AS pub, revoked FROM devices WHERE public_key IS NOT NULL')
@@ -24,7 +20,6 @@ export const directoryRoutes = new Hono().get('/', (c) => {
     id: number; name: string; legalName: string; taxRegime: string; vatRate: number; active: number
   }[]
 
-  // No INN/KPP in public directory (sensitive-ish); taxRegime + vatRate needed for cashier
   const categories = db.prepare(`
     SELECT id, name, sort_order AS sortOrder
     FROM categories WHERE available=1 ORDER BY sort_order, id
@@ -32,18 +27,29 @@ export const directoryRoutes = new Hono().get('/', (c) => {
 
   const products = db.prepare(`
     SELECT id, name, price, icon, description, category_id AS categoryId,
-           image_url AS imageUrl, sort_order AS sortOrder
+           image_url AS imageUrl, sort_order AS sortOrder,
+           modifier_scheme_id AS modifierSchemeId,
+           recipe_text AS recipeText,
+           recipe_cost_rub AS recipeCostRub,
+           recipe_seconds AS recipeSeconds
     FROM products WHERE available=1
     ORDER BY sort_order, id
-  `).all() as {
-    id: number; name: string; price: number; icon: string
-    description: string | null; categoryId: number | null
-    imageUrl: string | null; sortOrder: number
-  }[]
+  `).all() as Record<string, unknown>[]
+
+  const modifiers = db.prepare(`
+    SELECT id, name, price, group_key AS groupKey, sort_order AS sortOrder
+    FROM modifiers WHERE available=1 ORDER BY sort_order, id
+  `).all()
+
+  const schemes = db.prepare(`SELECT id, name FROM modifier_schemes ORDER BY id`).all() as { id: number; name: string }[]
+  const schemeItems = db.prepare(`
+    SELECT scheme_id AS schemeId, modifier_id AS modifierId, required, max_count AS maxCount
+    FROM modifier_scheme_items
+  `).all() as { schemeId: number; modifierId: number; required: number; maxCount: number }[]
 
   const promos = db.prepare(`SELECT id, title, body, icon, sponsor, ends_at AS endsAt FROM promos
                              WHERE starts_at<=? AND ends_at>=? ORDER BY id DESC`)
-    .all(now, now) as { id: number; title: string; body: string; icon: string; sponsor: string | null; endsAt: number }[]
+    .all(now, now)
 
   return c.json({
     serverPub,
@@ -51,22 +57,28 @@ export const directoryRoutes = new Hono().get('/', (c) => {
     referralCashbackPercent: config.referralCashbackPercent,
     currency: config.currency,
     generatedAt: now,
-    devices: devices.map((d) => ({ id: d.id, pub: d.pub, revoked: !!d.revoked })),
+    devices: devices.map((d: { id: number; pub: string; revoked: number }) => ({
+      id: d.id, pub: d.pub, revoked: !!d.revoked,
+    })),
     stores: stores.map((s) => ({
-      id: s.id,
-      name: s.name,
-      address: s.address,
-      organizationId: s.organizationId,
+      id: s.id, name: s.name, address: s.address, organizationId: s.organizationId,
     })),
     organizations: organizations.map((o) => ({
-      id: o.id,
-      name: o.name,
-      legalName: o.legalName,
-      taxRegime: o.taxRegime,
-      vatRate: o.vatRate,
+      id: o.id, name: o.name, legalName: o.legalName, taxRegime: o.taxRegime, vatRate: o.vatRate,
     })),
     categories,
-    // legacy shape: id, name, price, icon — plus optional extras (backward compatible)
+    modifiers,
+    modifierSchemes: schemes.map((s) => ({
+      id: s.id,
+      name: s.name,
+      items: schemeItems
+        .filter((i) => i.schemeId === s.id)
+        .map((i) => ({
+          modifierId: i.modifierId,
+          required: !!i.required,
+          maxCount: i.maxCount,
+        })),
+    })),
     products: products.map((p) => ({
       id: p.id,
       name: p.name,
@@ -76,6 +88,10 @@ export const directoryRoutes = new Hono().get('/', (c) => {
       categoryId: p.categoryId,
       imageUrl: p.imageUrl,
       sortOrder: p.sortOrder ?? 0,
+      modifierSchemeId: p.modifierSchemeId ?? null,
+      recipeText: p.recipeText ?? null,
+      recipeCostRub: p.recipeCostRub ?? null,
+      recipeSeconds: p.recipeSeconds ?? null,
     })),
     promos,
   })

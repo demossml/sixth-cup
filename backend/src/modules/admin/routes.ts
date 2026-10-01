@@ -256,7 +256,11 @@ export const adminRoutes = new Hono()
       SELECT p.id, p.name, p.price, p.icon, p.available,
              p.description, p.category_id AS categoryId, p.image_url AS imageUrl,
              p.sort_order AS sortOrder, p.created_at AS createdAt, p.updated_at AS updatedAt,
-             c.name AS categoryName
+             c.name AS categoryName,
+             p.modifier_scheme_id AS modifierSchemeId,
+             p.recipe_text AS recipeText,
+             p.recipe_cost_rub AS recipeCostRub,
+             p.recipe_seconds AS recipeSeconds
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
       ORDER BY p.sort_order, p.id
@@ -274,6 +278,10 @@ export const adminRoutes = new Hono()
     categoryId: z.number().int().positive().optional().nullable(),
     imageUrl: z.string().max(500).optional().nullable(),
     sortOrder: z.number().int().default(0),
+    modifierSchemeId: z.number().int().positive().optional().nullable(),
+    recipeText: z.string().max(4000).optional().nullable(),
+    recipeCostRub: z.number().int().min(0).optional().nullable(),
+    recipeSeconds: z.number().int().min(0).optional().nullable(),
   })), (c) => {
     const p = c.req.valid('json')
     if (p.categoryId != null) {
@@ -284,22 +292,113 @@ export const adminRoutes = new Hono()
     if (p.id) {
       db.prepare(`
         UPDATE products SET name=?, price=?, icon=?, available=?, description=?,
-          category_id=?, image_url=?, sort_order=?, updated_at=? WHERE id=?
+          category_id=?, image_url=?, sort_order=?, updated_at=?,
+          modifier_scheme_id=?, recipe_text=?, recipe_cost_rub=?, recipe_seconds=?
+        WHERE id=?
       `).run(
         p.name, p.price, p.icon, p.available ? 1 : 0,
         p.description ?? null, p.categoryId ?? null, p.imageUrl ?? null,
-        p.sortOrder, t, p.id
+        p.sortOrder, t,
+        p.modifierSchemeId ?? null, p.recipeText ?? null, p.recipeCostRub ?? null, p.recipeSeconds ?? null,
+        p.id
       )
     } else {
       db.prepare(`
-        INSERT INTO products(name,price,icon,available,description,category_id,image_url,sort_order,created_at,updated_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO products(name,price,icon,available,description,category_id,image_url,sort_order,created_at,updated_at,
+          modifier_scheme_id,recipe_text,recipe_cost_rub,recipe_seconds)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       `).run(
         p.name, p.price, p.icon, p.available ? 1 : 0,
         p.description ?? null, p.categoryId ?? null, p.imageUrl ?? null,
-        p.sortOrder, t, t
+        p.sortOrder, t, t,
+        p.modifierSchemeId ?? null, p.recipeText ?? null, p.recipeCostRub ?? null, p.recipeSeconds ?? null
       )
     }
+    return c.json({ ok: true })
+  })
+
+  .get('/modifiers', (c) => {
+    const modifiers = db.prepare(`
+      SELECT id, name, price, group_key AS groupKey, available, sort_order AS sortOrder
+      FROM modifiers ORDER BY sort_order, id
+    `).all()
+    return c.json({ modifiers })
+  })
+
+  .post('/modifiers', zValidator('json', z.object({
+    id: z.number().int().optional(),
+    name: z.string().min(1).max(60),
+    price: z.number().int().min(0),
+    groupKey: z.enum(['syrup', 'topping', 'milk', 'other']).default('other'),
+    available: z.boolean().default(true),
+    sortOrder: z.number().int().default(0),
+  })), (c) => {
+    const p = c.req.valid('json')
+    const t = Date.now()
+    if (p.id) {
+      db.prepare(`UPDATE modifiers SET name=?, price=?, group_key=?, available=?, sort_order=?, updated_at=? WHERE id=?`)
+        .run(p.name, p.price, p.groupKey, p.available ? 1 : 0, p.sortOrder, t, p.id)
+    } else {
+      db.prepare(`INSERT INTO modifiers(name,price,group_key,available,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`)
+        .run(p.name, p.price, p.groupKey, p.available ? 1 : 0, p.sortOrder, t, t)
+    }
+    return c.json({ ok: true })
+  })
+
+  .delete('/modifiers/:id', (c) => {
+    db.prepare('DELETE FROM modifiers WHERE id=?').run(Number(c.req.param('id')))
+    return c.json({ ok: true })
+  })
+
+  .get('/modifier-schemes', (c) => {
+    const schemes = db.prepare('SELECT id, name FROM modifier_schemes ORDER BY id').all() as { id: number; name: string }[]
+    const items = db.prepare(`
+      SELECT scheme_id AS schemeId, modifier_id AS modifierId, required, max_count AS maxCount
+      FROM modifier_scheme_items
+    `).all()
+    return c.json({
+      schemes: schemes.map((s) => ({
+        id: s.id,
+        name: s.name,
+        items: items.filter((i: any) => i.schemeId === s.id),
+      })),
+    })
+  })
+
+  .post('/modifier-schemes', zValidator('json', z.object({
+    id: z.number().int().optional(),
+    name: z.string().min(1).max(80),
+    modifierIds: z.array(z.number().int()).default([]),
+    copyFromSchemeId: z.number().int().optional(),
+  })), (c) => {
+    const p = c.req.valid('json')
+    const t = Date.now()
+    let schemeId = p.id
+    if (schemeId) {
+      db.prepare('UPDATE modifier_schemes SET name=?, updated_at=? WHERE id=?').run(p.name, t, schemeId)
+      db.prepare('DELETE FROM modifier_scheme_items WHERE scheme_id=?').run(schemeId)
+    } else {
+      const r = db.prepare('INSERT INTO modifier_schemes(name,created_at,updated_at) VALUES(?,?,?)').run(p.name, t, t)
+      schemeId = Number(r.lastInsertRowid)
+    }
+    let ids = p.modifierIds
+    if (p.copyFromSchemeId) {
+      const copied = db.prepare('SELECT modifier_id AS id FROM modifier_scheme_items WHERE scheme_id=?')
+        .all(p.copyFromSchemeId) as { id: number }[]
+      ids = copied.map((x) => x.id)
+    }
+    const ins = db.prepare(
+      'INSERT OR IGNORE INTO modifier_scheme_items(scheme_id,modifier_id,required,max_count) VALUES(?,?,0,2)'
+    )
+    for (const mid of ids) ins.run(schemeId, mid)
+    return c.json({ ok: true, id: schemeId })
+  })
+
+  .delete('/modifier-schemes/:id', (c) => {
+    const id = Number(c.req.param('id'))
+    db.prepare('UPDATE products SET modifier_scheme_id=NULL WHERE modifier_scheme_id=?').run(id)
+    db.prepare('DELETE FROM modifier_scheme_items WHERE scheme_id=?').run(id)
+    db.prepare('DELETE FROM modifier_schemes WHERE id=?').run(id)
     return c.json({ ok: true })
   })
 
