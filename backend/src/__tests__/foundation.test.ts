@@ -171,7 +171,7 @@ describe('product update and availability', () => {
     expect(p2.price).toBe(120)
     expect(p2.available).toBe(0)
 
-    const dir = await app.request('/api/directory').then((r) => r.json())
+    const dir = await (await app.request('/api/directory')).json()
     expect(dir.products.find((x: { id: number }) => x.id === p.id)).toBeUndefined()
   })
 })

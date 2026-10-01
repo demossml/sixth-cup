@@ -4,14 +4,20 @@ import ScanModal from '../components/ScanModal'
 import { useApp } from '../lib/app'
 import { addReceipt } from '../lib/customer'
 import { activeVouchers, freeAvailable, progress } from '../lib/proof'
-import { AppIcon, Gift, RefreshCw, ScanLine, Ticket, Wallet, Wifi, WifiOff } from '../lib/icons'
+import { AppIcon, Gift, RefreshCw, ScanLine, Ticket, Wallet, Wifi, WifiOff, Users, X } from '../lib/icons'
 
 export default function CardPage() {
   const { dir, me, best, syncing, lastSync, sync, reload } = useApp()
   const [scan, setScan] = useState(false)
   const [msg, setMsg] = useState('')
+  const [showSaveBanner, setShowSaveBanner] = useState(() => Number(localStorage.getItem('sc-launch-count') ?? 0) >= 2 && !localStorage.getItem('sc-recovery-banner-seen'))
 
   const N = dir?.cupsForFree ?? 5
+
+  function dismissSaveBanner() {
+    localStorage.setItem('sc-recovery-banner-seen', '1')
+    setShowSaveBanner(false)
+  }
   const online = Date.now() - lastSync < 5 * 60_000
 
   async function onScan(text: string) {
@@ -37,6 +43,16 @@ export default function CardPage() {
       </div>
 
       <div className="px-4 -mt-3">
+        {showSaveBanner && (
+          <div className="card mb-2 border-brand/20 bg-brand-soft relative">
+            <button className="absolute top-2 right-2 text-ink-tertiary" onClick={dismissSaveBanner} aria-label="Закрыть"><X size={16} /></button>
+            <div className="flex items-start gap-3 pr-5">
+              <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center shrink-0"><Users size={20} className="text-brand" /></div>
+              <div><b className="text-sm text-brand">Сохраните свой аккаунт</b><p className="text-xs text-ink-secondary mt-1">Создайте QR восстановления, чтобы не потерять стаканы и кэшбэк.</p><button className="text-brand font-semibold text-sm mt-2" onClick={() => { localStorage.setItem('sc-recovery-banner-seen', '1'); location.href = '/save-account' }}>Сохранить аккаунт →</button></div>
+            </div>
+          </div>
+        )}
+
         {dir?.promos[0] && (
           <div className="card flex gap-3 items-start border-0 shadow-soft">
             <div className="w-10 h-10 rounded-xl bg-brand-soft flex items-center justify-center shrink-0">

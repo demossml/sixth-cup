@@ -75,6 +75,30 @@ export async function sendCode(phoneRaw: string, ip?: string): Promise<{ devCode
   return { devCode: allowDevCode ? code : undefined }
 }
 
+export const registerAnonymousUser = db.transaction((inviteCode?: string) => {
+  const inviter = inviteCode
+    ? (db.prepare('SELECT id FROM users WHERE invite_code=?').get(inviteCode.trim().toUpperCase()) as { id: number } | undefined)
+    : undefined
+
+  // Anonymous accounts need a unique technical phone value because the legacy
+  // schema requires users.phone to be NOT NULL + UNIQUE. It is never shown to
+  // the customer and can later be replaced by a real phone during recovery.
+  let technicalPhone = `guest:${randomBytes(16).toString('hex')}`
+  while (db.prepare('SELECT 1 FROM users WHERE phone=?').get(technicalPhone)) {
+    technicalPhone = `guest:${randomBytes(16).toString('hex')}`
+  }
+
+  const invite = randomBytes(6).toString('hex').toUpperCase()
+  const r = db.prepare(
+    'INSERT INTO users(phone,nickname,invite_code,invited_by,created_at) VALUES(?,?,?,?,?)'
+  ).run(technicalPhone, 'Гость', invite, inviter?.id ?? null, Date.now())
+
+  const userId = Number(r.lastInsertRowid)
+  ensureCard(userId)
+  grantVoucher(userId, 'WELCOME')
+  return userId
+})
+
 const registerUser = db.transaction((phone: string, inviteCode?: string) => {
   const inviter = inviteCode
     ? (db.prepare('SELECT id FROM users WHERE invite_code=?').get(inviteCode.toUpperCase()) as { id: number } | undefined)

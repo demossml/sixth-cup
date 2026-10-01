@@ -2,6 +2,9 @@ import { NavLink, Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import { getJwt } from './api'
 import CardPage from './pages/CardPage'
 import LoginPage from './pages/LoginPage'
+import InvitePage from './pages/InvitePage'
+import SaveAccountPage from './pages/SaveAccountPage'
+import RecoveryPage from './pages/RecoveryPage'
 import MenuPage from './pages/MenuPage'
 import OnboardingPage from './pages/OnboardingPage'
 import ProfilePage from './pages/ProfilePage'
@@ -44,7 +47,6 @@ function Layout() {
 }
 
 function LoginGate() {
-  if (!localStorage.getItem('sc-onboarded')) return <Navigate to="/onboarding" replace />
   if (getJwt()) return <Navigate to="/" replace />
   return <LoginPage />
 }
@@ -59,11 +61,14 @@ export default function App() {
     <Routes>
       <Route path="/onboarding" element={<OnboardingPage />} />
       <Route path="/login" element={<div className="max-w-[480px] mx-auto min-h-screen bg-page"><LoginGate /></div>} />
+      <Route path="/recover" element={<RecoveryPage />} />
       <Route element={<Layout />}>
         <Route path="/" element={<CardPage />} />
         <Route path="/menu" element={<MenuPage />} />
         <Route path="/promos" element={<PromosPage />} />
         <Route path="/me" element={<ProfilePage />} />
+        <Route path="/invite" element={<InvitePage />} />
+        <Route path="/save-account" element={<SaveAccountPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

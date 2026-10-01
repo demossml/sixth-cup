@@ -1,26 +1,12 @@
 import { useNavigate } from 'react-router-dom'
-import Qr from '../components/Qr'
 import { setJwt } from '../api'
 import { useApp } from '../lib/app'
 import { clearUserData } from '../lib/db'
-import { LogOut, RefreshCw, Share2, Users, Wallet } from '../lib/icons'
+import { LogOut, RefreshCw, Users, Wallet, QrCode } from '../lib/icons'
 
 export default function ProfilePage() {
-  const { me, lastSync, syncing, sync, reload } = useApp()
+  const { me, referrals, lastSync, syncing, sync, reload } = useApp()
   const nav = useNavigate()
-  const link = me ? `${location.origin}/?invite=${me.inviteCode}` : ''
-
-  async function share() {
-    if (navigator.share) {
-      await navigator.share({
-        title: '6.7 Coffee',
-        text: 'Копи стаканы — каждый 6-й бесплатно. И получай 3% с покупок друзей.',
-        url: link,
-      })
-    } else {
-      await navigator.clipboard?.writeText(link)
-    }
-  }
 
   async function logout() {
     setJwt(null)
@@ -45,11 +31,27 @@ export default function ProfilePage() {
       </div>
 
       <div className="px-4 pt-4">
-        <button className="btn-ghost flex items-center justify-center gap-2" disabled={syncing} onClick={() => sync()}>
-          <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />
-          Синхронизировать
+        <button className="card w-full text-left flex items-center gap-3" onClick={() => nav('/invite')}>
+          <div className="w-10 h-10 rounded-xl bg-brand-soft flex items-center justify-center"><QrCode size={20} className="text-brand" /></div>
+          <div className="flex-1"><b className="text-sm">Пригласить друга</b><p className="text-xs text-ink-secondary mt-0.5">Покажите свой QR и получайте 3% с покупок друзей</p></div>
         </button>
-<button className="btn-danger mt-8 flex items-center justify-center gap-2" onClick={logout}>
+
+        <div className="card mt-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center"><Users size={20} className="text-accent-green" /></div>
+            <div><div className="text-xs text-ink-secondary">Кэшбэк от друзей</div><div className="text-xl font-bold">+{referrals.friendCashbackTotal} ₽</div><div className="text-xs text-ink-tertiary">Приглашено друзей: {referrals.friendCount}</div></div>
+          </div>
+        </div>
+
+        <button className="card mt-3 w-full text-left flex items-center gap-3" onClick={() => nav('/save-account')}>
+          <div className="w-10 h-10 rounded-xl bg-brand-soft flex items-center justify-center"><QrCode size={20} className="text-brand" /></div>
+          <div><b className="text-sm">Сохранить аккаунт</b><p className="text-xs text-ink-secondary mt-0.5">Создать QR для восстановления</p></div>
+        </button>
+
+        <button className="btn-ghost mt-3 flex items-center justify-center gap-2" disabled={syncing} onClick={() => sync()}>
+          <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} /> Синхронизировать
+        </button>
+        <button className="btn-danger mt-8 flex items-center justify-center gap-2" onClick={logout}>
           <LogOut size={16} /> Выйти
         </button>
       </div>

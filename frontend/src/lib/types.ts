@@ -32,4 +32,5 @@ export type Directory = {
 }
 
 export type Me = { id: number; nickname: string; inviteCode: string; cashbackBalance: number }
+export type ReferralStats = { friendCashbackTotal: number; friendCount: number }
 export type StoredReceipt = { id: string; token: string; uploaded: 0 | 1; userId: number; q: number }

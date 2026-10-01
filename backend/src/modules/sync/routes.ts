@@ -5,6 +5,7 @@ import { db } from '../../db'
 import { requireAuth, type AuthEnv } from '../../middleware/auth'
 import { buildCardProof } from '../loyalty/proof'
 import { applyReceipts } from '../loyalty/receipts'
+import { getReferralStats } from '../loyalty/referrals'
 
 export const syncRoutes = new Hono<AuthEnv>()
   .use('*', requireAuth)
@@ -16,6 +17,7 @@ export const syncRoutes = new Hono<AuthEnv>()
     return c.json({
       card: buildCardProof(userId),
       me: { id: u.id, nickname: u.nickname, inviteCode: u.invite_code, cashbackBalance: u.cashback_balance },
+      referrals: getReferralStats(userId),
       result,
     })
   })
