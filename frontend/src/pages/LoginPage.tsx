@@ -40,8 +40,8 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex flex-col">
       <div className="bg-brand px-6 pt-14 pb-10 text-white rounded-b-3xl">
-        <div className="w-14 h-14 rounded-2xl bg-white/15 flex items-center justify-center mb-4">
-          <Coffee size={32} className="text-white" strokeWidth={1.5} />
+        <div className="w-20 h-20 rounded-2xl bg-white/10 flex items-center justify-center mb-4 overflow-hidden">
+          <img src="/logo-alpaca.png" alt="6.7 Coffee" className="w-14 h-14 object-contain" />
         </div>
         <h1 className="text-2xl font-bold tracking-tight">6.7 Coffee</h1>
         <p className="text-white/80 text-sm mt-2 leading-relaxed">

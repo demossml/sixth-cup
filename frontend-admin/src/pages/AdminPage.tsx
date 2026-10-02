@@ -100,6 +100,7 @@ export default function AdminPage() {
   const [promoBody, setPromoBody] = useState('')
   const [uploading, setUploading] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
+  const [productModalOpen, setProductModalOpen] = useState(false)
   const [saving, setSaving] = useState(false)
 
   const load = useCallback(async (t: string) => {
@@ -173,8 +174,9 @@ export default function AdminPage() {
   if (!token || !stats) {
     return (
       <div className="max-w-[480px] mx-auto min-h-screen bg-page p-4">
-        <p className="text-ink-tertiary text-sm mb-6">Вход только для владельца · admin.*</p>
-        <h1 className="text-xl font-bold mb-4">Админ</h1>
+        <img src="/logo-mark.png" alt="6.7 Coffee" className="w-16 h-16 rounded-2xl mb-4" />
+        <p className="text-ink-tertiary text-sm mb-2">Вход только для владельца · admin.*</p>
+        <h1 className="text-xl font-bold mb-4">6.7 Coffee · Админ</h1>
         {error && <p className="text-red-600 text-sm mb-2">{error}</p>}
         <input className="input mb-3" placeholder="ADMIN_TOKEN" value={input} onChange={(e) => setInput(e.target.value)} />
         <button type="button" className="btn-primary w-full" onClick={login}>Войти</button>
@@ -253,7 +255,18 @@ export default function AdminPage() {
           <>
             {orgs.map((o) => (
               <div key={o.id} className="card !mb-0 text-sm">
-                <div className="font-semibold">{o.name} {!o.active ? '(выкл)' : ''}</div>
+                <div className="flex justify-between gap-2">
+                  <div className="font-semibold">{o.name} {!o.active ? '(выкл)' : ''}</div>
+                  <button type="button" className="text-xs text-red-600 shrink-0" onClick={async () => {
+                    if (!confirm('Удалить юрлицо? Только если нет точек.')) return
+                    try {
+                      await adminFetch(`/organizations/${o.id}`, token, { method: 'DELETE' })
+                      void load(token)
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message : 'Не удалось удалить')
+                    }
+                  }}>Удалить</button>
+                </div>
                 <div className="text-ink-secondary">{o.legalName}</div>
                 <div className="text-ink-tertiary">ИНН {o.inn} · {o.taxRegime} · НДС {o.vatRate}%</div>
               </div>
@@ -293,7 +306,18 @@ export default function AdminPage() {
           <>
             {stores.map((s) => (
               <div key={s.id} className="card !mb-0 text-sm">
-                <div className="font-semibold">{s.name}</div>
+                <div className="flex justify-between gap-2">
+                  <div className="font-semibold">{s.name}</div>
+                  <button type="button" className="text-xs text-red-600" onClick={async () => {
+                    if (!confirm('Удалить точку?')) return
+                    try {
+                      await adminFetch(`/stores/${s.id}`, token, { method: 'DELETE' })
+                      void load(token)
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message : 'Ошибка')
+                    }
+                  }}>Удалить</button>
+                </div>
                 <div className="text-ink-secondary">{s.address}</div>
                 <div className="text-ink-tertiary">{s.organizationName ?? `org #${s.organizationId}`}</div>
               </div>
@@ -385,6 +409,10 @@ export default function AdminPage() {
                             categoryId: p.categoryId,
                             imageUrl: p.imageUrl,
                             sortOrder: p.sortOrder ?? 0,
+                            modifierSchemeId: p.modifierSchemeId ?? null,
+                            recipeText: p.recipeText ?? null,
+                            recipeCostRub: p.recipeCostRub ?? null,
+                            recipeSeconds: p.recipeSeconds ?? null,
                           }),
                         })
                         await load(token)
@@ -415,16 +443,43 @@ export default function AdminPage() {
                         recipeCostRub: p.recipeCostRub ?? 0,
                         recipeSeconds: p.recipeSeconds ?? 0,
                       })
+                      setProductModalOpen(true)
                     }}
                   >
                     Изменить
                   </button>
+                  <button
+                    type="button"
+                    className="text-xs px-2 py-1 rounded-lg text-red-600 border border-red-200"
+                    onClick={async () => {
+                      if (!confirm('Удалить товар «' + p.name + '»?')) return
+                      await adminFetch('/products/' + p.id, token, { method: 'DELETE' })
+                      void load(token)
+                    }}
+                  >
+                    Удалить
+                  </button>
                 </div>
               </div>
             ))}
-            <div className="card space-y-2">
+            <button type="button" className="btn-primary w-full" onClick={() => {
+              setEditingId(null)
+              setProdForm({
+                name: '', price: 0, icon: 'Coffee', categoryId: categories[0]?.id ?? 0,
+                description: '', imageUrl: '', sortOrder: 0,
+                modifierSchemeId: 0, recipeText: '', recipeCostRub: 0, recipeSeconds: 0,
+              })
+              setProductModalOpen(true)
+            }}>+ Новый товар</button>
+
+            {productModalOpen && (
+            <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-3" onClick={() => setProductModalOpen(false)}>
+            <div className="card space-y-2 w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-xl" onClick={(e) => e.stopPropagation()}>
+              <div className="flex justify-between items-center">
               <div className="font-semibold text-sm">
-                {editingId ? `Редактирование #${editingId}` : 'Новый товар'}
+                {editingId ? `Товар #${editingId}` : 'Новый товар'}
+              </div>
+              <button type="button" className="text-ink-secondary text-sm px-2" onClick={() => setProductModalOpen(false)}>Закрыть</button>
               </div>
               <input className="input" placeholder="Название" value={prodForm.name}
                 onChange={(e) => setProdForm({ ...prodForm, name: e.target.value })} />
@@ -444,7 +499,8 @@ export default function AdminPage() {
                 <option value={0}>— без добавок —</option>
                 {schemes.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
-              <label className="text-xs text-ink-secondary block">Рецепт для бариста</label>
+              <label className="text-sm font-semibold text-ink block mt-2">Рецепт для бариста</label>
+              <p className="text-xs text-ink-secondary">Текст увидит кассир на кассе (long-press / рецепт)</p>
               <textarea className="input min-h-[80px]" placeholder="Как готовить…"
                 value={prodForm.recipeText ?? ''}
                 onChange={(e) => setProdForm({ ...prodForm, recipeText: e.target.value })} />
@@ -497,6 +553,7 @@ export default function AdminPage() {
                       }),
                     })
                     setEditingId(null)
+                    setProductModalOpen(false)
                     setProdForm({
                       name: '', price: 0, icon: 'Coffee', categoryId: categories[0]?.id ?? 0,
                       description: '', imageUrl: '', sortOrder: 0,
@@ -512,17 +569,18 @@ export default function AdminPage() {
               >
                 {saving ? 'Сохраняем…' : editingId ? 'Сохранить изменения' : 'Создать товар'}
               </button>
-              {editingId && (
-                <button type="button" className="btn-ghost w-full" onClick={() => {
+              <button type="button" className="btn-ghost w-full" onClick={() => {
                   setEditingId(null)
+                  setProductModalOpen(false)
                   setProdForm({
                     name: '', price: 0, icon: 'Coffee', categoryId: categories[0]?.id ?? 0,
                     description: '', imageUrl: '', sortOrder: 0,
                     modifierSchemeId: 0, recipeText: '', recipeCostRub: 0, recipeSeconds: 0,
                   })
-                }}>Отмена редактирования</button>
-              )}
+                }}>Отмена</button>
             </div>
+            </div>
+            )}
           </>
         )}
 
@@ -626,10 +684,17 @@ export default function AdminPage() {
                   {d.revoked ? ' · ОТОЗВАНА' : ''}
                 </div>
                 {!d.revoked && (
+                  <>
                   <button type="button" className="text-red-600 text-xs mt-1" onClick={async () => {
                     await adminFetch(`/devices/${d.id}/revoke`, token, { method: 'POST' })
                     void load(token)
                   }}>Отозвать</button>
+                  <button type="button" className="text-xs text-red-600 ml-2" onClick={async () => {
+                    if (!confirm('Удалить кассу из списка?')) return
+                    await adminFetch(`/devices/${d.id}`, token, { method: 'DELETE' })
+                    void load(token)
+                  }}>Удалить</button>
+                  </>
                 )}
               </div>
             ))}

@@ -72,7 +72,7 @@ export const adminRoutes = new Hono()
     inn: z.string().min(10).max(12),
     kpp: z.string().max(9).optional().nullable(),
     taxRegime: taxRegimeZ.default('usn_income'),
-    vatRate: z.number().int().min(0).max(20).default(0),
+    vatRate: z.number().int().min(0).max(22).default(0),
     active: z.boolean().default(true),
   })), (c) => {
     const p = c.req.valid('json')
@@ -90,7 +90,7 @@ export const adminRoutes = new Hono()
     inn: z.string().min(10).max(12).optional(),
     kpp: z.string().max(9).optional().nullable(),
     taxRegime: taxRegimeZ.optional(),
-    vatRate: z.number().int().min(0).max(20).optional(),
+    vatRate: z.number().int().min(0).max(22).optional(),
     active: z.boolean().optional(),
   })), (c) => {
     const id = Number(c.req.param('id'))
@@ -215,6 +215,11 @@ export const adminRoutes = new Hono()
 
   .post('/devices/:id/revoke', (c) => {
     db.prepare('UPDATE devices SET revoked=1 WHERE id=?').run(Number(c.req.param('id')))
+    return c.json({ ok: true })
+  })
+
+  .delete('/devices/:id', (c) => {
+    db.prepare('DELETE FROM devices WHERE id=?').run(Number(c.req.param('id')))
     return c.json({ ok: true })
   })
 
