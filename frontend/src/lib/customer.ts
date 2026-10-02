@@ -2,7 +2,7 @@ import { api, unwrap } from '../api'
 import { allReceipts, kvGet, kvSet, putReceipt } from './db'
 import { refreshDirectory } from './directory'
 import { newest, verifyProof, type Verified } from './proof'
-import type { CardState, Directory, Me, ReferralStats } from './types'
+import type { CardState, Directory, Me } from './types'
 
 export type Best = { state: CardState; token: string }
 
@@ -42,7 +42,6 @@ export async function syncCustomer(): Promise<SyncStatus> {
     const res = await unwrap(api.api.sync.$post({ json: { receipts: pending.map((r) => r.token) } }))
     await kvSet('card', res.card)
     await kvSet('me', res.me)
-    await kvSet('referrals', res.referrals as ReferralStats)
     const done = new Set([...res.result.applied, ...res.result.duplicates])
     for (const r of pending) if (done.has(r.id)) await putReceipt({ ...r, uploaded: 1 })
     localStorage.setItem('sc-last-sync', String(Date.now()))

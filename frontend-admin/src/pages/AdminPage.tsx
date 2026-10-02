@@ -57,7 +57,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'schemes', label: 'Схемы' },
   { id: 'devices', label: 'Кассы' },
   { id: 'promos', label: 'Акции' },
-  { id: 'disputes', label: 'Споры' },
+  { id: 'disputes', label: 'Конфликты' },
 ]
 
 const TAX = [
@@ -213,6 +213,7 @@ export default function AdminPage() {
 
       <div className="p-4 space-y-3">
         {tab === 'overview' && (
+          <>
           <div className="grid grid-cols-2 gap-2">
             {[
               ['Клиенты', stats.users],
@@ -230,6 +231,22 @@ export default function AdminPage() {
               </div>
             ))}
           </div>
+            <div className="card mt-4 space-y-2">
+              <p className="text-sm font-semibold text-ink">Данные</p>
+              <p className="text-xs text-ink-secondary">Обзор считает клиентов и чеки лояльности. Демо можно обнулить.</p>
+              <button type="button" className="btn-ghost w-full text-sm" onClick={async () => {
+                if (!confirm('Сбросить клиентов, чеки, кэшбэк, споры? Товары и точки останутся.')) return
+                await adminFetch('/reset', token, { method: 'POST', body: JSON.stringify({ mode: 'loyalty', confirm: true }) })
+                void load(token)
+              }}>Сбросить лояльность (обзор → 0)</button>
+              <button type="button" className="btn-ghost w-full text-sm text-red-700" onClick={async () => {
+                if (!confirm('Удалить ВСЕ юрлица, точки, товары, кассы, акции?')) return
+                if (!confirm('Точно полный сброс каталога?')) return
+                await adminFetch('/reset', token, { method: 'POST', body: JSON.stringify({ mode: 'full', confirm: true }) })
+                void load(token)
+              }}>Полный сброс каталога + лояльности</button>
+            </div>
+          </>
         )}
 
         {tab === 'orgs' && (
@@ -258,6 +275,7 @@ export default function AdminPage() {
                 <option value={0}>НДС 0%</option>
                 <option value={10}>НДС 10%</option>
                 <option value={20}>НДС 20%</option>
+                <option value={22}>НДС 22%</option>
               </select>
               <button type="button" className="btn-primary w-full" onClick={async () => {
                 await adminFetch('/organizations', token, {
@@ -598,7 +616,8 @@ export default function AdminPage() {
         )}
 
 {tab === 'devices' && (
-          <>
+          <div className="space-y-3">
+          <p className="text-xs text-ink-secondary mb-3">На кассе Эвотор вводится только <b>код регистрации</b> из этой вкладки и URL API. Пароль 6.7 Coffee / SMS не нужны.</p>
             {devices.map((d) => (
               <div key={d.id} className="card !mb-0 text-sm">
                 <div className="font-semibold">{d.name} · {d.storeName}</div>
@@ -630,7 +649,7 @@ export default function AdminPage() {
               }}>Выпустить код</button>
               {newCode && <div className="text-center font-mono text-lg text-brand">{newCode}</div>}
             </div>
-          </>
+          </div>
         )}
 
         {tab === 'promos' && (
@@ -665,7 +684,7 @@ export default function AdminPage() {
 
         {tab === 'disputes' && (
           disputes.length === 0
-            ? <p className="text-ink-tertiary text-sm">Споров нет</p>
+            ? <p className="text-ink-tertiary text-sm">Конфликтов нет</p>
             : disputes.map((d) => (
               <div key={d.id} className="card !mb-0 text-xs">
                 <div className="font-semibold">{d.kind}</div>

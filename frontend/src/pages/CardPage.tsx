@@ -1,24 +1,24 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import Qr from '../components/Qr'
 import ScanModal from '../components/ScanModal'
 import { useApp } from '../lib/app'
 import { addReceipt } from '../lib/customer'
 import { activeVouchers, freeAvailable, progress } from '../lib/proof'
-import { AppIcon, Gift, RefreshCw, ScanLine, Ticket, Wallet, Wifi, WifiOff, Users, X } from '../lib/icons'
+import { AppIcon, Gift, RefreshCw, ScanLine, Ticket, Users, Wallet, Wifi, WifiOff } from '../lib/icons'
 
 export default function CardPage() {
   const { dir, me, best, syncing, lastSync, sync, reload } = useApp()
+  const nav = useNavigate()
   const [scan, setScan] = useState(false)
   const [msg, setMsg] = useState('')
-  const [showSaveBanner, setShowSaveBanner] = useState(() => Number(localStorage.getItem('sc-launch-count') ?? 0) >= 2 && !localStorage.getItem('sc-recovery-banner-seen'))
 
   const N = dir?.cupsForFree ?? 5
-
-  function dismissSaveBanner() {
-    localStorage.setItem('sc-recovery-banner-seen', '1')
-    setShowSaveBanner(false)
-  }
   const online = Date.now() - lastSync < 5 * 60_000
+  const paidProgress = best ? progress(best.state, N) : 0
+  const left = Math.max(0, N - paidProgress)
+  const freeLeft = best ? freeAvailable(best.state, N) : 0
+  const pct = dir?.referralCashbackPercent ?? 3
 
   async function onScan(text: string) {
     setScan(false)
@@ -30,7 +30,7 @@ export default function CardPage() {
   return (
     <div className="pb-4">
       <div className="bg-brand text-white px-4 pt-10 pb-5 rounded-b-3xl">
-        <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center justify-between mb-3">
           <div>
             <p className="text-white/70 text-xs">Моя карта</p>
             <h1 className="text-xl font-bold">{me ? `№${me.id}` : '—'}</h1>
@@ -40,72 +40,101 @@ export default function CardPage() {
             {syncing ? 'синк…' : online ? 'на связи' : 'офлайн'}
           </span>
         </div>
+
+        {/* Cup progress — always visible at top */}
+        <div className="bg-white/10 rounded-2xl px-3 py-3">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-semibold">Стаканы до подарка</span>
+            <span className="text-sm font-bold tabular-nums">
+              {freeLeft > 0 ? 'Подарок!' : `${paidProgress} из ${N}`}
+            </span>
+          </div>
+          <div className="flex items-center justify-center gap-1.5">
+            {Array.from({ length: N }, (_, i) => (
+              <div
+                key={i}
+                className={`w-10 h-10 rounded-full flex items-center justify-center border-2 ${
+                  i < paidProgress
+                    ? 'border-white bg-white/25 text-white'
+                    : 'border-dashed border-white/35 text-white/35'
+                }`}
+              >
+                {i < paidProgress ? <AppIcon name="Coffee" size={16} /> : null}
+              </div>
+            ))}
+            <div
+              className={`w-10 h-10 rounded-full flex items-center justify-center border-2 ${
+                freeLeft > 0
+                  ? 'border-amber-300 bg-amber-400/40 text-amber-100'
+                  : 'border-dashed border-white/35 text-white/35'
+              }`}
+            >
+              <Gift size={16} />
+            </div>
+          </div>
+          <p className="text-center text-white/80 text-xs mt-2">
+            {freeLeft > 0
+              ? `Бесплатных доступно: ${freeLeft} — покажите QR на кассе`
+              : left === 0
+                ? 'Следующая покупка напитка может быть бесплатной'
+                : `Осталось ${left} оплаченн${left === 1 ? 'ый' : 'ых'} стакан${left === 1 ? '' : left < 5 ? 'а' : 'ов'}`}
+          </p>
+        </div>
       </div>
 
-      <div className="px-4 -mt-3">
-        {showSaveBanner && (
-          <div className="card mb-2 border-brand/20 bg-brand-soft relative">
-            <button className="absolute top-2 right-2 text-ink-tertiary" onClick={dismissSaveBanner} aria-label="Закрыть"><X size={16} /></button>
-            <div className="flex items-start gap-3 pr-5">
-              <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center shrink-0"><Users size={20} className="text-brand" /></div>
-              <div><b className="text-sm text-brand">Сохраните свой аккаунт</b><p className="text-xs text-ink-secondary mt-1">Создайте QR восстановления, чтобы не потерять стаканы и кэшбэк.</p><button className="text-brand font-semibold text-sm mt-2" onClick={() => { localStorage.setItem('sc-recovery-banner-seen', '1'); location.href = '/save-account' }}>Сохранить аккаунт →</button></div>
+      <div className="px-4 -mt-2">
+        {/* Active invite banner */}
+        <button
+          type="button"
+          onClick={() => nav('/invite')}
+          className="card w-full flex gap-3 items-center border-0 shadow-soft text-left active:scale-[0.99] transition-transform"
+        >
+          <div className="w-12 h-12 rounded-xl bg-brand-soft flex items-center justify-center shrink-0">
+            <Users size={22} className="text-brand" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <b className="text-sm text-ink">Приведи друга</b>
+            <div className="text-ink-secondary text-xs mt-0.5">
+              {pct}% с каждой его покупки · нажмите, чтобы показать QR
             </div>
           </div>
-        )}
+          <span className="text-brand text-lg font-light shrink-0">›</span>
+        </button>
 
-        {dir?.promos[0] && (
-          <div className="card flex gap-3 items-start border-0 shadow-soft">
-            <div className="w-10 h-10 rounded-xl bg-brand-soft flex items-center justify-center shrink-0">
-              <AppIcon name={dir.promos[0].icon || 'Sparkles'} size={20} className="text-brand" />
+        {/* Other promos from directory (skip pure invite duplicates by title) */}
+        {dir?.promos
+          ?.filter((p) => !/друг|приглас|реферал|3%/i.test(p.title + p.body))
+          .slice(0, 2)
+          .map((p) => (
+            <div key={p.id} className="card flex gap-3 items-start mt-2">
+              <div className="w-10 h-10 rounded-xl bg-brand-soft flex items-center justify-center shrink-0">
+                <AppIcon name={p.icon || 'Sparkles'} size={20} className="text-brand" />
+              </div>
+              <div className="min-w-0">
+                <b className="text-sm text-ink">{p.title}</b>
+                <div className="text-ink-secondary text-xs mt-0.5 line-clamp-2">{p.body}</div>
+              </div>
             </div>
-            <div className="min-w-0">
-              <b className="text-sm text-ink">{dir.promos[0].title}</b>
-              <div className="text-ink-secondary text-xs mt-0.5 line-clamp-2">{dir.promos[0].body}</div>
-            </div>
-          </div>
-        )}
+          ))}
 
         {!best ? (
           <div className="card mt-2">
             <b className="text-ink">Карта ещё не загружена</b>
-            <p className="text-ink-secondary text-sm mt-1">Подключитесь к Wi-Fi один раз — карта сохранится и будет работать без интернета.</p>
-            <button className="btn mt-3" onClick={() => sync()}>Загрузить карту</button>
+            <p className="text-ink-secondary text-sm mt-1">
+              Подключитесь к сети один раз — карта сохранится и будет работать офлайн.
+            </p>
+            <button type="button" className="btn mt-3" onClick={() => void sync()}>Синхронизировать</button>
           </div>
         ) : (
           <>
-            <div className="card mt-2 bg-gradient-to-br from-brand to-brand-dark border-0 text-white shadow-soft overflow-hidden relative">
-              <div className="absolute top-0 right-0 w-24 h-24 bg-white/5 rounded-full -mr-8 -mt-8" />
-              <div className="text-white/70 text-xs mb-1 relative">Карта участника · №{me?.id}</div>
-              <div className="flex gap-2 justify-center py-2 relative">
-                {Array.from({ length: N }, (_, i) => (
-                  <div
-                    key={i}
-                    className={`w-11 h-11 rounded-full flex items-center justify-center border-2 ${
-                      i < progress(best.state, N) ? 'border-white bg-white/20 text-white' : 'border-dashed border-white/40 text-white/40'
-                    }`}
-                  >
-                    {i < progress(best.state, N) ? <AppIcon name="Coffee" size={18} /> : null}
-                  </div>
-                ))}
-                <div className={`w-11 h-11 rounded-full flex items-center justify-center border-2 ${
-                  freeAvailable(best.state, N) > 0 ? 'border-accent-gold bg-amber-400/30 text-accent-gold' : 'border-dashed border-white/40 text-white/40'
-                }`}>
-                  <Gift size={18} />
-                </div>
+            {freeLeft > 0 && (
+              <div className="mt-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 text-center text-sm font-semibold text-amber-800">
+                Следующий стакан бесплатно · доступно: {freeLeft}
               </div>
-              {freeAvailable(best.state, N) > 0 ? (
-                <div className="mt-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 text-center text-sm font-semibold text-amber-800">
-                  Следующий стакан бесплатно · доступно: {freeAvailable(best.state, N)}
-                </div>
-              ) : (
-                <p className="text-white/70 text-center text-sm mt-1">
-                  До бесплатного: {N - progress(best.state, N)}
-                </p>
-              )}
-            </div>
+            )}
 
             {best.state.cb > 0 && (
-              <div className="card flex items-center gap-3 bg-emerald-50 border-emerald-100">
+              <div className="card flex items-center gap-3 bg-emerald-50 border-emerald-100 mt-2">
                 <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center">
                   <Wallet size={20} className="text-accent-green" />
                 </div>
@@ -116,7 +145,7 @@ export default function CardPage() {
               </div>
             )}
 
-            <div className="card text-center">
+            <div className="card text-center mt-2">
               <p className="text-sm font-medium text-ink mb-1">Покажите код кассиру</p>
               <Qr value={best.token} />
             </div>
@@ -133,11 +162,6 @@ export default function CardPage() {
                 <span className="text-ink-tertiary text-xs">до {new Date(v[3] * 86_400_000).toLocaleDateString()}</span>
               </div>
             ))}
-
-            <details className="mt-3">
-              <summary className="text-ink-tertiary text-xs cursor-pointer">Технический код карты</summary>
-              <textarea className="input mt-1 text-xs" readOnly value={best.token} rows={3} onFocus={(e) => e.target.select()} />
-            </details>
           </>
         )}
 
@@ -146,10 +170,10 @@ export default function CardPage() {
         )}
 
         <div className="flex gap-2 mt-4">
-          <button className="btn flex items-center justify-center gap-2" onClick={() => { setMsg(''); setScan(true) }}>
+          <button type="button" className="btn flex items-center justify-center gap-2" onClick={() => { setMsg(''); setScan(true) }}>
             <ScanLine size={18} /> Сканировать чек
           </button>
-          <button className="btn-ghost !w-12 flex items-center justify-center px-0" onClick={() => sync()} aria-label="Синхронизировать">
+          <button type="button" className="btn-ghost !w-12 flex items-center justify-center px-0" onClick={() => void sync()} aria-label="Синхронизировать">
             <RefreshCw size={18} className={syncing ? 'animate-spin' : ''} />
           </button>
         </div>

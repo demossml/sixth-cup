@@ -2,10 +2,7 @@ import { hc } from 'hono/client'
 import type { AppType } from '@sixth-cup/backend'
 
 export const getJwt = () => localStorage.getItem('sc-jwt')
-export const setJwt = (t: string | null) => {
-  if (t) localStorage.setItem('sc-jwt', t)
-  else localStorage.removeItem('sc-jwt')
-}
+export const setJwt = (t: string | null) => (t ? localStorage.setItem('sc-jwt', t) : localStorage.removeItem('sc-jwt'))
 
 const timedFetch: typeof fetch = (input, init) => {
   const ctl = new AbortController()

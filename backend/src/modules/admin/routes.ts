@@ -7,6 +7,7 @@ import { config, TAX_REGIMES } from '../../config'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import { grantVoucher } from '../vouchers/service'
+import { resetLoyaltyData, resetCatalogData } from '../../db/seed'
 
 const adminAuth = createMiddleware(async (c, next) => {
   if (c.req.header('X-Admin-Token') !== config.adminToken) throw bad('Forbidden', 403)
@@ -31,6 +32,17 @@ export const adminRoutes = new Hono()
     return c.json({
       users, receipts, receiptsToday, freeCups, cashbackGranted, cashbackSpent, amountTotal,
     })
+  })
+
+  /** mode: loyalty | catalog | full */
+  .post('/reset', zValidator('json', z.object({
+    mode: z.enum(['loyalty', 'catalog', 'full']),
+    confirm: z.literal(true),
+  })), (c) => {
+    const { mode } = c.req.valid('json')
+    if (mode === 'loyalty' || mode === 'full') resetLoyaltyData()
+    if (mode === 'catalog' || mode === 'full') resetCatalogData()
+    return c.json({ ok: true, mode })
   })
 
   // —— Organizations ——
@@ -103,6 +115,14 @@ export const adminRoutes = new Hono()
     return c.json({ ok: true })
   })
 
+  .delete('/organizations/:id', (c) => {
+    const id = Number(c.req.param('id'))
+    const stores = db.prepare('SELECT COUNT(*) AS n FROM stores WHERE organization_id=?').get(id) as { n: number }
+    if (stores.n > 0) throw bad('Сначала удалите или переназначьте точки', 409)
+    db.prepare('DELETE FROM organizations WHERE id=?').run(id)
+    return c.json({ ok: true })
+  })
+
   // —— Stores ——
   .get('/stores', (c) => {
     const stores = db.prepare(`
@@ -166,6 +186,15 @@ export const adminRoutes = new Hono()
   })
 
   // —— Devices (existing) ——
+  .delete('/stores/:id', (c) => {
+    const id = Number(c.req.param('id'))
+    const dev = db.prepare('SELECT COUNT(*) AS n FROM devices WHERE store_id=? AND revoked=0').get(id) as { n: number }
+    if (dev.n > 0) throw bad('Есть активные кассы на точке', 409)
+    db.prepare('DELETE FROM devices WHERE store_id=?').run(id)
+    db.prepare('DELETE FROM stores WHERE id=?').run(id)
+    return c.json({ ok: true })
+  })
+
   .get('/devices', (c) => {
     const rows = db.prepare(`
       SELECT d.id, d.name, d.store_id AS storeId, d.revoked, d.enroll_code AS enrollCode,
@@ -317,6 +346,12 @@ export const adminRoutes = new Hono()
     return c.json({ ok: true })
   })
 
+  .delete('/products/:id', (c) => {
+    const id = Number(c.req.param('id'))
+    db.prepare('DELETE FROM products WHERE id=?').run(id)
+    return c.json({ ok: true })
+  })
+
   .get('/modifiers', (c) => {
     const modifiers = db.prepare(`
       SELECT id, name, price, group_key AS groupKey, available, sort_order AS sortOrder
@@ -418,6 +453,30 @@ export const adminRoutes = new Hono()
     const now = Math.floor(Date.now() / 1000)
     db.prepare('INSERT INTO promos(title,body,icon,sponsor,starts_at,ends_at) VALUES(?,?,?,?,?,?)')
       .run(p.title, p.body, p.icon, p.sponsor ?? null, now, now + p.days * 86_400)
+    return c.json({ ok: true })
+  })
+
+  .patch('/promos/:id', zValidator('json', z.object({
+    title: z.string().min(1).max(80).optional(),
+    body: z.string().max(300).optional(),
+    icon: z.string().max(24).optional(),
+    sponsor: z.string().max(80).optional().nullable(),
+    days: z.number().int().min(1).max(365).optional(),
+  })), (c) => {
+    const id = Number(c.req.param('id'))
+    const p = c.req.valid('json')
+    const row = db.prepare('SELECT * FROM promos WHERE id=?').get(id) as Record<string, unknown> | undefined
+    if (!row) throw bad('Promo not found', 404)
+    const now = Math.floor(Date.now() / 1000)
+    const ends = p.days != null ? now + p.days * 86_400 : row.ends_at
+    db.prepare(`UPDATE promos SET title=?, body=?, icon=?, sponsor=?, ends_at=? WHERE id=?`).run(
+      p.title ?? row.title,
+      p.body ?? row.body,
+      p.icon ?? row.icon,
+      p.sponsor !== undefined ? p.sponsor : row.sponsor,
+      ends,
+      id,
+    )
     return c.json({ ok: true })
   })
 

@@ -9,7 +9,7 @@ export default function LoginPage() {
   const { sync } = useApp()
   const [phone, setPhone] = useState('')
   const [code, setCode] = useState('')
-  const [invite, setInvite] = useState('')
+  const [invite, setInvite] = useState(localStorage.getItem('sc-invite') ?? '')
   const [sent, setSent] = useState(false)
   const [hint, setHint] = useState('')
   const [error, setError] = useState('')
@@ -43,10 +43,10 @@ export default function LoginPage() {
         <div className="w-14 h-14 rounded-2xl bg-white/15 flex items-center justify-center mb-4">
           <Coffee size={32} className="text-white" strokeWidth={1.5} />
         </div>
-        <h1 className="text-2xl font-bold tracking-tight">Восстановление аккаунта</h1>
+        <h1 className="text-2xl font-bold tracking-tight">6.7 Coffee</h1>
         <p className="text-white/80 text-sm mt-2 leading-relaxed">
           Каждый 6-й стакан бесплатно.<br />
-          Телефон + SMS используются как резервный способ восстановления.
+          Приведи друга — получай 3% с его покупок.
         </p>
       </div>
 

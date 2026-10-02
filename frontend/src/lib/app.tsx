@@ -3,12 +3,11 @@ import { getJwt } from '../api'
 import { computeBest, syncCustomer, type Best } from './customer'
 import { kvGet } from './db'
 import { loadDirectory, refreshDirectory } from './directory'
-import type { Directory, Me, ReferralStats } from './types'
+import type { Directory, Me } from './types'
 
 type Ctx = {
   dir: Directory | null
   me: Me | null
-  referrals: ReferralStats
   best: Best | null
   syncing: boolean
   lastSync: number
@@ -21,7 +20,6 @@ export const useApp = () => useContext(AppCtx)
 export function AppProvider({ children }: { children: ReactNode }) {
   const [dir, setDir] = useState<Directory | null>(null)
   const [me, setMe] = useState<Me | null>(null)
-  const [referrals, setReferrals] = useState<ReferralStats>({ friendCashbackTotal: 0, friendCount: 0 })
   const [best, setBest] = useState<Best | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [lastSync, setLastSync] = useState(Number(localStorage.getItem('sc-last-sync') ?? 0))
@@ -29,10 +27,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const reload = useCallback(async () => {
     const d = (await loadDirectory()) ?? null
     const m = (await kvGet<Me>('me')) ?? null
-    const r = (await kvGet<ReferralStats>('referrals')) ?? { friendCashbackTotal: 0, friendCount: 0 }
     setDir(d)
     setMe(m)
-    setReferrals(r)
     setBest(d && m ? await computeBest(d, m) : null)
     setLastSync(Number(localStorage.getItem('sc-last-sync') ?? 0))
   }, [])
@@ -60,5 +56,5 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [reload, sync])
 
-  return <AppCtx.Provider value={{ dir, me, referrals, best, syncing, lastSync, sync, reload }}>{children}</AppCtx.Provider>
+  return <AppCtx.Provider value={{ dir, me, best, syncing, lastSync, sync, reload }}>{children}</AppCtx.Provider>
 }

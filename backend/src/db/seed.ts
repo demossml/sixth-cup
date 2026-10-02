@@ -11,7 +11,9 @@ function now() {
   return Date.now()
 }
 
-function ensureDefaultOrganization(): number {
+/** Dev-only: soft default org so admin is not empty. Production: no auto org. */
+function ensureDefaultOrganizationDev(): number | null {
+  if (!config.isDev) return null
   const existing = db.prepare('SELECT id FROM organizations WHERE inn=?').get('0000000000') as { id: number } | undefined
   if (existing) return existing.id
   const t = now()
@@ -22,14 +24,20 @@ function ensureDefaultOrganization(): number {
   return Number(r.lastInsertRowid)
 }
 
+/**
+ * Seed only fills empty tables in development.
+ * Production starts empty — owner creates org/stores/products in admin.
+ */
 export function seedIfEmpty() {
-  const orgId = ensureDefaultOrganization()
+  if (!config.isDev) return
 
-  // Link any store without organization
-  db.prepare('UPDATE stores SET organization_id=? WHERE organization_id IS NULL').run(orgId)
+  const orgId = ensureDefaultOrganizationDev()
+  if (orgId != null) {
+    db.prepare('UPDATE stores SET organization_id=? WHERE organization_id IS NULL').run(orgId)
+  }
 
   const { n } = db.prepare('SELECT COUNT(*) AS n FROM stores').get() as { n: number }
-  if (n === 0) {
+  if (n === 0 && orgId != null) {
     db.prepare('INSERT INTO stores(name,address,organization_id) VALUES(?,?,?)')
       .run('Кофейня на Ленина', 'ул. Ленина, 1', orgId)
     db.prepare('INSERT INTO stores(name,address,organization_id) VALUES(?,?,?)')
@@ -49,37 +57,28 @@ export function seedIfEmpty() {
 
   const prodCount = (db.prepare('SELECT COUNT(*) AS n FROM products').get() as { n: number }).n
   if (prodCount === 0) {
-    const drinks = db.prepare(`SELECT id FROM categories WHERE name='Напитки'`).get() as { id: number }
-    const food = db.prepare(`SELECT id FROM categories WHERE name='Еда'`).get() as { id: number }
+    const drinks = db.prepare(`SELECT id FROM categories WHERE name='Напитки'`).get() as { id: number } | undefined
+    const food = db.prepare(`SELECT id FROM categories WHERE name='Еда'`).get() as { id: number } | undefined
     const t = now()
     const pr = db.prepare(`
       INSERT INTO products(name,price,icon,available,description,category_id,sort_order,created_at,updated_at)
       VALUES(?,?,?,1,?,?,?,?,?)
     `)
-    pr.run('Американо', 150, 'Coffee', 'Классический чёрный кофе', drinks.id, 0, t, t)
-    pr.run('Капучино', 190, 'CupSoda', null, drinks.id, 1, t, t)
-    pr.run('Латте', 210, 'Milk', null, drinks.id, 2, t, t)
-    pr.run('Флэт уайт', 220, 'Coffee', null, drinks.id, 3, t, t)
-    pr.run('Чай с лимоном', 120, 'Leaf', null, drinks.id, 4, t, t)
-    pr.run('Круассан', 130, 'Croissant', null, food.id, 0, t, t)
-  } else {
-    // Backfill timestamps / default category for old rows
-    const drinks = db.prepare(`SELECT id FROM categories WHERE name='Напитки'`).get() as { id: number } | undefined
     if (drinks) {
-      db.prepare('UPDATE products SET category_id=? WHERE category_id IS NULL').run(drinks.id)
+      pr.run('Американо', 150, 'Coffee', 'Классический чёрный кофе', drinks.id, 0, t, t)
+      pr.run('Капучино', 180, 'Coffee', null, drinks.id, 1, t, t)
+      pr.run('Латте', 190, 'Coffee', null, drinks.id, 2, t, t)
     }
-    const t = now()
-    db.prepare('UPDATE products SET created_at=? WHERE created_at IS NULL').run(t)
-    db.prepare('UPDATE products SET updated_at=? WHERE updated_at IS NULL').run(t)
+    if (food) {
+      pr.run('Круассан', 120, 'Croissant', null, food.id, 0, t, t)
+    }
   }
 
   const vt = (db.prepare('SELECT COUNT(*) AS n FROM voucher_templates').get() as { n: number }).n
   if (vt === 0) {
-    const ins = db.prepare(
+    db.prepare(
       'INSERT INTO voucher_templates(code,title,kind,value,valid_days) VALUES(?,?,?,?,?)'
-    )
-    ins.run('WELCOME', 'Скидка 10% на первую покупку', 'percent', 10, 30)
-    ins.run('WEEK15', 'Скидка 15% на этой неделе', 'percent', 15, 7)
+    ).run('WELCOME', 'Скидка 10% на первую покупку', 'percent', 10, 30)
   }
 
   const pm = (db.prepare('SELECT COUNT(*) AS n FROM promos').get() as { n: number }).n
@@ -88,55 +87,42 @@ export function seedIfEmpty() {
     const ins = db.prepare(
       'INSERT INTO promos(title,body,icon,sponsor,starts_at,ends_at) VALUES(?,?,?,?,?,?)'
     )
-    ins.run(
-      'Каждый 6.7 Coffee бесплатно',
-      'Копите стаканы — подарок получите автоматически.',
-      'Gift',
-      null,
-      ts,
-      ts + 365 * 86_400
-    )
-    ins.run(
-      'Приведи друга — получай 3%',
-      'За каждую покупку друга тебе 3% кэшбэком. Навсегда.',
-      'Users',
-      null,
-      ts,
-      ts + 365 * 86_400
-    )
+    ins.run('Каждый 6-й стакан бесплатно', 'Копите стаканы — подарок автоматически.', 'Gift', null, ts, ts + 365 * 86_400)
+    ins.run('Приведи друга — 3%', 'С покупки друга — 3% кэшбэком.', 'Users', null, ts, ts + 365 * 86_400)
   }
 
-  if (config.isDev) {
-    const dev = db.prepare(`SELECT id FROM devices WHERE enroll_code='DEMO1234'`).get()
-    if (!dev) {
-      const store = db.prepare('SELECT id FROM stores ORDER BY id LIMIT 1').get() as { id: number }
+  const dev = db.prepare(`SELECT id FROM devices WHERE enroll_code='DEMO1234'`).get()
+  if (!dev) {
+    const store = db.prepare('SELECT id FROM stores ORDER BY id LIMIT 1').get() as { id: number } | undefined
+    if (store) {
       db.prepare('INSERT INTO devices(store_id,name,enroll_code,created_at) VALUES(?,?,?,?)').run(
-        store.id,
-        'Demo tablet',
-        'DEMO1234',
-        Date.now()
+        store.id, 'Demo tablet', 'DEMO1234', Date.now()
       )
     }
-    seedDemoUsers()
-    seedModifiers()
   }
+
+  seedDemoUsers()
+  seedModifiers()
 }
 
 function seedModifiers() {
-  const n = (db.prepare('SELECT COUNT(*) AS n FROM modifiers').get() as { n: number }).n
-  if (n > 0) return
-  const t = Date.now()
+  try {
+    const n = (db.prepare('SELECT COUNT(*) AS n FROM modifiers').get() as { n: number }).n
+    if (n > 0) return
+  } catch {
+    return
+  }
+  const t = now()
   const ins = db.prepare(
     'INSERT INTO modifiers(name,price,group_key,available,sort_order,created_at,updated_at) VALUES(?,?,?,1,?,?,?)'
   )
-  const mods = [
+  const mods: [string, number, string, number][] = [
     ['Ваниль', 40, 'syrup', 0],
     ['Карамель', 40, 'syrup', 1],
     ['Лесной орех', 40, 'syrup', 2],
     ['Корица', 20, 'topping', 0],
     ['Взбитые сливки', 50, 'topping', 1],
     ['Овсяное молоко', 50, 'milk', 0],
-    ['Кокосовое молоко', 50, 'milk', 1],
   ]
   const ids: number[] = []
   for (const [name, price, gk, sort] of mods) {
@@ -150,16 +136,11 @@ function seedModifiers() {
     'INSERT INTO modifier_scheme_items(scheme_id,modifier_id,required,max_count) VALUES(?,?,0,2)'
   )
   for (const id of ids) link.run(schemeId, id)
-  // attach to drink-like products without scheme
   db.prepare(`
     UPDATE products SET modifier_scheme_id=?
-    WHERE modifier_scheme_id IS NULL AND (
-      lower(name) LIKE '%капуч%' OR lower(name) LIKE '%латте%' OR lower(name) LIKE '%амер%'
-      OR lower(name) LIKE '%флэт%' OR lower(name) LIKE '%эспр%' OR icon='Coffee'
-    )
+    WHERE modifier_scheme_id IS NULL AND icon='Coffee'
   `).run(schemeId)
 }
-
 
 function seedDemoUsers() {
   const exists = db.prepare('SELECT id FROM users WHERE phone=?').get(DEMO_CUSTOMER_PHONE)
@@ -170,24 +151,51 @@ function seedDemoUsers() {
     .run(DEMO_CUSTOMER_PHONE, 'Демо Клиент', 'DEMOHOST', null, t)
   const hostId = Number(inv.lastInsertRowid)
   ensureCard(hostId)
-  grantVoucher(hostId, 'WELCOME')
+  try { grantVoucher(hostId, 'WELCOME') } catch { /* template may miss */ }
   const fr = db
     .prepare('INSERT INTO users(phone,nickname,invite_code,invited_by,created_at) VALUES(?,?,?,?,?)')
     .run(DEMO_FRIEND_PHONE, 'Демо Друг', 'DEMOFRND', hostId, t)
   ensureCard(Number(fr.lastInsertRowid))
 }
 
+/** Admin: clear loyalty noise without wiping catalog. */
+export function resetLoyaltyData() {
+  const steps = [
+    'DELETE FROM cashback_ledger',
+    'DELETE FROM disputes',
+    'DELETE FROM receipts',
+    'DELETE FROM vouchers',
+    'DELETE FROM cards',
+    'DELETE FROM sms_codes',
+    'DELETE FROM customer_recovery',
+    'DELETE FROM users',
+  ]
+  for (const sql of steps) {
+    try { db.exec(sql) } catch { /* table may not exist yet */ }
+  }
+}
+
+/** Admin: wipe catalog + devices + promos (keep empty shell). */
+export function resetCatalogData() {
+  const steps = [
+    'DELETE FROM modifier_scheme_items',
+    'DELETE FROM modifier_schemes',
+    'DELETE FROM modifiers',
+    'DELETE FROM devices',
+    'DELETE FROM products',
+    'DELETE FROM categories',
+    'DELETE FROM stores',
+    'DELETE FROM organizations',
+    'DELETE FROM promos',
+  ]
+  for (const sql of steps) {
+    try { db.exec(sql) } catch { /* ignore */ }
+  }
+}
+
 export function resetDemo() {
-  db.exec(`
-    DELETE FROM cashback_ledger;
-    DELETE FROM disputes;
-    DELETE FROM receipts;
-    DELETE FROM vouchers;
-    DELETE FROM cards;
-    DELETE FROM users;
-    DELETE FROM sms_codes;
-  `)
-  seedDemoUsers()
+  resetLoyaltyData()
+  if (config.isDev) seedDemoUsers()
 }
 
 export async function demoToken(phone = DEMO_CUSTOMER_PHONE) {
