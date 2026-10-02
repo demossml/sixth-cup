@@ -1,11 +1,13 @@
 import { openDB } from 'idb'
 import type { StoredReceipt } from './types'
 
-const dbp = openDB('sixth-cup', 1, {
-  upgrade(db) {
-    db.createObjectStore('kv')
-    db.createObjectStore('receipts', { keyPath: 'id' })
-    db.createObjectStore('seen', { keyPath: 'userId' })
+const dbp = openDB('sixth-cup', 2, {
+  upgrade(db, oldVersion) {
+    if (oldVersion < 1) {
+      db.createObjectStore('kv')
+      db.createObjectStore('receipts', { keyPath: 'id' })
+      db.createObjectStore('seen', { keyPath: 'userId' })
+    }
   },
 })
 
