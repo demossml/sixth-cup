@@ -29,7 +29,8 @@ function publicDirectory() {
   const products = db.prepare(`
     SELECT id, name, price, icon, description, category_id AS categoryId,
            image_url AS imageUrl, sort_order AS sortOrder,
-           modifier_scheme_id AS modifierSchemeId
+           modifier_scheme_id AS modifierSchemeId,
+           counts_as_cup AS countsAsCup
     FROM products WHERE available=1
     ORDER BY sort_order, id
   `).all() as Record<string, unknown>[]
@@ -87,6 +88,7 @@ function publicDirectory() {
       imageUrl: p.imageUrl,
       sortOrder: p.sortOrder ?? 0,
       modifierSchemeId: p.modifierSchemeId ?? null,
+      countsAsCup: !!(p as { countsAsCup?: number }).countsAsCup,
     })),
     promos,
   }
@@ -99,7 +101,8 @@ export const directoryRoutes = new Hono()
     const products = db.prepare(`
       SELECT id, name, price, modifier_scheme_id AS modifierSchemeId,
              recipe_text AS recipeText, recipe_cost_rub AS recipeCostRub,
-             recipe_seconds AS recipeSeconds
+             recipe_seconds AS recipeSeconds,
+             counts_as_cup AS countsAsCup
       FROM products WHERE available=1 ORDER BY sort_order, id
     `).all()
     return c.json({ products })

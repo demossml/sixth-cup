@@ -6,6 +6,7 @@ import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import { hashToken, requireDevice, type DeviceEnv } from '../../middleware/device'
 import { applyReceipts } from '../loyalty/receipts'
+import { applyOnlineSale } from './sales'
 
 export const deviceRoutes = new Hono<DeviceEnv>()
   .post('/enroll',
@@ -26,4 +27,23 @@ export const deviceRoutes = new Hono<DeviceEnv>()
   .post('/sync', zValidator('json', z.object({ receipts: z.array(z.string().max(3000)).max(200) })), (c) => {
     const result = applyReceipts(c.req.valid('json').receipts)
     return c.json({ result })
+  })
+
+  .use('/sales', requireDevice)
+  .post('/sales', zValidator('json', z.object({
+    cardToken: z.string().min(20).max(4000),
+    fiscalId: z.string().min(3).max(80),
+    amountRub: z.number().int().min(0).max(1_000_000),
+    useFree: z.boolean().default(false),
+    cashbackUseRub: z.number().int().min(0).max(50_000).default(0),
+    items: z.array(z.object({
+      productId: z.number().int().optional(),
+      name: z.string().min(1).max(120),
+      qty: z.number().int().min(1).max(99),
+      priceRub: z.number().int().min(0),
+    })).min(1).max(50),
+  })), (c) => {
+    const deviceId = c.get('deviceId')
+    const result = applyOnlineSale(deviceId, c.req.valid('json'))
+    return c.json(result)
   })
