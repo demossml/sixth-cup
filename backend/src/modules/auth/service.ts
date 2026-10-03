@@ -80,7 +80,7 @@ const registerUser = db.transaction((phone: string, inviteCode?: string) => {
     ? (db.prepare('SELECT id FROM users WHERE invite_code=?').get(inviteCode.toUpperCase()) as { id: number } | undefined)
     : undefined
   const r = db.prepare('INSERT INTO users(phone,nickname,invite_code,invited_by,created_at) VALUES(?,?,?,?,?)')
-    .run(phone, `Гость ${phone.slice(-4)}`, randomBytes(4).toString('hex').toUpperCase(), inviter?.id ?? null, Date.now())
+    .run(phone, phone.startsWith('guest:') ? 'Гость' : `Гость ${phone.slice(-4)}`, randomBytes(4).toString('hex').toUpperCase(), inviter?.id ?? null, Date.now())
   const userId = Number(r.lastInsertRowid)
   ensureCard(userId)
   grantVoucher(userId, 'WELCOME')
@@ -113,4 +113,10 @@ export function verifyCodeAndLogin(input: { phone: string; code: string; inviteC
 
   const existing = db.prepare('SELECT id FROM users WHERE phone=?').get(phone) as { id: number } | undefined
   return existing?.id ?? registerUser(phone, input.inviteCode)
+}
+
+/** Карта без телефона и SMS: синтетический id вместо ПДн. */
+export function createGuestUser(inviteCode?: string): number {
+  const phone = `guest:${randomBytes(16).toString('hex')}`
+  return registerUser(phone, inviteCode)
 }

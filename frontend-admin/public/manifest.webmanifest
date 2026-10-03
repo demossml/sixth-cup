@@ -1,10 +1,10 @@
 {
-  "name": "6.7 Coffee",
-  "short_name": "6.7 Coffee",
+  "name": "6.7 Coffee Admin",
+  "short_name": "6.7 Admin",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#002FA7",
-  "theme_color": "#002FA7",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
   "icons": [
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },

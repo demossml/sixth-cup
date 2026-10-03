@@ -30,13 +30,13 @@ export default function OnboardingPage() {
     if (i < slides.length - 1) setI(i + 1)
     else {
       localStorage.setItem('sc-onboarded', '1')
-      nav('/login', { replace: true })
+      nav('/', { replace: true })
     }
   }
 
   function skip() {
     localStorage.setItem('sc-onboarded', '1')
-    nav('/login', { replace: true })
+    nav('/', { replace: true })
   }
 
   return (

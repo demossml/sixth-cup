@@ -174,9 +174,10 @@ export default function AdminPage() {
   if (!token || !stats) {
     return (
       <div className="max-w-[480px] mx-auto min-h-screen bg-page p-4">
-        <img src="/logo-mark.png" alt="6.7 Coffee" className="w-16 h-16 rounded-2xl mb-4" />
-        <p className="text-ink-tertiary text-sm mb-2">Вход только для владельца · admin.*</p>
+        <img src="/logo-mark.png" alt="6.7 Coffee Admin" className="w-16 h-16 rounded-2xl mb-4 ring-2 ring-amber-400/50" />
+        <p className="text-ink-tertiary text-sm mb-1">Кабинет владельца · не клиентское приложение</p>
         <h1 className="text-xl font-bold mb-4">6.7 Coffee · Админ</h1>
+        <p className="text-xs text-amber-700 mb-3">Золотая альпака = admin. Белая на синем = приложение гостя.</p>
         {error && <p className="text-red-600 text-sm mb-2">{error}</p>}
         <input className="input mb-3" placeholder="ADMIN_TOKEN" value={input} onChange={(e) => setInput(e.target.value)} />
         <button type="button" className="btn-primary w-full" onClick={login}>Войти</button>

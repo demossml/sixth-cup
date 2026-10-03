@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import Qr from '../components/Qr'
 import { setJwt } from '../api'
+import { ensureGuest } from '../lib/ensureGuest'
 import { useApp } from '../lib/app'
 import { clearUserData } from '../lib/db'
 import { LogOut, RefreshCw, Share2, Users, Wallet } from '../lib/icons'
@@ -25,8 +26,9 @@ export default function ProfilePage() {
   async function logout() {
     setJwt(null)
     await clearUserData()
+    await ensureGuest()
     await reload()
-    nav('/login')
+    nav('/')
   }
 
   return (

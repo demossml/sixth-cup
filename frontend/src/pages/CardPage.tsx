@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getJwt } from '../api'
 import Qr from '../components/Qr'
 import ScanModal from '../components/ScanModal'
 import { useApp } from '../lib/app'
@@ -21,7 +20,6 @@ export default function CardPage() {
 
   const N = dir?.cupsForFree ?? 5
   const online = Date.now() - lastSync < 5 * 60_000
-  const loggedIn = !!getJwt()
   const paidProgress = best ? progress(best.state, N) : 0
   const freeLeft = best ? freeAvailable(best.state, N) : 0
   const left = Math.max(0, N - paidProgress)
@@ -38,7 +36,12 @@ export default function CardPage() {
     setMsg('')
     const status = await sync()
     if (status === 'auth') {
-      setMsg('Сессия устарела — войдите снова по телефону, карта подтянется с сервера.')
+      const { ensureGuest } = await import('../lib/ensureGuest')
+      const { setJwt } = await import('../api')
+      setJwt(null)
+      await ensureGuest()
+      await sync()
+      setMsg('Выдана новая карта (без телефона).')
     } else if (status === 'offline') {
       setMsg('Нет сети. Если карта уже была — QR ниже должен остаться.')
     }
@@ -91,7 +94,7 @@ export default function CardPage() {
           </div>
           <p className="text-center text-white/80 text-xs mt-2">
             {!best
-              ? 'После входа и синхронизации здесь будет прогресс'
+              ? 'После появления сети здесь будет прогресс'
               : freeLeft > 0
                 ? `Бесплатных доступно: ${freeLeft}`
                 : `Осталось ${left} до бесплатного`}
@@ -120,20 +123,13 @@ export default function CardPage() {
 
         {!best ? (
           <div className="card">
-            <b className="text-ink">Карта (QR) пока не на устройстве</b>
+            <b className="text-ink">Карта ещё подгружается</b>
             <p className="text-ink-secondary text-sm mt-1 leading-relaxed">
-              Это не «новая регистрация карты». Нужен вход по телефону (как раньше) и один синк по сети —
-              сервер пришлёт карту, QR появится здесь же.
+              Телефон и SMS не нужны. Нужен интернет один раз — карта и QR появятся автоматически.
             </p>
-            {!loggedIn ? (
-              <button type="button" className="btn mt-3" onClick={() => nav('/login')}>
-                Войти по телефону
-              </button>
-            ) : (
-              <button type="button" className="btn mt-3" onClick={() => void onSync()} disabled={syncing}>
-                {syncing ? 'Синхронизация…' : 'Синхронизировать карту'}
-              </button>
-            )}
+            <button type="button" className="btn mt-3" onClick={() => void onSync()} disabled={syncing}>
+              {syncing ? 'Синхронизация…' : 'Обновить карту'}
+            </button>
           </div>
         ) : (
           <>
