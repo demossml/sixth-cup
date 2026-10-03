@@ -131,7 +131,7 @@ export default function AdminPage() {
       if (o.organizations[0] && !storeForm.organizationId) {
         setStoreForm((f) => ({ ...f, organizationId: o.organizations[0].id }))
       }
-      if (st.stores[0] && !deviceStoreId) setDeviceStoreId(st.stores[0].id)
+      if (st.stores[0]) setDeviceStoreId((prev) => prev || st.stores[0].id)
       if (cat.categories[0] && !prodForm.categoryId) {
         setProdForm((f) => ({ ...f, categoryId: cat.categories[0].id }))
       }
@@ -685,7 +685,6 @@ export default function AdminPage() {
                   {d.revoked ? ' · ОТОЗВАНА' : ''}
                 </div>
                 {!d.revoked && (
-                  <>
                   <button type="button" className="text-red-600 text-xs mt-1" onClick={async () => {
                     await adminFetch(`/devices/${d.id}/revoke`, token, { method: 'POST' })
                     void load(token)
@@ -695,25 +694,76 @@ export default function AdminPage() {
                     await adminFetch(`/devices/${d.id}`, token, { method: 'DELETE' })
                     void load(token)
                   }}>Удалить</button>
-                  </>
                 )}
               </div>
             ))}
             <div className="card space-y-2">
-              <input className="input" placeholder="Имя кассы" value={deviceName} onChange={(e) => setDeviceName(e.target.value)} />
-              <select className="input" value={deviceStoreId} onChange={(e) => setDeviceStoreId(Number(e.target.value))}>
-                {stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-              <button type="button" className="btn-primary w-full" onClick={async () => {
-                const r = await adminFetch<{ enrollCode: string }>('/devices', token, {
-                  method: 'POST',
-                  body: JSON.stringify({ storeId: deviceStoreId, name: deviceName }),
-                })
-                setNewCode(r.enrollCode)
-                setDeviceName('')
-                void load(token)
-              }}>Выпустить код</button>
-              {newCode && <div className="text-center font-mono text-lg text-brand">{newCode}</div>}
+              <p className="text-sm font-semibold text-ink">Новая касса</p>
+              <p className="text-xs text-ink-secondary">
+                Нужна только <b>точка</b> (вкладка «Точки») и имя кассы. Других «параметров» нет —
+                на Эвоторе введёте URL API и этот код.
+              </p>
+              {stores.length === 0 ? (
+                <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                  Сначала создайте точку: вкладка <b>Точки</b> → название и адрес → «Создать точку».
+                  Пока точек нет, выпустить код нельзя (в списке «нет параметров» — это пустой выбор точки).
+                </p>
+              ) : (
+                <>
+                  <input
+                    className="input"
+                    placeholder="Имя кассы, например Барная"
+                    value={deviceName}
+                    onChange={(e) => setDeviceName(e.target.value)}
+                  />
+                  <label className="text-xs text-ink-secondary">Точка</label>
+                  <select
+                    className="input"
+                    value={deviceStoreId || stores[0]?.id || 0}
+                    onChange={(e) => setDeviceStoreId(Number(e.target.value))}
+                  >
+                    {stores.map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="btn-primary w-full"
+                    disabled={!deviceName.trim() || !(deviceStoreId || stores[0]?.id)}
+                    onClick={async () => {
+                      const storeId = deviceStoreId || stores[0]?.id
+                      if (!storeId) {
+                        setError('Нет точки — создайте во вкладке «Точки»')
+                        return
+                      }
+                      if (!deviceName.trim()) {
+                        setError('Укажите имя кассы')
+                        return
+                      }
+                      try {
+                        const r = await adminFetch<{ enrollCode: string }>('/devices', token, {
+                          method: 'POST',
+                          body: JSON.stringify({ storeId, name: deviceName.trim() }),
+                        })
+                        setNewCode(r.enrollCode)
+                        setDeviceName('')
+                        setError('')
+                        void load(token)
+                      } catch (e) {
+                        setError(e instanceof Error ? e.message : 'Не удалось выпустить код')
+                      }
+                    }}
+                  >
+                    Выпустить код
+                  </button>
+                </>
+              )}
+              {newCode && (
+                <div className="text-center space-y-1 pt-2">
+                  <p className="text-xs text-ink-secondary">Код для экрана регистрации на кассе</p>
+                  <div className="font-mono text-2xl font-bold text-brand tracking-widest">{newCode}</div>
+                </div>
+              )}
             </div>
           </div>
         )}

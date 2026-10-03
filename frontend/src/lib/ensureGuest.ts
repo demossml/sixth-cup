@@ -16,13 +16,13 @@ export async function ensureGuest(): Promise<'ok' | 'offline'> {
   const invite = localStorage.getItem('sc-invite') ?? undefined
   const clientNonce = getOrCreateNonce()
   try {
-    const r = await unwrap<{ token: string }>(
+    const r = await unwrap(
       api.api.auth.guest.$post({
         json: {
           ...(invite ? { inviteCode: invite } : {}),
           clientNonce,
         },
-      }) as unknown as Promise<{ ok: boolean; json: () => Promise<{ token: string }> }>,
+      }),
     )
     setJwt(r.token)
     return 'ok'
