@@ -685,15 +685,17 @@ export default function AdminPage() {
                   {d.revoked ? ' · ОТОЗВАНА' : ''}
                 </div>
                 {!d.revoked && (
-                  <button type="button" className="text-red-600 text-xs mt-1" onClick={async () => {
-                    await adminFetch(`/devices/${d.id}/revoke`, token, { method: 'POST' })
-                    void load(token)
-                  }}>Отозвать</button>
-                  <button type="button" className="text-xs text-red-600 ml-2" onClick={async () => {
-                    if (!confirm('Удалить кассу из списка?')) return
-                    await adminFetch(`/devices/${d.id}`, token, { method: 'DELETE' })
-                    void load(token)
-                  }}>Удалить</button>
+                  <>
+                    <button type="button" className="text-red-600 text-xs mt-1" onClick={async () => {
+                      await adminFetch(`/devices/${d.id}/revoke`, token, { method: 'POST' })
+                      void load(token)
+                    }}>Отозвать</button>
+                    <button type="button" className="text-xs text-red-600 ml-2" onClick={async () => {
+                      if (!confirm('Удалить кассу из списка?')) return
+                      await adminFetch(`/devices/${d.id}`, token, { method: 'DELETE' })
+                      void load(token)
+                    }}>Удалить</button>
+                  </>
                 )}
               </div>
             ))}

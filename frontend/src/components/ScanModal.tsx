@@ -54,10 +54,13 @@ export default function ScanModal({ title, onResult, onClose }: {
         </div>
         <video ref={video} className="w-full rounded-2xl bg-black aspect-square object-cover" muted />
         {error && <p className="text-bad text-sm mt-2">{error}</p>}
+        <p className="text-ink-secondary text-xs mt-2 leading-relaxed">
+          Наведите камеру на QR лояльности с чека. Стаканы и кэшбэк начисляет только сервер.
+        </p>
         <details className="mt-3">
           <summary className="text-ink-tertiary text-sm cursor-pointer">Ввести код вручную</summary>
           <textarea className="input mt-2" value={manual} onChange={(e) => setManual(e.target.value)} rows={3} />
-          <button className="btn btn-sm" onClick={() => manual.trim() && onResult(manual.trim())}>Применить</button>
+          <button type="button" className="btn btn-sm mt-2" onClick={() => manual.trim() && onResult(manual.trim())}>Отправить на сервер</button>
         </details>
         <button className="btn-ghost mt-3" onClick={onClose}>Закрыть</button>
       </div>

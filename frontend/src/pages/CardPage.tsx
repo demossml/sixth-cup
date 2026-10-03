@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import Qr from '../components/Qr'
 import ScanModal from '../components/ScanModal'
 import { useApp } from '../lib/app'
-import { addReceipt } from '../lib/customer'
+import { submitScannedReceipt } from '../lib/customer'
 import { activeVouchers, freeAvailable, progress } from '../lib/proof'
 import { AppIcon, Gift, RefreshCw, ScanLine, Ticket, Users, Wallet, Wifi, WifiOff } from '../lib/icons'
 
@@ -27,9 +27,10 @@ export default function CardPage() {
 
   async function onScan(text: string) {
     setScan(false)
-    const r = await addReceipt(text, dir, me)
-    setMsg(r.ok ? 'Чек принят, карта обновлена' : r.reason)
-    if (r.ok) await reload()
+    setMsg('Отправляем чек на сервер…')
+    const r = await submitScannedReceipt(text, dir, me)
+    setMsg(r.ok ? r.message : r.reason)
+    await reload()
   }
 
   async function onSync() {
@@ -212,7 +213,7 @@ export default function CardPage() {
       </div>
 
       {scan && (
-        <ScanModal title="Наведите камеру на QR кассира" onResult={onScan} onClose={() => setScan(false)} />
+        <ScanModal title="Сканировать чек лояльности" onResult={onScan} onClose={() => setScan(false)} />
       )}
     </div>
   )

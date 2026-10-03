@@ -1,4 +1,3 @@
-
 import { api, getJwt, setJwt, unwrap } from '../api'
 
 function getOrCreateNonce(): string {
@@ -16,14 +15,15 @@ export async function ensureGuest(): Promise<'ok' | 'offline'> {
   const invite = localStorage.getItem('sc-invite') ?? undefined
   const clientNonce = getOrCreateNonce()
   try {
+    // Hono RPC types may not yet include guest body fields / resumed — cast for tsc
     const r = await unwrap(
       api.api.auth.guest.$post({
         json: {
           ...(invite ? { inviteCode: invite } : {}),
           clientNonce,
         },
-      }),
-    )
+      }) as never,
+    ) as { token: string; resumed?: boolean }
     setJwt(r.token)
     return 'ok'
   } catch {
