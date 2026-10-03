@@ -24,8 +24,11 @@ export default function ProfilePage() {
   }
 
   async function logout() {
+    if (!confirm('Сбросить карту на этом устройстве? Кэшбэк и стаканы на сервере останутся недоступны без восстановления (пока в разработке). Лучше не выходить.')) return
+    if (!confirm('Точно создать новую пустую карту?')) return
     setJwt(null)
     await clearUserData()
+    localStorage.removeItem('sc-guest-nonce')
     await ensureGuest()
     await reload()
     nav('/')
@@ -55,7 +58,7 @@ export default function ProfilePage() {
           Синхронизировать
         </button>
 <button className="btn-danger mt-8 flex items-center justify-center gap-2" onClick={logout}>
-          <LogOut size={16} /> Выйти
+          <LogOut size={16} /> Сбросить карту на устройстве
         </button>
       </div>
     </div>

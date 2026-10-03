@@ -83,7 +83,7 @@ const registerUser = db.transaction((phone: string, inviteCode?: string) => {
     .run(phone, phone.startsWith('guest:') ? 'Гость' : `Гость ${phone.slice(-4)}`, randomBytes(4).toString('hex').toUpperCase(), inviter?.id ?? null, Date.now())
   const userId = Number(r.lastInsertRowid)
   ensureCard(userId)
-  grantVoucher(userId, 'WELCOME')
+  // WELCOME — после первой оплаты (loyalty), не при создании гостя
   return userId
 })
 

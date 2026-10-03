@@ -2,8 +2,9 @@ import { Hono } from 'hono'
 import { config } from '../../config'
 import { db } from '../../db'
 import { serverPub } from '../../lib/crypto'
+import { requireDevice } from '../../middleware/device'
 
-export const directoryRoutes = new Hono().get('/', (c) => {
+function publicDirectory() {
   const now = Math.floor(Date.now() / 1000)
   const devices = db.prepare('SELECT id, public_key AS pub, revoked FROM devices WHERE public_key IS NOT NULL')
     .all() as { id: number; pub: string; revoked: number }[]
@@ -28,10 +29,7 @@ export const directoryRoutes = new Hono().get('/', (c) => {
   const products = db.prepare(`
     SELECT id, name, price, icon, description, category_id AS categoryId,
            image_url AS imageUrl, sort_order AS sortOrder,
-           modifier_scheme_id AS modifierSchemeId,
-           recipe_text AS recipeText,
-           recipe_cost_rub AS recipeCostRub,
-           recipe_seconds AS recipeSeconds
+           modifier_scheme_id AS modifierSchemeId
     FROM products WHERE available=1
     ORDER BY sort_order, id
   `).all() as Record<string, unknown>[]
@@ -51,13 +49,13 @@ export const directoryRoutes = new Hono().get('/', (c) => {
                              WHERE starts_at<=? AND ends_at>=? ORDER BY id DESC`)
     .all(now, now)
 
-  return c.json({
+  return {
     serverPub,
     cupsForFree: config.cupsForFree,
     referralCashbackPercent: config.referralCashbackPercent,
     currency: config.currency,
     generatedAt: now,
-    devices: devices.map((d: { id: number; pub: string; revoked: number }) => ({
+    devices: devices.map((d) => ({
       id: d.id, pub: d.pub, revoked: !!d.revoked,
     })),
     stores: stores.map((s) => ({
@@ -89,10 +87,20 @@ export const directoryRoutes = new Hono().get('/', (c) => {
       imageUrl: p.imageUrl,
       sortOrder: p.sortOrder ?? 0,
       modifierSchemeId: p.modifierSchemeId ?? null,
-      recipeText: p.recipeText ?? null,
-      recipeCostRub: p.recipeCostRub ?? null,
-      recipeSeconds: p.recipeSeconds ?? null,
     })),
     promos,
+  }
+}
+
+export const directoryRoutes = new Hono()
+  .get('/', (c) => c.json(publicDirectory()))
+  /** Рецепты / себес — только устройство кассы. */
+  .get('/staff', requireDevice, (c) => {
+    const products = db.prepare(`
+      SELECT id, name, price, modifier_scheme_id AS modifierSchemeId,
+             recipe_text AS recipeText, recipe_cost_rub AS recipeCostRub,
+             recipe_seconds AS recipeSeconds
+      FROM products WHERE available=1 ORDER BY sort_order, id
+    `).all()
+    return c.json({ products })
   })
-})

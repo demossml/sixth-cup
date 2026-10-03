@@ -3,6 +3,7 @@ import { db } from '../../db'
 import { peek, verifyWith } from '../../lib/crypto'
 import { ensureCard } from './proof'
 import { cashbackOf, freeEarned } from './rules'
+import { grantVoucher } from '../vouchers/service'
 
 const receiptSchema = z.object({
   t: z.literal('r'),
@@ -40,6 +41,14 @@ function applyOne(r: Receipt) {
   db.prepare(`UPDATE cards SET paid_total = paid_total + ?, free_used = free_used + ?,
               seq = MAX(seq, ?) + 1, updated_at = ? WHERE user_id = ?`)
     .run(r.dp, r.df, r.q, Date.now(), r.u)
+
+  // WELCOME после первой оплаты (не при создании гостя)
+  if (r.dp > 0) {
+    const beforePaid = (db.prepare('SELECT paid_total FROM cards WHERE user_id=?').get(r.u) as { paid_total: number }).paid_total - r.dp
+    if (beforePaid <= 0) {
+      try { grantVoucher(r.u, 'WELCOME') } catch { /* already has or no template */ }
+    }
+  }
 
   if (r.dcb > 0) {
     const u = db.prepare('SELECT cashback_balance FROM users WHERE id=?')
