@@ -18,6 +18,11 @@ export const config = {
   maxVouchersInCard: 5,
   maxUploadBytes: 2 * 1024 * 1024,
 
+  /** Shared secret for Evotor cloud proxy (Authorization header). Empty = warn only. */
+  evotorProxyToken: process.env.EVOTOR_PROXY_TOKEN ?? '',
+  /** When 1, reject requests without valid proxy token on /api/devices/* */
+  evotorProxyEnforce: process.env.EVOTOR_PROXY_ENFORCE === '1',
+
   /** mock | smsaero */
   smsProvider: (process.env.SMS_PROVIDER ?? (isDev ? 'mock' : 'smsaero')).toLowerCase(),
   smsAeroEmail: process.env.SMS_AERO_EMAIL ?? '',
