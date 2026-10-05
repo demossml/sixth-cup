@@ -4,6 +4,7 @@ import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import { normalizePhone } from '../../lib/phone'
 import { getSmsProvider } from '../../lib/sms'
+import { ensureCardCode } from '../../lib/cardCode'
 import { ensureCard } from '../loyalty/proof'
 import { grantVoucher } from '../vouchers/service'
 
@@ -83,6 +84,7 @@ const registerUser = db.transaction((phone: string, inviteCode?: string) => {
     .run(phone, phone.startsWith('guest:') ? 'Гость' : `Гость ${phone.slice(-4)}`, randomBytes(4).toString('hex').toUpperCase(), inviter?.id ?? null, Date.now())
   const userId = Number(r.lastInsertRowid)
   ensureCard(userId)
+  ensureCardCode(db, userId)
   // WELCOME — после первой оплаты (loyalty), не при создании гостя
   return userId
 })

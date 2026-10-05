@@ -10,6 +10,7 @@ import { adminRoutes } from './modules/admin/routes'
 import { authRoutes } from './modules/auth/routes'
 import { devRoutes } from './modules/dev/routes'
 import { deviceRoutes } from './modules/devices/routes'
+import { cardLookupRoutes } from './modules/loyalty/cardLookup'
 import { directoryRoutes } from './modules/directory/routes'
 import { syncRoutes } from './modules/sync/routes'
 import { uploadRoutes } from './modules/upload/routes'
@@ -41,6 +42,7 @@ app.get('/uploads/:file', async (c) => {
 
 const routes = app
   .route('/api/auth', authRoutes)
+  .route('/api/loyalty', cardLookupRoutes)
   .route('/api/directory', directoryRoutes)
   .route('/api/sync', syncRoutes)
   .route('/api/devices', deviceRoutes)

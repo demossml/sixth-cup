@@ -129,4 +129,33 @@ export class EvotorClient {
   async getSellDocuments(storeId: string, since: string, until: string): Promise<unknown> {
     return this.getDocuments(storeId, since, until, 'SELL')
   }
+
+  /**
+   * V1: POST array of products to a store. Overwrites/creates by uuid.
+   * POST /api/v1/inventories/stores/{storeUuid}/products
+   */
+  async postProducts(storeId: string, products: Record<string, unknown>[]): Promise<unknown> {
+    if (!this.isConfigured) {
+      throw new EvotorApiError('EVOTOR_API_TOKEN not set', 0, 'postProducts')
+    }
+    const path = evotorPaths.products(storeId)
+    const url = `${this.baseUrl.replace(/\/$/, '')}${path}`
+    let requestUrl = url
+    if (this.proxyUrl?.trim() && url.startsWith('https://api.evotor.ru/')) {
+      requestUrl = `${this.proxyUrl}?url=${encodeURIComponent(url)}`
+    }
+    const res = await fetch(requestUrl, {
+      method: 'POST',
+      headers: {
+        'X-Authorization': this.token,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(products),
+    })
+    const text = await res.text()
+    if (!res.ok) {
+      throw new EvotorApiError(`HTTP ${res.status}: ${text.slice(0, 300)}`, res.status, path)
+    }
+    return text ? JSON.parse(text) : { ok: true }
+  }
 }

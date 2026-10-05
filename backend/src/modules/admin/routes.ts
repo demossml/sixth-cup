@@ -8,6 +8,7 @@ import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import { grantVoucher } from '../vouchers/service'
 import { resetLoyaltyData, resetCatalogData } from '../../db/seed'
+import { adminEvotorCatalog } from './evotorCatalog'
 
 const adminAuth = createMiddleware(async (c, next) => {
   if (c.req.header('X-Admin-Token') !== config.adminToken) throw bad('Forbidden', 403)
@@ -505,3 +506,6 @@ export const adminRoutes = new Hono()
     const rows = db.prepare(`SELECT * FROM cashback_ledger WHERE beneficiary_id=? ORDER BY id DESC LIMIT 100`).all(id)
     return c.json({ ledger: rows })
   })
+
+  // Evotor catalog admin (stores from cloud + product push, no local device enroll)
+  .route('/', adminEvotorCatalog)
