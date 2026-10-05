@@ -4,6 +4,7 @@ import { dirname } from 'node:path'
 import { config } from '../config'
 import { SCHEMA } from './schema'
 import { runMigrations } from './migrate'
+import { migrateEvotorSchema } from '../integrations/evotor/db'
 
 mkdirSync(dirname(config.dbPath), { recursive: true })
 mkdirSync(config.uploadsDir, { recursive: true })
@@ -13,3 +14,4 @@ db.pragma('journal_mode = WAL')
 db.pragma('foreign_keys = ON')
 db.exec(SCHEMA)
 runMigrations(db)
+migrateEvotorSchema(db)

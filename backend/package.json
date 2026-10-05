@@ -14,6 +14,7 @@
     "build": "tsup src/index.ts --format esm --clean",
     "start": "NODE_ENV=production node dist/index.js",
     "typecheck": "tsc --noEmit",
+    "evotor:probe": "tsx scripts/evotor-probe.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
