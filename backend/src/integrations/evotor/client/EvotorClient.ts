@@ -1,7 +1,9 @@
 /**
- * HTTP client for api.evotor.ru
- * Auth: X-Authorization (workApp FACT). V2 Accept headers (MASTER-TZ §3).
- * No token in logs.
+ * HTTP client for api.evotor.ru — pattern from workApp Evotor class.
+ *
+ * Auth: header X-Authorization: <EVOTOR_API_TOKEN>
+ * Token: permanent in server .env (owner pastes token from Evotor). No webhook exchange.
+ * Optional EVOTOR_PROXY_URL like workApp (proxy?url=).
  */
 import { evotorConfig } from '../../../config'
 import { evotorPaths } from './endpoints'
@@ -17,132 +19,111 @@ export class EvotorApiError extends Error {
   }
 }
 
-type Query = Record<string, string | number | undefined | null>
-
-function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms))
+/** workApp utils.formatDateWithTime equivalent */
+export function formatDateWithTime(date: Date, isEndOfDay = false): string {
+  const d = new Date(date)
+  if (isEndOfDay) {
+    d.setHours(23, 59, 59, 999)
+  } else {
+    d.setHours(0, 0, 0, 0)
+  }
+  const pad = (n: number) => String(n).padStart(2, '0')
+  // Evotor v1 often accepts "YYYY-MM-DD HH:mm:ss" style — match workApp if different
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  )
 }
 
 export class EvotorClient {
   constructor(
     private readonly token = evotorConfig.apiToken,
     private readonly baseUrl = evotorConfig.apiBaseUrl,
+    private readonly proxyUrl = evotorConfig.proxyUrl,
   ) {}
 
   get isConfigured(): boolean {
     return Boolean(this.token?.trim())
   }
 
-  private async request<T>(
-    method: string,
-    path: string,
-    opts?: { query?: Query; body?: unknown; retry?: boolean },
-  ): Promise<T> {
+  private async request(pathOrUrl: string): Promise<unknown> {
     if (!this.isConfigured) {
-      throw new EvotorApiError('EVOTOR_API_TOKEN not set', 0, path)
+      throw new EvotorApiError('EVOTOR_API_TOKEN not set', 0, pathOrUrl)
     }
 
-    const url = new URL(path.startsWith('http') ? path : `${this.baseUrl}${path}`)
-    if (opts?.query) {
-      for (const [k, v] of Object.entries(opts.query)) {
-        if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v))
-      }
+    let url = pathOrUrl.startsWith('http')
+      ? pathOrUrl
+      : `${this.baseUrl.replace(/\/$/, '')}${pathOrUrl.startsWith('/') ? '' : '/'}${pathOrUrl}`
+
+    if (this.proxyUrl?.trim() && url.startsWith('https://api.evotor.ru/')) {
+      url = `${this.proxyUrl}?url=${encodeURIComponent(url)}`
     }
 
-    const headers: Record<string, string> = {
-      'X-Authorization': this.token,
-      Accept: 'application/vnd.evotor.v2+json',
-    }
-    if (opts?.body !== undefined) {
-      headers['Content-Type'] = 'application/vnd.evotor.v2+json'
-    }
-
-    const maxAttempts = opts?.retry === false ? 1 : 5
     const backoffs = [1000, 2000, 4000, 8000, 16000]
     let lastStatus = 0
-    let lastText = ''
+    let lastBody = ''
 
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    for (let attempt = 0; attempt < 5; attempt++) {
       const ac = new AbortController()
-      const t = setTimeout(() => ac.abort(), 15_000)
+      const timer = setTimeout(() => ac.abort(), 15_000)
       try {
-        const res = await fetch(url.toString(), {
-          method,
-          headers,
-          body: opts?.body !== undefined ? JSON.stringify(opts.body) : undefined,
+        const res = await fetch(url, {
+          headers: { 'X-Authorization': this.token },
           signal: ac.signal,
         })
         lastStatus = res.status
-        lastText = await res.text()
-
+        lastBody = await res.text()
         if (res.status === 401) {
-          throw new EvotorApiError('Unauthorized (401) — token invalid', 401, path)
+          throw new EvotorApiError('Unauthorized — check EVOTOR_API_TOKEN', 401, pathOrUrl)
         }
-        if ([400, 403, 404].includes(res.status)) {
-          throw new EvotorApiError(`HTTP ${res.status}: ${lastText.slice(0, 200)}`, res.status, path)
-        }
-        if ([429, 500, 502, 503, 504].includes(res.status) && attempt < maxAttempts - 1) {
-          const jitter = Math.floor(Math.random() * 300)
-          await sleep(backoffs[attempt] + jitter)
+        if ([429, 500, 502, 503, 504].includes(res.status) && attempt < 4) {
+          await new Promise((r) => setTimeout(r, backoffs[attempt] + Math.random() * 300))
           continue
         }
         if (!res.ok) {
-          throw new EvotorApiError(`HTTP ${res.status}: ${lastText.slice(0, 200)}`, res.status, path)
+          throw new EvotorApiError(`HTTP ${res.status}: ${lastBody.slice(0, 240)}`, res.status, pathOrUrl)
         }
-        if (!lastText) return undefined as T
-        return JSON.parse(lastText) as T
+        if (!lastBody) return null
+        return JSON.parse(lastBody)
       } finally {
-        clearTimeout(t)
+        clearTimeout(timer)
       }
     }
-    throw new EvotorApiError(`HTTP ${lastStatus}: ${lastText.slice(0, 200)}`, lastStatus, path)
+    throw new EvotorApiError(`HTTP ${lastStatus}: ${lastBody.slice(0, 240)}`, lastStatus, pathOrUrl)
   }
 
-  getStores() {
-    return this.request<{ items?: unknown[] } | unknown[]>('GET', evotorPaths.stores)
+  /** workApp getShops → stores/search (array or wrapped) */
+  async getStores(): Promise<unknown> {
+    return this.request(evotorPaths.storesSearch)
   }
 
-  getDevices() {
-    return this.request<{ items?: unknown[] } | unknown[]>('GET', evotorPaths.devices)
+  async getEmployees(): Promise<unknown> {
+    return this.request(evotorPaths.employeesSearch)
   }
 
-  getEmployees() {
-    return this.request<{ items?: unknown[] } | unknown[]>('GET', evotorPaths.employees)
+  async getProducts(storeId: string): Promise<unknown> {
+    return this.request(evotorPaths.products(storeId))
   }
 
-  getDocuments(
+  /**
+   * Documents for store in [since, until], optional type filter (SELL, PAYBACK, …).
+   * workApp: gtCloseDate, ltCloseDate, types=
+   */
+  async getDocuments(
     storeId: string,
-    params: { since?: number | string; until?: number | string; type?: string; cursor?: string },
-  ) {
-    const query: Query = params.cursor
-      ? { cursor: params.cursor }
-      : {
-          since: params.since,
-          until: params.until,
-          type: params.type,
-        }
-    return this.request<{
-      items?: unknown[]
-      paging?: { next_cursor?: string }
-    }>('GET', evotorPaths.documents(storeId), { query })
-  }
-
-  getDocument(storeId: string, docId: string) {
-    return this.request<unknown>('GET', evotorPaths.document(storeId, docId))
-  }
-
-  getProducts(storeId: string, cursor?: string) {
-    return this.request<{ items?: unknown[]; paging?: { next_cursor?: string } }>(
-      'GET',
-      evotorPaths.products(storeId),
-      { query: cursor ? { cursor } : {} },
-    )
-  }
-
-  putProduct(storeId: string, productId: string, body: unknown) {
-    return this.request<unknown>('PUT', evotorPaths.product(storeId, productId), {
-      body,
-      retry: false,
+    since: string,
+    until: string,
+    types?: string,
+  ): Promise<unknown> {
+    const q = new URLSearchParams({
+      gtCloseDate: since,
+      ltCloseDate: until,
     })
+    if (types) q.set('types', types)
+    return this.request(`${evotorPaths.documents(storeId)}?${q}`)
+  }
+
+  async getSellDocuments(storeId: string, since: string, until: string): Promise<unknown> {
+    return this.getDocuments(storeId, since, until, 'SELL')
   }
 }

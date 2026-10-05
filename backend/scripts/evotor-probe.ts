@@ -1,77 +1,77 @@
 /**
- * Phase 0 probe — run on server with EVOTOR_API_TOKEN set.
- * Writes summary to stdout; save sanitized samples to __fixtures__ manually.
+ * Phase 0 probe — EVOTOR_API_TOKEN fixed in env (no webhook).
+ * Pattern: workApp Evotor + X-Authorization + v1 inventories.
  *
- *   cd backend && EVOTOR_API_TOKEN=... npx tsx scripts/evotor-probe.ts
+ *   export EVOTOR_API_TOKEN='…'
+ *   npm run evotor:probe
  */
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { EvotorClient } from '../src/integrations/evotor/client/EvotorClient'
+import { EvotorClient, formatDateWithTime } from '../src/integrations/evotor/client/EvotorClient'
 
 const client = new EvotorClient()
-const outDir = join(import.meta.dirname ?? '.', '../src/integrations/evotor/__fixtures__')
+
+function asArray(data: unknown): unknown[] {
+  if (Array.isArray(data)) return data
+  if (data && typeof data === 'object' && Array.isArray((data as { items?: unknown[] }).items)) {
+    return (data as { items: unknown[] }).items
+  }
+  return []
+}
 
 async function main() {
-  const report: Record<string, unknown> = {
-    at: new Date().toISOString(),
-    configured: client.isConfigured,
-  }
   if (!client.isConfigured) {
-    console.error('Set EVOTOR_API_TOKEN')
+    console.error('Set EVOTOR_API_TOKEN in env (fixed token from Evotor, not webhook).')
     process.exit(1)
   }
 
+  const report: Record<string, unknown> = { at: new Date().toISOString(), mode: 'v1+X-Authorization' }
+
   try {
     const stores = await client.getStores()
-    report.stores = stores
-    console.log('0.1 stores OK')
+    const list = asArray(stores)
+    report.storesCount = list.length
+    report.storeSample = list[0]
+      ? {
+          keys: Object.keys(list[0] as object),
+          uuid: (list[0] as { uuid?: string; id?: string }).uuid ?? (list[0] as { id?: string }).id,
+        }
+      : null
+    console.log('0.1 stores OK', report.storesCount)
   } catch (e) {
     report.storesError = String(e)
     console.error('0.1 stores FAIL', e)
   }
 
   try {
-    const devices = await client.getDevices()
-    report.devices = Array.isArray(devices)
-      ? { count: devices.length }
-      : { count: (devices as { items?: unknown[] }).items?.length }
-    console.log('0.1 devices OK')
+    const em = await client.getEmployees()
+    report.employeesCount = asArray(em).length
+    console.log('0.1 employees OK', report.employeesCount)
   } catch (e) {
-    report.devicesError = String(e)
+    report.employeesError = String(e)
   }
 
   try {
-    const storesRaw = await client.getStores()
-    const items = Array.isArray(storesRaw)
-      ? storesRaw
-      : ((storesRaw as { items?: { id?: string; uuid?: string }[] }).items ?? [])
-    const first = items[0] as { id?: string; uuid?: string } | undefined
-    const storeId = first?.id ?? first?.uuid
+    const stores = asArray(await client.getStores())
+    const first = stores[0] as { uuid?: string; id?: string } | undefined
+    const storeId = first?.uuid ?? first?.id
     if (storeId) {
-      const docs = await client.getDocuments(storeId, {
-        since: Date.now() - 7 * 86400_000,
-      })
-      report.documentsSampleMeta = {
-        storeId,
-        itemCount: docs.items?.length ?? 0,
-        next_cursor: docs.paging?.next_cursor ? 'yes' : 'no',
-        types: [...new Set((docs.items ?? []).map((d) => (d as { type?: string }).type))],
-      }
-      const sell = (docs.items ?? []).find((d) => (d as { type?: string }).type === 'SELL')
+      const since = formatDateWithTime(new Date(Date.now() - 7 * 86400_000), false)
+      const until = formatDateWithTime(new Date(), true)
+      const docs = asArray(await client.getDocuments(storeId, since, until))
+      report.documentsCount = docs.length
+      report.docTypes = [...new Set(docs.map((d) => (d as { type?: string }).type))]
+      const sell = docs.find((d) => (d as { type?: string }).type === 'SELL')
       if (sell) {
-        mkdirSync(outDir, { recursive: true })
-        const sanitized = JSON.parse(JSON.stringify(sell)) as Record<string, unknown>
-        // strip likely PII
-        const body = sanitized.body as Record<string, unknown> | undefined
-        if (body) {
-          delete body.customer_email
-          delete body.customer_phone
-        }
-        writeFileSync(join(outDir, 'sell-sample.json'), JSON.stringify(sanitized, null, 2))
-        report.sellFixture = 'sell-sample.json written'
+        const dir = join(import.meta.dirname ?? '.', '../src/integrations/evotor/__fixtures__')
+        mkdirSync(dir, { recursive: true })
+        const copy = JSON.parse(JSON.stringify(sell)) as Record<string, unknown>
+        writeFileSync(join(dir, 'sell-sample.json'), JSON.stringify(copy, null, 2))
+        report.sellFixture = 'sell-sample.json'
+        report.sellKeys = Object.keys(sell as object)
         console.log('0.3 SELL fixture written')
       } else {
-        console.log('0.3 no SELL in last 7d — create a test sale on terminal')
+        console.log('0.3 no SELL in 7d — make a test sale on terminal')
       }
     }
   } catch (e) {
@@ -80,7 +80,7 @@ async function main() {
   }
 
   console.log(JSON.stringify(report, null, 2))
-  console.log('\nNext: fill docs/EVOTOR-FACTS.md; run APK prototype for 0.6 extras.')
+  console.log('\nFill docs/EVOTOR-FACTS.md from this output. Token stays only in server .env.')
 }
 
 main().catch((e) => {

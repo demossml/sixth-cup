@@ -1,56 +1,53 @@
 /**
- * Document poll (MASTER-TZ §8). Insert only; handlers come after Phase 0.6.
+ * Document poll — workApp style (v1 gtCloseDate/ltCloseDate), fixed token.
+ * Insert-only; loyalty handlers after FACTS 0.6.
  */
 import type Database from 'better-sqlite3'
-import { EvotorClient } from '../client/EvotorClient'
+import { EvotorClient, formatDateWithTime } from '../client/EvotorClient'
 import { evotorConfig } from '../../../config'
-import type { EvotorDocumentBase } from '../types/common'
 
-function closeDateMs(doc: EvotorDocumentBase): number {
-  const raw = doc.close_date ?? (doc as { closeDate?: string }).closeDate
-  if (typeof raw === 'number') return raw
+function asArray(data: unknown): unknown[] {
+  if (Array.isArray(data)) return data
+  if (data && typeof data === 'object' && Array.isArray((data as { items?: unknown[] }).items)) {
+    return (data as { items: unknown[] }).items
+  }
+  return []
+}
+
+function storeIdOf(row: Record<string, unknown>): string | null {
+  const id = row.uuid ?? row.id ?? row.storeUuid ?? row.store_id
+  return typeof id === 'string' && id ? id : null
+}
+
+function docIdOf(row: Record<string, unknown>): string | null {
+  const id = row.uuid ?? row.id
+  return typeof id === 'string' && id ? id : null
+}
+
+function closeDateMs(row: Record<string, unknown>): number {
+  const raw = row.closeDate ?? row.close_date
+  if (typeof raw === 'number') return raw > 1e12 ? raw : raw * 1000
   if (typeof raw === 'string') {
-    const n = Number(raw)
-    if (!Number.isNaN(n) && n > 1e12) return n
-    if (!Number.isNaN(n) && n > 1e9) return n * 1000
-    const t = Date.parse(raw)
+    const t = Date.parse(raw.replace(' ', 'T'))
     if (!Number.isNaN(t)) return t
   }
   return Date.now()
 }
 
-function whitelist(doc: EvotorDocumentBase): string {
-  const body = (doc.body ?? {}) as Record<string, unknown>
-  const positions = Array.isArray(body.positions)
-    ? (body.positions as Record<string, unknown>[]).map((p) => ({
-        product_id: p.product_id,
-        quantity: p.quantity,
-        price: p.price,
-        sum: p.sum,
-        result_sum: p.result_sum,
-        result_price: p.result_price,
-        doc_distributed_discount: p.doc_distributed_discount,
-      }))
-    : []
-  const wl = {
-    id: doc.id,
-    type: doc.type,
-    number: doc.number,
-    close_date: doc.close_date,
-    session_id: doc.session_id,
-    device_id: doc.device_id,
-    store_id: doc.store_id,
-    extras: doc.extras,
-    body: {
-      positions,
-      sum: body.sum,
-      result_sum: body.result_sum,
-      doc_discounts: body.doc_discounts,
-      base_document_id: body.base_document_id,
-      base_document_number: body.base_document_number,
-    },
-  }
-  return JSON.stringify(wl)
+function whitelist(row: Record<string, unknown>): string {
+  const transactions = row.transactions
+  const body = row.body
+  return JSON.stringify({
+    id: docIdOf(row),
+    type: row.type,
+    closeDate: row.closeDate ?? row.close_date,
+    store_id: row.storeUuid ?? row.store_id,
+    device_id: row.deviceUuid ?? row.device_id,
+    extras: row.extras,
+    // v1 often uses transactions[]; v2 uses body — keep both keys for FACTS
+    transactions: Array.isArray(transactions) ? transactions.length : undefined,
+    body: body && typeof body === 'object' ? { keys: Object.keys(body as object) } : undefined,
+  })
 }
 
 export class PollService {
@@ -61,7 +58,7 @@ export class PollService {
 
   async ensureStores(): Promise<string[]> {
     const raw = await this.client.getStores()
-    const items = Array.isArray(raw) ? raw : ((raw as { items?: unknown[] }).items ?? [])
+    const items = asArray(raw)
     const now = Date.now()
     const ids: string[] = []
     const upsert = this.db.prepare(
@@ -69,11 +66,11 @@ export class PollService {
        ON CONFLICT(store_uuid) DO UPDATE SET name=excluded.name, updated_at=excluded.updated_at`,
     )
     for (const it of items) {
-      const o = it as { id?: string; uuid?: string; name?: string }
-      const id = o.id ?? o.uuid
+      const o = it as Record<string, unknown>
+      const id = storeIdOf(o)
       if (!id) continue
       ids.push(id)
-      upsert.run(id, o.name ?? null, now)
+      upsert.run(id, (o.name as string) ?? null, now)
       this.db
         .prepare(
           `INSERT OR IGNORE INTO evotor_sync_state(store_uuid, last_seen_close_ms) VALUES(?,0)`,
@@ -84,8 +81,11 @@ export class PollService {
   }
 
   async pollStore(storeUuid: string, sinceMs: number): Promise<number> {
-    let cursor: string | undefined
-    let page = 0
+    const since = formatDateWithTime(new Date(sinceMs || Date.now() - 7 * 86400_000), false)
+    const until = formatDateWithTime(new Date(), true)
+    // All types first (like workApp getDoc); filter in DB
+    const raw = await this.client.getDocuments(storeUuid, since, until)
+    const items = asArray(raw) as Record<string, unknown>[]
     let inserted = 0
     const ins = this.db.prepare(`
       INSERT OR IGNORE INTO evotor_docs(
@@ -93,54 +93,40 @@ export class PollService {
         source, status, wl_json, received_at
       ) VALUES (?,?,?,?,?,?,?,'poll',?,?,?)
     `)
+    const now = Date.now()
+    let maxClose = sinceMs
 
-    for (;;) {
-      const res = await this.client.getDocuments(storeUuid, {
-        since: cursor ? undefined : sinceMs,
-        cursor,
-      })
-      const items = (res.items ?? []) as EvotorDocumentBase[]
-      const now = Date.now()
-      let maxClose = sinceMs
-
-      for (const doc of items) {
-        const id = doc.id
-        if (!id) continue
-        const type = String(doc.type ?? 'UNKNOWN')
-        const cms = closeDateMs(doc)
-        maxClose = Math.max(maxClose, cms)
-        const business = type === 'SELL' || type === 'PAYBACK' || type === 'CORRECTION'
-        const status = business ? 'RECEIVED' : 'IGNORED'
-        const wl = business ? whitelist(doc) : null
-        const r = ins.run(
-          storeUuid,
-          id,
-          type,
-          doc.device_id ?? null,
-          doc.session_id ?? null,
-          doc.number ?? null,
-          cms,
-          status,
-          wl,
-          now,
-        )
-        if (r.changes > 0) inserted++
-      }
-
-      this.db
-        .prepare(
-          `UPDATE evotor_sync_state SET last_seen_close_ms = MAX(last_seen_close_ms, ?), last_fast_at = ? WHERE store_uuid = ?`,
-        )
-        .run(maxClose, now, storeUuid)
-
-      cursor = res.paging?.next_cursor
-      page++
-      if (!cursor || page > 200) break
+    for (const doc of items) {
+      const id = docIdOf(doc)
+      if (!id) continue
+      const type = String(doc.type ?? 'UNKNOWN')
+      const cms = closeDateMs(doc)
+      maxClose = Math.max(maxClose, cms)
+      const business = type === 'SELL' || type === 'PAYBACK' || type === 'CORRECTION'
+      const r = ins.run(
+        storeUuid,
+        id,
+        type,
+        (doc.deviceUuid ?? doc.device_id ?? null) as string | null,
+        (doc.sessionUuid ?? doc.session_id ?? null) as string | null,
+        (doc.number as number) ?? null,
+        cms,
+        business ? 'RECEIVED' : 'IGNORED',
+        business ? whitelist(doc) : null,
+        now,
+      )
+      if (r.changes > 0) inserted++
     }
+
+    this.db
+      .prepare(
+        `UPDATE evotor_sync_state SET last_seen_close_ms = MAX(last_seen_close_ms, ?), last_fast_at = ? WHERE store_uuid = ?`,
+      )
+      .run(maxClose, now, storeUuid)
+
     return inserted
   }
 
-  /** Fast window for all stores. */
   async runFast(): Promise<{ stores: number; inserted: number }> {
     if (!this.client.isConfigured) return { stores: 0, inserted: 0 }
     const stores = await this.ensureStores()
@@ -151,7 +137,7 @@ export class PollService {
         .prepare(`SELECT last_seen_close_ms FROM evotor_sync_state WHERE store_uuid=?`)
         .get(s) as { last_seen_close_ms: number } | undefined
       const since = Math.max(0, (row?.last_seen_close_ms ?? 0) - overlap)
-      inserted += await this.pollStore(s, since || Date.now() - 7 * 86400_000)
+      inserted += await this.pollStore(s, since || Date.now() - 5 * 86400_000)
     }
     return { stores: stores.length, inserted }
   }

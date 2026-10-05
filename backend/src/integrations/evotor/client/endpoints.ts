@@ -1,16 +1,16 @@
-/** All Evotor Cloud paths in one place (MASTER-TZ §3–10). */
+/**
+ * Evotor Cloud paths — aligned with working workApp client.
+ * Primary: API v1 inventories (X-Authorization + EVOTOR_API_TOKEN from env).
+ * Token is FIXED in server .env — no /user/token webhook required for 6.7.
+ */
 export const evotorPaths = {
-  stores: '/stores',
-  devices: '/devices',
-  employees: '/employees',
-  documents: (storeId: string) => `/stores/${storeId}/documents`,
-  document: (storeId: string, docId: string) => `/stores/${storeId}/documents/${docId}`,
-  deviceDocuments: (storeId: string, deviceId: string) =>
-    `/stores/${storeId}/devices/${deviceId}/documents`,
-  products: (storeId: string) => `/stores/${storeId}/products`,
-  product: (storeId: string, productId: string) => `/stores/${storeId}/products/${productId}`,
-  productGroups: (storeId: string) => `/stores/${storeId}/product-groups`,
-  productGroup: (storeId: string, groupId: string) =>
-    `/stores/${storeId}/product-groups/${groupId}`,
-  bulks: (bulkId: string) => `/bulks/${bulkId}`,
+  /** workApp: stores/search */
+  storesSearch: '/api/v1/inventories/stores/search',
+  employeesSearch: '/api/v1/inventories/employees/search',
+  products: (storeId: string) => `/api/v1/inventories/stores/${storeId}/products`,
+  /** Documents: gtCloseDate & ltCloseDate (ISO-like strings from workApp formatDateWithTime) */
+  documents: (storeId: string) => `/api/v1/inventories/stores/${storeId}/documents`,
+  /** Optional V2 (probe only if v1 fails) */
+  v2Stores: '/stores',
+  v2Documents: (storeId: string) => `/stores/${storeId}/documents`,
 } as const
