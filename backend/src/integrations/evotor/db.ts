@@ -125,14 +125,5 @@ CREATE TABLE IF NOT EXISTS card_denylist (
 );
 `)
 
-  // card_id on users if table exists
-  try {
-    const cols = db.prepare(`PRAGMA table_info(users)`).all() as { name: string }[]
-    if (cols.length && !cols.some((c) => c.name === 'card_id')) {
-      db.exec(`ALTER TABLE users ADD COLUMN card_id TEXT`)
-      db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_card_id ON users(card_id) WHERE card_id IS NOT NULL`)
-    }
-  } catch {
-    /* users may not exist in unit tests */
-  }
+
 }

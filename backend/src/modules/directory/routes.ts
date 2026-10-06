@@ -1,11 +1,12 @@
 import { Hono } from 'hono'
 import { config } from '../../config'
 import { db } from '../../db'
-import { serverPub } from '../../lib/crypto'
+import { serverKeys, serverPub } from '../../lib/crypto'
 import { requireDevice } from '../../middleware/device'
 
 function publicDirectory() {
   const now = Math.floor(Date.now() / 1000)
+  const nowMs = Date.now()
   const devices = db.prepare('SELECT id, public_key AS pub, revoked FROM devices WHERE public_key IS NOT NULL')
     .all() as { id: number; pub: string; revoked: number }[]
 
@@ -30,10 +31,13 @@ function publicDirectory() {
     SELECT id, name, price, icon, description, category_id AS categoryId,
            image_url AS imageUrl, sort_order AS sortOrder,
            modifier_scheme_id AS modifierSchemeId,
-           counts_as_cup AS countsAsCup
-    FROM products WHERE available=1
+           counts_as_cup AS countsAsCup, free_eligible AS freeEligible
+    FROM products
+    WHERE available=1
+      AND (season_start_at IS NULL OR season_start_at<=?)
+      AND (season_end_at IS NULL OR season_end_at>=?)
     ORDER BY sort_order, id
-  `).all() as Record<string, unknown>[]
+  `).all(nowMs, nowMs) as Record<string, unknown>[]
 
   const modifiers = db.prepare(`
     SELECT id, name, price, group_key AS groupKey, sort_order AS sortOrder
@@ -52,6 +56,7 @@ function publicDirectory() {
 
   return {
     serverPub,
+    serverKeys,
     cupsForFree: config.cupsForFree,
     referralCashbackPercent: config.referralCashbackPercent,
     currency: config.currency,
@@ -89,6 +94,7 @@ function publicDirectory() {
       sortOrder: p.sortOrder ?? 0,
       modifierSchemeId: p.modifierSchemeId ?? null,
       countsAsCup: !!(p as { countsAsCup?: number }).countsAsCup,
+      freeEligible: !!(p as { freeEligible?: number }).freeEligible,
     })),
     promos,
   }
@@ -103,7 +109,10 @@ export const directoryRoutes = new Hono()
              recipe_text AS recipeText, recipe_cost_rub AS recipeCostRub,
              recipe_seconds AS recipeSeconds,
              counts_as_cup AS countsAsCup
-      FROM products WHERE available=1 ORDER BY sort_order, id
-    `).all()
+      FROM products WHERE available=1
+        AND (season_start_at IS NULL OR season_start_at<=?)
+        AND (season_end_at IS NULL OR season_end_at>=?)
+      ORDER BY sort_order, id
+    `).all(Date.now(), Date.now())
     return c.json({ products })
   })

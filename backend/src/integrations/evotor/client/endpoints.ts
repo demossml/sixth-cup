@@ -8,6 +8,7 @@ export const evotorPaths = {
   storesSearch: '/api/v1/inventories/stores/search',
   employeesSearch: '/api/v1/inventories/employees/search',
   products: (storeId: string) => `/api/v1/inventories/stores/${storeId}/products`,
+  productExtras: (storeId: string) => `/api/v1/inventories/stores/${storeId}/products/extras`,
   /** Documents: gtCloseDate & ltCloseDate (ISO-like strings from workApp formatDateWithTime) */
   documents: (storeId: string) => `/api/v1/inventories/stores/${storeId}/documents`,
   /** Optional V2 (probe only if v1 fails) */

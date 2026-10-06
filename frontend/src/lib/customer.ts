@@ -14,7 +14,7 @@ export async function computeBest(dir: Directory, me: Me): Promise<Best | null> 
   const card = await kvGet<string>('card')
   if (!card) return null
   const v = verifyProof(card, dir)
-  if (!v || v.kind !== 'card' || v.payload.u !== me.id) return null
+  if (!v || v.kind !== 'card' || v.payload.id !== me.cardId) return null
   return { state: v.payload, token: card }
 }
 
@@ -37,6 +37,7 @@ export async function submitScannedReceipt(
       reason: 'Это не QR чека кассы 6.7 Coffee. Покажите карту кассиру или отсканируйте QR с чека лояльности.',
     }
   }
+  // receipt tokens carry the numeric user id internally; card QR itself never exposes it.
   if (v.payload.u !== me.id) {
     return { ok: false, reason: 'Этот чек относится к другой карте.' }
   }

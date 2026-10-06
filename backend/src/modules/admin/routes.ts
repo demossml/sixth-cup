@@ -295,7 +295,11 @@ export const adminRoutes = new Hono()
              p.modifier_scheme_id AS modifierSchemeId,
              p.recipe_text AS recipeText,
              p.recipe_cost_rub AS recipeCostRub,
-             p.recipe_seconds AS recipeSeconds
+             p.recipe_seconds AS recipeSeconds,
+             p.counts_as_cup AS countsAsCup, p.free_eligible AS freeEligible,
+             p.tax AS tax, p.measure AS measure, p.cost_price_kopecks AS costPriceKopecks,
+             p.season_start_at AS seasonStartAt, p.season_end_at AS seasonEndAt,
+             p.evotor_extra_json AS evotorExtraJson
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
       ORDER BY p.sort_order, p.id
@@ -317,6 +321,14 @@ export const adminRoutes = new Hono()
     recipeText: z.string().max(4000).optional().nullable(),
     recipeCostRub: z.number().int().min(0).optional().nullable(),
     recipeSeconds: z.number().int().min(0).optional().nullable(),
+    countsAsCup: z.boolean().optional(),
+    freeEligible: z.boolean().optional(),
+    tax: z.string().max(32).optional(),
+    measure: z.string().max(16).optional(),
+    costPriceKopecks: z.number().int().min(0).optional(),
+    seasonStartAt: z.number().int().nullable().optional(),
+    seasonEndAt: z.number().int().nullable().optional(),
+    evotorExtraJson: z.string().max(20000).nullable().optional(),
   })), (c) => {
     const p = c.req.valid('json')
     if (p.categoryId != null) {
@@ -328,34 +340,54 @@ export const adminRoutes = new Hono()
       db.prepare(`
         UPDATE products SET name=?, price=?, icon=?, available=?, description=?,
           category_id=?, image_url=?, sort_order=?, updated_at=?,
-          modifier_scheme_id=?, recipe_text=?, recipe_cost_rub=?, recipe_seconds=?
+          modifier_scheme_id=?, recipe_text=?, recipe_cost_rub=?, recipe_seconds=?,
+          counts_as_cup=COALESCE(?, counts_as_cup), free_eligible=COALESCE(?, free_eligible),
+          tax=COALESCE(?, tax), measure=COALESCE(?, measure), cost_price_kopecks=COALESCE(?, cost_price_kopecks),
+          season_start_at=?, season_end_at=?, evotor_extra_json=?
         WHERE id=?
       `).run(
         p.name, p.price, p.icon, p.available ? 1 : 0,
         p.description ?? null, p.categoryId ?? null, p.imageUrl ?? null,
         p.sortOrder, t,
         p.modifierSchemeId ?? null, p.recipeText ?? null, p.recipeCostRub ?? null, p.recipeSeconds ?? null,
-        p.id
+        p.countsAsCup === undefined ? null : (p.countsAsCup ? 1 : 0),
+        p.freeEligible === undefined ? null : (p.freeEligible ? 1 : 0),
+        p.tax ?? null, p.measure ?? null, p.costPriceKopecks ?? null,
+        p.seasonStartAt ?? null, p.seasonEndAt ?? null, p.evotorExtraJson ?? null, p.id
       )
     } else {
       db.prepare(`
         INSERT INTO products(name,price,icon,available,description,category_id,image_url,sort_order,created_at,updated_at,
-          modifier_scheme_id,recipe_text,recipe_cost_rub,recipe_seconds)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+          modifier_scheme_id,recipe_text,recipe_cost_rub,recipe_seconds,counts_as_cup,free_eligible,tax,measure,cost_price_kopecks,season_start_at,season_end_at,evotor_extra_json)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       `).run(
         p.name, p.price, p.icon, p.available ? 1 : 0,
         p.description ?? null, p.categoryId ?? null, p.imageUrl ?? null,
         p.sortOrder, t, t,
-        p.modifierSchemeId ?? null, p.recipeText ?? null, p.recipeCostRub ?? null, p.recipeSeconds ?? null
+        p.modifierSchemeId ?? null, p.recipeText ?? null, p.recipeCostRub ?? null, p.recipeSeconds ?? null,
+        p.countsAsCup ? 1 : 0, p.freeEligible ? 1 : 0, p.tax ?? 'NO_VAT', p.measure ?? 'шт',
+        p.costPriceKopecks ?? 0, p.seasonStartAt ?? null, p.seasonEndAt ?? null, p.evotorExtraJson ?? null
       )
     }
-    return c.json({ ok: true })
+    const productId = p.id ?? Number(db.prepare('SELECT last_insert_rowid() AS id').get() as { id: number })
+    for (const store of db.prepare('SELECT store_uuid AS uuid FROM evotor_stores').all() as { uuid: string }[]) {
+      db.prepare(`INSERT INTO evotor_outbox(store_uuid,entity,entity_key,op,priority,status,attempts,next_at)
+        VALUES(?,?,?,?,5,'PENDING',0,?)`).run(store.uuid, 'PRODUCT', String(productId), 'UPSERT', Date.now())
+    }
+    return c.json({ ok: true, id: productId })
   })
 
   .delete('/products/:id', (c) => {
     const id = Number(c.req.param('id'))
-    db.prepare('DELETE FROM products WHERE id=?').run(id)
-    return c.json({ ok: true })
+    const stores = db.prepare('SELECT store_uuid FROM evotor_stores').all() as { store_uuid: string }[]
+    db.transaction(() => {
+      db.prepare('UPDATE products SET available=0, updated_at=? WHERE id=?').run(Date.now(), id)
+      for (const store of stores) {
+        db.prepare(`INSERT INTO evotor_outbox(store_uuid,entity,entity_key,op,priority,status,attempts,next_at)
+          VALUES(?,?,?,?,5,'PENDING',0,?)`).run(store.store_uuid, 'PRODUCT', String(id), 'UPSERT', Date.now())
+      }
+    })()
+    return c.json({ ok: true, disabled: true })
   })
 
   .get('/modifiers', (c) => {

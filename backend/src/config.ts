@@ -12,7 +12,8 @@ export const config = {
   uploadsDir: process.env.UPLOADS_DIR ?? resolve('./data/uploads'),
   publicBaseUrl: process.env.PUBLIC_BASE_URL ?? '',
   adminHost: process.env.ADMIN_HOST ?? '',
-  cupsForFree: 5,
+  cupsForFree: Number(process.env.CUPS_FOR_FREE ?? 5),
+  cardQrTtlSec: Number(process.env.CARD_QR_TTL_SEC ?? 86400),
   referralCashbackPercent: 3,
   currency: 'RUB',
   maxVouchersInCard: 5,
@@ -23,16 +24,7 @@ export const config = {
   /** When 1, reject requests without valid proxy token on /api/devices/* */
   evotorProxyEnforce: process.env.EVOTOR_PROXY_ENFORCE === '1',
 
-  /** mock | smsaero */
-  smsProvider: (process.env.SMS_PROVIDER ?? (isDev ? 'mock' : 'smsaero')).toLowerCase(),
-  smsAeroEmail: process.env.SMS_AERO_EMAIL ?? '',
-  smsAeroApiKey: process.env.SMS_AERO_API_KEY ?? '',
-  smsAeroSender: process.env.SMS_AERO_SENDER ?? '67Coffee',
-  /** OTP message template; {code} replaced */
-  smsOtpTemplate: process.env.SMS_OTP_TEMPLATE ?? 'Код 6.7 Coffee: {code}',
-  otpTtlMs: 5 * 60_000,
-  otpResendCooldownMs: 45_000,
-  otpLength: 4,
+
 }
 
 if (!isDev && (config.jwtSecret === 'dev-secret-change-me' || config.adminToken === 'dev-admin')) {

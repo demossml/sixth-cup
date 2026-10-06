@@ -3,19 +3,27 @@ import type { CardProof, CardState, Directory, ReceiptPayload } from './types'
 
 export const todayDay = () => Math.floor(Date.now() / 86_400_000)
 
-export const freeAvailable = (s: CardState, n: number) => Math.floor(s.p / n) - s.f
+export const freeAvailable = (s: CardState, n: number) => Math.max(0, Math.floor(s.p / n) - s.f)
 export const progress = (s: CardState, n: number) => s.p % n
 export const activeVouchers = (s: CardState) => s.v.filter((v) => v[3] >= todayDay())
 
-export type Verified = { kind: 'card' | 'receipt'; payload: CardProof | ReceiptPayload; at: number }
+export type Verified =
+  | { kind: 'card'; payload: CardProof; at: number }
+  | { kind: 'receipt'; payload: ReceiptPayload; at: number }
 
 export function verifyProof(token: string, dir: Directory): Verified | null {
-  const head = peek<{ t?: string; d?: number }>(token)
+  const head = peek<{ t?: string; d?: number; kid?: string; exp?: number; ver?: number }>(token)
   if (!head) return null
 
   if (head.t === 'c') {
-    const p = openToken<CardProof>(token, dir.serverPub)
-    return p ? { kind: 'card', payload: p, at: p.i } : null
+    if (head.ver !== 2 || !head.kid || typeof head.exp !== 'number' || head.exp < Math.floor(Date.now() / 1000)) return null
+    const keys = dir.serverKeys?.length ? dir.serverKeys : [{ kid: 'legacy', pub: dir.serverPub }]
+    for (const key of keys) {
+      if (key.kid !== head.kid) continue
+      const p = openToken<CardProof>(token, key.pub)
+      if (p) return { kind: 'card', payload: p, at: p.i }
+    }
+    return null
   }
   if (head.t === 'r') {
     const dev = dir.devices.find((d) => d.id === head.d && !d.revoked)

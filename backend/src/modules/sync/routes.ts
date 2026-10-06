@@ -11,11 +11,11 @@ export const syncRoutes = new Hono<AuthEnv>()
   .post('/', zValidator('json', z.object({ receipts: z.array(z.string().max(3000)).max(200) })), (c) => {
     const userId = c.get('userId')
     const result = applyReceipts(c.req.valid('json').receipts)
-    const u = db.prepare('SELECT id, nickname, invite_code, cashback_balance, card_code FROM users WHERE id=?')
-      .get(userId) as { id: number; nickname: string; invite_code: string; cashback_balance: number; card_code: string | null }
+    const u = db.prepare('SELECT id, card_id, card_code, nickname, invite_code, cashback_balance FROM users WHERE id=?')
+      .get(userId) as { id: number; card_id: string; card_code: string; nickname: string; invite_code: string; cashback_balance: number }
     return c.json({
       card: buildCardProof(userId),
-      me: { id: u.id, nickname: u.nickname, inviteCode: u.invite_code, cashbackBalance: u.cashback_balance, cardCode: u.card_code },
+      me: { id: u.id, cardId: u.card_id, cardCode: u.card_code, nickname: u.nickname, inviteCode: u.invite_code, cashbackBalance: u.cashback_balance },
       result,
     })
   })

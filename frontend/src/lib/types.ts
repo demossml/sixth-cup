@@ -1,16 +1,17 @@
 export type Voucher = [id: number, kind: 'p' | 'f', value: number, expDay: number]
 
 export type CardState = {
-  u: number; q: number; p: number; f: number; v: Voucher[]; cb: number
+  q: number; p: number; f: number; v: Voucher[]; cb: number
 }
-export type CardProof = CardState & { t: 'c'; i: number }
+export type CardProof = CardState & { id: string; t: 'c'; ver: 2; kid: string; i: number; exp: number }
 export type ReceiptPayload = CardState & {
-  t: 'r'; r: string; d: number
+  t: 'r'; r: string; u: number; d: number
   dp: number; df: number; dcb: number; vu: number[]; a: number; ts: number
 }
 
 export type Directory = {
   serverPub: string
+  serverKeys?: { kid: string; pub: string }[]
   cupsForFree: number
   referralCashbackPercent: number
   currency: string
@@ -27,9 +28,10 @@ export type Directory = {
     categoryId?: number | null
     imageUrl?: string | null
     sortOrder?: number
+    freeEligible?: boolean
   }[]
   promos: { id: number; title: string; body: string; icon: string; sponsor: string | null; endsAt: number }[]
 }
 
-export type Me = { id: number; nickname: string; inviteCode: string; cashbackBalance: number }
+export type Me = { id: number; cardId: string; cardCode: string; nickname: string; inviteCode: string; cashbackBalance: number }
 export type StoredReceipt = { id: string; token: string; uploaded: 0 | 1; userId: number; q: number }

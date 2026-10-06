@@ -158,4 +158,23 @@ export class EvotorClient {
     }
     return text ? JSON.parse(text) : { ok: true }
   }
+
+  async postProductExtras(storeId: string, extras: Record<string, unknown>[]): Promise<unknown> {
+    if (!this.isConfigured) throw new EvotorApiError('EVOTOR_API_TOKEN not set', 0, 'postProductExtras')
+    const path = evotorPaths.productExtras(storeId)
+    const url = `${this.baseUrl.replace(/\/$/, '')}${path}`
+    let requestUrl = url
+    if (this.proxyUrl?.trim() && url.startsWith('https://api.evotor.ru/')) {
+      requestUrl = `${this.proxyUrl}?url=${encodeURIComponent(url)}`
+    }
+    const res = await fetch(requestUrl, {
+      method: 'POST',
+      headers: { 'X-Authorization': this.token, 'Content-Type': 'application/json' },
+      body: JSON.stringify(extras),
+    })
+    const text = await res.text()
+    if (!res.ok) throw new EvotorApiError(`HTTP ${res.status}: ${text.slice(0, 300)}`, res.status, path)
+    return text ? JSON.parse(text) : { ok: true }
+  }
+
 }

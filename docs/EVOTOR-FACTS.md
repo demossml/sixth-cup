@@ -9,14 +9,14 @@
 | 0.2 V2 headers | ℹ️ не требуется | 2026-10-05 | схема v1 (`/api/v1/inventories/*`), заголовок `X-Authorization`; Accept не обязателен |
 | 0.3 SELL sample | ✅ есть | 2026-10-05 | `src/integrations/evotor/__fixtures__/sell-sample.json` (ПДн не содержит) |
 | 0.4 fields present | ✅ | 2026-10-05 | поля в `transactions[]`, НЕ `body.positions`; `extras` = `{}` (пусто в API) |
-| 0.5 product write | | | |
-| 0.6 extras in GET documents | ⚠️ extras пуст | 2026-10-05 | `extras: {}` в SELL — loyalty-`sc` из APK не виден; см. Branch 0.6 |
-| 0.7 extra size | | | |
-| 0.8 ReceiptDiscountEvent | | | |
+| 0.5 product write | ⚠️ code ready, live verification pending | 2026-10-06 | deterministic UUIDv5 + outbox + v1 POST implemented; real response still must be captured |
+| 0.6 extras in GET documents | ⚠️ pending APK test | 2026-10-06 | APK now writes signed `extras.sc`; must install and perform a real sale to confirm Cloud GET visibility |
+| 0.7 extra size | ⚠️ pending | 2026-10-06 | must measure after 0.6 |
+| 0.8 ReceiptDiscountEvent | ⚠️ code implemented, live verification pending | 2026-10-06 | signed QR verification + voucher/cashback discount calculation implemented |
 | 0.9 PAYBACK base_document_id | ✅ | 2026-10-05 | `PAYBACK` есть в 7-дневке; структура как SELL + `baseDocumentUUID` |
-| 0.10 offline delay | | | |
-| 0.11 webhook | | | |
-| 0.12 429 | | | |
+| 0.10 offline delay | ⚠️ pending | | must test on physical terminal |
+| 0.11 webhook | N/A for current v1 polling architecture | 2026-10-06 | no webhook dependency |
+| 0.12 429 | ⚠️ pending | | rate-limit behaviour still needs live probe |
 
 ### Ключевые факты API v1 (проверено 2026-10-05)
 
@@ -31,11 +31,12 @@
 
 ## Branch 0.6
 
-- [ ] (a) extras/sc visible in API document — **пока extras = {}** (не виден)
-- [ ] (b) fallback field for `op`
-- [ ] (c) STOP — no loyalty without redesign
+- [ ] (a) extras/sc visible in API document — **pending real APK sale**
+- [x] (b) fallback field for `op` — `op` is included in signed loyalty extra
+- [ ] (c) STOP — only after a real 0.6 test; code is prepared but not declared production-ready
 
 ## Decision log
 
 - 2026-10-05: схема **фиксированный токен v1** (workApp-стиль) — без webhook `/user/token`/verify/push.
+- 2026-10-06: loyalty QR v2, SELL/PAYBACK processing, ledger, outbox and Android signature verification implemented; physical 0.6 test remains the release gate.
 - 2026-10-05: исправлен формат дат (`YYYY-MM-DD`, `lt` = следующая дата) по результатам 400 на времени.

@@ -76,6 +76,16 @@ export const adminEvotorCatalog = new Hono()
     }
   })
 
+  .get('/evotor/stores/:storeUuid/products/drift', async (c) => {
+    const storeUuid = c.req.param('storeUuid')
+    const svc = new ProductPushService(db)
+    try {
+      return c.json(await svc.verifyStore(storeUuid))
+    } catch (e) {
+      throw bad(String(e), 502)
+    }
+  })
+
   /** One-shot poll documents (manual) */
   .post('/evotor/poll', async (c) => {
     const poll = new PollService(db)

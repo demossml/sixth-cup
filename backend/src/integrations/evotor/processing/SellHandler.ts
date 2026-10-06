@@ -1,9 +1,229 @@
-/**
- * SELL loyalty handler — IMPLEMENT ONLY AFTER Phase 0.6 branch (a) or (b)
- * is recorded in docs/EVOTOR-FACTS.md (MASTER-TZ §2, §9).
- */
-export function handleSellNotReady(): never {
-  throw new Error(
-    'SellHandler blocked: complete Phase 0.6 and set EVOTOR-FACTS.md branch before enabling loyalty processing',
-  )
+import type Database from 'better-sqlite3'
+import { verifyServerToken } from '../../../lib/crypto'
+import { normalizeCardCode } from '../../../modules/loyalty/proof'
+import { cashbackOf, freeEarned } from '../../../modules/loyalty/rules'
+
+type Tx = Record<string, unknown>
+
+type ScClaim = {
+  v: number
+  c: string
+  q?: number
+  op?: string
+  free?: number
+  cb?: number
+  ts?: number
+  kind?: 'token' | 'code'
+}
+
+function obj(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+}
+
+function number(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+function transactions(doc: Record<string, unknown>): Tx[] {
+  const tx = doc.transactions
+  if (Array.isArray(tx)) return tx.filter((x): x is Tx => Boolean(obj(x)))
+  const body = obj(doc.body)
+  const positions = body?.positions
+  if (Array.isArray(positions)) return positions.filter((x): x is Tx => Boolean(obj(x)))
+  return []
+}
+
+function productUuid(tx: Tx): string | null {
+  const value = tx.productUuid ?? tx.product_uuid ?? tx.productId ?? tx.product_id ?? tx.code
+  return typeof value === 'string' && value ? value : null
+}
+
+function qty(tx: Tx): number {
+  return Math.max(0, number(tx.quantity ?? tx.qty ?? 0))
+}
+
+function amountKopecks(doc: Record<string, unknown>, txs: Tx[]): number {
+  const body = obj(doc.body)
+  const candidates = [doc.closeSum, doc.close_sum, body?.closeSum, body?.close_sum, body?.sum, doc.closeResultSum, doc.close_result_sum, body?.result_sum, doc.result_sum, doc.sum]
+  for (const value of candidates) {
+    const n = number(value)
+    if (n > 0) return Math.round(n * 100)
+  }
+  return Math.round(txs.reduce((sum, tx) => sum + number(tx.result_sum ?? tx.sum ?? 0), 0) * 100)
+}
+
+function getSc(doc: Record<string, unknown>): ScClaim | null {
+  const extras = obj(doc.extras)
+  const raw = extras?.sc
+  const sc = typeof raw === 'string' ? (() => { try { return JSON.parse(raw) } catch { return null } })() : obj(raw)
+  if (!sc || sc.v !== 2 || typeof sc.c !== 'string') return null
+  return sc as unknown as ScClaim
+}
+
+function cupsForDocument(db: Database.Database, storeUuid: string, txs: Tx[]): number {
+  let cups = 0
+  const byEvotor = db.prepare(`
+    SELECT p.counts_as_cup AS countsAsCup
+    FROM evotor_products ep JOIN products p ON p.id=ep.product_id
+    WHERE ep.store_uuid=? AND ep.evotor_uuid=?
+  `)
+  const byLink = db.prepare(`
+    SELECT p.counts_as_cup AS countsAsCup
+    FROM product_store_links l JOIN products p ON p.id=l.product_id
+    WHERE l.store_uuid=? AND l.evotor_uuid=?
+  `)
+  for (const tx of txs) {
+    const uuid = productUuid(tx)
+    if (!uuid) continue
+    const row = byEvotor.get(storeUuid, uuid) as { countsAsCup: number } | undefined
+      ?? byLink.get(storeUuid, uuid) as { countsAsCup: number } | undefined
+    if (row?.countsAsCup) cups += Math.max(0, Math.floor(qty(tx)))
+  }
+  return cups
+}
+
+export function handleSell(db: Database.Database, storeUuid: string, doc: Record<string, unknown>): { processed: boolean; reason?: string } {
+  const docId = typeof doc.id === 'string' ? doc.id : null
+  if (!docId) return { processed: false, reason: 'missing document id' }
+  const sc = getSc(doc)
+  if (!sc) return { processed: false, reason: 'no loyalty extra' }
+
+  const rawCard = sc.c.trim()
+  let user: { id: number; card_id: string; card_code: string; cashback_balance: number; invited_by: number | null } | undefined
+
+  // Preferred path: signed server token. The server, not the terminal, remains the source of truth.
+  if (rawCard.includes('.')) {
+    const card = verifyServerToken(rawCard)
+    if (!card || card.t !== 'c' || card.ver !== 2 || typeof card.id !== 'string') {
+      db.prepare(`INSERT INTO disputes(kind,details,created_at) VALUES(?,?,?)`)
+        .run('bad_card_token', `SELL ${docId}: invalid signed card token`, Date.now())
+      return { processed: false, reason: 'invalid signed card token' }
+    }
+    user = db.prepare('SELECT id, card_id, card_code, cashback_balance, invited_by FROM users WHERE card_id=?')
+      .get(card.id) as typeof user
+    if (!user) {
+      db.prepare(`INSERT INTO disputes(kind,details,created_at) VALUES(?,?,?)`)
+        .run('card_not_found', `SELL ${docId}: signed card id not found`, Date.now())
+      return { processed: false, reason: 'card not found' }
+    }
+  } else {
+    // Fallback path: human-entered/scanned numeric short code. Leading zeroes are ignored.
+    const code = normalizeCardCode(rawCard)
+    if (!code) {
+      db.prepare(`INSERT INTO disputes(kind,details,created_at) VALUES(?,?,?)`)
+        .run('bad_card_code', `SELL ${docId}: card code must contain digits only`, Date.now())
+      return { processed: false, reason: 'invalid card code' }
+    }
+    user = db.prepare(`
+      SELECT id, card_id, card_code, cashback_balance, invited_by
+      FROM users
+      WHERE card_code=? OR CAST(card_code AS INTEGER)=CAST(? AS INTEGER)
+      LIMIT 1
+    `).get(code, code) as typeof user
+    if (!user) {
+      db.prepare(`INSERT INTO disputes(kind,details,created_at) VALUES(?,?,?)`)
+        .run('card_code_not_found', `SELL ${docId}: unknown card code ${code}`, Date.now())
+      return { processed: false, reason: 'card code not found' }
+    }
+  }
+
+  if (!user) return { processed: false, reason: 'card not found' }
+
+  const existing = db.prepare('SELECT 1 FROM loyalty_ops WHERE doc_store=? AND doc_id=?').get(storeUuid, docId)
+  if (existing) return { processed: true, reason: 'duplicate' }
+
+  const txs = transactions(doc)
+  const cups = cupsForDocument(db, storeUuid, txs)
+  const before = db.prepare('SELECT paid_total, free_used, seq FROM cards WHERE user_id=?').get(user.id) as {
+    paid_total: number; free_used: number; seq: number
+  } | undefined
+  if (!before) db.prepare('INSERT OR IGNORE INTO cards(user_id,updated_at) VALUES(?,?)').run(user.id, Date.now())
+  const state = (before ?? db.prepare('SELECT paid_total, free_used, seq FROM cards WHERE user_id=?').get(user.id)) as {
+    paid_total: number; free_used: number; seq: number
+  }
+  const freeAvail = Math.max(0, freeEarned(state.paid_total) - state.free_used)
+  const claimedFree = Math.max(0, Math.floor(number(sc.free)))
+  const sequenceMatches = typeof sc.q !== 'number' || sc.q === state.seq
+  const appliedFree = sequenceMatches ? Math.min(claimedFree, freeAvail, cups) : 0
+  const claimedCb = Math.max(0, Math.floor(number(sc.cb)))
+  const amount = amountKopecks(doc, txs)
+  const appliedCb = sequenceMatches ? Math.min(claimedCb, user.cashback_balance, amount) : 0
+  const paidCups = Math.max(0, cups - appliedFree)
+  const now = Date.now()
+  const cardId = user.card_id
+  const opClaimed = sc.op ?? null
+
+  db.transaction(() => {
+    db.prepare(`INSERT INTO loyalty_ops(doc_store,doc_id,kind,card_id,op_claimed,q_claimed,free,cb,disc_claimed,result_rub,cups_counted,created_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      storeUuid, docId, 'SELL', cardId, opClaimed, typeof sc.q === 'number' ? sc.q : null,
+      appliedFree, appliedCb, null, amount / 100, cups, now,
+    )
+    db.prepare(`UPDATE cards SET paid_total=paid_total+?, free_used=free_used+?, seq=seq+1, updated_at=? WHERE user_id=?`)
+      .run(paidCups, appliedFree, now, user.id)
+    if (appliedCb > 0) {
+      db.prepare('UPDATE users SET cashback_balance=cashback_balance-? WHERE id=?').run(appliedCb, user.id)
+    }
+    if (paidCups || appliedFree || appliedCb) {
+      db.prepare(`INSERT INTO loyalty_ledger(card_id,operation,cups_delta,free_delta,cashback_delta,source_type,source_id,created_at)
+        VALUES(?,?,?,?,?,?,?,?)`).run(cardId, 'EARN', paidCups, appliedFree, -appliedCb, 'EVOTOR_SELL', docId, now)
+    }
+    if (amount > 0 && user.invited_by) {
+      const bonus = cashbackOf(Math.max(0, amount - appliedCb))
+      if (bonus > 0) {
+        const beneficiary = db.prepare('SELECT card_id FROM users WHERE id=?').get(user.invited_by) as { card_id: string | null } | undefined
+        db.prepare('UPDATE users SET cashback_balance=cashback_balance+? WHERE id=?').run(bonus, user.invited_by)
+        db.prepare(`INSERT INTO cashback_ledger(beneficiary_id,from_user_id,receipt_id,amount,created_at) VALUES(?,?,?,?,?)`)
+          .run(user.invited_by, user.id, docId, bonus, now)
+        if (beneficiary?.card_id) {
+          db.prepare(`INSERT INTO loyalty_ledger(card_id,operation,cups_delta,free_delta,cashback_delta,source_type,source_id,created_at)
+            VALUES(?,?,?,?,?,?,?,?)`).run(beneficiary.card_id, 'EARN', 0, 0, bonus, 'REFERRAL', docId, now)
+        }
+      }
+    }
+    if (!sequenceMatches || appliedFree !== claimedFree || appliedCb !== claimedCb) {
+      db.prepare(`INSERT INTO disputes(kind,user_id,receipt_id,details,created_at) VALUES(?,?,?,?,?)`)
+        .run('loyalty_claim_clamped', user.id, docId, JSON.stringify({ claimedFree, appliedFree, claimedCb, appliedCb, sequenceMatches, claimedSeq: sc.q, currentSeq: state.seq }), now)
+    }
+  })()
+
+  return { processed: true }
+}
+
+export function handlePayback(db: Database.Database, storeUuid: string, doc: Record<string, unknown>): { processed: boolean; reason?: string } {
+  const docId = typeof doc.id === 'string' ? doc.id : null
+  if (!docId) return { processed: false, reason: 'missing document id' }
+  if (db.prepare('SELECT 1 FROM loyalty_ops WHERE doc_store=? AND doc_id=?').get(storeUuid, docId)) return { processed: true, reason: 'duplicate' }
+  const body = obj(doc.body)
+  const baseId = String(doc.baseDocumentUUID ?? doc.base_document_uuid ?? body?.baseDocumentUUID ?? body?.base_document_id ?? '').trim()
+  if (!baseId) return { processed: false, reason: 'missing baseDocumentUUID' }
+  const original = db.prepare(`SELECT * FROM loyalty_ops WHERE doc_store=? AND doc_id=? AND kind='SELL'`).get(storeUuid, baseId) as Record<string, unknown> | undefined
+  if (!original || typeof original.card_id !== 'string') return { processed: false, reason: 'base SELL not found' }
+  const user = db.prepare('SELECT id, cashback_balance, card_id FROM users WHERE card_id=?').get(original.card_id) as {
+    id: number; cashback_balance: number; card_id: string
+  } | undefined
+  if (!user) return { processed: false, reason: 'card not found' }
+  const now = Date.now()
+  const free = Math.max(0, Number(original.free ?? 0))
+  const cb = Math.max(0, Number(original.cb ?? 0))
+  const cups = Math.max(0, Number(original.cups_counted ?? 0))
+  db.transaction(() => {
+    db.prepare(`INSERT INTO loyalty_ops(doc_store,doc_id,kind,card_id,op_claimed,q_claimed,free,cb,disc_claimed,result_rub,cups_counted,created_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).run(storeUuid, docId, 'PAYBACK', user.card_id, baseId, null, free, cb, null, 0, cups, now)
+    db.prepare(`UPDATE cards SET paid_total=MAX(0,paid_total-?), free_used=MAX(0,free_used-?), seq=seq+1, updated_at=? WHERE user_id=?`)
+      .run(cups - free, free, now, user.id)
+    if (cb > 0) db.prepare('UPDATE users SET cashback_balance=cashback_balance+? WHERE id=?').run(cb, user.id)
+    db.prepare(`INSERT INTO loyalty_ledger(card_id,operation,cups_delta,free_delta,cashback_delta,source_type,source_id,created_at)
+      VALUES(?,?,?,?,?,?,?,?)`).run(user.card_id, 'REVERSAL', -(cups - free), -free, cb, 'EVOTOR_PAYBACK', docId, now)
+    const refs = db.prepare('SELECT beneficiary_id, amount FROM cashback_ledger WHERE receipt_id=?').all(baseId) as { beneficiary_id: number; amount: number }[]
+    for (const ref of refs) {
+      db.prepare('UPDATE users SET cashback_balance=MAX(0,cashback_balance-?) WHERE id=?').run(ref.amount, ref.beneficiary_id)
+      const beneficiary = db.prepare('SELECT card_id FROM users WHERE id=?').get(ref.beneficiary_id) as { card_id: string | null } | undefined
+      if (beneficiary?.card_id) {
+        db.prepare(`INSERT INTO loyalty_ledger(card_id,operation,cups_delta,free_delta,cashback_delta,source_type,source_id,created_at)
+          VALUES(?,?,?,?,?,?,?,?)`).run(beneficiary.card_id, 'REVERSAL', 0, 0, -ref.amount, 'EVOTOR_PAYBACK_REFERRAL', docId, now)
+      }
+    }
+  })()
+  return { processed: true }
 }

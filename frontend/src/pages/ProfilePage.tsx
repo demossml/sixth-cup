@@ -44,7 +44,13 @@ export default function ProfilePage() {
         {me && me.cashbackBalance > 0 && (
           <div className="mt-3 inline-flex items-center gap-2 bg-white/15 rounded-xl px-3 py-2">
             <Wallet size={16} />
-            <span className="text-sm font-semibold">Кэшбэк {me.cashbackBalance} ₽</span>
+            <span className="text-sm font-semibold">Кэшбэк {Math.floor(me.cashbackBalance / 100)} ₽</span>
+          </div>
+        )}
+        {me?.cardCode && (
+          <div className="mt-3 rounded-xl bg-white/10 px-3 py-2">
+            <div className="text-white/70 text-xs">Номер карты</div>
+            <div className="text-2xl font-bold tracking-[0.2em] tabular-nums">{me.cardCode.padStart(4, '0')}</div>
           </div>
         )}
       </div>

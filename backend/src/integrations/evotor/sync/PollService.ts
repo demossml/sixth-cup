@@ -1,13 +1,17 @@
 /**
- * Document poll — workApp style (v1 gtCloseDate/ltCloseDate), fixed token.
- * Insert-only; loyalty handlers after FACTS 0.6.
+ * Evotor Cloud v1 polling based on the verified Phase-0 behaviour of the test account:
+ * X-Authorization, YYYY-MM-DD gtCloseDate/ltCloseDate, and transactions[].
  */
 import type Database from 'better-sqlite3'
 import { EvotorClient, formatDateWithTime } from '../client/EvotorClient'
 import { evotorConfig } from '../../../config'
+import { handlePayback, handleSell } from '../processing/SellHandler'
 
 function asArray(data: unknown): unknown[] {
   if (Array.isArray(data)) return data
+  if (data && typeof data === 'object' && Array.isArray((data as { transactions?: unknown[] }).transactions)) {
+    return (data as { transactions: unknown[] }).transactions
+  }
   if (data && typeof data === 'object' && Array.isArray((data as { items?: unknown[] }).items)) {
     return (data as { items: unknown[] }).items
   }
@@ -35,8 +39,6 @@ function closeDateMs(row: Record<string, unknown>): number {
 }
 
 function whitelist(row: Record<string, unknown>): string {
-  const transactions = row.transactions
-  const body = row.body
   return JSON.stringify({
     id: docIdOf(row),
     type: row.type,
@@ -44,9 +46,7 @@ function whitelist(row: Record<string, unknown>): string {
     store_id: row.storeUuid ?? row.store_id,
     device_id: row.deviceUuid ?? row.device_id,
     extras: row.extras,
-    // v1 often uses transactions[]; v2 uses body — keep both keys for FACTS
-    transactions: Array.isArray(transactions) ? transactions.length : undefined,
-    body: body && typeof body === 'object' ? { keys: Object.keys(body as object) } : undefined,
+    transactions: Array.isArray(row.transactions) ? row.transactions.length : undefined,
   })
 }
 
@@ -70,32 +70,48 @@ export class PollService {
       const id = storeIdOf(o)
       if (!id) continue
       ids.push(id)
-      upsert.run(id, (o.name as string) ?? null, now)
-      this.db
-        .prepare(
-          `INSERT OR IGNORE INTO evotor_sync_state(store_uuid, last_seen_close_ms) VALUES(?,0)`,
-        )
-        .run(id)
+      upsert.run(id, typeof o.name === 'string' ? o.name : null, now)
+      this.db.prepare(`INSERT OR IGNORE INTO evotor_sync_state(store_uuid,last_seen_close_ms) VALUES(?,0)`).run(id)
     }
     return ids
+  }
+
+  private processDocument(storeUuid: string, doc: Record<string, unknown>) {
+    const type = String(doc.type ?? '')
+    if (type !== 'SELL' && type !== 'PAYBACK') return
+    const extras = doc.extras && typeof doc.extras === 'object' ? doc.extras as Record<string, unknown> : {}
+    const hasSc = extras.sc != null
+    if (!hasSc) {
+      this.db.prepare(`UPDATE evotor_docs SET status='PROCESSED', processed_at=? WHERE store_uuid=? AND doc_id=?`)
+        .run(Date.now(), storeUuid, docIdOf(doc))
+      return
+    }
+    try {
+      const result = type === 'SELL'
+        ? handleSell(this.db, storeUuid, doc)
+        : handlePayback(this.db, storeUuid, doc)
+      this.db.prepare(`UPDATE evotor_docs SET status=?, processed_at=?, last_error=? WHERE store_uuid=? AND doc_id=?`)
+        .run(result.processed ? 'PROCESSED' : 'FAILED', Date.now(), result.processed ? null : (result.reason ?? 'processing failed'), storeUuid, docIdOf(doc))
+    } catch (e) {
+      this.db.prepare(`UPDATE evotor_docs SET status='FAILED', attempts=attempts+1, last_error=? WHERE store_uuid=? AND doc_id=?`)
+        .run(String(e), storeUuid, docIdOf(doc))
+    }
   }
 
   async pollStore(storeUuid: string, sinceMs: number): Promise<number> {
     const since = formatDateWithTime(new Date(sinceMs || Date.now() - 7 * 86400_000), false)
     const until = formatDateWithTime(new Date(), true)
-    // All types first (like workApp getDoc); filter in DB
     const raw = await this.client.getDocuments(storeUuid, since, until)
     const items = asArray(raw) as Record<string, unknown>[]
     let inserted = 0
     const ins = this.db.prepare(`
       INSERT OR IGNORE INTO evotor_docs(
         store_uuid, doc_id, type, device_uuid, session_id, number, close_date_ms,
-        source, status, wl_json, received_at
-      ) VALUES (?,?,?,?,?,?,?,'poll',?,?,?)
+        source, status, wl_json, raw_json, received_at
+      ) VALUES (?,?,?,?,?,?,?,'poll',?,?,?,?)
     `)
     const now = Date.now()
     let maxClose = sinceMs
-
     for (const doc of items) {
       const id = docIdOf(doc)
       if (!id) continue
@@ -113,32 +129,57 @@ export class PollService {
         cms,
         business ? 'RECEIVED' : 'IGNORED',
         business ? whitelist(doc) : null,
+        business ? JSON.stringify(doc) : null,
         now,
       )
-      if (r.changes > 0) inserted++
+      if (r.changes > 0) {
+        inserted++
+        if (business) this.processDocument(storeUuid, doc)
+      }
     }
-
-    this.db
-      .prepare(
-        `UPDATE evotor_sync_state SET last_seen_close_ms = MAX(last_seen_close_ms, ?), last_fast_at = ? WHERE store_uuid = ?`,
-      )
+    this.db.prepare(`UPDATE evotor_sync_state SET last_seen_close_ms=MAX(last_seen_close_ms,?),last_fast_at=? WHERE store_uuid=?`)
       .run(maxClose, now, storeUuid)
-
     return inserted
   }
 
-  async runFast(): Promise<{ stores: number; inserted: number }> {
-    if (!this.client.isConfigured) return { stores: 0, inserted: 0 }
+  async runFast(): Promise<{ stores: number; inserted: number; errors: { storeUuid: string; error: string }[] }> {
+    if (!this.client.isConfigured) return { stores: 0, inserted: 0, errors: [] }
     const stores = await this.ensureStores()
     let inserted = 0
+    const errors: { storeUuid: string; error: string }[] = []
     const overlap = evotorConfig.fastOverlapMin * 60 * 1000
     for (const s of stores) {
-      const row = this.db
-        .prepare(`SELECT last_seen_close_ms FROM evotor_sync_state WHERE store_uuid=?`)
-        .get(s) as { last_seen_close_ms: number } | undefined
-      const since = Math.max(0, (row?.last_seen_close_ms ?? 0) - overlap)
-      inserted += await this.pollStore(s, since || Date.now() - 5 * 86400_000)
+      try {
+        const row = this.db.prepare(`SELECT last_seen_close_ms FROM evotor_sync_state WHERE store_uuid=?`).get(s) as { last_seen_close_ms: number } | undefined
+        const since = Math.max(0, (row?.last_seen_close_ms ?? 0) - overlap)
+        inserted += await this.pollStore(s, since || Date.now() - 5 * 86400_000)
+        this.db.prepare(`UPDATE evotor_sync_state SET status='OK',last_error=NULL WHERE store_uuid=?`).run(s)
+      } catch (e) {
+        const error = String(e)
+        errors.push({ storeUuid: s, error })
+        this.db.prepare(`UPDATE evotor_sync_state SET status='ERROR',last_error=? WHERE store_uuid=?`).run(error, s)
+      }
     }
+    return { stores: stores.length, inserted, errors }
+  }
+
+  async runHourly(): Promise<{ stores: number; inserted: number }> {
+    if (!this.client.isConfigured) return { stores: 0, inserted: 0 }
+    const stores = await this.ensureStores()
+    const since = Date.now() - evotorConfig.hourlyWindowHours * 3_600_000
+    let inserted = 0
+    for (const s of stores) inserted += await this.pollStore(s, since)
+    this.db.prepare(`UPDATE evotor_sync_state SET last_hourly_at=?`).run(Date.now())
+    return { stores: stores.length, inserted }
+  }
+
+  async runDaily(): Promise<{ stores: number; inserted: number }> {
+    if (!this.client.isConfigured) return { stores: 0, inserted: 0 }
+    const stores = await this.ensureStores()
+    const since = Date.now() - evotorConfig.dailyWindowDays * 86_400_000
+    let inserted = 0
+    for (const s of stores) inserted += await this.pollStore(s, since)
+    this.db.prepare(`UPDATE evotor_sync_state SET last_daily_at=?`).run(Date.now())
     return { stores: stores.length, inserted }
   }
 }

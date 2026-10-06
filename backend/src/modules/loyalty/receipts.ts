@@ -37,10 +37,16 @@ function dispute(kind: string, userId: number, receiptId: string, details: strin
 
 function applyOne(r: Receipt) {
   ensureCard(r.u)
+  const userRow = db.prepare('SELECT card_id FROM users WHERE id=?').get(r.u) as { card_id: string }
 
   db.prepare(`UPDATE cards SET paid_total = paid_total + ?, free_used = free_used + ?,
               seq = MAX(seq, ?) + 1, updated_at = ? WHERE user_id = ?`)
     .run(r.dp, r.df, r.q, Date.now(), r.u)
+
+  if (r.dp || r.df || r.dcb) {
+    db.prepare(`INSERT INTO loyalty_ledger(card_id,operation,cups_delta,free_delta,cashback_delta,source_type,source_id,created_at)
+      VALUES(?,?,?,?,?,?,?,?)`).run(userRow.card_id, 'EARN', r.dp, r.df, -r.dcb, 'CLIENT_RECEIPT', r.r, Date.now())
+  }
 
   // WELCOME после первой оплаты (не при создании гостя)
   if (r.dp > 0) {
@@ -107,6 +113,12 @@ export const applyReceipts = db.transaction((tokens: string[]): ApplyResult => {
 
     if (!r.r.startsWith(`${r.d}-`) || r.ts > now + 86_400) { result.rejected.push({ reason: 'bad receipt' }); continue }
     if (!db.prepare('SELECT 1 FROM users WHERE id=?').get(r.u)) { result.rejected.push({ reason: 'unknown user' }); continue }
+    const current = db.prepare('SELECT seq FROM cards WHERE user_id=?').get(r.u) as { seq: number } | undefined
+    if (current && r.q <= current.seq) {
+      dispute('stale_receipt_sequence', r.u, r.r, `q=${r.q}, current=${current.seq}`)
+      result.rejected.push({ reason: 'stale receipt sequence' })
+      continue
+    }
 
     const ins = db.prepare(`INSERT OR IGNORE INTO receipts(id,device_id,user_id,dp,df,dcb,amount,ts,raw,applied_at)
                             VALUES(?,?,?,?,?,?,?,?,?,?)`)

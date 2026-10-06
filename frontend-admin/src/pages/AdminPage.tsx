@@ -39,6 +39,9 @@ type Product = {
   sortOrder: number; categoryName?: string | null
   modifierSchemeId?: number | null; recipeText?: string | null
   recipeCostRub?: number | null; recipeSeconds?: number | null
+  countsAsCup?: number; freeEligible?: number; tax?: string; measure?: string
+  costPriceKopecks?: number; seasonStartAt?: number | null; seasonEndAt?: number | null
+  evotorExtraJson?: string | null
 }
 type Modifier = { id: number; name: string; price: number; groupKey: string; available: number | boolean }
 type Scheme = { id: number; name: string; items: { modifierId: number }[] }
@@ -92,6 +95,8 @@ export default function AdminPage() {
   const [prodForm, setProdForm] = useState({
     name: '', price: 0, icon: 'Coffee', categoryId: 0, description: '', imageUrl: '', sortOrder: 0,
     modifierSchemeId: 0, recipeText: '', recipeCostRub: 0, recipeSeconds: 0,
+    countsAsCup: false, freeEligible: false, tax: 'NO_VAT', measure: 'шт', costPriceKopecks: 0,
+    seasonStartAt: null as number | null, seasonEndAt: null as number | null, evotorExtraJson: '',
   })
   const [deviceName, setDeviceName] = useState('')
   const [deviceStoreId, setDeviceStoreId] = useState(0)
@@ -223,9 +228,9 @@ export default function AdminPage() {
               ['Чеки сегодня', stats.receiptsToday],
               ['Всего чеков', stats.receipts],
               ['Бесплатных', stats.freeCups],
-              ['Кэшбэк +', `${stats.cashbackGranted} ₽`],
-              ['Кэшбэк −', `${stats.cashbackSpent} ₽`],
-              ['Сумма', `${stats.amountTotal} ₽`],
+              ['Кэшбэк +', `${Math.floor(stats.cashbackGranted / 100)} ₽`],
+              ['Кэшбэк −', `${Math.floor(stats.cashbackSpent / 100)} ₽`],
+              ['Сумма', `${Math.floor(stats.amountTotal / 100)} ₽`],
               ['Юрлица', orgs.length],
             ].map(([k, v]) => (
               <div key={String(k)} className="card !mb-0">
@@ -414,6 +419,9 @@ export default function AdminPage() {
                             recipeText: p.recipeText ?? null,
                             recipeCostRub: p.recipeCostRub ?? null,
                             recipeSeconds: p.recipeSeconds ?? null,
+                            countsAsCup: !!p.countsAsCup, freeEligible: !!p.freeEligible, tax: p.tax ?? 'NO_VAT',
+                            measure: p.measure ?? 'шт', costPriceKopecks: p.costPriceKopecks ?? 0,
+                            seasonStartAt: p.seasonStartAt ?? null, seasonEndAt: p.seasonEndAt ?? null, evotorExtraJson: p.evotorExtraJson ?? null,
                           }),
                         })
                         await load(token)
@@ -443,6 +451,9 @@ export default function AdminPage() {
                         recipeText: p.recipeText ?? '',
                         recipeCostRub: p.recipeCostRub ?? 0,
                         recipeSeconds: p.recipeSeconds ?? 0,
+                        countsAsCup: !!p.countsAsCup, freeEligible: !!p.freeEligible, tax: p.tax ?? 'NO_VAT', measure: p.measure ?? 'шт',
+                        costPriceKopecks: p.costPriceKopecks ?? 0, seasonStartAt: p.seasonStartAt ?? null, seasonEndAt: p.seasonEndAt ?? null,
+                        evotorExtraJson: p.evotorExtraJson ?? '',
                       })
                       setProductModalOpen(true)
                     }}
@@ -469,6 +480,8 @@ export default function AdminPage() {
                 name: '', price: 0, icon: 'Coffee', categoryId: categories[0]?.id ?? 0,
                 description: '', imageUrl: '', sortOrder: 0,
                 modifierSchemeId: 0, recipeText: '', recipeCostRub: 0, recipeSeconds: 0,
+    countsAsCup: false, freeEligible: false, tax: 'NO_VAT', measure: 'шт', costPriceKopecks: 0,
+    seasonStartAt: null as number | null, seasonEndAt: null as number | null, evotorExtraJson: '',
               })
               setProductModalOpen(true)
             }}>+ Новый товар</button>
@@ -500,6 +513,18 @@ export default function AdminPage() {
                 <option value={0}>— без добавок —</option>
                 {schemes.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="text-xs text-ink-secondary"><input type="checkbox" checked={!!prodForm.countsAsCup} onChange={(e) => setProdForm({ ...prodForm, countsAsCup: e.target.checked })} /> Считает стакан
+                </label>
+                <label className="text-xs text-ink-secondary"><input type="checkbox" checked={!!prodForm.freeEligible} onChange={(e) => setProdForm({ ...prodForm, freeEligible: e.target.checked })} /> Можно подарить
+                </label>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <input className="input" placeholder="Налог (NO_VAT)" value={prodForm.tax} onChange={(e) => setProdForm({ ...prodForm, tax: e.target.value })} />
+                <input className="input" placeholder="Ед. (шт)" value={prodForm.measure} onChange={(e) => setProdForm({ ...prodForm, measure: e.target.value })} />
+              </div>
+              <input className="input" type="number" placeholder="Себестоимость, копейки" value={prodForm.costPriceKopecks || ''} onChange={(e) => setProdForm({ ...prodForm, costPriceKopecks: Number(e.target.value) })} />
+              <textarea className="input min-h-[60px]" placeholder="JSON extras для Evotor (необязательно)" value={prodForm.evotorExtraJson} onChange={(e) => setProdForm({ ...prodForm, evotorExtraJson: e.target.value })} />
               <label className="text-sm font-semibold text-ink block mt-2">Рецепт для бариста</label>
               <p className="text-xs text-ink-secondary">Текст увидит кассир на кассе (long-press / рецепт)</p>
               <textarea className="input min-h-[80px]" placeholder="Как готовить…"
@@ -551,6 +576,9 @@ export default function AdminPage() {
                         recipeText: prodForm.recipeText || null,
                         recipeCostRub: prodForm.recipeCostRub || null,
                         recipeSeconds: prodForm.recipeSeconds || null,
+                        countsAsCup: !!prodForm.countsAsCup, freeEligible: !!prodForm.freeEligible, tax: prodForm.tax || 'NO_VAT', measure: prodForm.measure || 'шт',
+                        costPriceKopecks: prodForm.costPriceKopecks || 0, seasonStartAt: prodForm.seasonStartAt, seasonEndAt: prodForm.seasonEndAt,
+                        evotorExtraJson: prodForm.evotorExtraJson || null,
                       }),
                     })
                     setEditingId(null)
@@ -559,6 +587,8 @@ export default function AdminPage() {
                       name: '', price: 0, icon: 'Coffee', categoryId: categories[0]?.id ?? 0,
                       description: '', imageUrl: '', sortOrder: 0,
                       modifierSchemeId: 0, recipeText: '', recipeCostRub: 0, recipeSeconds: 0,
+    countsAsCup: false, freeEligible: false, tax: 'NO_VAT', measure: 'шт', costPriceKopecks: 0,
+    seasonStartAt: null as number | null, seasonEndAt: null as number | null, evotorExtraJson: '',
                     })
                     await load(token)
                   } catch (e) {
@@ -577,6 +607,8 @@ export default function AdminPage() {
                     name: '', price: 0, icon: 'Coffee', categoryId: categories[0]?.id ?? 0,
                     description: '', imageUrl: '', sortOrder: 0,
                     modifierSchemeId: 0, recipeText: '', recipeCostRub: 0, recipeSeconds: 0,
+    countsAsCup: false, freeEligible: false, tax: 'NO_VAT', measure: 'шт', costPriceKopecks: 0,
+    seasonStartAt: null as number | null, seasonEndAt: null as number | null, evotorExtraJson: '',
                   })
                 }}>Отмена</button>
             </div>

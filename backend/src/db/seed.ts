@@ -166,7 +166,6 @@ export function resetLoyaltyData() {
     'DELETE FROM receipts',
     'DELETE FROM vouchers',
     'DELETE FROM cards',
-    'DELETE FROM sms_codes',
     'DELETE FROM customer_recovery',
     'DELETE FROM users',
   ]

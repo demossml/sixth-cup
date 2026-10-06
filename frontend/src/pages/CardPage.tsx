@@ -55,7 +55,7 @@ export default function CardPage() {
         <div className="flex items-center justify-between mb-3">
           <div>
             <p className="text-white/70 text-xs">Моя карта</p>
-            <h1 className="text-xl font-bold">{me ? `№${me.id}` : '—'}</h1>
+            <h1 className="text-xl font-bold">Карта лояльности</h1>
           </div>
           <span className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full ${online ? 'bg-white/20' : 'bg-black/20'}`}>
             {syncing ? <RefreshCw size={12} className="animate-spin" /> : online ? <Wifi size={12} /> : <WifiOff size={12} />}
@@ -138,6 +138,14 @@ export default function CardPage() {
             <div className="card text-center">
               <p className="text-sm font-medium text-ink mb-1">Покажите код кассиру</p>
               <Qr value={best.token} />
+              {me?.cardCode && (
+                <div className="mt-3 rounded-xl bg-surface px-3 py-2">
+                  <div className="text-xs text-ink-tertiary">Номер карты — если QR не сканируется</div>
+                  <div className="mt-0.5 text-3xl font-bold tracking-[0.2em] tabular-nums text-ink">
+                    {me.cardCode.padStart(4, '0')}
+                  </div>
+                </div>
+              )}
             </div>
 
             {freeLeft > 0 && (
@@ -152,7 +160,7 @@ export default function CardPage() {
                   <Wallet size={20} className="text-accent-green" />
                 </div>
                 <div>
-                  <div className="text-sm font-semibold text-ink">Кэшбэк {best.state.cb} ₽</div>
+                  <div className="text-sm font-semibold text-ink">Кэшбэк {Math.floor(best.state.cb / 100)} ₽</div>
                   <div className="text-xs text-ink-secondary">Можно списать на кассе</div>
                 </div>
               </div>
@@ -171,16 +179,7 @@ export default function CardPage() {
               </div>
             ))}
 
-            <details className="mt-2">
-              <summary className="text-ink-tertiary text-xs cursor-pointer">Технический код карты</summary>
-              <textarea
-                className="input mt-1 text-xs"
-                readOnly
-                value={best.token}
-                rows={3}
-                onFocus={(e) => e.target.select()}
-              />
-            </details>
+
           </>
         )}
 

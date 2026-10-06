@@ -22,13 +22,13 @@ function newReceiptId(deviceId: number) {
 }
 
 export async function createReceipt(
-  creds: DeviceCreds, base: CardState,
+  creds: DeviceCreds, base: CardState, userId: number,
   o: { cups: number; useFree: boolean; voucherId: number | null; cashbackUse: number; amount: number },
 ) {
   const vu = o.voucherId ? [o.voucherId] : []
   const dcb = Math.min(o.cashbackUse, base.cb)
   const payload: ReceiptPayload = {
-    t: 'r', r: newReceiptId(creds.deviceId), u: base.u, d: creds.deviceId,
+    t: 'r', r: newReceiptId(creds.deviceId), u: userId, d: creds.deviceId,
     q: base.q + 1,
     p: base.p + o.cups,
     f: base.f + (o.useFree ? 1 : 0),
@@ -38,8 +38,8 @@ export async function createReceipt(
     ts: Math.floor(Date.now() / 1000),
   }
   const token = signPayload(payload, b64u.dec(creds.priv))
-  await putReceipt({ id: payload.r, token, uploaded: 0, userId: base.u, q: payload.q })
-  await putSeen({ userId: base.u, q: payload.q, token })
+  await putReceipt({ id: payload.r, token, uploaded: 0, userId, q: payload.q })
+  await putSeen({ userId, q: payload.q, token })
   return { token, payload }
 }
 
