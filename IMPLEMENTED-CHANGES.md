@@ -1,29 +1,31 @@
-# Sixth Cup — implemented customer mechanics
+# 6.7 Coffee — current implementation summary
 
-This build adds the new customer flow on top of the existing loyalty/cashier core.
+This file supersedes the older customer-mechanics notes that described SMS login and a standalone cashier catalog.
 
-## Implemented
+## Current customer flow
 
-- Automatic anonymous customer account creation at first app launch.
-- Optional `?invite=...` is consumed during automatic account creation.
-- Existing SMS login remains available at `/login` as a legacy/recovery path.
-- Persistent local account storage in IndexedDB with JWT runtime mirror.
-- Customer referral QR at `/invite`.
-- Referral relationship uses the existing `users.invited_by` field.
-- Existing 3% referral cashback engine is preserved.
-- Aggregated referral statistics: total cashback from friends + friend count.
-- No individual friend identity or per-friend amounts are returned to the client.
-- One-time account recovery QR at `/save-account` and `/recover?token=...`.
-- Recovery tokens are stored only as SHA-256 hashes and previous active tokens are revoked when a new one is generated.
-- Save-account banner appears from the second app launch until dismissed/saved.
-- Existing menu, promos, cards, receipts, offline sync and cashier mechanisms are retained.
+- Anonymous guest account; phone/SMS is not required.
+- Signed customer QR is the preferred loyalty identifier.
+- Numeric short card code is a supported fallback for barista manual entry or numeric scanner output.
+- Card code is normalized server-side; loyalty is applied only after fiscal SELL polling.
 
-## Important deployment note
+## Current Evotor catalog flow
 
-The first-ever automatic account creation requires network access because the server must create the account and issue the JWT. After that, the customer app keeps working from the existing offline cache as before.
+- Evotor Cloud is authoritative for store/employee/base product records.
+- A new 6.7 product is first created locally with no Evotor UUID.
+- Cloud CREATE assigns the Evotor product UUID; 6.7 persists it per store.
+- Later changes use PUT with the saved UUID and never CREATE a duplicate.
+- A stable `articleNumber=sc-<localProductId>` recovers a product when a CREATE response is lost.
+- Existing Evotor-only products are imported/upserted by `(store_uuid, evotor_uuid)`.
+- Recipe/toppings/business metadata are pushed as `ProductExtra`.
+- APK reads terminal inventory + `ProductExtra`; it has no hardcoded product catalog.
 
-## Validation performed in this environment
+## Current fiscal flow
 
-- SQLite base schema + recovery migration: passed.
-- TypeScript parser-level check: no syntax diagnostics found in modified TS/TSX files.
-- Full `npm run typecheck` / production build could not be executed in this environment because the archive's dependency tree was not installed and package installation timed out. Run `npm install`, then `npm run typecheck`, `npm test -w backend`, and `npm run build` on the development machine before production deployment.
+- APK returns an Evotor `Position` through `ru.evotor.createPosition`.
+- EvotorPOS remains responsible for the receipt and fiscalization.
+- Backend processes the resulting Cloud `SELL` through polling and `SellHandler`.
+
+## Validation
+
+The source tree has passed migration and syntax-level checks in the current working environment. A full Android Gradle build still requires an available Gradle 8.2 distribution and the actual SDK/dependency artifacts. The final physical gate is testing on the real ST5 terminal and Evotor Cloud.

@@ -18,8 +18,6 @@ export const api = hc<AppType>('/', {
   },
 })
 
-export const deviceApi = (token: string) =>
-  hc<AppType>('/', { fetch: timedFetch, headers: { 'X-Device-Token': token } })
 
 export async function unwrap<T>(p: Promise<{ ok: boolean; json: () => Promise<T> }>): Promise<T> {
   const res = await p

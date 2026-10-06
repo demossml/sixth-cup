@@ -9,6 +9,7 @@ import { bad } from '../../lib/errors'
 import { grantVoucher } from '../vouchers/service'
 import { resetLoyaltyData, resetCatalogData } from '../../db/seed'
 import { adminEvotorCatalog } from './evotorCatalog'
+import { ProductPushService } from '../../integrations/evotor/sync/ProductPushService'
 
 const adminAuth = createMiddleware(async (c, next) => {
   if (c.req.header('X-Admin-Token') !== config.adminToken) throw bad('Forbidden', 403)
@@ -16,6 +17,21 @@ const adminAuth = createMiddleware(async (c, next) => {
 })
 
 const taxRegimeZ = z.enum(TAX_REGIMES)
+
+function enqueueProductSync(productIds: number[]) {
+  const ids = [...new Set(productIds.filter((id) => Number.isInteger(id) && id > 0))]
+  if (!ids.length) return
+  const stores = db.prepare('SELECT store_uuid FROM evotor_stores').all() as { store_uuid: string }[]
+  for (const store of stores) {
+    for (const productId of ids) {
+      const existing = db.prepare(`SELECT id FROM evotor_outbox WHERE store_uuid=? AND entity='PRODUCT' AND entity_key=? AND status='PENDING' LIMIT 1`)
+        .get(store.store_uuid, String(productId)) as { id: number } | undefined
+      if (existing) db.prepare(`UPDATE evotor_outbox SET next_at=?,last_error=NULL WHERE id=?`).run(Date.now(), existing.id)
+      else db.prepare(`INSERT INTO evotor_outbox(store_uuid,entity,entity_key,op,priority,status,attempts,next_at) VALUES(?,?,?,?,5,'PENDING',0,?)`)
+        .run(store.store_uuid, 'PRODUCT', String(productId), 'UPSERT', Date.now())
+    }
+  }
+}
 
 export const adminRoutes = new Hono()
   .use('*', adminAuth)
@@ -299,12 +315,25 @@ export const adminRoutes = new Hono()
              p.counts_as_cup AS countsAsCup, p.free_eligible AS freeEligible,
              p.tax AS tax, p.measure AS measure, p.cost_price_kopecks AS costPriceKopecks,
              p.season_start_at AS seasonStartAt, p.season_end_at AS seasonEndAt,
-             p.evotor_extra_json AS evotorExtraJson
+             p.evotor_extra_json AS evotorExtraJson,
+             p.catalog_source AS catalogSource, p.evotor_uuid AS evotorUuid
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
       ORDER BY p.sort_order, p.id
-    `).all()
-    return c.json({ products })
+    `).all() as Record<string, unknown>[]
+    const links = db.prepare(`
+      SELECT product_id AS productId, store_uuid AS storeUuid, evotor_uuid AS evotorUuid,
+             last_pushed_at AS lastPushedAt, last_pulled_at AS lastPulledAt, last_error AS lastError
+      FROM product_store_links ORDER BY store_uuid, product_id
+    `).all() as Record<string, unknown>[]
+    const byProduct = new Map<number, Record<string, unknown>[]>()
+    for (const link of links) {
+      const id = Number(link.productId)
+      const list = byProduct.get(id) ?? []
+      list.push(link)
+      byProduct.set(id, list)
+    }
+    return c.json({ products: products.map((p) => ({ ...p, evotorLinks: byProduct.get(Number(p.id)) ?? [] })) })
   })
 
   .post('/products', zValidator('json', z.object({
@@ -337,13 +366,15 @@ export const adminRoutes = new Hono()
     }
     const t = Date.now()
     if (p.id) {
+      const exists = db.prepare('SELECT id FROM products WHERE id=?').get(p.id)
+      if (!exists) throw bad('Product not found', 404)
       db.prepare(`
         UPDATE products SET name=?, price=?, icon=?, available=?, description=?,
           category_id=?, image_url=?, sort_order=?, updated_at=?,
           modifier_scheme_id=?, recipe_text=?, recipe_cost_rub=?, recipe_seconds=?,
           counts_as_cup=COALESCE(?, counts_as_cup), free_eligible=COALESCE(?, free_eligible),
           tax=COALESCE(?, tax), measure=COALESCE(?, measure), cost_price_kopecks=COALESCE(?, cost_price_kopecks),
-          season_start_at=?, season_end_at=?, evotor_extra_json=?
+          season_start_at=?, season_end_at=?, evotor_extra_json=?, catalog_source='SIXTH_CUP'
         WHERE id=?
       `).run(
         p.name, p.price, p.icon, p.available ? 1 : 0,
@@ -358,8 +389,8 @@ export const adminRoutes = new Hono()
     } else {
       db.prepare(`
         INSERT INTO products(name,price,icon,available,description,category_id,image_url,sort_order,created_at,updated_at,
-          modifier_scheme_id,recipe_text,recipe_cost_rub,recipe_seconds,counts_as_cup,free_eligible,tax,measure,cost_price_kopecks,season_start_at,season_end_at,evotor_extra_json)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+          modifier_scheme_id,recipe_text,recipe_cost_rub,recipe_seconds,counts_as_cup,free_eligible,tax,measure,cost_price_kopecks,season_start_at,season_end_at,evotor_extra_json,catalog_source)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'SIXTH_CUP')
       `).run(
         p.name, p.price, p.icon, p.available ? 1 : 0,
         p.description ?? null, p.categoryId ?? null, p.imageUrl ?? null,
@@ -370,23 +401,14 @@ export const adminRoutes = new Hono()
       )
     }
     const productId = p.id ?? Number(db.prepare('SELECT last_insert_rowid() AS id').get() as { id: number })
-    for (const store of db.prepare('SELECT store_uuid AS uuid FROM evotor_stores').all() as { uuid: string }[]) {
-      db.prepare(`INSERT INTO evotor_outbox(store_uuid,entity,entity_key,op,priority,status,attempts,next_at)
-        VALUES(?,?,?,?,5,'PENDING',0,?)`).run(store.uuid, 'PRODUCT', String(productId), 'UPSERT', Date.now())
-    }
+    enqueueProductSync([productId])
     return c.json({ ok: true, id: productId })
   })
 
   .delete('/products/:id', (c) => {
     const id = Number(c.req.param('id'))
-    const stores = db.prepare('SELECT store_uuid FROM evotor_stores').all() as { store_uuid: string }[]
-    db.transaction(() => {
-      db.prepare('UPDATE products SET available=0, updated_at=? WHERE id=?').run(Date.now(), id)
-      for (const store of stores) {
-        db.prepare(`INSERT INTO evotor_outbox(store_uuid,entity,entity_key,op,priority,status,attempts,next_at)
-          VALUES(?,?,?,?,5,'PENDING',0,?)`).run(store.store_uuid, 'PRODUCT', String(id), 'UPSERT', Date.now())
-      }
-    })()
+    db.prepare("UPDATE products SET available=0, updated_at=?, catalog_source='SIXTH_CUP' WHERE id=?").run(Date.now(), id)
+    enqueueProductSync([id])
     return c.json({ ok: true, disabled: true })
   })
 
@@ -408,18 +430,25 @@ export const adminRoutes = new Hono()
   })), (c) => {
     const p = c.req.valid('json')
     const t = Date.now()
+    let modifierId = p.id
     if (p.id) {
       db.prepare(`UPDATE modifiers SET name=?, price=?, group_key=?, available=?, sort_order=?, updated_at=? WHERE id=?`)
         .run(p.name, p.price, p.groupKey, p.available ? 1 : 0, p.sortOrder, t, p.id)
     } else {
-      db.prepare(`INSERT INTO modifiers(name,price,group_key,available,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`)
+      const created = db.prepare(`INSERT INTO modifiers(name,price,group_key,available,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`)
         .run(p.name, p.price, p.groupKey, p.available ? 1 : 0, p.sortOrder, t, t)
+      modifierId = Number(created.lastInsertRowid)
     }
+    const affected = db.prepare(`SELECT id FROM products WHERE modifier_scheme_id IN (SELECT scheme_id FROM modifier_scheme_items WHERE modifier_id=?)`).all(modifierId) as { id: number }[]
+    enqueueProductSync(affected.map((x) => x.id))
     return c.json({ ok: true })
   })
 
   .delete('/modifiers/:id', (c) => {
-    db.prepare('DELETE FROM modifiers WHERE id=?').run(Number(c.req.param('id')))
+    const id = Number(c.req.param('id'))
+    const affected = db.prepare(`SELECT p.id FROM products p JOIN modifier_scheme_items i ON i.scheme_id=p.modifier_scheme_id WHERE i.modifier_id=?`).all(id) as { id: number }[]
+    db.prepare('DELETE FROM modifiers WHERE id=?').run(id)
+    enqueueProductSync(affected.map((x) => x.id))
     return c.json({ ok: true })
   })
 
@@ -464,14 +493,18 @@ export const adminRoutes = new Hono()
       'INSERT OR IGNORE INTO modifier_scheme_items(scheme_id,modifier_id,required,max_count) VALUES(?,?,0,2)'
     )
     for (const mid of ids) ins.run(schemeId, mid)
+    const affected = db.prepare('SELECT id FROM products WHERE modifier_scheme_id=?').all(schemeId) as { id: number }[]
+    enqueueProductSync(affected.map((x) => x.id))
     return c.json({ ok: true, id: schemeId })
   })
 
   .delete('/modifier-schemes/:id', (c) => {
     const id = Number(c.req.param('id'))
-    db.prepare('UPDATE products SET modifier_scheme_id=NULL WHERE modifier_scheme_id=?').run(id)
+    const affected = db.prepare('SELECT id FROM products WHERE modifier_scheme_id=?').all(id) as { id: number }[]
+    db.prepare('UPDATE products SET modifier_scheme_id=NULL, updated_at=? WHERE modifier_scheme_id=?').run(Date.now(), id)
     db.prepare('DELETE FROM modifier_scheme_items WHERE scheme_id=?').run(id)
     db.prepare('DELETE FROM modifier_schemes WHERE id=?').run(id)
+    enqueueProductSync(affected.map((x) => x.id))
     return c.json({ ok: true })
   })
 

@@ -17,12 +17,12 @@
 - обработка SELL/PAYBACK с идемпотентностью;
 - loyalty ledger;
 - disputes;
-- deterministic UUIDv5 для товаров;
+- Cloud-generated Evotor product UUID + persistent local mapping; UUIDv5 only for 6.7 ProductExtra UUIDs;
 - outbox товаров;
 - product extras;
 - сезонность;
 - signed card QR v2;
-- отсутствие SMS и числового публичного card code.
+- отсутствие SMS; numeric short card code remains supported as a controlled fallback and is resolved server-side.
 
 ## Осталось проверить физически
 

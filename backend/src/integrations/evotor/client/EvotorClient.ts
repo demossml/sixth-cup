@@ -1,9 +1,10 @@
 /**
- * HTTP client for api.evotor.ru — pattern from workApp Evotor class.
+ * HTTP client for api.evotor.ru.
  *
- * Auth: header X-Authorization: <EVOTOR_API_TOKEN>
- * Token: permanent in server .env (owner pastes token from Evotor). No webhook exchange.
- * Optional EVOTOR_PROXY_URL like workApp (proxy?url=).
+ * Authentication is the fixed EVOTOR_API_TOKEN from server env.
+ * Fiscal documents/catalog reads continue to use the verified v1 inventories API.
+ * Product CREATE/UPDATE use the Cloud catalog API where the Cloud generates the
+ * product id on first POST; subsequent updates use that saved id in PUT.
  */
 import { evotorConfig } from '../../../config'
 import { evotorPaths } from './endpoints'
@@ -19,22 +20,15 @@ export class EvotorApiError extends Error {
   }
 }
 
-/**
- * Evotor v1 inventories dates: plain `YYYY-MM-DD`.
- * - gtCloseDate (since) is inclusive → start of day.
- * - ltCloseDate (until) is EXCLUSIVE → next day, so the whole `date` day is included.
- * Verified against api.evotor.ru (a time component returns HTTP 400 invalid_format).
- */
 export function formatDateWithTime(date: Date, isEndOfDay = false): string {
   const d = new Date(date)
   if (isEndOfDay) {
-    // exclusive upper bound: include all of `date` by advancing to the next day
     d.setDate(d.getDate() + 1)
     d.setHours(0, 0, 0, 0)
   } else {
     d.setHours(0, 0, 0, 0)
   }
-  const pad = (n: number) => String(n).padStart(2, '0')
+  const pad = (n: number) => [...String(n)].length === 1 ? `0${n}` : String(n)
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
@@ -49,132 +43,90 @@ export class EvotorClient {
     return Boolean(this.token?.trim())
   }
 
-  private async request(pathOrUrl: string): Promise<unknown> {
-    if (!this.isConfigured) {
-      throw new EvotorApiError('EVOTOR_API_TOKEN not set', 0, pathOrUrl)
-    }
-
+  private buildUrl(pathOrUrl: string): string {
     let url = pathOrUrl.startsWith('http')
       ? pathOrUrl
       : `${this.baseUrl.replace(/\/$/, '')}${pathOrUrl.startsWith('/') ? '' : '/'}${pathOrUrl}`
-
     if (this.proxyUrl?.trim() && url.startsWith('https://api.evotor.ru/')) {
       url = `${this.proxyUrl}?url=${encodeURIComponent(url)}`
     }
+    return url
+  }
 
-    const backoffs = [1000, 2000, 4000, 8000, 16000]
+  private async requestJson(pathOrUrl: string, method = 'GET', body?: unknown): Promise<unknown> {
+    if (!this.isConfigured) throw new EvotorApiError('EVOTOR_API_TOKEN not set', 0, pathOrUrl)
+    const url = this.buildUrl(pathOrUrl)
+    const backoffs = [1000, 2000, 4000, 8000]
     let lastStatus = 0
     let lastBody = ''
-
     for (let attempt = 0; attempt < 5; attempt++) {
       const ac = new AbortController()
       const timer = setTimeout(() => ac.abort(), 15_000)
       try {
         const res = await fetch(url, {
-          headers: { 'X-Authorization': this.token },
+          method,
+          headers: {
+            'X-Authorization': this.token,
+            ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+          },
+          body: body === undefined ? undefined : JSON.stringify(body),
           signal: ac.signal,
         })
         lastStatus = res.status
         lastBody = await res.text()
-        if (res.status === 401) {
-          throw new EvotorApiError('Unauthorized — check EVOTOR_API_TOKEN', 401, pathOrUrl)
-        }
-        if ([429, 500, 502, 503, 504].includes(res.status) && attempt < 4) {
+        if (res.status === 401) throw new EvotorApiError('Unauthorized — check EVOTOR_API_TOKEN', 401, pathOrUrl)
+        if ([408, 429, 500, 502, 503, 504].includes(res.status) && attempt < 4) {
           await new Promise((r) => setTimeout(r, backoffs[attempt] + Math.random() * 300))
           continue
         }
-        if (!res.ok) {
-          throw new EvotorApiError(`HTTP ${res.status}: ${lastBody.slice(0, 240)}`, res.status, pathOrUrl)
-        }
+        if (!res.ok) throw new EvotorApiError(`HTTP ${res.status}: ${lastBody.slice(0, 400)}`, res.status, pathOrUrl)
         if (!lastBody) return null
-        return JSON.parse(lastBody)
+        try { return JSON.parse(lastBody) } catch { return lastBody }
       } finally {
         clearTimeout(timer)
       }
     }
-    throw new EvotorApiError(`HTTP ${lastStatus}: ${lastBody.slice(0, 240)}`, lastStatus, pathOrUrl)
+    throw new EvotorApiError(`HTTP ${lastStatus}: ${lastBody.slice(0, 400)}`, lastStatus, pathOrUrl)
   }
 
-  /** workApp getShops → stores/search (array or wrapped) */
   async getStores(): Promise<unknown> {
-    return this.request(evotorPaths.storesSearch)
+    return this.requestJson(evotorPaths.storesSearch)
   }
 
   async getEmployees(): Promise<unknown> {
-    return this.request(evotorPaths.employeesSearch)
+    return this.requestJson(evotorPaths.employeesSearch)
   }
 
   async getProducts(storeId: string): Promise<unknown> {
-    return this.request(evotorPaths.products(storeId))
+    return this.requestJson(evotorPaths.products(storeId))
   }
 
-  /**
-   * Documents for store in [since, until], optional type filter (SELL, PAYBACK, …).
-   * workApp: gtCloseDate, ltCloseDate, types=
-   */
-  async getDocuments(
-    storeId: string,
-    since: string,
-    until: string,
-    types?: string,
-  ): Promise<unknown> {
-    const q = new URLSearchParams({
-      gtCloseDate: since,
-      ltCloseDate: until,
-    })
+  async getDocuments(storeId: string, since: string, until: string, types?: string): Promise<unknown> {
+    const q = new URLSearchParams({ gtCloseDate: since, ltCloseDate: until })
     if (types) q.set('types', types)
-    return this.request(`${evotorPaths.documents(storeId)}?${q}`)
+    return this.requestJson(`${evotorPaths.documents(storeId)}?${q}`)
   }
 
   async getSellDocuments(storeId: string, since: string, until: string): Promise<unknown> {
     return this.getDocuments(storeId, since, until, 'SELL')
   }
 
-  /**
-   * V1: POST array of products to a store. Overwrites/creates by uuid.
-   * POST /api/v1/inventories/stores/{storeUuid}/products
-   */
+  /** Cloud Catalog API: Cloud generates the product id on first POST. */
+  async createCloudProduct(storeId: string, product: Record<string, unknown>): Promise<unknown> {
+    return this.requestJson(evotorPaths.v2Products(storeId), 'POST', product)
+  }
+
+  /** Cloud Catalog API: replace/update an already identified product. */
+  async replaceCloudProduct(storeId: string, productId: string, product: Record<string, unknown>): Promise<unknown> {
+    return this.requestJson(evotorPaths.v2Product(storeId, productId), 'PUT', product)
+  }
+
+  /** Legacy v1 bulk product write retained only for explicit recovery tooling. */
   async postProducts(storeId: string, products: Record<string, unknown>[]): Promise<unknown> {
-    if (!this.isConfigured) {
-      throw new EvotorApiError('EVOTOR_API_TOKEN not set', 0, 'postProducts')
-    }
-    const path = evotorPaths.products(storeId)
-    const url = `${this.baseUrl.replace(/\/$/, '')}${path}`
-    let requestUrl = url
-    if (this.proxyUrl?.trim() && url.startsWith('https://api.evotor.ru/')) {
-      requestUrl = `${this.proxyUrl}?url=${encodeURIComponent(url)}`
-    }
-    const res = await fetch(requestUrl, {
-      method: 'POST',
-      headers: {
-        'X-Authorization': this.token,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(products),
-    })
-    const text = await res.text()
-    if (!res.ok) {
-      throw new EvotorApiError(`HTTP ${res.status}: ${text.slice(0, 300)}`, res.status, path)
-    }
-    return text ? JSON.parse(text) : { ok: true }
+    return this.requestJson(evotorPaths.products(storeId), 'POST', products)
   }
 
   async postProductExtras(storeId: string, extras: Record<string, unknown>[]): Promise<unknown> {
-    if (!this.isConfigured) throw new EvotorApiError('EVOTOR_API_TOKEN not set', 0, 'postProductExtras')
-    const path = evotorPaths.productExtras(storeId)
-    const url = `${this.baseUrl.replace(/\/$/, '')}${path}`
-    let requestUrl = url
-    if (this.proxyUrl?.trim() && url.startsWith('https://api.evotor.ru/')) {
-      requestUrl = `${this.proxyUrl}?url=${encodeURIComponent(url)}`
-    }
-    const res = await fetch(requestUrl, {
-      method: 'POST',
-      headers: { 'X-Authorization': this.token, 'Content-Type': 'application/json' },
-      body: JSON.stringify(extras),
-    })
-    const text = await res.text()
-    if (!res.ok) throw new EvotorApiError(`HTTP ${res.status}: ${text.slice(0, 300)}`, res.status, path)
-    return text ? JSON.parse(text) : { ok: true }
+    return this.requestJson(evotorPaths.productExtras(storeId), 'POST', extras)
   }
-
 }

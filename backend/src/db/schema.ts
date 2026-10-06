@@ -99,7 +99,8 @@ CREATE TABLE IF NOT EXISTS products (
   name TEXT NOT NULL,
   price INTEGER NOT NULL,
   icon TEXT NOT NULL DEFAULT 'Coffee',
-  available INTEGER NOT NULL DEFAULT 1
+  available INTEGER NOT NULL DEFAULT 1,
+  evotor_uuid TEXT
 );
 
 CREATE TABLE IF NOT EXISTS promos (

@@ -14,4 +14,6 @@ export const evotorPaths = {
   /** Optional V2 (probe only if v1 fails) */
   v2Stores: '/stores',
   v2Documents: (storeId: string) => `/stores/${storeId}/documents`,
+  v2Products: (storeId: string) => `/stores/${storeId}/products`,
+  v2Product: (storeId: string, productId: string) => `/stores/${storeId}/products/${productId}`,
 } as const

@@ -4,9 +4,11 @@
 
 ## 1. Architecture
 
-Backend is the source of truth for catalogue, loyalty and history.
+Evotor Cloud is authoritative for Evotor-owned entities: stores, employees, base catalogue records and Evotor product UUIDs.
 
-Evotor Cloud v1 is the fiscal/data integration layer.
+6.7 backend is authoritative for our business metadata: recipes, toppings, loyalty flags, seasonality, cost and custom JSON.
+
+Evotor Cloud v1 remains the verified document/polling contract; the Cloud catalog CRUD uses the official `/stores/{store}/products` API for CREATE/PUT because that API is the contract that assigns/accepts product identifiers.
 
 The Android app on Evotor is a cashier-side adapter. It does not own customer state.
 
@@ -20,11 +22,13 @@ Current production contract:
 - `/api/v1/inventories/employees/search`;
 - `/api/v1/inventories/stores/{store}/products`;
 - `/api/v1/inventories/stores/{store}/documents`;
+- `/stores/{store}/products` for catalog CREATE/PUT;
+- `/api/v1/inventories/stores/{store}/products/extras` for 6.7 metadata;
 - `X-Authorization`;
 - `gtCloseDate` / `ltCloseDate` as `YYYY-MM-DD`;
 - `transactions[]` in actual document responses.
 
-Do not silently switch the implementation to V2.
+Do not replace the verified v1 document/polling contract with another document API without re-verification. Catalog writes are intentionally separate and use the Cloud product CRUD API documented by Evotor.
 
 ## 3. Stores
 
@@ -114,13 +118,13 @@ All API/UI conversion to rubles must divide by 100.
 
 The app:
 
-- accepts only a structurally valid signed QR;
+- accepts a structurally valid signed QR **or** a numeric short card code;
 - keeps the current customer in memory only;
 - applies discount through `ReceiptDiscountEvent`;
 - writes `extras.sc`;
 - clears customer state after discount attempt;
 - has no `INTERNET` permission;
-- has no manual numeric card input.
+- has manual numeric card input as a fallback to signed QR.
 
 `extras.sc` is not trusted by itself on backend. Backend re-verifies `c` and checks current card sequence.
 
@@ -149,29 +153,21 @@ PAYBACK:
 
 ## 10. Product synchronisation
 
-Backend product id is canonical.
+Our product id is canonical inside the 6.7 database.
 
-Evotor UUID is deterministic UUIDv5:
+For each store, the authoritative Evotor product id is the UUID returned by Cloud CREATE.
 
-```text
-UUIDv5(namespace, storeUuid + ':' + productId)
-```
+- first sync: POST product without a product UUID; Evotor Cloud assigns the UUID;
+- returned UUID is persisted in `product_store_links` / `evotor_products`;
+- later syncs: PUT the same UUID;
+- a stable `article_number=sc-<localProductId>` is used to recover from a lost CREATE response;
+- incoming Evotor products are upserted by `(store_uuid, evotor_uuid)`.
 
-Changes enter `evotor_outbox`.
+Changes enter `evotor_outbox`, with exponential retry.
+Product payload includes name, price, measure, tax, cost price and allow_to_sell.
+UUIDv5 may be used for our ProductExtra object, but never as the Evotor product UUID.
 
-Outbox retries with exponential delay.
-
-Product payload includes:
-
-- name;
-- price;
-- measure;
-- tax;
-- cost price;
-- allowToSell;
-- deterministic uuid.
-
-Seasonal products are represented through `season_start_at` / `season_end_at` and `allowToSell`.
+Seasonal products are represented through `season_start_at` / `season_end_at` and `allow_to_sell`.
 
 ## 11. Product extras
 

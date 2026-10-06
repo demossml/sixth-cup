@@ -1,3 +1,5 @@
+> HISTORICAL NOTES: the current admin/Evotor contract is documented in `README.md` and `docs/PRODUCT-SYNC-EVOTOR.md`.
+
 # Admin prod (реализовано по ТЗ)
 
 - `POST /api/admin/reset` mode: loyalty | catalog | full

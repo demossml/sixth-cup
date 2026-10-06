@@ -1,3 +1,5 @@
+> HISTORICAL DOCUMENT: this generated implementation guide predates the current Evotor Cloud catalog architecture and anonymous signed-QR/manual-card flow. Use `README.md`, `ANDROID_INTEGRATION_CONTRACT.md` and `docs/PRODUCT-SYNC-EVOTOR.md` for the current system.
+
 # «Шестой стакан» — офлайн-приложение лояльности для кофейни (PWA)
 
 > Стек: **Turborepo** · **backend** = Hono + TypeScript + SQLite · **frontend** = React + Vite + TypeScript + PWA.

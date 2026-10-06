@@ -1,16 +1,19 @@
-# P0 security (после аудита)
+# P0 security — current state
 
-Сделано:
-- requireAuth: 401 если user удалён
-- recipe* убраны из публичного GET /api/directory; касса: GET /api/directory/staff + X-Device-Token
-- POST /auth/guest: rate limit IP, clientNonce идемпотентность 10 мин
-- SMS /send-code /verify только NODE_ENV=development
-- WELCOME после первой оплаты (dp>0), не при создании гостя
-- «Выйти» → двойной confirm, текст про потерю доступа
+## Implemented
 
-Ещё не сделано (P0/P1 backlog):
-- recovery QR/код
-- динамический QR карты
-- public_id вместо phone column
-- antifraud рефералов глубже
-- админ 2FA на reset
+- Anonymous guest accounts; real phone/SMS is not required.
+- Signed customer QR uses Ed25519, key id and expiry.
+- Numeric card code is a controlled fallback; backend resolves it and never trusts terminal loyalty state.
+- `extras.sc` is re-verified on the server after fiscal SELL.
+- Loyalty operations are idempotent by `(store, document)`.
+- Card QR is kept in Android memory only; no customer token in SharedPreferences.
+- Public directory does not expose recipe metadata.
+- Backend rate-limits guest/card lookup endpoints.
+
+## Remaining production gates
+
+- Real ST5 terminal test.
+- Confirm the physical Cloud document contains `extras.sc` exactly as written by the APK.
+- Confirm ProductExtra delivery and local InventoryApi visibility on the physical terminal.
+- Production privacy/legal review before scaling customer analytics.

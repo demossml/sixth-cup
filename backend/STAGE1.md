@@ -1,3 +1,5 @@
+> HISTORICAL DOCUMENT: this stage predates the current Evotor Cloud catalog/terminal architecture.
+
 # Stage 1 — Backend Foundation
 
 ## Added

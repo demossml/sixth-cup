@@ -1,3 +1,5 @@
+> HISTORICAL STAGE-1 PROXY/ENROLL NOTES: current APK does not use the old direct device-enroll flow; current catalog/loyalty contract is in `ANDROID_INTEGRATION_CONTRACT.md`.
+
 # Этап 1: облако Эвотор → app.67coffee.ru
 
 ## Владелец (кабинет)

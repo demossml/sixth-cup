@@ -1,106 +1,92 @@
-# Android / external cashier — API contract
+# Android / Evotor cashier integration — current contract
 
-Этот документ для **следующего** этапа (отдельное Android-приложение).  
-В текущем репозитории Android **не** реализуется.
+Android APK 6.7 runs **inside the Evotor smart terminal** as an Evotor application. It is not a separate fiscal cash register.
 
-Base URL (production): `https://<your-domain>`  
-Dev: `http://<lan-ip>:3000`
+## Catalog ownership
 
-## Auth
+### Evotor Cloud is authoritative for
 
-| Role | Header | Как получить |
-|------|--------|----------------|
-| Device (касса) | `X-Device-Token: <token>` | `POST /api/devices/enroll` |
-| Admin | `X-Admin-Token: <secret>` | env `ADMIN_TOKEN` |
-| Customer | `Authorization: Bearer <jwt>` | `POST /api/auth/verify` |
+- stores/trading points;
+- employees;
+- base product/nomenclature objects;
+- Evotor product UUIDs;
+- base price, tax, measure and sell availability.
 
-Нет refresh-token у device: при компрометации — revoke в admin.
+### 6.7 backend is authoritative for
 
-## Directory (каталог + ключи)
+- local product id;
+- recipe;
+- modifier/topping scheme;
+- `countsAsCup` / `freeEligible`;
+- seasonal availability;
+- cost data;
+- custom JSON metadata.
 
-```http
-GET /api/directory
+## Product lifecycle
+
+```text
+6.7 Admin creates Product
+        ↓
+local products.id
+        ↓
+POST Cloud /stores/{store}/products without product id
+        ↓
+Evotor Cloud assigns product UUID
+        ↓
+store in product_store_links + evotor_products
+        ↓
+POST ProductExtra with recipe/toppings
+        ↓
+Evotor Cloud → terminal inventory
+        ↓
+6.7 APK InventoryApi
 ```
 
-Без auth. Ответ (ключевые поля):
+After the first successful CREATE, the saved Evotor UUID is never regenerated. Product changes use PUT with that UUID. If the CREATE response is lost, the backend searches the remote catalog by stable `article_number=sc-<localProductId>` before attempting another CREATE.
+
+Incoming Evotor products are upserted by `(store_uuid, evotor_uuid)`. Products that originated only in Evotor are stored as `EVOTOR_IMPORT` until an administrator edits them in 6.7.
+
+## Product metadata on terminal
+
+6.7 sends a `ProductExtra` named `sixthcup` containing JSON such as:
 
 ```json
 {
-  "serverPub": "...",
-  "cupsForFree": 5,
-  "referralCashbackPercent": 3,
-  "currency": "RUB",
-  "generatedAt": 1710000000,
-  "devices": [{ "id": 1, "pub": "...", "revoked": false }],
-  "stores": [{ "id": 1, "name": "...", "address": "...", "organizationId": 1 }],
-  "organizations": [{
-    "id": 1,
-    "name": "...",
-    "legalName": "...",
-    "taxRegime": "usn_income",
-    "vatRate": 0
-  }],
-  "categories": [{ "id": 1, "name": "Напитки", "sortOrder": 0 }],
-  "products": [{
-    "id": 1,
-    "name": "Капучино",
-    "price": 190,
-    "icon": "CupSoda",
-    "description": "...",
-    "categoryId": 1,
-    "imageUrl": "/uploads/....jpg",
-    "sortOrder": 0
-  }],
-  "promos": []
+  "schema": "6.7.product.v1",
+  "productUuid": "<evotor-uuid>",
+  "countsAsCup": true,
+  "freeEligible": true,
+  "recipe": "18g espresso + 180ml milk",
+  "recipeCostRub": 53,
+  "recipeSeconds": 90,
+  "toppings": [
+    { "id": 1, "name": "Ваниль", "priceRub": 30, "groupKey": "syrup" }
+  ]
 }
 ```
 
-### Цена
+On the terminal `EvotorCatalogActivity` reads the real local Evotor inventory using `InventoryApi`, resolves the selected product by UUID and reads `InventoryApi.getProductExtras()` to display the 6.7 metadata.
 
-`price` — **целые рубли** (190 = 190 ₽), не копейки.
+## Adding a product to the receipt
 
-### Налог
+The APK is registered for Evotor's `ru.evotor.createPosition` ActivityResult integration.
 
-На уровне **organization**: `taxRegime`, `vatRate` (0 | 10 | 20).  
-Товарного НДС в API нет — наследование через store → organization.
+It returns an ordinary `ru.evotor.framework.receipt.Position` whose `productUuid` is an existing terminal-inventory UUID. EvotorPOS then places the position in the current receipt and remains responsible for fiscalization.
 
-`taxRegime` values: `usn_income` | `usn_income_expense` | `osn` | `patent`.
+## Loyalty customer identity
 
-### Картинки
+Two supported channels:
 
-`imageUrl` относительный путь, например `/uploads/171-abc.jpg`.  
-Полный URL: `https://<domain>` + `imageUrl`.
+1. **Preferred:** signed customer QR. The APK verifies the Ed25519 signature, expiry and key id before keeping the token in an in-memory sale session.
+2. **Fallback:** numeric short card code, entered manually or received from a scanner. Leading zeroes are preserved in the terminal session; backend normalization resolves `0042` and `42` to the same card.
 
-## Device enrollment
+The APK writes the selected value to `extras.sc.c`. It may also write `kind=token|code`.
 
-```http
-POST /api/devices/enroll
-Content-Type: application/json
+The server is the loyalty source of truth. After fiscal `SELL`, Cloud polling passes the document to `SellHandler`, which resolves the token/card code, applies idempotent loyalty operations and records disputes for invalid/stale claims.
 
-{ "code": "DEMO1234", "publicKey": "<43-char base64url Ed25519 pub>" }
-```
+## Security / secrets
 
-Ответ:
-
-```json
-{ "deviceId": 1, "deviceToken": "...", "storeName": "..." }
-```
-
-Код выпускается в `/admin` → Кассы.
-
-## Loyalty sync (не фискальный чек)
-
-```http
-POST /api/devices/sync
-X-Device-Token: ...
-{ "receipts": [ "<signed-token>", ... ] }
-```
-
-Формат signed receipt — как в PWA (`frontend/src/lib/cashier.ts`).  
-Фискальная продажа Эвотор **не** описана этим контрактом.
-
-## Health
-
-```http
-GET /health → { "ok": true }
-```
+- No Evotor API token is stored in the APK.
+- The server `EVOTOR_API_TOKEN` remains backend-only.
+- The Android build receives only the Ed25519 **public** key and key id needed to verify signed customer QR.
+- No `.env` or private signing key belongs in either repository.

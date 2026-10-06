@@ -18,7 +18,7 @@ async function adminFetch<T>(path: string, token: string, init?: RequestInit): P
   return body as T
 }
 
-type Tab = 'overview' | 'orgs' | 'stores' | 'categories' | 'products' | 'modifiers' | 'schemes' | 'devices' | 'promos' | 'disputes'
+type Tab = 'overview' | 'orgs' | 'stores' | 'evotor' | 'categories' | 'products' | 'modifiers' | 'schemes' | 'devices' | 'promos' | 'disputes'
 
 type Stats = {
   users: number; receipts: number; receiptsToday: number; freeCups: number
@@ -42,6 +42,9 @@ type Product = {
   countsAsCup?: number; freeEligible?: number; tax?: string; measure?: string
   costPriceKopecks?: number; seasonStartAt?: number | null; seasonEndAt?: number | null
   evotorExtraJson?: string | null
+  catalogSource?: 'SIXTH_CUP' | 'EVOTOR_IMPORT'
+  evotorUuid?: string | null
+  evotorLinks?: Array<{ storeUuid: string; evotorUuid: string | null; lastPushedAt?: number | null; lastPulledAt?: number | null; lastError?: string | null }>
 }
 type Modifier = { id: number; name: string; price: number; groupKey: string; available: number | boolean }
 type Scheme = { id: number; name: string; items: { modifierId: number }[] }
@@ -49,11 +52,14 @@ type Device = {
   id: number; name: string; storeId: number; storeName: string; revoked: number
   enrollCode: string | null; enrolled: number
 }
+type EvotorStore = { uuid: string; name?: string | null; address?: string | null; code?: string | null }
+type EvotorEmployee = { uuid: string; name?: string | null; phone?: string | null; role?: string | null; storeUuid?: string | null }
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'overview', label: 'Обзор' },
   { id: 'orgs', label: 'Юрлица' },
   { id: 'stores', label: 'Точки' },
+  { id: 'evotor', label: 'Эвотор' },
   { id: 'categories', label: 'Категории' },
   { id: 'products', label: 'Товары' },
   { id: 'modifiers', label: 'Добавки' },
@@ -85,6 +91,8 @@ export default function AdminPage() {
   const [modForm, setModForm] = useState({ name: '', price: 40, groupKey: 'syrup' })
   const [schemeForm, setSchemeForm] = useState({ name: '', modifierIds: [] as number[], copyFrom: 0 })
   const [devices, setDevices] = useState<Device[]>([])
+  const [evotorStores, setEvotorStores] = useState<EvotorStore[]>([])
+  const [evotorEmployees, setEvotorEmployees] = useState<EvotorEmployee[]>([])
   const [promos, setPromos] = useState<Array<{ id: number; title: string; body: string; endsAt: number }>>([])
   const [disputes, setDisputes] = useState<Array<{ id: number; kind: string; details: string; created_at: number }>>([])
 
@@ -111,7 +119,7 @@ export default function AdminPage() {
   const load = useCallback(async (t: string) => {
     setError('')
     try {
-      const [s, o, st, cat, p, mod, sch, d, pr, di] = await Promise.all([
+      const [s, o, st, cat, p, mod, sch, d, storesFromApi, employeesFromApi, pr, di] = await Promise.all([
         adminFetch<Stats>('/stats', t),
         adminFetch<{ organizations: Org[] }>('/organizations', t),
         adminFetch<{ stores: Store[] }>('/stores', t),
@@ -120,6 +128,8 @@ export default function AdminPage() {
         adminFetch<{ modifiers: Modifier[] }>('/modifiers', t).catch(() => ({ modifiers: [] as Modifier[] })),
         adminFetch<{ schemes: Scheme[] }>('/modifier-schemes', t).catch(() => ({ schemes: [] as Scheme[] })),
         adminFetch<{ devices: Device[] }>('/devices', t),
+        adminFetch<{ stores: EvotorStore[] }>('/evotor/stores', t).catch(() => ({ stores: [] as EvotorStore[] })),
+        adminFetch<{ employees: EvotorEmployee[] }>('/evotor/employees', t).catch(() => ({ employees: [] as EvotorEmployee[] })),
         adminFetch<{ promos: typeof promos }>('/promos', t),
         adminFetch<{ disputes: typeof disputes }>('/disputes', t),
       ])
@@ -131,6 +141,8 @@ export default function AdminPage() {
       setModifiers(mod.modifiers)
       setSchemes(sch.schemes)
       setDevices(d.devices)
+      setEvotorStores(storesFromApi.stores)
+      setEvotorEmployees(employeesFromApi.employees)
       setPromos(pr.promos)
       setDisputes(di.disputes)
       if (o.organizations[0] && !storeForm.organizationId) {
@@ -347,6 +359,46 @@ export default function AdminPage() {
           </>
         )}
 
+        {tab === 'evotor' && (
+          <div className="space-y-3">
+            <div className="card space-y-2">
+              <div className="font-semibold text-sm">Эвотор Cloud</div>
+              <p className="text-xs text-ink-secondary">Здесь видно то, что пришло из Эвотора. Новые товары создаются в 6.7, получают UUID в Cloud и дальше обновляются по сохранённому UUID — повторного CREATE нет.</p>
+              <button type="button" className="btn-primary w-full" onClick={async () => {
+                try {
+                  await adminFetch('/evotor/sync', token, { method: 'POST', body: JSON.stringify({}) })
+                  await load(token)
+                } catch (e) { setError(e instanceof Error ? e.message : 'Синхронизация Эвотор не удалась') }
+              }}>Синхронизировать магазины и каталог</button>
+            </div>
+            <div className="card">
+              <div className="font-semibold text-sm mb-2">Торговые точки из Эвотора · {evotorStores.length}</div>
+              {evotorStores.map((s) => (
+                <div key={s.uuid} className="border-b border-line py-2 last:border-0">
+                  <div className="font-medium text-sm">{s.name ?? s.uuid}</div>
+                  <div className="text-[11px] text-ink-tertiary">{s.address ?? 'Адрес не передан'} · UUID {s.uuid}</div>
+                  <button type="button" className="text-xs text-brand mt-1" onClick={async () => {
+                    try {
+                      await adminFetch(`/evotor/stores/${encodeURIComponent(s.uuid)}/sync`, token, { method: 'POST' })
+                      await load(token)
+                    } catch (e) { setError(e instanceof Error ? e.message : 'Ошибка синхронизации') }
+                  }}>Синхронизировать эту точку</button>
+                </div>
+              ))}
+              {!evotorStores.length && <p className="text-xs text-ink-tertiary">Эвотор Cloud пока не вернул торговые точки.</p>}
+            </div>
+            <div className="card">
+              <div className="font-semibold text-sm mb-2">Сотрудники Эвотора · {evotorEmployees.length}</div>
+              {evotorEmployees.slice(0, 50).map((e) => (
+                <div key={e.uuid} className="py-1.5 border-b border-line last:border-0 text-sm">
+                  <div>{e.name ?? e.uuid}</div>
+                  <div className="text-[11px] text-ink-tertiary">{e.role ?? 'Роль не передана'}{e.phone ? ` · ${e.phone}` : ''}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {tab === 'categories' && (
           <>
             {categories.map((c) => (
@@ -393,6 +445,20 @@ export default function AdminPage() {
                     <div className={`text-xs mt-0.5 ${p.available ? 'text-ok' : 'text-red-600'}`}>
                       {p.available ? 'В меню' : 'Скрыт из меню'}
                     </div>
+                    <div className="text-[11px] text-ink-tertiary mt-1">
+                      {p.catalogSource === 'EVOTOR_IMPORT' ? 'Источник: Эвотор' : 'Источник: 6.7'}
+                      {p.evotorLinks?.length ? ` · Cloud: ${p.evotorLinks.length}` : ' · ещё не синхронизирован'}
+                    </div>
+                    {!!p.evotorLinks?.length && (
+                      <div className="text-[10px] text-ink-tertiary mt-0.5 space-y-0.5">
+                        {p.evotorLinks.slice(0, 4).map((l) => (
+                          <div key={`${l.storeUuid}:${l.evotorUuid ?? 'pending'}`} className="truncate">
+                            {l.storeUuid} → {l.evotorUuid ?? 'ожидает CREATE'}
+                            {l.lastError ? ` · ошибка: ${l.lastError}` : ''}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2 mt-2">

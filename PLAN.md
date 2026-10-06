@@ -1,3 +1,5 @@
+> HISTORICAL PLANNING DOCUMENT: the SMS/standalone-cashier sections below describe an older architecture and are not the current 6.7 product. Use `README.md`, `ANDROID_INTEGRATION_CONTRACT.md` and `docs/PRODUCT-SYNC-EVOTOR.md` for the current implementation.
+
 # План доработки «6.7 Coffee» до полноценного приложения
 
 Точка отсчёта: офлайн-протокол, три механики (карта-стакан, реферальный кэшбэк, промо), касса и клиент — уже работают и проверены сценарием из гайда. Дальше — то, что отделяет рабочий прототип от того, что можно поставить в реальную кофейню и не бояться.

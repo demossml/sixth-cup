@@ -71,7 +71,9 @@ npm run dev
 - Владелец открывает только `https://admin.example.com`.  
 - Секрет: `ADMIN_TOKEN`, не «скрытие кнопки».
 
-## SMS (SMS Aero)
+> HISTORICAL: SMS authentication is not used by the current anonymous loyalty flow. Do not configure SMS for the current product.
+
+## Legacy SMS (not used)
 
 В `backend/.env` на Mac mini (значения не в git):
 

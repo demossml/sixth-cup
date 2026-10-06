@@ -1,0 +1,21 @@
+# 6.7 — Evotor catalog architecture restored
+
+- Admin now treats 6.7 as the business-data master while Evotor Cloud remains the cashier/catalog identity source.
+- New products are created locally first; Cloud API POST creates the Evotor product UUID; the UUID is saved in `product_store_links`.
+- Subsequent synchronization uses PUT by the saved Evotor UUID; it does not CREATE duplicates.
+- Recovery after a lost CREATE response uses stable `articleNumber=sc-<local-product-id>` before any retry CREATE.
+- Existing Evotor catalog is pulled into the 6.7 DB with upsert-by-store+Evotor-UUID and shown in Admin.
+- Product metadata (recipe, toppings, cup flags, seasonality and custom JSON) is sent as 6.7 ProductExtra keyed by the Evotor product UUID.
+- Modifier/scheme changes now re-enqueue affected products so ProductExtra stays synchronized.
+- Fixed price-unit bug: 6.7 product price is stored/displayed in RUB and is no longer divided by 100 when sent to Evotor.
+- APK no longer relies on a hardcoded Catalog/Cart; `EvotorCatalogActivity` reads the terminal inventory and returns a real Evotor `Position` through `ru.evotor.createPosition`.
+- Manual loyalty card + signed QR remain intact; loyalty is still finalized only by backend `SELL` polling.
+- Android version bumped to `versionCode 53`, `versionName 2.3.2-evotor-catalog`.
+- Cloud-generated Evotor product UUID is now authoritative; UUIDv5 is used only for 6.7 ProductExtra IDs.
+- First CREATE has no product id; returned id is persisted and all later updates use PUT by that id.
+- Lost CREATE responses are recovered by stable articleNumber `sc-<localId>` before retrying CREATE.
+- Existing Evotor products are imported/upserted by store + Evotor UUID; imports are marked `EVOTOR_IMPORT`.
+- Admin now exposes Evotor stores/employees/catalog state alongside local 6.7 product metadata.
+- APK reads the terminal's real Evotor inventory and ProductExtra recipe/topping metadata; no hardcoded Catalog is used.
+- APK adds a selected existing Evotor product to the active receipt through the documented `ru.evotor.createPosition` ActivityResult contract.
+- Manual short card code and signed QR loyalty paths remain intact; server-side SELL polling remains the loyalty source of truth.
