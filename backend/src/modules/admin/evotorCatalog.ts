@@ -37,23 +37,68 @@ const client = () => {
   return value
 }
 
+function ensureStoresSchema() {
+  const cols = db.prepare(`PRAGMA table_info(evotor_stores)`).all() as { name: string }[]
+  const names = new Set(cols.map((c) => c.name))
+  if (!names.has('sync_enabled')) {
+    db.exec(`ALTER TABLE evotor_stores ADD COLUMN sync_enabled INTEGER NOT NULL DEFAULT 0`)
+  }
+}
+
+function enabledStoreUuids(): string[] {
+  ensureStoresSchema()
+  return (db.prepare(`SELECT store_uuid FROM evotor_stores WHERE COALESCE(sync_enabled,0)=1`).all() as { store_uuid: string }[])
+    .map((r) => r.store_uuid)
+}
+
+
 export const adminEvotorCatalog = new Hono()
   .get('/evotor/stores', async (c) => {
     try {
+      ensureStoresSchema()
       const items = asArray(await client().getStores())
       const now = Date.now()
-      const upsert = db.prepare(`INSERT INTO evotor_stores(store_uuid,name,address,code,raw_json,updated_at)
-        VALUES(?,?,?,?,?,?) ON CONFLICT(store_uuid) DO UPDATE SET name=excluded.name,address=excluded.address,code=excluded.code,raw_json=excluded.raw_json,updated_at=excluded.updated_at`)
+      // Do NOT overwrite sync_enabled on refresh from Cloud
+      const upsert = db.prepare(`INSERT INTO evotor_stores(store_uuid,name,address,code,raw_json,updated_at,sync_enabled)
+        VALUES(?,?,?,?,?,?,0) ON CONFLICT(store_uuid) DO UPDATE SET name=excluded.name,address=excluded.address,code=excluded.code,raw_json=excluded.raw_json,updated_at=excluded.updated_at`)
       for (const o of items) {
         const uuid = String(o.uuid ?? o.id ?? '').trim()
         if (!uuid) continue
         upsert.run(uuid, o.name ?? null, o.address ?? null, o.code ?? null, JSON.stringify(o), now)
         db.prepare(`INSERT OR IGNORE INTO evotor_sync_state(store_uuid,last_seen_close_ms) VALUES(?,0)`).run(uuid)
       }
-      return c.json({ stores: items.map((o) => ({ uuid: o.uuid ?? o.id, name: o.name, address: o.address ?? null, code: o.code ?? null })) })
+      const flags = new Map(
+        (db.prepare(`SELECT store_uuid, COALESCE(sync_enabled,0) AS sync_enabled FROM evotor_stores`).all() as { store_uuid: string; sync_enabled: number }[])
+          .map((r) => [r.store_uuid, r.sync_enabled === 1]),
+      )
+      return c.json({
+        stores: items.map((o) => {
+          const uuid = String(o.uuid ?? o.id ?? '')
+          return {
+            uuid,
+            name: o.name,
+            address: o.address ?? null,
+            code: o.code ?? null,
+            syncEnabled: flags.get(uuid) === true,
+          }
+        }),
+      })
     } catch (e) {
       throw bad(String(e), 502)
     }
+  })
+
+  .patch('/evotor/stores/:storeUuid', zValidator('json', z.object({
+    syncEnabled: z.boolean(),
+  })), async (c) => {
+    ensureStoresSchema()
+    const storeUuid = c.req.param('storeUuid')
+    const { syncEnabled } = c.req.valid('json')
+    const row = db.prepare(`SELECT store_uuid FROM evotor_stores WHERE store_uuid=?`).get(storeUuid)
+    if (!row) throw bad('Store not found — сначала обновите список точек', 404)
+    db.prepare(`UPDATE evotor_stores SET sync_enabled=?, updated_at=? WHERE store_uuid=?`)
+      .run(syncEnabled ? 1 : 0, Date.now(), storeUuid)
+    return c.json({ ok: true, storeUuid, syncEnabled })
   })
 
   .get('/evotor/employees', async (c) => {
@@ -77,9 +122,14 @@ export const adminEvotorCatalog = new Hono()
       const p = c.req.valid('json')
       const evotor = client()
       const svc = new ProductPushService(db, evotor)
+      ensureStoresSchema()
+      // Only stores with sync_enabled=1 (unless explicit storeUuid in body)
       const stores = p.storeUuid
         ? [p.storeUuid]
-        : asArray(await evotor.getStores()).map((s) => String(s.uuid ?? s.id ?? '')).filter(Boolean)
+        : enabledStoreUuids()
+      if (!stores.length) {
+        return c.json({ stores: 0, catalog: [], employees: 0, note: 'Нет магазинов с галочкой sync. Включите точку во вкладке Точки.' })
+      }
       const result: Record<string, unknown> = { stores: stores.length, catalog: [] }
       const catalog: unknown[] = []
       for (const storeUuid of stores) catalog.push({ storeUuid, ...(await svc.syncStore(storeUuid)) })
@@ -100,9 +150,13 @@ export const adminEvotorCatalog = new Hono()
   .post('/evotor/stores/:storeUuid/sync', async (c) => {
     const storeUuid = c.req.param('storeUuid')
     try {
+      ensureStoresSchema()
+      const en = db.prepare(`SELECT COALESCE(sync_enabled,0) AS e FROM evotor_stores WHERE store_uuid=?`).get(storeUuid) as { e: number } | undefined
+      if (!en || en.e !== 1) throw bad('Магазин не включён для sync (поставьте галочку в Точки)', 403)
       const svc = new ProductPushService(db, client())
       return c.json(await svc.syncStore(storeUuid))
     } catch (e) {
+      if (String(e).includes('403') || String((e as any)?.status) === '403') throw e
       throw bad(String(e), 502)
     }
   })

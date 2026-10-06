@@ -22,7 +22,12 @@ const taxRegimeZ = z.enum(TAX_REGIMES)
 function enqueueProductSync(productIds: number[]) {
   const ids = [...new Set(productIds.filter((id) => Number.isInteger(id) && id > 0))]
   if (!ids.length) return
-  const stores = db.prepare('SELECT store_uuid FROM evotor_stores').all() as { store_uuid: string }[]
+  // Outbox only for stores with sync_enabled=1
+  const cols = db.prepare(`PRAGMA table_info(evotor_stores)`).all() as { name: string }[]
+  if (!cols.some((c) => c.name === 'sync_enabled')) {
+    db.exec(`ALTER TABLE evotor_stores ADD COLUMN sync_enabled INTEGER NOT NULL DEFAULT 0`)
+  }
+  const stores = db.prepare('SELECT store_uuid FROM evotor_stores WHERE COALESCE(sync_enabled,0)=1').all() as { store_uuid: string }[]
   for (const store of stores) {
     for (const productId of ids) {
       const existing = db.prepare(`SELECT id FROM evotor_outbox WHERE store_uuid=? AND entity='PRODUCT' AND entity_key=? AND status='PENDING' LIMIT 1`)

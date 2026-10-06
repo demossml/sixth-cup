@@ -33,7 +33,7 @@ type Overview = {
   lastPollAt: number | null
 }
 
-type EvotorStore = { uuid: string; name: string; address?: string | null }
+type EvotorStore = { uuid: string; name: string; address?: string | null; syncEnabled?: boolean }
 type Product = {
   id: number
   name: string
@@ -226,16 +226,43 @@ export default function AdminPage() {
 
         {tab === 'stores' && (
           <div className="space-y-3">
-            <h2 className="font-semibold">Торговые точки (только Эвотор)</h2>
-            <p className="text-xs text-slate-500">Название и список только из Cloud. Создание вручную отключено.</p>
+            <h2 className="font-semibold">Торговые точки (Эвотор)</h2>
+            <p className="text-xs text-slate-500">
+              Список из Cloud. Галочка «Синхронизировать» — только такие магазины в pull/push.
+              Без галочки чужие SKU в 6.7 не тянутся.
+            </p>
             {stores.map((s) => (
-              <div key={s.uuid} className="bg-white rounded-xl p-3 shadow-sm">
-                <div className="font-medium">{s.name}</div>
-                <div className="text-xs text-slate-500 font-mono">{s.uuid}</div>
-                {s.address && <div className="text-xs text-slate-500">{s.address}</div>}
+              <div key={s.uuid} className="bg-white rounded-xl p-3 shadow-sm flex gap-3 items-start">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={!!s.syncEnabled}
+                  disabled={busy}
+                  onChange={async (e) => {
+                    const on = e.target.checked
+                    setBusy(true)
+                    try {
+                      await adminFetch(`/evotor/stores/${encodeURIComponent(s.uuid)}`, token, {
+                        method: 'PATCH',
+                        body: JSON.stringify({ syncEnabled: on }),
+                      })
+                      setStores((prev) => prev.map((x) => (x.uuid === s.uuid ? { ...x, syncEnabled: on } : x)))
+                    } catch (err: any) {
+                      setErr(err.message)
+                    } finally {
+                      setBusy(false)
+                    }
+                  }}
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium">{s.name}</div>
+                  <div className="text-xs text-slate-500 font-mono truncate">{s.uuid}</div>
+                  {s.address && <div className="text-xs text-slate-500">{s.address}</div>}
+                  <div className="text-xs mt-1">{s.syncEnabled ? 'sync включён' : 'sync выключен'}</div>
+                </div>
               </div>
             ))}
-            {!stores.length && <p className="text-sm text-slate-500">Нет точек — Эвотор → Sync.</p>}
+            {!stores.length && <p className="text-sm text-slate-500">Нет точек — сначала обновите список (Эвотор → Sync после галочек).</p>}
           </div>
         )}
 

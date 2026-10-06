@@ -400,19 +400,17 @@ export class ProductPushService {
       const tax = typeof item.tax === 'string' ? item.tax : 'NO_VAT'
       const measure = typeof item.measureName === 'string' ? item.measureName : (typeof item.measure === 'string' ? item.measure : 'шт')
 
+      // Do NOT auto-import every Evotor SKU into 6.7 (stores can have 1000+ items).
+      // Only refresh already linked products or article sc-{id}.
       if (!productId) {
-        const r = this.db.prepare(`INSERT INTO products(name,price,icon,available,description,sort_order,created_at,updated_at,tax,measure,catalog_source)
-          VALUES(?,?,?,?,?,?,?,?,?,?, 'EVOTOR_IMPORT')`)
-          .run(name, price, 'Coffee', allowToSell === false ? 0 : 1, typeof item.description === 'string' ? item.description : null, 0, now, now, tax, measure)
-        productId = Number(r.lastInsertRowid)
-        imported++
-      } else {
-        const local = this.db.prepare(`SELECT catalog_source FROM products WHERE id=?`).get(productId) as { catalog_source: string } | undefined
-        if (local?.catalog_source !== 'SIXTH_CUP') {
-          this.db.prepare(`UPDATE products SET name=?,price=?,available=?,tax=?,measure=?,updated_at=? WHERE id=?`)
-            .run(name, price, allowToSell === false ? 0 : 1, tax, measure, now, productId)
-          updated++
-        }
+        continue
+      }
+
+      const local = this.db.prepare(`SELECT catalog_source FROM products WHERE id=?`).get(productId) as { catalog_source: string } | undefined
+      if (local?.catalog_source !== 'SIXTH_CUP') {
+        this.db.prepare(`UPDATE products SET name=?,price=?,available=?,tax=?,measure=?,updated_at=? WHERE id=?`)
+          .run(name, price, allowToSell === false ? 0 : 1, tax, measure, now, productId)
+        updated++
       }
 
       const linkResult = this.db.prepare(`INSERT INTO product_store_links(product_id,store_uuid,evotor_uuid,last_pulled_at,last_error)
