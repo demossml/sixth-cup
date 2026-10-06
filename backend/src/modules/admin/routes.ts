@@ -1,3 +1,4 @@
+import { adminAssignments } from './assignments'
 import { randomBytes } from 'node:crypto'
 import { Hono } from 'hono'
 import { createMiddleware } from 'hono/factory'
@@ -574,3 +575,5 @@ export const adminRoutes = new Hono()
 
   // Evotor catalog admin (stores from cloud + product push, no local device enroll)
   .route('/', adminEvotorCatalog)
+
+adminRoutes.route('/', adminAssignments)

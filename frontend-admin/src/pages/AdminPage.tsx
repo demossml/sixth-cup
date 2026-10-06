@@ -1,914 +1,465 @@
+/**
+ * Admin UI per TZ-ADMIN-EVOTOR-SYNC-FULL:
+ * Overview | Points (RO) | Products (assignments) | Groups | Sales | Evotor settings
+ * No manual stores, no loyalty, no enroll as primary flow.
+ */
 import { useCallback, useEffect, useState } from 'react'
 
-import { ChevronLeft, RefreshCw } from './icons'
-
-const TOKEN_KEY = 'sc-admin-token'
+const API = (import.meta as any).env?.VITE_API_URL ?? ''
 
 async function adminFetch<T>(path: string, token: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/api/admin${path}`, {
+  const res = await fetch(`${API}/api/admin${path}`, {
     ...init,
     headers: {
+      'Content-Type': 'application/json',
       'X-Admin-Token': token,
-      ...(init?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
-      ...(init?.headers ?? {}),
+      ...(init?.headers || {}),
     },
   })
-  const body = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error((body as { error?: string }).error ?? `Ошибка ${res.status}`)
-  return body as T
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as any).error || res.statusText)
+  }
+  return res.json() as Promise<T>
 }
 
-type Tab = 'overview' | 'orgs' | 'stores' | 'evotor' | 'categories' | 'products' | 'modifiers' | 'schemes' | 'devices' | 'promos' | 'disputes'
+type Tab = 'overview' | 'stores' | 'products' | 'categories' | 'sales' | 'evotor'
 
-type Stats = {
-  users: number; receipts: number; receiptsToday: number; freeCups: number
-  cashbackGranted: number; cashbackSpent: number; amountTotal: number
+type Overview = {
+  stores: number
+  products: number
+  linked: number
+  pending: number
+  errors: number
+  lastPollAt: number | null
 }
 
-type Org = {
-  id: number; name: string; legalName: string; inn: string; kpp: string | null
-  taxRegime: string; vatRate: number; active: number
-}
-type Store = {
-  id: number; name: string; address: string; organizationId: number | null; organizationName?: string
-}
-type Category = { id: number; name: string; sortOrder: number; available: number }
+type EvotorStore = { uuid: string; name: string; address?: string | null }
 type Product = {
-  id: number; name: string; price: number; icon: string; available: number
-  description: string | null; categoryId: number | null; imageUrl: string | null
-  sortOrder: number; categoryName?: string | null
-  modifierSchemeId?: number | null; recipeText?: string | null
-  recipeCostRub?: number | null; recipeSeconds?: number | null
-  countsAsCup?: number; freeEligible?: number; tax?: string; measure?: string
-  costPriceKopecks?: number; seasonStartAt?: number | null; seasonEndAt?: number | null
-  evotorExtraJson?: string | null
-  catalogSource?: 'SIXTH_CUP' | 'EVOTOR_IMPORT'
-  evotorUuid?: string | null
-  evotorLinks?: Array<{ storeUuid: string; evotorUuid: string | null; lastPushedAt?: number | null; lastPulledAt?: number | null; lastError?: string | null }>
+  id: number
+  name: string
+  price: number
+  available: number
+  categoryId?: number | null
+  description?: string | null
+  imageUrl?: string | null
+  recipeText?: string | null
+  tax?: string | null
+  measure?: string | null
+  evotorLinks?: { storeUuid: string; evotorUuid: string | null; enabled?: number; lastError?: string | null }[]
 }
-type Modifier = { id: number; name: string; price: number; groupKey: string; available: number | boolean }
-type Scheme = { id: number; name: string; items: { modifierId: number }[] }
-type Device = {
-  id: number; name: string; storeId: number; storeName: string; revoked: number
-  enrollCode: string | null; enrolled: number
-}
-type EvotorStore = { uuid: string; name?: string | null; address?: string | null; code?: string | null }
-type EvotorEmployee = { uuid: string; name?: string | null; phone?: string | null; role?: string | null; storeUuid?: string | null }
+type Category = { id: number; name: string; sortOrder?: number }
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'overview', label: 'Обзор' },
-  { id: 'orgs', label: 'Юрлица' },
   { id: 'stores', label: 'Точки' },
-  { id: 'evotor', label: 'Эвотор' },
-  { id: 'categories', label: 'Категории' },
   { id: 'products', label: 'Товары' },
-  { id: 'modifiers', label: 'Добавки' },
-  { id: 'schemes', label: 'Схемы' },
-  { id: 'devices', label: 'Кассы' },
-  { id: 'promos', label: 'Акции' },
-  { id: 'disputes', label: 'Конфликты' },
-]
-
-const TAX = [
-  { v: 'usn_income', l: 'УСН доходы' },
-  { v: 'usn_income_expense', l: 'УСН доходы-расходы' },
-  { v: 'osn', l: 'ОСН' },
-  { v: 'patent', l: 'Патент' },
+  { id: 'categories', label: 'Группы' },
+  { id: 'sales', label: 'Продажи' },
+  { id: 'evotor', label: 'Эвотор' },
 ]
 
 export default function AdminPage() {
-  const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY) ?? '')
-  const [input, setInput] = useState(token)
-  const [error, setError] = useState('')
+  const [token, setToken] = useState(() => localStorage.getItem('admin_token') || '')
+  const [authed, setAuthed] = useState(false)
   const [tab, setTab] = useState<Tab>('overview')
-  const [stats, setStats] = useState<Stats | null>(null)
-  const [orgs, setOrgs] = useState<Org[]>([])
-  const [stores, setStores] = useState<Store[]>([])
-  const [categories, setCategories] = useState<Category[]>([])
+  const [err, setErr] = useState('')
+  const [overview, setOverview] = useState<Overview | null>(null)
+  const [stores, setStores] = useState<EvotorStore[]>([])
   const [products, setProducts] = useState<Product[]>([])
-  const [modifiers, setModifiers] = useState<Modifier[]>([])
-  const [schemes, setSchemes] = useState<Scheme[]>([])
-  const [modForm, setModForm] = useState({ name: '', price: 40, groupKey: 'syrup' })
-  const [schemeForm, setSchemeForm] = useState({ name: '', modifierIds: [] as number[], copyFrom: 0 })
-  const [devices, setDevices] = useState<Device[]>([])
-  const [evotorStores, setEvotorStores] = useState<EvotorStore[]>([])
-  const [evotorEmployees, setEvotorEmployees] = useState<EvotorEmployee[]>([])
-  const [promos, setPromos] = useState<Array<{ id: number; title: string; body: string; endsAt: number }>>([])
-  const [disputes, setDisputes] = useState<Array<{ id: number; kind: string; details: string; created_at: number }>>([])
+  const [categories, setCategories] = useState<Category[]>([])
+  const [sales, setSales] = useState<{ lines: any[]; lastPollAt: number | null; sellDocs: number } | null>(null)
+  const [edit, setEdit] = useState<Partial<Product> & { storeUuids: string[] } | null>(null)
+  const [busy, setBusy] = useState(false)
 
-  // forms
-  const [orgForm, setOrgForm] = useState({ name: '', legalName: '', inn: '', taxRegime: 'usn_income', vatRate: 0 })
-  const [storeForm, setStoreForm] = useState({ name: '', address: '', organizationId: 0 })
-  const [catForm, setCatForm] = useState({ name: '', sortOrder: 0 })
-  const [prodForm, setProdForm] = useState({
-    name: '', price: 0, icon: 'Coffee', categoryId: 0, description: '', imageUrl: '', sortOrder: 0,
-    modifierSchemeId: 0, recipeText: '', recipeCostRub: 0, recipeSeconds: 0,
-    countsAsCup: false, freeEligible: false, tax: 'NO_VAT', measure: 'шт', costPriceKopecks: 0,
-    seasonStartAt: null as number | null, seasonEndAt: null as number | null, evotorExtraJson: '',
-  })
-  const [deviceName, setDeviceName] = useState('')
-  const [deviceStoreId, setDeviceStoreId] = useState(0)
-  const [newCode, setNewCode] = useState('')
-  const [promoTitle, setPromoTitle] = useState('')
-  const [promoBody, setPromoBody] = useState('')
-  const [uploading, setUploading] = useState(false)
-  const [editingId, setEditingId] = useState<number | null>(null)
-  const [productModalOpen, setProductModalOpen] = useState(false)
-  const [saving, setSaving] = useState(false)
-
-  const load = useCallback(async (t: string) => {
-    setError('')
+  const login = async () => {
+    setErr('')
     try {
-      const [s, o, st, cat, p, mod, sch, d, storesFromApi, employeesFromApi, pr, di] = await Promise.all([
-        adminFetch<Stats>('/stats', t),
-        adminFetch<{ organizations: Org[] }>('/organizations', t),
-        adminFetch<{ stores: Store[] }>('/stores', t),
-        adminFetch<{ categories: Category[] }>('/categories', t),
-        adminFetch<{ products: Product[] }>('/products', t),
-        adminFetch<{ modifiers: Modifier[] }>('/modifiers', t).catch(() => ({ modifiers: [] as Modifier[] })),
-        adminFetch<{ schemes: Scheme[] }>('/modifier-schemes', t).catch(() => ({ schemes: [] as Scheme[] })),
-        adminFetch<{ devices: Device[] }>('/devices', t),
-        adminFetch<{ stores: EvotorStore[] }>('/evotor/stores', t).catch(() => ({ stores: [] as EvotorStore[] })),
-        adminFetch<{ employees: EvotorEmployee[] }>('/evotor/employees', t).catch(() => ({ employees: [] as EvotorEmployee[] })),
-        adminFetch<{ promos: typeof promos }>('/promos', t),
-        adminFetch<{ disputes: typeof disputes }>('/disputes', t),
-      ])
-      setStats(s)
-      setOrgs(o.organizations)
-      setStores(st.stores)
-      setCategories(cat.categories)
-      setProducts(p.products)
-      setModifiers(mod.modifiers)
-      setSchemes(sch.schemes)
-      setDevices(d.devices)
-      setEvotorStores(storesFromApi.stores)
-      setEvotorEmployees(employeesFromApi.employees)
-      setPromos(pr.promos)
-      setDisputes(di.disputes)
-      if (o.organizations[0] && !storeForm.organizationId) {
-        setStoreForm((f) => ({ ...f, organizationId: o.organizations[0].id }))
-      }
-      if (st.stores[0]) setDeviceStoreId((prev) => prev || st.stores[0].id)
-      if (cat.categories[0] && !prodForm.categoryId) {
-        setProdForm((f) => ({ ...f, categoryId: cat.categories[0].id }))
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Ошибка загрузки')
-      setStats(null)
+      await adminFetch('/overview', token)
+      localStorage.setItem('admin_token', token)
+      setAuthed(true)
+    } catch (e: any) {
+      setErr(e.message || 'Неверный токен')
     }
-  }, [])
+  }
+
+  const load = useCallback(async () => {
+    if (!token) return
+    setErr('')
+    try {
+      const [ov, st, pr, cat] = await Promise.all([
+        adminFetch<Overview>('/overview', token).catch(() => null),
+        adminFetch<{ stores: EvotorStore[] }>('/evotor/stores', token).catch(() => ({ stores: [] })),
+        adminFetch<{ products: Product[] }>('/products', token),
+        adminFetch<{ categories: Category[] }>('/categories', token).catch(() => ({ categories: [] })),
+      ])
+      if (ov) setOverview(ov)
+      setStores(st.stores || [])
+      setProducts((pr.products || []).filter((p) => true))
+      setCategories(cat.categories || [])
+    } catch (e: any) {
+      setErr(e.message)
+    }
+  }, [token])
 
   useEffect(() => {
-    if (token) void load(token)
-  }, [token, load])
+    if (authed) void load()
+  }, [authed, load])
 
-  function login() {
-    const t = input.trim()
-    localStorage.setItem(TOKEN_KEY, t)
-    setToken(t)
-  }
-
-  async function uploadImage(file: File) {
-    setUploading(true)
+  const loadSales = async () => {
     try {
-      const fd = new FormData()
-      fd.append('file', file)
-      const res = await fetch('/api/admin/upload', {
-        method: 'POST',
-        headers: { 'X-Admin-Token': token },
-        body: fd,
-      })
-      const body = await res.json()
-      if (!res.ok) throw new Error(body.error ?? 'Upload failed')
-      setProdForm((f) => ({ ...f, imageUrl: body.url as string }))
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Upload error')
-    } finally {
-      setUploading(false)
+      const s = await adminFetch<{ lines: any[]; lastPollAt: number | null; sellDocs: number }>('/sales/summary', token)
+      setSales(s)
+    } catch (e: any) {
+      setErr(e.message)
     }
   }
 
-  if (!token || !stats) {
+  if (!authed) {
     return (
-      <div className="max-w-[480px] mx-auto min-h-screen bg-page p-4">
-        <img src="/logo-mark.png" alt="6.7 Coffee Admin" className="w-16 h-16 rounded-2xl mb-4 ring-2 ring-amber-400/50" />
-        <p className="text-ink-tertiary text-sm mb-1">Кабинет владельца · не клиентское приложение</p>
-        <h1 className="text-xl font-bold mb-4">6.7 Coffee · Админ</h1>
-        <p className="text-xs text-amber-700 mb-3">Золотая альпака = admin. Белая на синем = приложение гостя.</p>
-        {error && <p className="text-red-600 text-sm mb-2">{error}</p>}
-        <input className="input mb-3" placeholder="ADMIN_TOKEN" value={input} onChange={(e) => setInput(e.target.value)} />
-        <button type="button" className="btn-primary w-full" onClick={login}>Войти</button>
+      <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50">
+        <div className="w-full max-w-sm space-y-3 bg-white p-6 rounded-xl shadow">
+          <h1 className="text-xl font-bold text-[#002FA7]">6.7 Coffee — админка</h1>
+          <p className="text-sm text-slate-500">Токен владельца (ADMIN_TOKEN)</p>
+          <input
+            className="w-full border rounded-lg px-3 py-2"
+            type="password"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="X-Admin-Token"
+          />
+          {err && <p className="text-sm text-red-600">{err}</p>}
+          <button className="w-full bg-[#002FA7] text-white rounded-lg py-2" onClick={() => void login()}>
+            Войти
+          </button>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="max-w-[480px] mx-auto min-h-screen bg-page pb-24">
-      <div className="bg-brand text-white px-4 pt-10 pb-3">
-        <div className="flex items-center justify-between">
-          <span className="text-white/80 text-sm">Кабинет владельца</span>
-          <button type="button" className="text-white/90" onClick={() => void load(token)} aria-label="Обновить">
-            <RefreshCw size={18} />
-          </button>
-        </div>
-        <h1 className="text-xl font-bold mt-2">Бизнес-панель</h1>
-      </div>
-
-      <div className="flex gap-1 overflow-x-auto px-2 py-2 bg-white border-b border-line sticky top-0 z-10">
+    <div className="min-h-screen bg-slate-50 text-slate-900">
+      <header className="bg-[#002FA7] text-white px-4 py-3 flex items-center justify-between">
+        <div className="font-semibold">6.7 Coffee · Админ</div>
+        <button
+          className="text-sm opacity-80"
+          onClick={() => {
+            localStorage.removeItem('admin_token')
+            setAuthed(false)
+          }}
+        >
+          Выйти
+        </button>
+      </header>
+      <nav className="flex gap-1 overflow-x-auto bg-white border-b px-2 py-2">
         {TABS.map((t) => (
           <button
             key={t.id}
-            type="button"
-            onClick={() => setTab(t.id)}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium ${
-              tab === t.id ? 'bg-brand text-white' : 'bg-page text-ink-secondary'
-            }`}
+            className={`px-3 py-1.5 rounded-lg text-sm whitespace-nowrap ${tab === t.id ? 'bg-[#002FA7] text-white' : 'bg-slate-100'}`}
+            onClick={() => {
+              setTab(t.id)
+              if (t.id === 'sales') void loadSales()
+            }}
           >
             {t.label}
           </button>
         ))}
-      </div>
+      </nav>
+      <main className="max-w-3xl mx-auto p-4 space-y-4">
+        {err && <div className="text-sm text-red-600 bg-red-50 p-2 rounded">{err}</div>}
 
-      {error && <p className="text-red-600 text-sm px-4 pt-2">{error}</p>}
-
-      <div className="p-4 space-y-3">
-        {tab === 'overview' && (
-          <>
-          <div className="grid grid-cols-2 gap-2">
+        {tab === 'overview' && overview && (
+          <div className="grid grid-cols-2 gap-3">
             {[
-              ['Клиенты', stats.users],
-              ['Чеки сегодня', stats.receiptsToday],
-              ['Всего чеков', stats.receipts],
-              ['Бесплатных', stats.freeCups],
-              ['Кэшбэк +', `${Math.floor(stats.cashbackGranted / 100)} ₽`],
-              ['Кэшбэк −', `${Math.floor(stats.cashbackSpent / 100)} ₽`],
-              ['Сумма', `${Math.floor(stats.amountTotal / 100)} ₽`],
-              ['Юрлица', orgs.length],
+              ['Точки Эвотор', overview.stores],
+              ['Товары 6.7', overview.products],
+              ['Синхронизировано', overview.linked],
+              ['Ждут CREATE', overview.pending],
+              ['Ошибки sync', overview.errors],
             ].map(([k, v]) => (
-              <div key={String(k)} className="card !mb-0">
-                <div className="text-ink-tertiary text-xs">{k}</div>
-                <div className="text-lg font-bold text-ink">{v}</div>
+              <div key={String(k)} className="bg-white rounded-xl p-4 shadow-sm">
+                <div className="text-xs text-slate-500">{k}</div>
+                <div className="text-2xl font-bold">{v as number}</div>
               </div>
             ))}
+            <div className="bg-white rounded-xl p-4 shadow-sm col-span-2 text-sm text-slate-600">
+              Последний poll:{' '}
+              {overview.lastPollAt ? new Date(overview.lastPollAt).toLocaleString('ru-RU') : 'ещё не было'}
+            </div>
+            <button className="col-span-2 border rounded-lg py-2" onClick={() => void load()}>
+              Обновить
+            </button>
           </div>
-            <div className="card mt-4 space-y-2">
-              <p className="text-sm font-semibold text-ink">Данные</p>
-              <p className="text-xs text-ink-secondary">Обзор считает клиентов и чеки лояльности. Демо можно обнулить.</p>
-              <button type="button" className="btn-ghost w-full text-sm" onClick={async () => {
-                if (!confirm('Сбросить клиентов, чеки, кэшбэк, споры? Товары и точки останутся.')) return
-                await adminFetch('/reset', token, { method: 'POST', body: JSON.stringify({ mode: 'loyalty', confirm: true }) })
-                void load(token)
-              }}>Сбросить лояльность (обзор → 0)</button>
-              <button type="button" className="btn-ghost w-full text-sm text-red-700" onClick={async () => {
-                if (!confirm('Удалить ВСЕ юрлица, точки, товары, кассы, акции?')) return
-                if (!confirm('Точно полный сброс каталога?')) return
-                await adminFetch('/reset', token, { method: 'POST', body: JSON.stringify({ mode: 'full', confirm: true }) })
-                void load(token)
-              }}>Полный сброс каталога + лояльности</button>
-            </div>
-          </>
-        )}
-
-        {tab === 'orgs' && (
-          <>
-            {orgs.map((o) => (
-              <div key={o.id} className="card !mb-0 text-sm">
-                <div className="flex justify-between gap-2">
-                  <div className="font-semibold">{o.name} {!o.active ? '(выкл)' : ''}</div>
-                  <button type="button" className="text-xs text-red-600 shrink-0" onClick={async () => {
-                    if (!confirm('Удалить юрлицо? Только если нет точек.')) return
-                    try {
-                      await adminFetch(`/organizations/${o.id}`, token, { method: 'DELETE' })
-                      void load(token)
-                    } catch (e) {
-                      setError(e instanceof Error ? e.message : 'Не удалось удалить')
-                    }
-                  }}>Удалить</button>
-                </div>
-                <div className="text-ink-secondary">{o.legalName}</div>
-                <div className="text-ink-tertiary">ИНН {o.inn} · {o.taxRegime} · НДС {o.vatRate}%</div>
-              </div>
-            ))}
-            <div className="card space-y-2">
-              <div className="font-semibold text-sm">Новое юрлицо</div>
-              <input className="input" placeholder="Краткое имя" value={orgForm.name}
-                onChange={(e) => setOrgForm({ ...orgForm, name: e.target.value })} />
-              <input className="input" placeholder="Официальное наименование" value={orgForm.legalName}
-                onChange={(e) => setOrgForm({ ...orgForm, legalName: e.target.value })} />
-              <input className="input" placeholder="ИНН" value={orgForm.inn}
-                onChange={(e) => setOrgForm({ ...orgForm, inn: e.target.value })} />
-              <select className="input" value={orgForm.taxRegime}
-                onChange={(e) => setOrgForm({ ...orgForm, taxRegime: e.target.value })}>
-                {TAX.map((t) => <option key={t.v} value={t.v}>{t.l}</option>)}
-              </select>
-              <select className="input" value={orgForm.vatRate}
-                onChange={(e) => setOrgForm({ ...orgForm, vatRate: Number(e.target.value) })}>
-                <option value={0}>НДС 0%</option>
-                <option value={10}>НДС 10%</option>
-                <option value={20}>НДС 20%</option>
-                <option value={22}>НДС 22%</option>
-              </select>
-              <button type="button" className="btn-primary w-full" onClick={async () => {
-                await adminFetch('/organizations', token, {
-                  method: 'POST',
-                  body: JSON.stringify(orgForm),
-                })
-                setOrgForm({ name: '', legalName: '', inn: '', taxRegime: 'usn_income', vatRate: 0 })
-                void load(token)
-              }}>Создать</button>
-            </div>
-          </>
         )}
 
         {tab === 'stores' && (
-          <>
+          <div className="space-y-3">
+            <div className="flex justify-between items-center">
+              <h2 className="font-semibold">Торговые точки из Эвотор</h2>
+              <button
+                className="text-sm bg-[#002FA7] text-white px-3 py-1.5 rounded-lg"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true)
+                  try {
+                    await adminFetch('/evotor/sync', token, { method: 'POST', body: '{}' })
+                    await load()
+                  } catch (e: any) {
+                    setErr(e.message)
+                  } finally {
+                    setBusy(false)
+                  }
+                }}
+              >
+                Обновить из Эвотор
+              </button>
+            </div>
+            <p className="text-xs text-slate-500">Точки не создаём и не переименовываем — только из Cloud.</p>
             {stores.map((s) => (
-              <div key={s.id} className="card !mb-0 text-sm">
-                <div className="flex justify-between gap-2">
-                  <div className="font-semibold">{s.name}</div>
-                  <button type="button" className="text-xs text-red-600" onClick={async () => {
-                    if (!confirm('Удалить точку?')) return
-                    try {
-                      await adminFetch(`/stores/${s.id}`, token, { method: 'DELETE' })
-                      void load(token)
-                    } catch (e) {
-                      setError(e instanceof Error ? e.message : 'Ошибка')
-                    }
-                  }}>Удалить</button>
-                </div>
-                <div className="text-ink-secondary">{s.address}</div>
-                <div className="text-ink-tertiary">{s.organizationName ?? `org #${s.organizationId}`}</div>
+              <div key={s.uuid} className="bg-white rounded-xl p-3 shadow-sm">
+                <div className="font-medium">{s.name}</div>
+                <div className="text-xs text-slate-500 font-mono">{s.uuid}</div>
+                {s.address && <div className="text-xs text-slate-600">{s.address}</div>}
               </div>
             ))}
-            <div className="card space-y-2">
-              <div className="font-semibold text-sm">Новая точка</div>
-              <input className="input" placeholder="Название" value={storeForm.name}
-                onChange={(e) => setStoreForm({ ...storeForm, name: e.target.value })} />
-              <input className="input" placeholder="Адрес" value={storeForm.address}
-                onChange={(e) => setStoreForm({ ...storeForm, address: e.target.value })} />
-              <select className="input" value={storeForm.organizationId}
-                onChange={(e) => setStoreForm({ ...storeForm, organizationId: Number(e.target.value) })}>
-                {orgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-              </select>
-              <button type="button" className="btn-primary w-full" onClick={async () => {
-                await adminFetch('/stores', token, { method: 'POST', body: JSON.stringify(storeForm) })
-                setStoreForm((f) => ({ ...f, name: '', address: '' }))
-                void load(token)
-              }}>Создать точку</button>
-            </div>
-          </>
-        )}
-
-        {tab === 'evotor' && (
-          <div className="space-y-3">
-            <div className="card space-y-2">
-              <div className="font-semibold text-sm">Эвотор Cloud</div>
-              <p className="text-xs text-ink-secondary">Здесь видно то, что пришло из Эвотора. Новые товары создаются в 6.7, получают UUID в Cloud и дальше обновляются по сохранённому UUID — повторного CREATE нет.</p>
-              <button type="button" className="btn-primary w-full" onClick={async () => {
-                try {
-                  await adminFetch('/evotor/sync', token, { method: 'POST', body: JSON.stringify({}) })
-                  await load(token)
-                } catch (e) { setError(e instanceof Error ? e.message : 'Синхронизация Эвотор не удалась') }
-              }}>Синхронизировать магазины и каталог</button>
-            </div>
-            <div className="card">
-              <div className="font-semibold text-sm mb-2">Торговые точки из Эвотора · {evotorStores.length}</div>
-              {evotorStores.map((s) => (
-                <div key={s.uuid} className="border-b border-line py-2 last:border-0">
-                  <div className="font-medium text-sm">{s.name ?? s.uuid}</div>
-                  <div className="text-[11px] text-ink-tertiary">{s.address ?? 'Адрес не передан'} · UUID {s.uuid}</div>
-                  <button type="button" className="text-xs text-brand mt-1" onClick={async () => {
-                    try {
-                      await adminFetch(`/evotor/stores/${encodeURIComponent(s.uuid)}/sync`, token, { method: 'POST' })
-                      await load(token)
-                    } catch (e) { setError(e instanceof Error ? e.message : 'Ошибка синхронизации') }
-                  }}>Синхронизировать эту точку</button>
-                </div>
-              ))}
-              {!evotorStores.length && <p className="text-xs text-ink-tertiary">Эвотор Cloud пока не вернул торговые точки.</p>}
-            </div>
-            <div className="card">
-              <div className="font-semibold text-sm mb-2">Сотрудники Эвотора · {evotorEmployees.length}</div>
-              {evotorEmployees.slice(0, 50).map((e) => (
-                <div key={e.uuid} className="py-1.5 border-b border-line last:border-0 text-sm">
-                  <div>{e.name ?? e.uuid}</div>
-                  <div className="text-[11px] text-ink-tertiary">{e.role ?? 'Роль не передана'}{e.phone ? ` · ${e.phone}` : ''}</div>
-                </div>
-              ))}
-            </div>
+            {!stores.length && <p className="text-sm text-slate-500">Нет точек. Проверьте токен и sync.</p>}
           </div>
         )}
 
         {tab === 'categories' && (
-          <>
+          <div className="space-y-3">
+            <h2 className="font-semibold">Группы меню 6.7</h2>
             {categories.map((c) => (
-              <div key={c.id} className="card !mb-0 flex justify-between items-center text-sm">
-                <span>{c.name} <span className="text-ink-tertiary">#{c.sortOrder}</span></span>
-                <button type="button" className="text-red-600 text-xs" onClick={async () => {
-                  try {
-                    await adminFetch(`/categories/${c.id}`, token, { method: 'DELETE' })
-                    void load(token)
-                  } catch (e) {
-                    setError(e instanceof Error ? e.message : 'err')
-                  }
-                }}>Удалить</button>
+              <div key={c.id} className="bg-white rounded-xl p-3 shadow-sm">
+                #{c.id} · {c.name}
               </div>
             ))}
-            <div className="card space-y-2">
-              <input className="input" placeholder="Название категории" value={catForm.name}
-                onChange={(e) => setCatForm({ ...catForm, name: e.target.value })} />
-              <button type="button" className="btn-primary w-full" onClick={async () => {
-                await adminFetch('/categories', token, {
-                  method: 'POST',
-                  body: JSON.stringify({ name: catForm.name, sortOrder: catForm.sortOrder }),
-                })
-                setCatForm({ name: '', sortOrder: 0 })
-                void load(token)
-              }}>Добавить</button>
-            </div>
-          </>
+            <p className="text-xs text-slate-500">Создание/редактирование групп — через API categories (как раньше) или расширим UI позже.</p>
+          </div>
         )}
 
         {tab === 'products' && (
-          <>
+          <div className="space-y-3">
+            <div className="flex justify-between">
+              <h2 className="font-semibold">Товары 6.7</h2>
+              <button
+                className="text-sm bg-[#002FA7] text-white px-3 py-1.5 rounded-lg"
+                onClick={() =>
+                  setEdit({
+                    name: '',
+                    price: 0,
+                    available: 1,
+                    storeUuids: [],
+                    tax: 'NO_VAT',
+                    measure: 'шт',
+                  })
+                }
+              >
+                + Товар
+              </button>
+            </div>
             {products.map((p) => (
-              <div key={p.id} className="card !mb-0 text-sm">
-                <div className="flex gap-3">
-                  {p.imageUrl ? (
-                    <img src={p.imageUrl} alt="" className="w-12 h-12 rounded-lg object-cover bg-brand-soft" />
-                  ) : (
-                    <div className="w-12 h-12 rounded-lg bg-brand-soft" />
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <div className="font-semibold">{p.name} · {p.price} ₽</div>
-                    <div className="text-ink-tertiary truncate">{p.categoryName ?? 'без категории'} · {p.icon}</div>
-                    <div className={`text-xs mt-0.5 ${p.available ? 'text-ok' : 'text-red-600'}`}>
-                      {p.available ? 'В меню' : 'Скрыт из меню'}
-                    </div>
-                    <div className="text-[11px] text-ink-tertiary mt-1">
-                      {p.catalogSource === 'EVOTOR_IMPORT' ? 'Источник: Эвотор' : 'Источник: 6.7'}
-                      {p.evotorLinks?.length ? ` · Cloud: ${p.evotorLinks.length}` : ' · ещё не синхронизирован'}
-                    </div>
-                    {!!p.evotorLinks?.length && (
-                      <div className="text-[10px] text-ink-tertiary mt-0.5 space-y-0.5">
-                        {p.evotorLinks.slice(0, 4).map((l) => (
-                          <div key={`${l.storeUuid}:${l.evotorUuid ?? 'pending'}`} className="truncate">
-                            {l.storeUuid} → {l.evotorUuid ?? 'ожидает CREATE'}
-                            {l.lastError ? ` · ошибка: ${l.lastError}` : ''}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+              <div key={p.id} className="bg-white rounded-xl p-3 shadow-sm space-y-1">
+                <div className="font-medium">
+                  {p.name} · {p.price} ₽
                 </div>
-                <div className="flex flex-wrap gap-2 mt-2">
+                <div className="text-xs text-slate-500">
+                  {(p.evotorLinks || [])
+                    .map((l) => `${l.storeUuid.slice(0, 8)}… → ${l.evotorUuid ? l.evotorUuid.slice(0, 8) + '…' : 'нет uuid'}`)
+                    .join(' · ') || 'не назначен на точки'}
+                </div>
+                <div className="flex gap-2 pt-1">
                   <button
-                    type="button"
-                    className="text-xs px-2 py-1 rounded-lg bg-page border border-line"
-                    disabled={saving}
-                    onClick={async () => {
-                      setSaving(true)
-                      try {
-                        await adminFetch('/products', token, {
-                          method: 'POST',
-                          body: JSON.stringify({
-                            id: p.id,
-                            name: p.name,
-                            price: p.price,
-                            icon: p.icon,
-                            available: !p.available,
-                            description: p.description,
-                            categoryId: p.categoryId,
-                            imageUrl: p.imageUrl,
-                            sortOrder: p.sortOrder ?? 0,
-                            modifierSchemeId: p.modifierSchemeId ?? null,
-                            recipeText: p.recipeText ?? null,
-                            recipeCostRub: p.recipeCostRub ?? null,
-                            recipeSeconds: p.recipeSeconds ?? null,
-                            countsAsCup: !!p.countsAsCup, freeEligible: !!p.freeEligible, tax: p.tax ?? 'NO_VAT',
-                            measure: p.measure ?? 'шт', costPriceKopecks: p.costPriceKopecks ?? 0,
-                            seasonStartAt: p.seasonStartAt ?? null, seasonEndAt: p.seasonEndAt ?? null, evotorExtraJson: p.evotorExtraJson ?? null,
-                          }),
-                        })
-                        await load(token)
-                      } catch (e) {
-                        setError(e instanceof Error ? e.message : 'Ошибка')
-                      } finally {
-                        setSaving(false)
-                      }
-                    }}
-                  >
-                    {p.available ? 'Скрыть из меню' : 'Показать в меню'}
-                  </button>
-                  <button
-                    type="button"
-                    className="text-xs px-2 py-1 rounded-lg bg-brand-soft text-brand"
-                    onClick={() => {
-                      setEditingId(p.id)
-                      setProdForm({
-                        name: p.name,
-                        price: p.price,
-                        icon: p.icon || 'Coffee',
-                        categoryId: p.categoryId ?? categories[0]?.id ?? 0,
-                        description: p.description ?? '',
-                        imageUrl: p.imageUrl ?? '',
-                        sortOrder: p.sortOrder ?? 0,
-                        modifierSchemeId: p.modifierSchemeId ?? 0,
-                        recipeText: p.recipeText ?? '',
-                        recipeCostRub: p.recipeCostRub ?? 0,
-                        recipeSeconds: p.recipeSeconds ?? 0,
-                        countsAsCup: !!p.countsAsCup, freeEligible: !!p.freeEligible, tax: p.tax ?? 'NO_VAT', measure: p.measure ?? 'шт',
-                        costPriceKopecks: p.costPriceKopecks ?? 0, seasonStartAt: p.seasonStartAt ?? null, seasonEndAt: p.seasonEndAt ?? null,
-                        evotorExtraJson: p.evotorExtraJson ?? '',
+                    className="text-xs border rounded px-2 py-1"
+                    onClick={() =>
+                      setEdit({
+                        ...p,
+                        storeUuids: (p.evotorLinks || []).filter((l) => l.enabled !== 0).map((l) => l.storeUuid),
                       })
-                      setProductModalOpen(true)
-                    }}
+                    }
                   >
                     Изменить
                   </button>
                   <button
-                    type="button"
-                    className="text-xs px-2 py-1 rounded-lg text-red-600 border border-red-200"
+                    className="text-xs border rounded px-2 py-1"
+                    disabled={busy}
                     onClick={async () => {
-                      if (!confirm('Удалить товар «' + p.name + '»?')) return
-                      await adminFetch('/products/' + p.id, token, { method: 'DELETE' })
-                      void load(token)
-                    }}
-                  >
-                    Удалить
-                  </button>
-                </div>
-              </div>
-            ))}
-            <button type="button" className="btn-primary w-full" onClick={() => {
-              setEditingId(null)
-              setProdForm({
-                name: '', price: 0, icon: 'Coffee', categoryId: categories[0]?.id ?? 0,
-                description: '', imageUrl: '', sortOrder: 0,
-                modifierSchemeId: 0, recipeText: '', recipeCostRub: 0, recipeSeconds: 0,
-    countsAsCup: false, freeEligible: false, tax: 'NO_VAT', measure: 'шт', costPriceKopecks: 0,
-    seasonStartAt: null as number | null, seasonEndAt: null as number | null, evotorExtraJson: '',
-              })
-              setProductModalOpen(true)
-            }}>+ Новый товар</button>
-
-            {productModalOpen && (
-            <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-3" onClick={() => setProductModalOpen(false)}>
-            <div className="card space-y-2 w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-xl" onClick={(e) => e.stopPropagation()}>
-              <div className="flex justify-between items-center">
-              <div className="font-semibold text-sm">
-                {editingId ? `Товар #${editingId}` : 'Новый товар'}
-              </div>
-              <button type="button" className="text-ink-secondary text-sm px-2" onClick={() => setProductModalOpen(false)}>Закрыть</button>
-              </div>
-              <input className="input" placeholder="Название" value={prodForm.name}
-                onChange={(e) => setProdForm({ ...prodForm, name: e.target.value })} />
-              <input className="input" type="number" placeholder="Цена ₽" value={prodForm.price || ''}
-                onChange={(e) => setProdForm({ ...prodForm, price: Number(e.target.value) })} />
-              <input className="input" placeholder="Описание" value={prodForm.description}
-                onChange={(e) => setProdForm({ ...prodForm, description: e.target.value })} />
-              <select className="input" value={prodForm.categoryId}
-                onChange={(e) => setProdForm({ ...prodForm, categoryId: Number(e.target.value) })}>
-                {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-              <input className="input" placeholder="Lucide icon (Coffee)" value={prodForm.icon}
-                onChange={(e) => setProdForm({ ...prodForm, icon: e.target.value })} />
-              <label className="text-xs text-ink-secondary block">Схема добавок</label>
-              <select className="input" value={prodForm.modifierSchemeId ?? 0}
-                onChange={(e) => setProdForm({ ...prodForm, modifierSchemeId: Number(e.target.value) })}>
-                <option value={0}>— без добавок —</option>
-                {schemes.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-              <div className="grid grid-cols-2 gap-2">
-                <label className="text-xs text-ink-secondary"><input type="checkbox" checked={!!prodForm.countsAsCup} onChange={(e) => setProdForm({ ...prodForm, countsAsCup: e.target.checked })} /> Считает стакан
-                </label>
-                <label className="text-xs text-ink-secondary"><input type="checkbox" checked={!!prodForm.freeEligible} onChange={(e) => setProdForm({ ...prodForm, freeEligible: e.target.checked })} /> Можно подарить
-                </label>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <input className="input" placeholder="Налог (NO_VAT)" value={prodForm.tax} onChange={(e) => setProdForm({ ...prodForm, tax: e.target.value })} />
-                <input className="input" placeholder="Ед. (шт)" value={prodForm.measure} onChange={(e) => setProdForm({ ...prodForm, measure: e.target.value })} />
-              </div>
-              <input className="input" type="number" placeholder="Себестоимость, копейки" value={prodForm.costPriceKopecks || ''} onChange={(e) => setProdForm({ ...prodForm, costPriceKopecks: Number(e.target.value) })} />
-              <textarea className="input min-h-[60px]" placeholder="JSON extras для Evotor (необязательно)" value={prodForm.evotorExtraJson} onChange={(e) => setProdForm({ ...prodForm, evotorExtraJson: e.target.value })} />
-              <label className="text-sm font-semibold text-ink block mt-2">Рецепт для бариста</label>
-              <p className="text-xs text-ink-secondary">Текст увидит кассир на кассе (long-press / рецепт)</p>
-              <textarea className="input min-h-[80px]" placeholder="Как готовить…"
-                value={prodForm.recipeText ?? ''}
-                onChange={(e) => setProdForm({ ...prodForm, recipeText: e.target.value })} />
-              <input className="input" type="number" placeholder="Себес ₽ (только касса)"
-                value={prodForm.recipeCostRub ?? 0}
-                onChange={(e) => setProdForm({ ...prodForm, recipeCostRub: Number(e.target.value) })} />
-              <label className="text-xs text-ink-secondary block">
-                Фото (jpeg/png/webp, до 2 МБ)
-                <input type="file" accept="image/jpeg,image/png,image/webp" className="block mt-1 text-xs w-full"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0]
-                    if (f) void uploadImage(f)
-                  }} />
-              </label>
-              {uploading && <div className="text-xs text-ink-tertiary">Загрузка фото…</div>}
-              {prodForm.imageUrl && (
-                <div className="flex items-center gap-2">
-                  <img src={prodForm.imageUrl} alt="" className="w-16 h-16 rounded object-cover" />
-                  <span className="text-xs text-brand break-all">{prodForm.imageUrl}</span>
-                </div>
-              )}
-              <button
-                type="button"
-                className="btn-primary w-full"
-                disabled={saving || uploading || !prodForm.name.trim() || prodForm.price < 0}
-                onClick={async () => {
-                  if (!prodForm.name.trim()) {
-                    setError('Название обязательно')
-                    return
-                  }
-                  setSaving(true)
-                  setError('')
-                  try {
-                    await adminFetch('/products', token, {
-                      method: 'POST',
-                      body: JSON.stringify({
-                        id: editingId ?? undefined,
-                        name: prodForm.name.trim(),
-                        price: prodForm.price,
-                        icon: prodForm.icon || 'Coffee',
-                        categoryId: prodForm.categoryId || null,
-                        description: prodForm.description || null,
-                        imageUrl: prodForm.imageUrl || null,
-                        sortOrder: prodForm.sortOrder,
-                        available: true,
-                        modifierSchemeId: prodForm.modifierSchemeId || null,
-                        recipeText: prodForm.recipeText || null,
-                        recipeCostRub: prodForm.recipeCostRub || null,
-                        recipeSeconds: prodForm.recipeSeconds || null,
-                        countsAsCup: !!prodForm.countsAsCup, freeEligible: !!prodForm.freeEligible, tax: prodForm.tax || 'NO_VAT', measure: prodForm.measure || 'шт',
-                        costPriceKopecks: prodForm.costPriceKopecks || 0, seasonStartAt: prodForm.seasonStartAt, seasonEndAt: prodForm.seasonEndAt,
-                        evotorExtraJson: prodForm.evotorExtraJson || null,
-                      }),
-                    })
-                    setEditingId(null)
-                    setProductModalOpen(false)
-                    setProdForm({
-                      name: '', price: 0, icon: 'Coffee', categoryId: categories[0]?.id ?? 0,
-                      description: '', imageUrl: '', sortOrder: 0,
-                      modifierSchemeId: 0, recipeText: '', recipeCostRub: 0, recipeSeconds: 0,
-    countsAsCup: false, freeEligible: false, tax: 'NO_VAT', measure: 'шт', costPriceKopecks: 0,
-    seasonStartAt: null as number | null, seasonEndAt: null as number | null, evotorExtraJson: '',
-                    })
-                    await load(token)
-                  } catch (e) {
-                    setError(e instanceof Error ? e.message : 'Не удалось сохранить товар')
-                  } finally {
-                    setSaving(false)
-                  }
-                }}
-              >
-                {saving ? 'Сохраняем…' : editingId ? 'Сохранить изменения' : 'Создать товар'}
-              </button>
-              <button type="button" className="btn-ghost w-full" onClick={() => {
-                  setEditingId(null)
-                  setProductModalOpen(false)
-                  setProdForm({
-                    name: '', price: 0, icon: 'Coffee', categoryId: categories[0]?.id ?? 0,
-                    description: '', imageUrl: '', sortOrder: 0,
-                    modifierSchemeId: 0, recipeText: '', recipeCostRub: 0, recipeSeconds: 0,
-    countsAsCup: false, freeEligible: false, tax: 'NO_VAT', measure: 'шт', costPriceKopecks: 0,
-    seasonStartAt: null as number | null, seasonEndAt: null as number | null, evotorExtraJson: '',
-                  })
-                }}>Отмена</button>
-            </div>
-            </div>
-            )}
-          </>
-        )}
-
-        {tab === 'modifiers' && (
-          <div className="space-y-3">
-            <p className="text-sm text-ink-secondary">Сиропы, топпинги, молоко — справочник добавок.</p>
-            {modifiers.map((m) => (
-              <div key={m.id} className="card flex justify-between items-center">
-                <span className="text-sm">{m.name} · {m.price} ₽ · {m.groupKey}</span>
-                <button type="button" className="text-xs text-red-600" onClick={async () => {
-                  await adminFetch(`/modifiers/${m.id}`, token, { method: 'DELETE' })
-                  void load(token)
-                }}>Удалить</button>
-              </div>
-            ))}
-            <div className="card space-y-2">
-              <input className="input" placeholder="Название" value={modForm.name}
-                onChange={(e) => setModForm({ ...modForm, name: e.target.value })} />
-              <input className="input" type="number" placeholder="Цена ₽" value={modForm.price}
-                onChange={(e) => setModForm({ ...modForm, price: Number(e.target.value) })} />
-              <select className="input" value={modForm.groupKey}
-                onChange={(e) => setModForm({ ...modForm, groupKey: e.target.value })}>
-                <option value="syrup">Сироп</option>
-                <option value="topping">Топпинг</option>
-                <option value="milk">Молоко</option>
-                <option value="other">Другое</option>
-              </select>
-              <button type="button" className="btn" onClick={async () => {
-                await adminFetch('/modifiers', token, { method: 'POST', body: JSON.stringify(modForm) })
-                setModForm({ name: '', price: 40, groupKey: 'syrup' })
-                void load(token)
-              }}>Добавить добавку</button>
-            </div>
-          </div>
-        )}
-
-        {tab === 'schemes' && (
-          <div className="space-y-3">
-            <p className="text-sm text-ink-secondary">Схема = набор добавок. Один набор можно повесить на капучино и латте.</p>
-            {schemes.map((s) => (
-              <div key={s.id} className="card">
-                <div className="flex justify-between">
-                  <b className="text-sm">{s.name}</b>
-                  <button type="button" className="text-xs text-red-600" onClick={async () => {
-                    await adminFetch(`/modifier-schemes/${s.id}`, token, { method: 'DELETE' })
-                    void load(token)
-                  }}>Удалить</button>
-                </div>
-                <p className="text-xs text-ink-secondary mt-1">
-                  Добавок: {s.items?.length ?? 0} · id схемы {s.id} (укажите в товаре)
-                </p>
-              </div>
-            ))}
-            <div className="card space-y-2">
-              <input className="input" placeholder="Имя схемы" value={schemeForm.name}
-                onChange={(e) => setSchemeForm({ ...schemeForm, name: e.target.value })} />
-              <p className="text-xs">Отметьте добавки или скопируйте существующую схему:</p>
-              <select className="input" value={schemeForm.copyFrom}
-                onChange={(e) => setSchemeForm({ ...schemeForm, copyFrom: Number(e.target.value) })}>
-                <option value={0}>— не копировать —</option>
-                {schemes.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-              <div className="max-h-40 overflow-y-auto space-y-1">
-                {modifiers.map((m) => (
-                  <label key={m.id} className="flex items-center gap-2 text-sm">
-                    <input type="checkbox" checked={schemeForm.modifierIds.includes(m.id)}
-                      onChange={(e) => {
-                        const ids = e.target.checked
-                          ? [...schemeForm.modifierIds, m.id]
-                          : schemeForm.modifierIds.filter((x) => x !== m.id)
-                        setSchemeForm({ ...schemeForm, modifierIds: ids })
-                      }} />
-                    {m.name} ({m.price} ₽)
-                  </label>
-                ))}
-              </div>
-              <button type="button" className="btn" onClick={async () => {
-                await adminFetch('/modifier-schemes', token, {
-                  method: 'POST',
-                  body: JSON.stringify({
-                    name: schemeForm.name || 'Схема',
-                    modifierIds: schemeForm.modifierIds,
-                    copyFromSchemeId: schemeForm.copyFrom || undefined,
-                  }),
-                })
-                setSchemeForm({ name: '', modifierIds: [], copyFrom: 0 })
-                void load(token)
-              }}>Создать схему</button>
-            </div>
-          </div>
-        )}
-
-{tab === 'devices' && (
-          <div className="space-y-3">
-          <p className="text-xs text-ink-secondary mb-3">На кассе Эвотор вводится только <b>код регистрации</b> из этой вкладки и URL API. Пароль 6.7 Coffee / SMS не нужны.</p>
-            {devices.map((d) => (
-              <div key={d.id} className="card !mb-0 text-sm">
-                <div className="font-semibold">{d.name} · {d.storeName}</div>
-                <div className="text-ink-tertiary">
-                  {d.enrolled ? 'зарег.' : `код ${d.enrollCode}`}
-                  {d.revoked ? ' · ОТОЗВАНА' : ''}
-                </div>
-                {!d.revoked && (
-                  <>
-                    <button type="button" className="text-red-600 text-xs mt-1" onClick={async () => {
-                      await adminFetch(`/devices/${d.id}/revoke`, token, { method: 'POST' })
-                      void load(token)
-                    }}>Отозвать</button>
-                    <button type="button" className="text-xs text-red-600 ml-2" onClick={async () => {
-                      if (!confirm('Удалить кассу из списка?')) return
-                      await adminFetch(`/devices/${d.id}`, token, { method: 'DELETE' })
-                      void load(token)
-                    }}>Удалить</button>
-                  </>
-                )}
-              </div>
-            ))}
-            <div className="card space-y-2">
-              <p className="text-sm font-semibold text-ink">Новая касса</p>
-              <p className="text-xs text-ink-secondary">
-                Нужна только <b>точка</b> (вкладка «Точки») и имя кассы. Других «параметров» нет —
-                на Эвоторе введёте URL API и этот код.
-              </p>
-              {stores.length === 0 ? (
-                <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-                  Сначала создайте точку: вкладка <b>Точки</b> → название и адрес → «Создать точку».
-                  Пока точек нет, выпустить код нельзя (в списке «нет параметров» — это пустой выбор точки).
-                </p>
-              ) : (
-                <>
-                  <input
-                    className="input"
-                    placeholder="Имя кассы, например Барная"
-                    value={deviceName}
-                    onChange={(e) => setDeviceName(e.target.value)}
-                  />
-                  <label className="text-xs text-ink-secondary">Точка</label>
-                  <select
-                    className="input"
-                    value={deviceStoreId || stores[0]?.id || 0}
-                    onChange={(e) => setDeviceStoreId(Number(e.target.value))}
-                  >
-                    {stores.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    className="btn-primary w-full"
-                    disabled={!deviceName.trim() || !(deviceStoreId || stores[0]?.id)}
-                    onClick={async () => {
-                      const storeId = deviceStoreId || stores[0]?.id
-                      if (!storeId) {
-                        setError('Нет точки — создайте во вкладке «Точки»')
-                        return
-                      }
-                      if (!deviceName.trim()) {
-                        setError('Укажите имя кассы')
-                        return
-                      }
+                      setBusy(true)
                       try {
-                        const r = await adminFetch<{ enrollCode: string }>('/devices', token, {
-                          method: 'POST',
-                          body: JSON.stringify({ storeId, name: deviceName.trim() }),
-                        })
-                        setNewCode(r.enrollCode)
-                        setDeviceName('')
-                        setError('')
-                        void load(token)
-                      } catch (e) {
-                        setError(e instanceof Error ? e.message : 'Не удалось выпустить код')
+                        await adminFetch(`/products/${p.id}/sync`, token, { method: 'POST', body: '{}' })
+                        await load()
+                      } catch (e: any) {
+                        setErr(e.message)
+                      } finally {
+                        setBusy(false)
                       }
                     }}
                   >
-                    Выпустить код
+                    Sync → Эвотор
                   </button>
-                </>
-              )}
-              {newCode && (
-                <div className="text-center space-y-1 pt-2">
-                  <p className="text-xs text-ink-secondary">Код для экрана регистрации на кассе</p>
-                  <div className="font-mono text-2xl font-bold text-brand tracking-widest">{newCode}</div>
                 </div>
-              )}
-            </div>
+              </div>
+            ))}
+
+            {edit && (
+              <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-xl p-4 w-full max-w-md space-y-3 max-h-[90vh] overflow-y-auto">
+                  <h3 className="font-semibold">{edit.id ? `Товар #${edit.id}` : 'Новый товар'}</h3>
+                  <input
+                    className="w-full border rounded-lg px-3 py-2"
+                    placeholder="Название"
+                    value={edit.name || ''}
+                    onChange={(e) => setEdit({ ...edit, name: e.target.value })}
+                  />
+                  <input
+                    className="w-full border rounded-lg px-3 py-2"
+                    type="number"
+                    placeholder="Цена ₽"
+                    value={edit.price ?? 0}
+                    onChange={(e) => setEdit({ ...edit, price: Number(e.target.value) })}
+                  />
+                  <textarea
+                    className="w-full border rounded-lg px-3 py-2 text-sm"
+                    placeholder="Описание / рецепт"
+                    value={edit.recipeText || edit.description || ''}
+                    onChange={(e) => setEdit({ ...edit, recipeText: e.target.value, description: e.target.value })}
+                  />
+                  <div className="text-sm font-medium">Где продаётся</div>
+                  <div className="space-y-1 max-h-40 overflow-y-auto border rounded-lg p-2">
+                    {stores.map((s) => {
+                      const checked = (edit.storeUuids || []).includes(s.uuid)
+                      return (
+                        <label key={s.uuid} className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => {
+                              const set = new Set(edit.storeUuids || [])
+                              if (checked) set.delete(s.uuid)
+                              else set.add(s.uuid)
+                              setEdit({ ...edit, storeUuids: [...set] })
+                            }}
+                          />
+                          {s.name}
+                        </label>
+                      )
+                    })}
+                    {!stores.length && <p className="text-xs text-slate-500">Сначала обновите точки из Эвотор</p>}
+                  </div>
+                  <div className="flex gap-2">
+                    <button className="flex-1 border rounded-lg py-2" onClick={() => setEdit(null)}>
+                      Отмена
+                    </button>
+                    <button
+                      className="flex-1 bg-[#002FA7] text-white rounded-lg py-2"
+                      disabled={busy || !edit.name}
+                      onClick={async () => {
+                        setBusy(true)
+                        setErr('')
+                        try {
+                          const body = {
+                            id: edit.id,
+                            name: edit.name,
+                            price: edit.price,
+                            available: true,
+                            description: edit.description,
+                            recipeText: edit.recipeText,
+                            tax: edit.tax || 'NO_VAT',
+                            measure: edit.measure || 'шт',
+                          }
+                          await adminFetch('/products', token, { method: 'POST', body: JSON.stringify(body) })
+                          // reload to get id if new
+                          const pr = await adminFetch<{ products: Product[] }>('/products', token)
+                          const list = pr.products || []
+                          const found =
+                            edit.id != null
+                              ? list.find((x) => x.id === edit.id)
+                              : list.filter((x) => x.name === edit.name).sort((a, b) => b.id - a.id)[0]
+                          if (found) {
+                            await adminFetch(`/products/${found.id}/stores`, token, {
+                              method: 'PUT',
+                              body: JSON.stringify({ storeUuids: edit.storeUuids || [] }),
+                            })
+                            await adminFetch(`/products/${found.id}/sync`, token, { method: 'POST', body: '{}' })
+                          }
+                          setEdit(null)
+                          await load()
+                        } catch (e: any) {
+                          setErr(e.message)
+                        } finally {
+                          setBusy(false)
+                        }
+                      }}
+                    >
+                      Сохранить + sync
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
-        {tab === 'promos' && (
-          <>
-            {promos.map((p) => (
-              <div key={p.id} className="card !mb-0 text-sm flex justify-between">
-                <div>
-                  <div className="font-semibold">{p.title}</div>
-                  <div className="text-ink-tertiary">{p.body}</div>
-                </div>
-                <button type="button" className="text-red-600 text-xs" onClick={async () => {
-                  await adminFetch(`/promos/${p.id}`, token, { method: 'DELETE' })
-                  void load(token)
-                }}>×</button>
+        {tab === 'sales' && (
+          <div className="space-y-3">
+            <h2 className="font-semibold">Продажи (24ч)</h2>
+            <p className="text-xs text-slate-500">
+              Документов SELL: {sales?.sellDocs ?? '—'} · poll:{' '}
+              {sales?.lastPollAt ? new Date(sales.lastPollAt).toLocaleString('ru-RU') : '—'}
+            </p>
+            {(sales?.lines || []).map((l, i) => (
+              <div key={i} className="bg-white rounded-xl p-3 text-sm shadow-sm">
+                {l.storeUuid?.slice?.(0, 8)}… · {l.name} · ×{l.qty}
               </div>
             ))}
-            <div className="card space-y-2">
-              <input className="input" placeholder="Заголовок" value={promoTitle} onChange={(e) => setPromoTitle(e.target.value)} />
-              <input className="input" placeholder="Текст" value={promoBody} onChange={(e) => setPromoBody(e.target.value)} />
-              <button type="button" className="btn-primary w-full" onClick={async () => {
-                await adminFetch('/promos', token, {
-                  method: 'POST',
-                  body: JSON.stringify({ title: promoTitle, body: promoBody, days: 14 }),
-                })
-                setPromoTitle('')
-                setPromoBody('')
-                void load(token)
-              }}>Создать акцию</button>
-            </div>
-          </>
+            {!sales?.lines?.length && <p className="text-sm text-slate-500">Нет строк за сутки (нужен poll документов).</p>}
+            <button className="border rounded-lg py-2 w-full" onClick={() => void loadSales()}>
+              Обновить
+            </button>
+          </div>
         )}
 
-        {tab === 'disputes' && (
-          disputes.length === 0
-            ? <p className="text-ink-tertiary text-sm">Конфликтов нет</p>
-            : disputes.map((d) => (
-              <div key={d.id} className="card !mb-0 text-xs">
-                <div className="font-semibold">{d.kind}</div>
-                <div className="text-ink-secondary">{d.details}</div>
-              </div>
-            ))
+        {tab === 'evotor' && (
+          <div className="space-y-3">
+            <h2 className="font-semibold">Настройки Эвотор</h2>
+            <p className="text-sm text-slate-600">Токен только на сервере (EVOTOR_API_TOKEN). Здесь — действия sync/poll.</p>
+            <button
+              className="w-full bg-[#002FA7] text-white rounded-lg py-2"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true)
+                try {
+                  await adminFetch('/evotor/sync', token, { method: 'POST', body: '{}' })
+                  await load()
+                } catch (e: any) {
+                  setErr(e.message)
+                } finally {
+                  setBusy(false)
+                }
+              }}
+            >
+              Sync магазины / каталог
+            </button>
+            <button
+              className="w-full border rounded-lg py-2"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true)
+                try {
+                  await adminFetch('/evotor/poll', token, { method: 'POST', body: '{}' })
+                  await loadSales()
+                } catch (e: any) {
+                  setErr(e.message)
+                } finally {
+                  setBusy(false)
+                }
+              }}
+            >
+              Poll документы (продажи)
+            </button>
+          </div>
         )}
-      </div>
+      </main>
     </div>
   )
 }
