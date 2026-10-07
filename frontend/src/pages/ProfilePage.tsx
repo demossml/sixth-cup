@@ -1,7 +1,10 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import ScanModal from '../components/ScanModal'
+import { api, unwrap } from '../api'
 import Qr from '../components/Qr'
 import { setJwt } from '../api'
-import { ensureGuest } from '../lib/ensureGuest'
+import { ensureGuest, restoreAccount } from '../lib/ensureGuest'
 import { useApp } from '../lib/app'
 import { clearUserData } from '../lib/db'
 import { LogOut, RefreshCw, Share2, Users, Wallet } from '../lib/icons'
@@ -9,6 +12,11 @@ import { LogOut, RefreshCw, Share2, Users, Wallet } from '../lib/icons'
 export default function ProfilePage() {
   const { me, lastSync, syncing, sync, reload } = useApp()
   const nav = useNavigate()
+  const [recovery, setRecovery] = useState('')
+  const [restoreOpen, setRestoreOpen] = useState(false)
+  const [restoreText, setRestoreText] = useState('')
+  const [note, setNote] = useState('')
+  const [scan, setScan] = useState(false)
   const link = me ? `${location.origin}/?invite=${me.inviteCode}` : ''
 
   async function share() {
@@ -23,8 +31,32 @@ export default function ProfilePage() {
     }
   }
 
+  async function makeRecovery() {
+    try {
+      const r = await unwrap(api.api.auth.recovery.$post()) as { recovery: string }
+      setRecovery(r.recovery)
+      localStorage.setItem('sc-saved', '1')
+    } catch { setNote('Нужен интернет, чтобы создать код сохранения.') }
+  }
+
+  async function downloadRecovery() {
+    const QRCode = (await import('qrcode')).default
+    const url = await QRCode.toDataURL(recovery, { errorCorrectionLevel: 'M', margin: 3, width: 480 })
+    const a = document.createElement('a')
+    a.href = url; a.download = '6-7-coffee-account.png'; a.click()
+  }
+
+  async function doRestore(code: string) {
+    setScan(false)
+    if (await restoreAccount(code.trim())) {
+      localStorage.setItem('sc-saved', '1')
+      await clearUserData()
+      await reload(); await sync(); nav('/')
+    } else setNote('Не удалось восстановить: неверный код.')
+  }
+
   async function logout() {
-    if (!confirm('Сбросить карту на этом устройстве? Кэшбэк и стаканы на сервере останутся недоступны без восстановления (пока в разработке). Лучше не выходить.')) return
+    if (!confirm('Сбросить карту на этом устройстве? Без сохранённого QR восстановления кэшбэк и стаканы станут недоступны. Лучше не выходить.')) return
     if (!confirm('Точно создать новую пустую карту?')) return
     setJwt(null)
     await clearUserData()
@@ -57,7 +89,7 @@ export default function ProfilePage() {
 
       <div className="px-4 pt-4">
         <button type="button" className="btn flex items-center justify-center gap-2 mb-2" onClick={() => nav('/invite')}>
-          <Users size={16} /> Приведи друга — QR
+          <Users size={16} /> Пригласить друга — QR
         </button>
         <button type="button" className="btn-ghost flex items-center justify-center gap-2" disabled={syncing} onClick={() => void sync()}>
           <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />

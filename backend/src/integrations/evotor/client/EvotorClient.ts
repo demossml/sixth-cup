@@ -101,9 +101,10 @@ export class EvotorClient {
     return this.requestJson(evotorPaths.products(storeId))
   }
 
-  async getDocuments(storeId: string, since: string, until: string, types?: string): Promise<unknown> {
-    const q = new URLSearchParams({ gtCloseDate: since, ltCloseDate: until })
-    if (types) q.set('types', types)
+  async getDocuments(storeId: string, since: string, until: string, types?: string, cursor?: string): Promise<unknown> {
+    // With a cursor the date window must NOT be repeated (Evotor cursor pagination).
+    const q = cursor ? new URLSearchParams({ cursor }) : new URLSearchParams({ gtCloseDate: since, ltCloseDate: until })
+    if (types && !cursor) q.set('types', types)
     return this.requestJson(`${evotorPaths.documents(storeId)}?${q}`)
   }
 

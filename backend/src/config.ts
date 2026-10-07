@@ -13,7 +13,9 @@ export const config = {
   publicBaseUrl: process.env.PUBLIC_BASE_URL ?? '',
   adminHost: process.env.ADMIN_HOST ?? '',
   cupsForFree: Number(process.env.CUPS_FOR_FREE ?? 5),
-  cardQrTtlSec: Number(process.env.CARD_QR_TTL_SEC ?? 86400),
+  cardQrTtlSec: Number(process.env.CARD_QR_TTL_SEC ?? 30 * 86400),
+  /** Time a till reservation holds a bonus before it is released. */
+  reservationTtlSec: Number(process.env.RESERVATION_TTL_SEC ?? 90),
   referralCashbackPercent: 3,
   currency: 'RUB',
   maxVouchersInCard: 5,

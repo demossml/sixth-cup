@@ -1,8 +1,8 @@
-import { consumeReservation } from '../../../modules/loyalty/reservations'
 import type Database from 'better-sqlite3'
 import { verifyServerToken } from '../../../lib/crypto'
 import { normalizeCardCode } from '../../../modules/loyalty/proof'
 import { cashbackOf, freeEarned } from '../../../modules/loyalty/rules'
+import { consumeReservation } from '../../../modules/loyalty/reservations'
 
 type Tx = Record<string, unknown>
 
@@ -57,7 +57,7 @@ function getSc(doc: Record<string, unknown>): ScClaim | null {
   const extras = obj(doc.extras)
   const raw = extras?.sc
   const sc = typeof raw === 'string' ? (() => { try { return JSON.parse(raw) } catch { return null } })() : obj(raw)
-  if (!sc || sc.v !== 2 || typeof sc.c !== 'string') return null
+  if (!sc || typeof sc.v !== 'number' || sc.v < 2 || typeof sc.c !== 'string') return null
   return sc as unknown as ScClaim
 }
 
@@ -130,13 +130,6 @@ export function handleSell(db: Database.Database, storeUuid: string, doc: Record
 
   if (!user) return { processed: false, reason: 'card not found' }
 
-  // Link SELL to prior resolve reservation (anti double free across stores)
-  const reservationId = typeof sc.op === 'string' && sc.op.startsWith('R-') ? sc.op : null
-  if (reservationId) {
-    consumeReservation(reservationId, docId)
-  }
-
-
   const existing = db.prepare('SELECT 1 FROM loyalty_ops WHERE doc_store=? AND doc_id=?').get(storeUuid, docId)
   if (existing) return { processed: true, reason: 'duplicate' }
 
@@ -150,12 +143,15 @@ export function handleSell(db: Database.Database, storeUuid: string, doc: Record
     paid_total: number; free_used: number; seq: number
   }
   const freeAvail = Math.max(0, freeEarned(state.paid_total) - state.free_used)
-  const claimedFree = Math.max(0, Math.floor(number(sc.free)))
-  const sequenceMatches = typeof sc.q !== 'number' || sc.q === state.seq
-  const appliedFree = sequenceMatches ? Math.min(claimedFree, freeAvail, cups) : 0
-  const claimedCb = Math.max(0, Math.floor(number(sc.cb)))
   const amount = amountKopecks(doc, txs)
-  const appliedCb = sequenceMatches ? Math.min(claimedCb, user.cashback_balance, amount) : 0
+  const isToken = rawCard.includes('.')
+  const claimedFree = Math.max(0, Math.floor(number(sc.free)))
+  const claimedCb = Math.max(0, Math.floor(number(sc.cb)))
+  // Benefits are only honoured for a signed QR with a server-issued reservation (sc.op).
+  const reserved = isToken ? consumeReservation(db, sc.op, user.card_id, storeUuid, docId) : { free: 0, cb: 0 }
+  const appliedFree = Math.min(reserved.free, claimedFree, freeAvail, cups)
+  const appliedCb = Math.min(reserved.cb, claimedCb, user.cashback_balance, amount)
+  const sequenceMatches = true
   const paidCups = Math.max(0, cups - appliedFree)
   const now = Date.now()
   const cardId = user.card_id
@@ -189,7 +185,7 @@ export function handleSell(db: Database.Database, storeUuid: string, doc: Record
         }
       }
     }
-    if (!sequenceMatches || appliedFree !== claimedFree || appliedCb !== claimedCb) {
+    if (appliedFree !== claimedFree || appliedCb !== claimedCb) {
       db.prepare(`INSERT INTO disputes(kind,user_id,receipt_id,details,created_at) VALUES(?,?,?,?,?)`)
         .run('loyalty_claim_clamped', user.id, docId, JSON.stringify({ claimedFree, appliedFree, claimedCb, appliedCb, sequenceMatches, claimedSeq: sc.q, currentSeq: state.seq }), now)
     }
@@ -211,26 +207,43 @@ export function handlePayback(db: Database.Database, storeUuid: string, doc: Rec
     id: number; cashback_balance: number; card_id: string
   } | undefined
   if (!user) return { processed: false, reason: 'card not found' }
-
   const now = Date.now()
-  const free = Math.max(0, Number(original.free ?? 0))
-  const cb = Math.max(0, Number(original.cb ?? 0))
-  const cups = Math.max(0, Number(original.cups_counted ?? 0))
+
+  // Proportional reversal: share of the original sale refunded by this PAYBACK, capped by what is not yet reversed.
+  const origRub = Math.max(0, Number(original.result_rub ?? 0))
+  const paybackRub = amountKopecks(doc, transactions(doc)) / 100
+  const prev = db.prepare(`SELECT COALESCE(SUM(result_rub),0) AS rub, COALESCE(SUM(cups_counted),0) AS cups, COALESCE(SUM(free),0) AS free, COALESCE(SUM(cb),0) AS cb
+    FROM loyalty_ops WHERE doc_store=? AND kind='PAYBACK' AND op_claimed=?`).get(storeUuid, baseId) as { rub: number; cups: number; free: number; cb: number }
+  const remaining = Math.max(0, origRub - prev.rub)
+  const thisRub = origRub > 0 && paybackRub > 0 ? Math.min(paybackRub, remaining) : remaining
+  const cumFrac = origRub > 0 ? Math.min(1, (prev.rub + thisRub) / origRub) : 1
+  const full = cumFrac >= 0.999999
+  const origCups = Math.max(0, Number(original.cups_counted ?? 0))
+  const origFree = Math.max(0, Number(original.free ?? 0))
+  const origCb = Math.max(0, Number(original.cb ?? 0))
+  const cups = Math.max(0, (full ? origCups : Math.floor(origCups * cumFrac)) - prev.cups)
+  const free = Math.max(0, (full ? origFree : Math.floor(origFree * cumFrac)) - prev.free)
+  const cb = Math.max(0, (full ? origCb : Math.floor(origCb * cumFrac)) - prev.cb)
+  const fracDelta = origRub > 0 ? thisRub / origRub : 1
   db.transaction(() => {
     db.prepare(`INSERT INTO loyalty_ops(doc_store,doc_id,kind,card_id,op_claimed,q_claimed,free,cb,disc_claimed,result_rub,cups_counted,created_at)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).run(storeUuid, docId, 'PAYBACK', user.card_id, baseId, null, free, cb, null, 0, cups, now)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).run(storeUuid, docId, 'PAYBACK', user.card_id, baseId, null, free, cb, null, thisRub, cups, now)
     db.prepare(`UPDATE cards SET paid_total=MAX(0,paid_total-?), free_used=MAX(0,free_used-?), seq=seq+1, updated_at=? WHERE user_id=?`)
-      .run(cups - free, free, now, user.id)
+      .run(Math.max(0, cups - free), free, now, user.id)
     if (cb > 0) db.prepare('UPDATE users SET cashback_balance=cashback_balance+? WHERE id=?').run(cb, user.id)
     db.prepare(`INSERT INTO loyalty_ledger(card_id,operation,cups_delta,free_delta,cashback_delta,source_type,source_id,created_at)
-      VALUES(?,?,?,?,?,?,?,?)`).run(user.card_id, 'REVERSAL', -(cups - free), -free, cb, 'EVOTOR_PAYBACK', docId, now)
-    const refs = db.prepare('SELECT beneficiary_id, amount FROM cashback_ledger WHERE receipt_id=?').all(baseId) as { beneficiary_id: number; amount: number }[]
+      VALUES(?,?,?,?,?,?,?,?)`).run(user.card_id, 'REVERSAL', -Math.max(0, cups - free), -free, cb, 'EVOTOR_PAYBACK', docId, now)
+    const refs = db.prepare('SELECT beneficiary_id, amount FROM cashback_ledger WHERE receipt_id=? AND amount>0').all(baseId) as { beneficiary_id: number; amount: number }[]
     for (const ref of refs) {
-      db.prepare('UPDATE users SET cashback_balance=MAX(0,cashback_balance-?) WHERE id=?').run(ref.amount, ref.beneficiary_id)
+      const amount = full && prev.rub === 0 ? ref.amount : Math.floor(ref.amount * fracDelta)
+      if (amount <= 0) continue
+      db.prepare('UPDATE users SET cashback_balance=MAX(0,cashback_balance-?) WHERE id=?').run(amount, ref.beneficiary_id)
+      db.prepare(`INSERT INTO cashback_ledger(beneficiary_id,from_user_id,receipt_id,amount,created_at) VALUES(?,?,?,?,?)`)
+        .run(ref.beneficiary_id, user.id, baseId, -amount, now)
       const beneficiary = db.prepare('SELECT card_id FROM users WHERE id=?').get(ref.beneficiary_id) as { card_id: string | null } | undefined
       if (beneficiary?.card_id) {
         db.prepare(`INSERT INTO loyalty_ledger(card_id,operation,cups_delta,free_delta,cashback_delta,source_type,source_id,created_at)
-          VALUES(?,?,?,?,?,?,?,?)`).run(beneficiary.card_id, 'REVERSAL', 0, 0, -ref.amount, 'EVOTOR_PAYBACK_REFERRAL', docId, now)
+          VALUES(?,?,?,?,?,?,?,?)`).run(beneficiary.card_id, 'REVERSAL', 0, 0, -amount, 'EVOTOR_PAYBACK_REFERRAL', docId, now)
       }
     }
   })()

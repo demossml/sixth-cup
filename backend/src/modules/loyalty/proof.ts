@@ -59,20 +59,13 @@ export type VerifiedCard = {
 
 export function buildCardProof(userId: number): string {
   ensureCard(userId)
-  const c = db.prepare('SELECT paid_total, free_used, seq FROM cards WHERE user_id=?')
-    .get(userId) as { paid_total: number; free_used: number; seq: number }
-  const u = db.prepare('SELECT card_id, cashback_balance FROM users WHERE id=?')
-    .get(userId) as { card_id: string; cashback_balance: number }
+  const u = db.prepare('SELECT card_id FROM users WHERE id=?')
+    .get(userId) as { card_id: string }
   const now = Math.floor(Date.now() / 1000)
   return signToken({
     t: 'c',
     ver: 2,
     id: u.card_id,
-    q: c.seq,
-    p: c.paid_total,
-    f: c.free_used,
-    v: activeVouchers(userId),
-    cb: u.cashback_balance,
     i: now,
     exp: now + config.cardQrTtlSec,
     kid: serverKid,
@@ -82,17 +75,17 @@ export function buildCardProof(userId: number): string {
 export function verifyCardProof(token: string): VerifiedCard | null {
   const p = verifyServerToken(token)
   if (!p || p.t !== 'c' || p.ver !== 2) return null
-  if (typeof p.id !== 'string' || !p.id || typeof p.q !== 'number' || typeof p.p !== 'number' || typeof p.f !== 'number') return null
+  if (typeof p.id !== 'string' || !p.id) return null
   const user = db.prepare('SELECT id FROM users WHERE card_id=?').get(p.id) as { id: number } | undefined
   if (!user) return null
   return {
     userId: user.id,
     cardId: p.id,
-    q: p.q,
-    paidTotal: p.p,
-    freeUsed: p.f,
-    cashback: typeof p.cb === 'number' ? p.cb : 0,
-    vouchers: Array.isArray(p.v) ? p.v as VerifiedCard['vouchers'] : [],
+    q: 0,
+    paidTotal: 0,
+    freeUsed: 0,
+    cashback: 0,
+    vouchers: [],
     issuedAt: typeof p.i === 'number' ? p.i : 0,
     expiresAt: typeof p.exp === 'number' ? p.exp : 0,
     kid: String(p.kid ?? ''),

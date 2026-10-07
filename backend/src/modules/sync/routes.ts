@@ -4,7 +4,9 @@ import { z } from 'zod'
 import { db } from '../../db'
 import { requireAuth, type AuthEnv } from '../../middleware/auth'
 import { buildCardProof } from '../loyalty/proof'
+import { activeVouchers } from '../vouchers/service'
 import { applyReceipts } from '../loyalty/receipts'
+import { stateView } from '../loyalty/cardLookup'
 
 export const syncRoutes = new Hono<AuthEnv>()
   .use('*', requireAuth)
@@ -15,7 +17,7 @@ export const syncRoutes = new Hono<AuthEnv>()
       .get(userId) as { id: number; card_id: string; card_code: string; nickname: string; invite_code: string; cashback_balance: number }
     return c.json({
       card: buildCardProof(userId),
-      me: { id: u.id, cardId: u.card_id, cardCode: u.card_code, nickname: u.nickname, inviteCode: u.invite_code, cashbackBalance: u.cashback_balance },
+      me: { id: u.id, cardId: u.card_id, cardCode: u.card_code, nickname: u.nickname, inviteCode: u.invite_code, cashbackBalance: u.cashback_balance, ...stateView(userId), vouchers: activeVouchers(userId) },
       result,
     })
   })

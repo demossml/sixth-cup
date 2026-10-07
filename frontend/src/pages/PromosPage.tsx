@@ -28,7 +28,7 @@ export default function PromosPage() {
             <AppIcon name="Users" size={22} className="text-brand" />
           </div>
           <div className="min-w-0 flex-1">
-            <b className="text-sm text-ink">Приведи друга</b>
+            <b className="text-sm text-ink">Пригласить друга</b>
             <div className="text-ink-secondary text-xs mt-0.5">
               Нажмите — QR для друга и условия {dir?.referralCashbackPercent ?? 3}% кэшбэка
             </div>

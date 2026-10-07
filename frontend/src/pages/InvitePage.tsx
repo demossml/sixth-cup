@@ -41,7 +41,7 @@ export default function InvitePage() {
             <Users size={24} />
           </div>
           <div>
-            <h1 className="text-xl font-bold">Приведи друга</h1>
+            <h1 className="text-xl font-bold">Пригласить друга</h1>
             <p className="text-white/75 text-sm mt-0.5">Вы получаете {pct}% с его покупок</p>
           </div>
         </div>

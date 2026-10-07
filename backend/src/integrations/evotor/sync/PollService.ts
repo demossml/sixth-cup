@@ -101,8 +101,15 @@ export class PollService {
   async pollStore(storeUuid: string, sinceMs: number): Promise<number> {
     const since = formatDateWithTime(new Date(sinceMs || Date.now() - 7 * 86400_000), false)
     const until = formatDateWithTime(new Date(), true)
-    const raw = await this.client.getDocuments(storeUuid, since, until)
-    const items = asArray(raw) as Record<string, unknown>[]
+    const items: Record<string, unknown>[] = []
+    let cursor: string | undefined
+    for (let page = 0; page < 100; page++) {
+      const raw = await this.client.getDocuments(storeUuid, since, until, undefined, cursor)
+      items.push(...(asArray(raw) as Record<string, unknown>[]))
+      const paging = raw && typeof raw === 'object' ? (raw as { paging?: { next_cursor?: unknown } }).paging : undefined
+      cursor = typeof paging?.next_cursor === 'string' && paging.next_cursor ? paging.next_cursor : undefined
+      if (!cursor) break
+    }
     let inserted = 0
     const ins = this.db.prepare(`
       INSERT OR IGNORE INTO evotor_docs(
@@ -129,7 +136,7 @@ export class PollService {
         cms,
         business ? 'RECEIVED' : 'IGNORED',
         business ? whitelist(doc) : null,
-        business ? JSON.stringify(doc) : null,
+        null, // raw document is not stored: data minimisation
         now,
       )
       if (r.changes > 0) {

@@ -14,3 +14,14 @@ export async function ensureGuest(): Promise<'ok' | 'offline'> {
     return 'offline'
   }
 }
+
+/** Восстановление аккаунта по коду/QR сохранения. */
+export async function restoreAccount(recovery: string): Promise<boolean> {
+  try {
+    const r = await unwrap(api.api.auth.restore.$post({ json: { recovery } })) as { token: string }
+    setJwt(r.token)
+    return true
+  } catch {
+    return false
+  }
+}

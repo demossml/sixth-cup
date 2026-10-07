@@ -9,6 +9,7 @@ import { applyReceipts } from '../loyalty/receipts'
 import { applyOnlineSale } from './sales'
 import { checkEvotorProxyAuth, evotorProxyStrict } from '../../middleware/evotorProxy'
 import { config } from '../../config'
+import { resolveAndReserve } from '../loyalty/reservations'
 
 export const deviceRoutes = new Hono<DeviceEnv>()
   .get('/ping', (c) => {
@@ -28,6 +29,27 @@ export const deviceRoutes = new Hono<DeviceEnv>()
       proxy: { authOk, storeUuid: storeUuid || undefined, deviceUuid: deviceUuid || undefined },
     })
   })
+  .post('/loyalty/resolve',
+    evotorProxyStrict,
+    zValidator('json', z.object({ code: z.string().min(1).max(4000) })),
+    (c) => {
+      // Reserving bonuses must never be reachable without the shared proxy secret.
+      if (!config.evotorProxyToken) throw bad('proxy_not_configured', 503)
+      const storeUuid = (c.req.header('X-Evotor-Store-Uuid') ?? '').slice(0, 64) || undefined
+      const deviceUuid = (c.req.header('X-Evotor-Device-UUID') ?? '').slice(0, 64) || undefined
+      const key = `resolve:${deviceUuid ?? storeUuid ?? 'any'}`
+      const now = Date.now()
+      const row = db.prepare('SELECT count, window_start FROM rate_limits WHERE key=?').get(key) as { count: number; window_start: number } | undefined
+      if (!row || now - row.window_start > 60_000) {
+        db.prepare('INSERT OR REPLACE INTO rate_limits(key,count,window_start) VALUES(?,?,?)').run(key, 1, now)
+      } else if (row.count >= 60) {
+        throw bad('Too many requests', 429)
+      } else {
+        db.prepare('UPDATE rate_limits SET count=count+1 WHERE key=?').run(key)
+      }
+      const r = resolveAndReserve({ code: c.req.valid('json').code, storeUuid, deviceUuid })
+      return c.json(r, r.ok ? 200 : 404)
+    })
   .post('/enroll',
     zValidator('json', z.object({ code: z.string().min(4).max(20), publicKey: z.string().min(0).max(64).optional() })),
     (c) => {

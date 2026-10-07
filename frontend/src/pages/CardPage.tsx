@@ -1,37 +1,30 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Qr from '../components/Qr'
-import ScanModal from '../components/ScanModal'
 import { useApp } from '../lib/app'
-import { submitScannedReceipt } from '../lib/customer'
-import { activeVouchers, freeAvailable, progress } from '../lib/proof'
-import { AppIcon, Gift, RefreshCw, ScanLine, Ticket, Users, Wallet, Wifi, WifiOff } from '../lib/icons'
+import { activeVouchers } from '../lib/proof'
+import { AppIcon, Gift, RefreshCw, Ticket, Users, Wallet, Wifi, WifiOff } from '../lib/icons'
 
 /**
  * Главный экран карты.
  * Важно: QR кассиру — сразу после шапки/прогресса, не внизу длинной ленты.
- * Новое: прогресс стаканов сверху + кликабельный «Приведи друга».
+ * Новое: прогресс стаканов сверху + кликабельный «Пригласить друга».
  */
 export default function CardPage() {
-  const { dir, me, best, syncing, lastSync, sync, reload } = useApp()
+  const { dir, me, best, syncing, lastSync, sync } = useApp()
   const nav = useNavigate()
-  const [scan, setScan] = useState(false)
   const [msg, setMsg] = useState('')
+  const saved = (() => { try { return localStorage.getItem('sc-saved') === '1' } catch { return false } })()
 
-  const N = dir?.cupsForFree ?? 5
+  // Всё состояние берётся с сервера (me); QR — только удостоверение клиента.
+  const N = me?.cupsForFree ?? dir?.cupsForFree ?? 5
   const online = Date.now() - lastSync < 5 * 60_000
-  const paidProgress = best ? progress(best.state, N) : 0
-  const freeLeft = best ? freeAvailable(best.state, N) : 0
+  const paidProgress = me?.cupsTowardFree ?? 0
+  const freeLeft = me?.freeAvailable ?? 0
   const left = Math.max(0, N - paidProgress)
   const pct = dir?.referralCashbackPercent ?? 3
-
-  async function onScan(text: string) {
-    setScan(false)
-    setMsg('Отправляем чек на сервер…')
-    const r = await submitScannedReceipt(text, dir, me)
-    setMsg(r.ok ? r.message : r.reason)
-    await reload()
-  }
+  const cashbackRub = Math.floor((me?.cashbackBalance ?? 0) / 100)
+  const vouchers = activeVouchers({ v: me?.vouchers ?? [] } as never)
 
   async function onSync() {
     setMsg('')
@@ -67,7 +60,7 @@ export default function CardPage() {
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-semibold">Стаканы до подарка</span>
             <span className="text-sm font-bold tabular-nums">
-              {best ? (freeLeft > 0 ? 'Подарок!' : `${paidProgress} из ${N}`) : `— / ${N}`}
+              {me ? (freeLeft > 0 ? 'Подарок!' : `${paidProgress} из ${N}`) : `— / ${N}`}
             </span>
           </div>
           <div className="flex items-center justify-center gap-1.5">
@@ -75,12 +68,12 @@ export default function CardPage() {
               <div
                 key={i}
                 className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center border-2 ${
-                  best && i < paidProgress
+                  me && i < paidProgress
                     ? 'border-white bg-white/25 text-white'
                     : 'border-dashed border-white/35 text-white/35'
                 }`}
               >
-                {best && i < paidProgress ? <AppIcon name="Coffee" size={15} /> : null}
+                {me && i < paidProgress ? <AppIcon name="Coffee" size={15} /> : null}
               </div>
             ))}
             <div
@@ -94,7 +87,7 @@ export default function CardPage() {
             </div>
           </div>
           <p className="text-center text-white/80 text-xs mt-2">
-            {!best
+            {!me
               ? 'После появления сети здесь будет прогресс'
               : freeLeft > 0
                 ? `Бесплатных доступно: ${freeLeft}`
@@ -104,7 +97,7 @@ export default function CardPage() {
       </div>
 
       <div className="px-4 -mt-2 space-y-2">
-        {/* Приведи друга — активный баннер */}
+        {/* Пригласить друга — активный баннер */}
         <button
           type="button"
           onClick={() => nav('/invite')}
@@ -114,7 +107,7 @@ export default function CardPage() {
             <Users size={22} className="text-brand" />
           </div>
           <div className="min-w-0 flex-1">
-            <b className="text-sm text-ink">Приведи друга</b>
+            <b className="text-sm text-ink">Пригласить друга</b>
             <div className="text-ink-secondary text-xs mt-0.5">
               {pct}% с покупок друга · нажмите — QR для друга
             </div>
@@ -122,7 +115,17 @@ export default function CardPage() {
           <span className="text-brand text-lg font-light shrink-0">›</span>
         </button>
 
-        {!best ? (
+        {!saved && me && (
+          <button
+            type="button"
+            onClick={() => nav('/me#save')}
+            className="w-full text-left rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-900"
+          >
+            Сохраните свой аккаунт, чтобы не потерять бонусы <span className="font-semibold">›</span>
+          </button>
+        )}
+
+        {!best || !me ? (
           <div className="card">
             <b className="text-ink">Карта ещё подгружается</b>
             <p className="text-ink-secondary text-sm mt-1 leading-relaxed">
@@ -154,25 +157,35 @@ export default function CardPage() {
               </div>
             )}
 
-            {best.state.cb > 0 && (
-              <div className="card flex items-center gap-3 bg-emerald-50 border-emerald-100">
-                <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center">
-                  <Wallet size={20} className="text-accent-green" />
+            <div className="card flex items-center gap-3 bg-emerald-50 border-emerald-100">
+              <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center">
+                <Wallet size={20} className="text-accent-green" />
+              </div>
+              <div>
+                <div className="text-sm font-semibold text-ink">Кэшбэк {cashbackRub} ₽</div>
+                <div className="text-xs text-ink-secondary">Можно списать на кассе</div>
+              </div>
+            </div>
+
+            {(me.friendsCount ?? 0) > 0 || (me.fromFriendsRub ?? 0) > 0 ? (
+              <div className="card flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-brand-soft flex items-center justify-center">
+                  <Gift size={20} className="text-brand" />
                 </div>
                 <div>
-                  <div className="text-sm font-semibold text-ink">Кэшбэк {Math.floor(best.state.cb / 100)} ₽</div>
-                  <div className="text-xs text-ink-secondary">Можно списать на кассе</div>
+                  <div className="text-sm font-semibold text-ink">От друзей получено +{me.fromFriendsRub ?? 0} ₽</div>
+                  <div className="text-xs text-ink-secondary">Друзей приглашено: {me.friendsCount ?? 0}</div>
                 </div>
               </div>
-            )}
+            ) : null}
 
             <h2 className="text-sm font-semibold text-ink mt-2 mb-1 flex items-center gap-1.5">
               <Ticket size={16} className="text-brand" /> Мои купоны
             </h2>
-            {activeVouchers(best.state).length === 0 && (
+            {vouchers.length === 0 && (
               <p className="text-ink-tertiary text-sm">Пока нет. Новые приходят при синхронизации.</p>
             )}
-            {activeVouchers(best.state).map((v) => (
+            {vouchers.map((v) => (
               <div key={v[0]} className="card flex justify-between items-center py-3">
                 <b className="text-sm">{v[1] === 'p' ? `Скидка ${v[2]}%` : `Скидка ${v[2]} ₽`}</b>
                 <span className="text-ink-tertiary text-xs">до {new Date(v[3] * 86_400_000).toLocaleDateString()}</span>
@@ -192,28 +205,14 @@ export default function CardPage() {
         <div className="flex gap-2 mt-3">
           <button
             type="button"
-            className="btn flex items-center justify-center gap-2"
-            onClick={() => {
-              setMsg('')
-              setScan(true)
-            }}
-          >
-            <ScanLine size={18} /> Сканировать чек
-          </button>
-          <button
-            type="button"
-            className="btn-ghost !w-12 flex items-center justify-center px-0"
+            className="btn-ghost flex items-center justify-center gap-2"
             onClick={() => void onSync()}
-            aria-label="Синхронизировать"
+            aria-label="Обновить"
           >
-            <RefreshCw size={18} className={syncing ? 'animate-spin' : ''} />
+            <RefreshCw size={18} className={syncing ? 'animate-spin' : ''} /> Обновить
           </button>
         </div>
       </div>
-
-      {scan && (
-        <ScanModal title="Сканировать чек лояльности" onResult={onScan} onClose={() => setScan(false)} />
-      )}
     </div>
   )
 }

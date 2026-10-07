@@ -33,5 +33,11 @@ export type Directory = {
   promos: { id: number; title: string; body: string; icon: string; sponsor: string | null; endsAt: number }[]
 }
 
-export type Me = { id: number; cardId: string; cardCode: string; nickname: string; inviteCode: string; cashbackBalance: number }
+export type Me = {
+  id: number; cardId: string; cardCode: string; nickname: string; inviteCode: string; cashbackBalance: number
+  /** Серверное состояние лояльности (источник истины — backend). */
+  cupsTowardFree?: number; freeAvailable?: number; cupsForFree?: number
+  fromFriendsRub?: number; friendsCount?: number
+  vouchers?: Voucher[]
+}
 export type StoredReceipt = { id: string; token: string; uploaded: 0 | 1; userId: number; q: number }

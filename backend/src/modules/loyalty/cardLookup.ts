@@ -1,12 +1,9 @@
 import { Hono } from 'hono'
 import { db } from '../../db'
 import { requireAuth, type AuthEnv } from '../../middleware/auth'
-import { buildCardProof, ensureCard, normalizeCardCode } from './proof'
+import { buildCardProof, ensureCard } from './proof'
 import { freeEarned } from './rules'
 import { config } from '../../config'
-import { zValidator } from '@hono/zod-validator'
-import { z } from 'zod'
-import { resolveAndReserve } from './reservations'
 
 function hitCardRate(userId: number): boolean {
   const key = `card:${userId}`
@@ -19,6 +16,23 @@ function hitCardRate(userId: number): boolean {
   if (row.count >= 60) return false
   db.prepare('UPDATE rate_limits SET count=count+1 WHERE key=?').run(key)
   return true
+}
+
+export function stateView(userId: number) {
+  ensureCard(userId)
+  const card = db.prepare('SELECT paid_total, free_used FROM cards WHERE user_id=?').get(userId) as { paid_total: number; free_used: number }
+  return {
+    cupsTowardFree: card.paid_total % config.cupsForFree,
+    freeAvailable: Math.max(0, freeEarned(card.paid_total) - card.free_used),
+    cupsForFree: config.cupsForFree,
+    ...friendsView(userId),
+  }
+}
+
+export function friendsView(userId: number) {
+  const g = db.prepare('SELECT COALESCE(SUM(amount),0) AS n FROM cashback_ledger WHERE beneficiary_id=?').get(userId) as { n: number }
+  const f = db.prepare('SELECT COUNT(*) AS n FROM users WHERE invited_by=?').get(userId) as { n: number }
+  return { fromFriendsRub: Math.floor(Math.max(0, g.n) / 100), friendsCount: f.n }
 }
 
 function cardView(userId: number) {
@@ -37,50 +51,15 @@ function cardView(userId: number) {
     cashbackRub: Math.floor(row.cashback_balance / 100),
     cupsTowardFree: card.paid_total % config.cupsForFree,
     freeAvailable: Math.max(0, earned - card.free_used),
+    cupsForFree: config.cupsForFree,
+    ...friendsView(userId),
   }
 }
 
 export const cardLookupRoutes = new Hono<AuthEnv>()
-  // Public: cash register resolves QR → live state + FREE_CUP reservation (TTL ~90s)
-  .post(
-    '/resolve',
-    zValidator(
-      'json',
-      z.object({
-        c: z.string().min(1).max(4000),
-        storeUuid: z.string().max(80).optional().nullable(),
-        terminalId: z.string().max(80).optional().nullable(),
-        reserveFree: z.boolean().optional(),
-      }),
-    ),
-    (c) => {
-      const body = c.req.valid('json')
-      return c.json(
-        resolveAndReserve({
-          cardRef: body.c,
-          storeUuid: body.storeUuid,
-          terminalId: body.terminalId,
-          reserveFree: body.reserveFree,
-        }),
-      )
-    },
-  )
   .use('*', requireAuth)
   .get('/card', (c) => {
     const userId = c.get('userId')
     if (!hitCardRate(userId)) return c.json({ error: 'Too many requests' }, 429)
     return c.json(cardView(userId))
-  })
-  .get('/card/:code', (c) => {
-    const requester = c.get('userId')
-    if (!hitCardRate(requester)) return c.json({ error: 'Too many requests' }, 429)
-    const code = normalizeCardCode(c.req.param('code'))
-    if (!code) return c.json({ error: 'Invalid card code' }, 400)
-    const user = db.prepare(`
-      SELECT id FROM users
-      WHERE card_code=? OR CAST(card_code AS INTEGER)=CAST(? AS INTEGER)
-      LIMIT 1
-    `).get(code, code) as { id: number } | undefined
-    if (!user) return c.json({ error: 'Card not found' }, 404)
-    return c.json(cardView(user.id))
   })
