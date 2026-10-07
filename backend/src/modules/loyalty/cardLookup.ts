@@ -4,6 +4,9 @@ import { requireAuth, type AuthEnv } from '../../middleware/auth'
 import { buildCardProof, ensureCard, normalizeCardCode } from './proof'
 import { freeEarned } from './rules'
 import { config } from '../../config'
+import { zValidator } from '@hono/zod-validator'
+import { z } from 'zod'
+import { resolveAndReserve } from './reservations'
 
 function hitCardRate(userId: number): boolean {
   const key = `card:${userId}`
@@ -38,6 +41,30 @@ function cardView(userId: number) {
 }
 
 export const cardLookupRoutes = new Hono<AuthEnv>()
+  // Public: cash register resolves QR → live state + FREE_CUP reservation (TTL ~90s)
+  .post(
+    '/resolve',
+    zValidator(
+      'json',
+      z.object({
+        c: z.string().min(1).max(4000),
+        storeUuid: z.string().max(80).optional().nullable(),
+        terminalId: z.string().max(80).optional().nullable(),
+        reserveFree: z.boolean().optional(),
+      }),
+    ),
+    (c) => {
+      const body = c.req.valid('json')
+      return c.json(
+        resolveAndReserve({
+          cardRef: body.c,
+          storeUuid: body.storeUuid,
+          terminalId: body.terminalId,
+          reserveFree: body.reserveFree,
+        }),
+      )
+    },
+  )
   .use('*', requireAuth)
   .get('/card', (c) => {
     const userId = c.get('userId')

@@ -1,3 +1,4 @@
+import { consumeReservation } from '../../../modules/loyalty/reservations'
 import type Database from 'better-sqlite3'
 import { verifyServerToken } from '../../../lib/crypto'
 import { normalizeCardCode } from '../../../modules/loyalty/proof'
@@ -129,6 +130,13 @@ export function handleSell(db: Database.Database, storeUuid: string, doc: Record
 
   if (!user) return { processed: false, reason: 'card not found' }
 
+  // Link SELL to prior resolve reservation (anti double free across stores)
+  const reservationId = typeof sc.op === 'string' && sc.op.startsWith('R-') ? sc.op : null
+  if (reservationId) {
+    consumeReservation(reservationId, docId)
+  }
+
+
   const existing = db.prepare('SELECT 1 FROM loyalty_ops WHERE doc_store=? AND doc_id=?').get(storeUuid, docId)
   if (existing) return { processed: true, reason: 'duplicate' }
 
@@ -203,6 +211,7 @@ export function handlePayback(db: Database.Database, storeUuid: string, doc: Rec
     id: number; cashback_balance: number; card_id: string
   } | undefined
   if (!user) return { processed: false, reason: 'card not found' }
+
   const now = Date.now()
   const free = Math.max(0, Number(original.free ?? 0))
   const cb = Math.max(0, Number(original.cb ?? 0))
