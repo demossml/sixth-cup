@@ -22,7 +22,7 @@ async function adminFetch<T>(path: string, token: string, init?: RequestInit): P
   return res.json() as Promise<T>
 }
 
-type Tab = 'overview' | 'stores' | 'products' | 'categories' | 'modifiers' | 'sales' | 'evotor'
+type Tab = 'overview' | 'stores' | 'products' | 'categories' | 'modifiers' | 'sales' | 'evotor' | 'logs'
 
 type Overview = {
   stores: number
@@ -72,6 +72,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'modifiers', label: 'Добавки' },
   { id: 'sales', label: 'Продажи' },
   { id: 'evotor', label: 'Эвотор' },
+  { id: 'logs', label: 'Логи' },
 ]
 
 const GROUP_KEYS = [
@@ -98,6 +99,11 @@ export default function AdminPage() {
   const [modEdit, setModEdit] = useState<Partial<Modifier> | null>(null)
   const [schemeEdit, setSchemeEdit] = useState<{ id?: number; name: string; modifierIds: number[]; copyFromId?: number } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [logLines, setLogLines] = useState<string[]>([])
+  const [logCount, setLogCount] = useState(50)
+  const [logSource, setLogSource] = useState<'buffer' | 'file'>('buffer')
+  const [logMeta, setLogMeta] = useState<{ available?: number; error?: string }>({})
+  const [logCopied, setLogCopied] = useState(false)
 
   const login = async () => {
     setErr('')
@@ -132,6 +138,29 @@ export default function AdminPage() {
       setErr(e.message)
     }
   }, [token])
+
+  const loadLogs = useCallback(async () => {
+    if (!token) return
+    setBusy(true)
+    setErr('')
+    try {
+      const data = await adminFetch<{
+        lines: string[]
+        available?: number
+        error?: string
+      }>(`/logs?lines=${logCount}&source=${logSource}`, token)
+      setLogLines(data.lines || [])
+      setLogMeta({ available: data.available, error: data.error })
+    } catch (e: any) {
+      setErr(e.message || String(e))
+    } finally {
+      setBusy(false)
+    }
+  }, [token, logCount, logSource])
+
+  useEffect(() => {
+    if (tab === 'logs' && token) void loadLogs()
+  }, [tab, token, loadLogs])
 
   useEffect(() => {
     if (authed) void load()

@@ -10,6 +10,7 @@ import { bad } from '../../lib/errors'
 import { grantVoucher } from '../vouchers/service'
 import { resetLoyaltyData, resetCatalogData } from '../../db/seed'
 import { adminEvotorCatalog } from './evotorCatalog'
+import { getBufferLines, bufferSize, tailFile, logLine } from '../../lib/logBuffer'
 import { ProductPushService } from '../../integrations/evotor/sync/ProductPushService'
 
 const adminAuth = createMiddleware(async (c, next) => {
@@ -41,6 +42,47 @@ function enqueueProductSync(productIds: number[]) {
 
 export const adminRoutes = new Hono()
   .use('*', adminAuth)
+
+  // —— Logs (in-memory ring + optional LOG_PATH file) ——
+  .get('/logs', (c) => {
+    const linesParam = Number(c.req.query('lines') ?? 50)
+    const lines = Math.min(Math.max(1, Number.isFinite(linesParam) ? linesParam : 50), 500)
+    const source = (c.req.query('source') ?? 'buffer') as string
+    if (source === 'file') {
+      const path = process.env.LOG_PATH || ''
+      if (!path) {
+        return c.json({
+          source: 'file',
+          lines: [],
+          available: 0,
+          error: 'LOG_PATH not set — showing empty file source; use source=buffer',
+          generatedAt: Date.now(),
+        })
+      }
+      const tailed = tailFile(path, lines)
+      return c.json({
+        source: 'file',
+        path,
+        lines: tailed.lines,
+        available: tailed.lines.length,
+        error: tailed.error,
+        generatedAt: Date.now(),
+      })
+    }
+    const buf = getBufferLines(lines)
+    return c.json({
+      source: 'buffer',
+      lines: buf,
+      available: bufferSize(),
+      maxBuffer: 2000,
+      generatedAt: Date.now(),
+    })
+  })
+  .post('/logs/test', (c) => {
+    logLine('INFO', 'admin log test ping', { at: Date.now() })
+    return c.json({ ok: true })
+  })
+
 
   // —— Stats (unchanged contract) ——
   .get('/stats', (c) => {

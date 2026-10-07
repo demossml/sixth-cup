@@ -1,3 +1,5 @@
+import { installConsoleCapture, logLine } from './lib/logBuffer'
+installConsoleCapture()
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
@@ -16,6 +18,13 @@ import { syncRoutes } from './modules/sync/routes'
 import { uploadRoutes } from './modules/upload/routes'
 
 const app = new Hono()
+  app.use('*', async (c, next) => {
+    const start = Date.now()
+    await next()
+    if (c.req.path.startsWith('/api')) {
+      logLine('HTTP', `${c.req.method} ${c.req.path} → ${c.res.status} ${Date.now() - start}ms`)
+    }
+  })
 app.use('*', logger())
 app.use('/api/*', cors())
 
