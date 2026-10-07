@@ -43,7 +43,6 @@ function enqueueProductSync(productIds: number[]) {
 export const adminRoutes = new Hono()
   .use('*', adminAuth)
 
-  // —— Logs (in-memory ring + optional LOG_PATH file) ——
   .get('/logs', (c) => {
     const linesParam = Number(c.req.query('lines') ?? 50)
     const lines = Math.min(Math.max(1, Number.isFinite(linesParam) ? linesParam : 50), 500)
@@ -55,7 +54,7 @@ export const adminRoutes = new Hono()
           source: 'file',
           lines: [],
           available: 0,
-          error: 'LOG_PATH not set — showing empty file source; use source=buffer',
+          error: 'LOG_PATH не задан — выберите источник «Память (API)»',
           generatedAt: Date.now(),
         })
       }
@@ -80,7 +79,7 @@ export const adminRoutes = new Hono()
   })
   .post('/logs/test', (c) => {
     logLine('INFO', 'admin log test ping', { at: Date.now() })
-    return c.json({ ok: true })
+    return c.json({ ok: true, available: bufferSize() })
   })
 
 

@@ -102,8 +102,9 @@ export default function AdminPage() {
   const [logLines, setLogLines] = useState<string[]>([])
   const [logCount, setLogCount] = useState(50)
   const [logSource, setLogSource] = useState<'buffer' | 'file'>('buffer')
-  const [logMeta, setLogMeta] = useState<{ available?: number; error?: string }>({})
+  const [logMeta, setLogMeta] = useState<{ available?: number; error?: string; generatedAt?: number }>({})
   const [logCopied, setLogCopied] = useState(false)
+  const [logStatus, setLogStatus] = useState('')
 
   const login = async () => {
     setErr('')
@@ -139,29 +140,6 @@ export default function AdminPage() {
     }
   }, [token])
 
-  const loadLogs = useCallback(async () => {
-    if (!token) return
-    setBusy(true)
-    setErr('')
-    try {
-      const data = await adminFetch<{
-        lines: string[]
-        available?: number
-        error?: string
-      }>(`/logs?lines=${logCount}&source=${logSource}`, token)
-      setLogLines(data.lines || [])
-      setLogMeta({ available: data.available, error: data.error })
-    } catch (e: any) {
-      setErr(e.message || String(e))
-    } finally {
-      setBusy(false)
-    }
-  }, [token, logCount, logSource])
-
-  useEffect(() => {
-    if (tab === 'logs' && token) void loadLogs()
-  }, [tab, token, loadLogs])
-
   useEffect(() => {
     if (authed) void load()
   }, [authed, load])
@@ -175,7 +153,47 @@ export default function AdminPage() {
     }
   }
 
-  if (!authed) {
+  
+  const loadLogs = useCallback(async () => {
+    if (!token) return
+    setBusy(true)
+    setErr('')
+    setLogStatus('')
+    try {
+      const data = await adminFetch<{
+        lines: string[]
+        available?: number
+        error?: string
+        generatedAt?: number
+      }>(`/logs?lines=${logCount}&source=${logSource}`, token)
+      setLogLines(Array.isArray(data.lines) ? data.lines : [])
+      setLogMeta({ available: data.available, error: data.error, generatedAt: data.generatedAt })
+      if (!data.lines?.length) {
+        setLogStatus('Буфер пуст — нажмите «Тест» или подождите запросов к API, затем «Обновить».')
+      }
+    } catch (e: any) {
+      setErr(e.message || String(e))
+      setLogLines([])
+    } finally {
+      setBusy(false)
+    }
+  }, [token, logCount, logSource])
+
+  const pingLog = async () => {
+    if (!token) return
+    try {
+      await adminFetch('/logs/test', token, { method: 'POST', body: '{}' })
+      await loadLogs()
+    } catch (e: any) {
+      setErr(e.message || String(e))
+    }
+  }
+
+  useEffect(() => {
+    if (tab === 'logs' && token) void loadLogs()
+  }, [tab, token, loadLogs])
+
+if (!authed) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50">
         <div className="w-full max-w-sm space-y-3 bg-white p-6 rounded-xl shadow">
@@ -188,7 +206,89 @@ export default function AdminPage() {
             onChange={(e) => setToken(e.target.value)}
             placeholder="X-Admin-Token"
           />
-          {err && <p className="text-sm text-red-600">{err}</p>}
+          
+        {tab === 'logs' && (
+          <div className="space-y-3">
+            <h2 className="font-semibold">Логи сервера</h2>
+            <p className="text-xs text-slate-500">
+              Здесь видны последние строки из памяти API (после последнего рестарта сервиса).
+              Выберите сколько строк смотреть, обновите, при необходимости скопируйте и пришлите в чат.
+            </p>
+            <div className="flex flex-wrap gap-2 items-center bg-white p-3 rounded-xl shadow-sm">
+              <label className="text-sm text-slate-600">Строк:</label>
+              <select
+                className="border rounded-lg px-2 py-1.5 text-sm min-w-[5rem]"
+                value={logCount}
+                onChange={(e) => setLogCount(Number(e.target.value))}
+              >
+                {[20, 30, 40, 50, 60, 80, 100, 150, 200, 300, 500].map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+              <label className="text-sm text-slate-600">Источник:</label>
+              <select
+                className="border rounded-lg px-2 py-1.5 text-sm"
+                value={logSource}
+                onChange={(e) => setLogSource(e.target.value as 'buffer' | 'file')}
+              >
+                <option value="buffer">Память (API)</option>
+                <option value="file">Файл LOG_PATH</option>
+              </select>
+              <button
+                type="button"
+                className="px-3 py-1.5 rounded-lg bg-slate-100 text-sm disabled:opacity-50"
+                disabled={busy}
+                onClick={() => void loadLogs()}
+              >
+                Обновить
+              </button>
+              <button
+                type="button"
+                className="px-3 py-1.5 rounded-lg bg-slate-100 text-sm disabled:opacity-50"
+                disabled={busy}
+                onClick={() => void pingLog()}
+              >
+                Тест (записать строку)
+              </button>
+              <button
+                type="button"
+                className="px-3 py-1.5 rounded-lg bg-[#002FA7] text-white text-sm disabled:opacity-50"
+                disabled={!logLines.length}
+                onClick={async () => {
+                  const text = logLines.join('\n')
+                  try {
+                    await navigator.clipboard.writeText(text)
+                  } catch {
+                    const ta = document.createElement('textarea')
+                    ta.value = text
+                    document.body.appendChild(ta)
+                    ta.select()
+                    document.execCommand('copy')
+                    document.body.removeChild(ta)
+                  }
+                  setLogCopied(true)
+                  setTimeout(() => setLogCopied(false), 2000)
+                }}
+              >
+                {logCopied ? '✓ Скопировано' : `Копировать ${logLines.length} строк`}
+              </button>
+            </div>
+            {logMeta.error && <p className="text-sm text-amber-700">{logMeta.error}</p>}
+            {logStatus && <p className="text-sm text-slate-600">{logStatus}</p>}
+            <p className="text-xs text-slate-400">
+              Показано: {logLines.length}
+              {logMeta.available != null ? ` · всего в буфере: ${logMeta.available}` : ''}
+              {logMeta.generatedAt ? ` · обновлено: ${new Date(logMeta.generatedAt).toLocaleTimeString()}` : ''}
+            </p>
+            <pre className="bg-slate-900 text-green-100 text-xs rounded-xl p-3 overflow-auto max-h-[32rem] whitespace-pre-wrap break-all font-mono leading-relaxed">
+              {logLines.length
+                ? logLines.join('\n')
+                : 'Пока пусто.\n1) Нажмите «Тест» — должна появиться строка.\n2) Или «Обновить» после запросов к API.\n3) Если снова пусто — backend не перезапущен с новым кодом.'}
+            </pre>
+          </div>
+        )}
+
+      {err && <p className="text-sm text-red-600">{err}</p>}
           <button className="w-full bg-[#002FA7] text-white rounded-lg py-2" onClick={() => void login()}>
             Войти
           </button>

@@ -25,8 +25,6 @@ export const config = {
   evotorProxyToken: process.env.EVOTOR_PROXY_TOKEN ?? '',
   /** When 1, reject requests without valid proxy token on /api/devices/* */
   evotorProxyEnforce: process.env.EVOTOR_PROXY_ENFORCE === '1',
-
-  /** Optional file path for mirrored logs (also always kept in memory for admin). */
   logPath: process.env.LOG_PATH ?? '',
 
 
