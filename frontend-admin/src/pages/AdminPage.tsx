@@ -2,7 +2,7 @@
  * Admin: groups (categories) CRUD + toppings (modifiers) + schemes + product links.
  * Backend routes already exist: /categories, /modifiers, /modifier-schemes, /products
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 const API = (import.meta as any).env?.VITE_API_URL ?? ''
 
@@ -23,6 +23,23 @@ async function adminFetch<T>(path: string, token: string, init?: RequestInit): P
 }
 
 type Tab = 'overview' | 'stores' | 'products' | 'categories' | 'modifiers' | 'sales' | 'evotor' | 'logs'
+
+type LogSourceFilter = 'all' | 'server' | 'client' | 'device'
+type LogLevelFilter = 'all' | 'error' | 'warn' | 'info'
+
+const LOG_COUNTS = [20, 30, 50, 60, 80, 100, 150, 200, 300, 500]
+const LOG_SOURCES: { id: LogSourceFilter; label: string }[] = [
+  { id: 'all', label: 'Все' },
+  { id: 'server', label: 'Сервер' },
+  { id: 'client', label: 'Клиент' },
+  { id: 'device', label: 'Касса' },
+]
+const LOG_LEVELS: { id: LogLevelFilter; label: string }[] = [
+  { id: 'all', label: 'Все уровни' },
+  { id: 'error', label: 'error' },
+  { id: 'warn', label: 'warn' },
+  { id: 'info', label: 'info' },
+]
 
 type Overview = {
   stores: number
@@ -99,12 +116,19 @@ export default function AdminPage() {
   const [modEdit, setModEdit] = useState<Partial<Modifier> | null>(null)
   const [schemeEdit, setSchemeEdit] = useState<{ id?: number; name: string; modifierIds: number[]; copyFromId?: number } | null>(null)
   const [busy, setBusy] = useState(false)
+  // —— Логи ——
   const [logLines, setLogLines] = useState<string[]>([])
   const [logCount, setLogCount] = useState(50)
-  const [logSource, setLogSource] = useState<'buffer' | 'file'>('buffer')
-  const [logMeta, setLogMeta] = useState<{ available?: number; error?: string; generatedAt?: number }>({})
-  const [logCopied, setLogCopied] = useState(false)
-  const [logStatus, setLogStatus] = useState('')
+  const [logSource, setLogSource] = useState<LogSourceFilter>('all')
+  const [logLevel, setLogLevel] = useState<LogLevelFilter>('all')
+  const [logAuto, setLogAuto] = useState(false)
+  const [logLoading, setLogLoading] = useState(false)
+  const [logLoaded, setLogLoaded] = useState(false)
+  const [logErr, setLogErr] = useState('')
+  const [logAvailable, setLogAvailable] = useState<number | null>(null)
+  const [logAt, setLogAt] = useState<number | null>(null)
+  const [logCopied, setLogCopied] = useState<'' | 'ok' | 'fail'>('')
+  const logReq = useRef(0)
 
   const login = async () => {
     setErr('')
@@ -153,47 +177,75 @@ export default function AdminPage() {
     }
   }
 
-  
   const loadLogs = useCallback(async () => {
     if (!token) return
-    setBusy(true)
-    setErr('')
-    setLogStatus('')
+    const req = ++logReq.current
+    setLogLoading(true)
+    setLogErr('')
     try {
-      const data = await adminFetch<{
-        lines: string[]
-        available?: number
-        error?: string
-        generatedAt?: number
-      }>(`/logs?lines=${logCount}&source=${logSource}`, token)
+      const qs = new URLSearchParams({ lines: String(logCount), source: logSource, level: logLevel })
+      const data = await adminFetch<{ lines: string[]; available?: number; generatedAt?: number }>(`/logs?${qs}`, token)
+      if (req !== logReq.current) return // a newer request is in flight — ignore stale answer
       setLogLines(Array.isArray(data.lines) ? data.lines : [])
-      setLogMeta({ available: data.available, error: data.error, generatedAt: data.generatedAt })
-      if (!data.lines?.length) {
-        setLogStatus('Буфер пуст — нажмите «Тест» или подождите запросов к API, затем «Обновить».')
-      }
+      setLogAvailable(typeof data.available === 'number' ? data.available : null)
+      setLogAt(data.generatedAt ?? Date.now())
+      setLogLoaded(true)
     } catch (e: any) {
-      setErr(e.message || String(e))
-      setLogLines([])
+      if (req !== logReq.current) return
+      setLogErr(e?.message || String(e))
+      setLogLoaded(true)
     } finally {
-      setBusy(false)
+      if (req === logReq.current) setLogLoading(false)
     }
-  }, [token, logCount, logSource])
+  }, [token, logCount, logSource, logLevel])
 
-  const pingLog = async () => {
-    if (!token) return
+  const testLog = async () => {
+    setLogErr('')
     try {
       await adminFetch('/logs/test', token, { method: 'POST', body: '{}' })
       await loadLogs()
     } catch (e: any) {
-      setErr(e.message || String(e))
+      setLogErr(e?.message || String(e))
     }
   }
 
-  useEffect(() => {
-    if (tab === 'logs' && token) void loadLogs()
-  }, [tab, token, loadLogs])
+  const copyLogs = async () => {
+    const text = logLines.join('\n')
+    let ok = false
+    try {
+      await navigator.clipboard.writeText(text)
+      ok = true
+    } catch {
+      try {
+        const ta = document.createElement('textarea')
+        ta.value = text
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        ok = document.execCommand('copy')
+        document.body.removeChild(ta)
+      } catch {
+        ok = false
+      }
+    }
+    setLogCopied(ok ? 'ok' : 'fail')
+    setTimeout(() => setLogCopied(''), 2000)
+  }
 
-if (!authed) {
+  // load when the tab opens and whenever a filter changes
+  useEffect(() => {
+    if (authed && tab === 'logs') void loadLogs()
+  }, [authed, tab, loadLogs])
+
+  // optional auto-refresh while the tab is open
+  useEffect(() => {
+    if (!authed || tab !== 'logs' || !logAuto) return
+    const id = setInterval(() => void loadLogs(), 5000)
+    return () => clearInterval(id)
+  }, [authed, tab, logAuto, loadLogs])
+
+  if (!authed) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50">
         <div className="w-full max-w-sm space-y-3 bg-white p-6 rounded-xl shadow">
@@ -204,91 +256,10 @@ if (!authed) {
             type="password"
             value={token}
             onChange={(e) => setToken(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && void login()}
             placeholder="X-Admin-Token"
           />
-          
-        {tab === 'logs' && (
-          <div className="space-y-3">
-            <h2 className="font-semibold">Логи сервера</h2>
-            <p className="text-xs text-slate-500">
-              Здесь видны последние строки из памяти API (после последнего рестарта сервиса).
-              Выберите сколько строк смотреть, обновите, при необходимости скопируйте и пришлите в чат.
-            </p>
-            <div className="flex flex-wrap gap-2 items-center bg-white p-3 rounded-xl shadow-sm">
-              <label className="text-sm text-slate-600">Строк:</label>
-              <select
-                className="border rounded-lg px-2 py-1.5 text-sm min-w-[5rem]"
-                value={logCount}
-                onChange={(e) => setLogCount(Number(e.target.value))}
-              >
-                {[20, 30, 40, 50, 60, 80, 100, 150, 200, 300, 500].map((n) => (
-                  <option key={n} value={n}>{n}</option>
-                ))}
-              </select>
-              <label className="text-sm text-slate-600">Источник:</label>
-              <select
-                className="border rounded-lg px-2 py-1.5 text-sm"
-                value={logSource}
-                onChange={(e) => setLogSource(e.target.value as 'buffer' | 'file')}
-              >
-                <option value="buffer">Память (API)</option>
-                <option value="file">Файл LOG_PATH</option>
-              </select>
-              <button
-                type="button"
-                className="px-3 py-1.5 rounded-lg bg-slate-100 text-sm disabled:opacity-50"
-                disabled={busy}
-                onClick={() => void loadLogs()}
-              >
-                Обновить
-              </button>
-              <button
-                type="button"
-                className="px-3 py-1.5 rounded-lg bg-slate-100 text-sm disabled:opacity-50"
-                disabled={busy}
-                onClick={() => void pingLog()}
-              >
-                Тест (записать строку)
-              </button>
-              <button
-                type="button"
-                className="px-3 py-1.5 rounded-lg bg-[#002FA7] text-white text-sm disabled:opacity-50"
-                disabled={!logLines.length}
-                onClick={async () => {
-                  const text = logLines.join('\n')
-                  try {
-                    await navigator.clipboard.writeText(text)
-                  } catch {
-                    const ta = document.createElement('textarea')
-                    ta.value = text
-                    document.body.appendChild(ta)
-                    ta.select()
-                    document.execCommand('copy')
-                    document.body.removeChild(ta)
-                  }
-                  setLogCopied(true)
-                  setTimeout(() => setLogCopied(false), 2000)
-                }}
-              >
-                {logCopied ? '✓ Скопировано' : `Копировать ${logLines.length} строк`}
-              </button>
-            </div>
-            {logMeta.error && <p className="text-sm text-amber-700">{logMeta.error}</p>}
-            {logStatus && <p className="text-sm text-slate-600">{logStatus}</p>}
-            <p className="text-xs text-slate-400">
-              Показано: {logLines.length}
-              {logMeta.available != null ? ` · всего в буфере: ${logMeta.available}` : ''}
-              {logMeta.generatedAt ? ` · обновлено: ${new Date(logMeta.generatedAt).toLocaleTimeString()}` : ''}
-            </p>
-            <pre className="bg-slate-900 text-green-100 text-xs rounded-xl p-3 overflow-auto max-h-[32rem] whitespace-pre-wrap break-all font-mono leading-relaxed">
-              {logLines.length
-                ? logLines.join('\n')
-                : 'Пока пусто.\n1) Нажмите «Тест» — должна появиться строка.\n2) Или «Обновить» после запросов к API.\n3) Если снова пусто — backend не перезапущен с новым кодом.'}
-            </pre>
-          </div>
-        )}
-
-      {err && <p className="text-sm text-red-600">{err}</p>}
+          {err && <p className="text-sm text-red-600">{err}</p>}
           <button className="w-full bg-[#002FA7] text-white rounded-lg py-2" onClick={() => void login()}>
             Войти
           </button>
@@ -1055,6 +1026,120 @@ if (!authed) {
             >
               Poll документы (продажи)
             </button>
+          </div>
+        )}
+        {tab === 'logs' && (
+          <div className="space-y-3">
+            <h2 className="font-semibold">Логи</h2>
+            <p className="text-xs text-slate-500">
+              Последние события из памяти сервера: запросы API, ошибки, loyalty, Эвотор, а также события клиентского
+              приложения и кассы. Хранится до рестарта сервиса (если задан LOG_PATH — дополнительно пишется в файл).
+            </p>
+
+            <div className="bg-white p-3 rounded-xl shadow-sm space-y-3">
+              <div className="flex flex-wrap gap-2 items-center">
+                <label className="text-sm text-slate-600" htmlFor="log-count">Строк:</label>
+                <select
+                  id="log-count"
+                  className="border rounded-lg px-2 py-1.5 text-sm"
+                  value={logCount}
+                  onChange={(e) => setLogCount(Number(e.target.value))}
+                >
+                  {LOG_COUNTS.map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+                <label className="text-sm text-slate-600" htmlFor="log-level">Уровень:</label>
+                <select
+                  id="log-level"
+                  className="border rounded-lg px-2 py-1.5 text-sm"
+                  value={logLevel}
+                  onChange={(e) => setLogLevel(e.target.value as LogLevelFilter)}
+                >
+                  {LOG_LEVELS.map((l) => (
+                    <option key={l.id} value={l.id}>{l.label}</option>
+                  ))}
+                </select>
+                <label className="text-sm text-slate-600 flex items-center gap-1 ml-auto">
+                  <input type="checkbox" checked={logAuto} onChange={(e) => setLogAuto(e.target.checked)} />
+                  Авто (5 с)
+                </label>
+              </div>
+
+              <div className="flex flex-wrap gap-1" role="tablist" aria-label="Источник логов">
+                {LOG_SOURCES.map((o) => (
+                  <button
+                    key={o.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={logSource === o.id}
+                    className={`px-3 py-1.5 rounded-lg text-sm ${logSource === o.id ? 'bg-[#002FA7] text-white' : 'bg-slate-100'}`}
+                    onClick={() => setLogSource(o.id)}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="px-3 py-1.5 rounded-lg bg-slate-100 text-sm disabled:opacity-50"
+                  disabled={logLoading}
+                  onClick={() => void loadLogs()}
+                >
+                  {logLoading ? 'Загрузка…' : 'Обновить'}
+                </button>
+                <button
+                  type="button"
+                  className="px-3 py-1.5 rounded-lg bg-slate-100 text-sm disabled:opacity-50"
+                  disabled={logLoading}
+                  onClick={() => void testLog()}
+                  title="Записать одну тестовую строку на сервер"
+                >
+                  Тест
+                </button>
+                <button
+                  type="button"
+                  className="px-3 py-1.5 rounded-lg bg-[#002FA7] text-white text-sm disabled:opacity-50"
+                  disabled={!logLines.length}
+                  onClick={() => void copyLogs()}
+                >
+                  {logCopied === 'ok' ? '✓ Скопировано' : logCopied === 'fail' ? 'Не удалось скопировать' : `Копировать ${logLines.length} строк`}
+                </button>
+              </div>
+            </div>
+
+            {logErr && (
+              <p role="alert" className="text-sm text-red-700 bg-red-50 border border-red-200 p-2 rounded-lg">
+                Ошибка загрузки логов: {logErr}
+              </p>
+            )}
+
+            <p className="text-xs text-slate-400">
+              Показано: {logLines.length}
+              {logAvailable != null ? ` из ${logAvailable} по фильтру` : ''}
+              {logAt ? ` · обновлено ${new Date(logAt).toLocaleTimeString()}` : ''}
+            </p>
+
+            <pre className="bg-slate-900 text-slate-100 text-xs rounded-xl p-3 overflow-auto max-h-[32rem] min-h-[8rem] whitespace-pre-wrap break-all font-mono leading-relaxed">
+              {logLines.length ? (
+                logLines.map((line, i) => (
+                  <div
+                    key={i}
+                    className={line.includes(' [error] ') ? 'text-red-400' : line.includes(' [warn] ') ? 'text-amber-300' : undefined}
+                  >
+                    {line}
+                  </div>
+                ))
+              ) : !logLoaded ? (
+                'Загрузка…'
+              ) : logErr ? (
+                'Не удалось получить логи (см. ошибку выше).'
+              ) : (
+                'Нет событий по этому фильтру.\nНажмите «Тест» — на сервер запишется строка, она сразу появится здесь.\nЛоги живут в памяти и очищаются при рестарте сервиса.'
+              )}
+            </pre>
           </div>
         )}
       </main>

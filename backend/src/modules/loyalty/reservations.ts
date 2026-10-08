@@ -4,6 +4,7 @@ import { config } from '../../config'
 import { verifyServerToken } from '../../lib/crypto'
 import { normalizeCardCode } from './proof'
 import { freeEarned } from './rules'
+import { log, shortId } from '../../lib/logBuffer'
 
 export type ResolveInput = { code: string; storeUuid?: string; deviceUuid?: string }
 
@@ -112,9 +113,12 @@ export function consumeReservation(conn: typeof db, opId: string | null | undefi
   const r = conn.prepare(`UPDATE loyalty_reservations SET status='CONSUMED', consumed_at=?, doc_store=?, doc_id=? WHERE id=? AND status IN ('RESERVED','EXPIRED')`)
     .run(now, docStore, docId, opId)
   if (r.changes !== 1) return { free: 0, cb: 0 }
+  log.info('loyalty reservation consumed', { res: shortId(opId, 6), free: row.benefit_free, cbKop: row.benefit_cb, late: row.status === 'EXPIRED' ? 1 : 0 })
   return { free: row.benefit_free, cb: row.benefit_cb }
 }
 
 export function expireStaleReservations(now = Date.now()): number {
-  return db.prepare(`UPDATE loyalty_reservations SET status='EXPIRED' WHERE status='RESERVED' AND expires_at<=?`).run(Math.floor(now / 1000)).changes
+  const n = db.prepare(`UPDATE loyalty_reservations SET status='EXPIRED' WHERE status='RESERVED' AND expires_at<=?`).run(Math.floor(now / 1000)).changes
+  if (n > 0) log.info('loyalty reservations expired', { count: n })
+  return n
 }

@@ -90,3 +90,30 @@ The server is the loyalty source of truth. After fiscal `SELL`, Cloud polling pa
 - The server `EVOTOR_API_TOKEN` remains backend-only.
 - The Android build receives only the Ed25519 **public** key and key id needed to verify signed customer QR.
 - No `.env` or private signing key belongs in either repository.
+
+## Till event log — `POST /api/devices/logs`
+
+The terminal reports important events so they appear in the admin panel (Логи → «Касса»).
+Same auth and headers as `/api/devices/loyalty/resolve`:
+
+```
+POST /api/devices/logs
+Authorization: <EVOTOR_PROXY_TOKEN>            (required; 403 without it, 503 if the server has no token)
+X-Evotor-Store-Uuid: <store uuid>              (optional, only the first 4 chars are logged)
+X-Evotor-Device-UUID: <device uuid>            (optional, only the first 4 chars are logged)
+Content-Type: application/json
+
+{ "level": "info|warn|error", "message": "scan QR", "meta": { "code": "0042", "kind": "token" } }
+or a batch (≤ 20, e.g. flushed after being offline):
+{ "entries": [ { "level": "...", "message": "...", "meta": {...} }, ... ] }
+```
+
+Limits: body ≤ 16 KB, message ≤ 500 chars, 120 requests/min per device. Answers `{ "ok": true }`.
+
+Recommended events: `scan QR`, `resolve ok` / `resolve fail` (+ `error`), `discount applied` (free / cashback),
+`sell extras written`. Fire-and-forget — a failed log request must never block a sale.
+
+**Never send** the QR/card token, `Authorization`, device token or any secret. A card code may be sent as
+`meta.code` (short numeric code only): the server stores just `••NN` (last two digits). Meta keys containing
+`token`, `secret`, `password`, `authorization`, `cookie`, `jwt`, `qr`, `payload`, `proof` are always dropped, and
+long token-like strings are redacted server-side as a safety net.

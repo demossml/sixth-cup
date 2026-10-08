@@ -6,6 +6,7 @@ import type Database from 'better-sqlite3'
 import { EvotorClient, formatDateWithTime } from '../client/EvotorClient'
 import { evotorConfig } from '../../../config'
 import { handlePayback, handleSell } from '../processing/SellHandler'
+import { log, shortId } from '../../../lib/logBuffer'
 
 function asArray(data: unknown): unknown[] {
   if (Array.isArray(data)) return data
@@ -92,7 +93,11 @@ export class PollService {
         : handlePayback(this.db, storeUuid, doc)
       this.db.prepare(`UPDATE evotor_docs SET status=?, processed_at=?, last_error=? WHERE store_uuid=? AND doc_id=?`)
         .run(result.processed ? 'PROCESSED' : 'FAILED', Date.now(), result.processed ? null : (result.reason ?? 'processing failed'), storeUuid, docIdOf(doc))
+      const meta = { doc: shortId(docIdOf(doc), 8), store: shortId(storeUuid) }
+      if (result.processed) log.info(`evotor ${type} processed${result.reason ? ` (${result.reason})` : ''}`, meta)
+      else log.warn(`evotor ${type} rejected: ${result.reason ?? 'processing failed'}`, meta)
     } catch (e) {
+      log.error(`evotor ${type} processing failed: ${String(e).slice(0, 200)}`, { doc: shortId(docIdOf(doc), 8), store: shortId(storeUuid) })
       this.db.prepare(`UPDATE evotor_docs SET status='FAILED', attempts=attempts+1, last_error=? WHERE store_uuid=? AND doc_id=?`)
         .run(String(e), storeUuid, docIdOf(doc))
     }

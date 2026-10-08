@@ -10,7 +10,7 @@ import { bad } from '../../lib/errors'
 import { grantVoucher } from '../vouchers/service'
 import { resetLoyaltyData, resetCatalogData } from '../../db/seed'
 import { adminEvotorCatalog } from './evotorCatalog'
-import { getBufferLines, bufferSize, tailFile, logLine } from '../../lib/logBuffer'
+import { queryLogs, log, LOG_SOURCES, LOG_LEVELS, type LogLevel, type LogSource } from '../../lib/logBuffer'
 import { ProductPushService } from '../../integrations/evotor/sync/ProductPushService'
 
 const adminAuth = createMiddleware(async (c, next) => {
@@ -43,45 +43,30 @@ function enqueueProductSync(productIds: number[]) {
 export const adminRoutes = new Hono()
   .use('*', adminAuth)
 
+  /**
+   * GET /api/admin/logs?lines=50&source=all|server|client|device&level=all|error|warn|info
+   * → { lines: ["ISO [source] [level] message"], available, generatedAt }
+   * `source=device` is the till; `kassa` is accepted as an alias. `available` counts lines matching the filters.
+   */
   .get('/logs', (c) => {
-    const linesParam = Number(c.req.query('lines') ?? 50)
-    const lines = Math.min(Math.max(1, Number.isFinite(linesParam) ? linesParam : 50), 500)
-    const source = (c.req.query('source') ?? 'buffer') as string
-    if (source === 'file') {
-      const path = process.env.LOG_PATH || ''
-      if (!path) {
-        return c.json({
-          source: 'file',
-          lines: [],
-          available: 0,
-          error: 'LOG_PATH не задан — выберите источник «Память (API)»',
-          generatedAt: Date.now(),
-        })
-      }
-      const tailed = tailFile(path, lines)
-      return c.json({
-        source: 'file',
-        path,
-        lines: tailed.lines,
-        available: tailed.lines.length,
-        error: tailed.error,
-        generatedAt: Date.now(),
-      })
-    }
-    const buf = getBufferLines(lines)
-    return c.json({
-      source: 'buffer',
-      lines: buf,
-      available: bufferSize(),
-      maxBuffer: 2000,
-      generatedAt: Date.now(),
+    const n = Number(c.req.query('lines') ?? 50)
+    const rawSource = (c.req.query('source') ?? 'all').toLowerCase()
+    const rawLevel = (c.req.query('level') ?? 'all').toLowerCase()
+    const source = rawSource === 'kassa' ? 'device' : rawSource
+    if (source !== 'all' && !LOG_SOURCES.includes(source as LogSource)) throw bad('invalid source', 400)
+    if (rawLevel !== 'all' && !LOG_LEVELS.includes(rawLevel as LogLevel)) throw bad('invalid level', 400)
+    const r = queryLogs({
+      lines: Number.isFinite(n) ? n : 50,
+      source: source as LogSource | 'all',
+      level: rawLevel as LogLevel | 'all',
     })
+    return c.json({ lines: r.lines, available: r.available, total: r.total, generatedAt: Date.now() })
   })
+  /** POST /api/admin/logs/test — writes one test line so the UI can be verified end to end. */
   .post('/logs/test', (c) => {
-    logLine('INFO', 'admin log test ping', { at: Date.now() })
-    return c.json({ ok: true, available: bufferSize() })
+    log.info('admin log test', { at: new Date().toISOString() })
+    return c.json({ ok: true })
   })
-
 
   // —— Stats (unchanged contract) ——
   .get('/stats', (c) => {

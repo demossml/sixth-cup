@@ -1,4 +1,4 @@
-import { installConsoleCapture, logLine } from './lib/logBuffer'
+import { installConsoleCapture, redact, writeLog } from './lib/logBuffer'
 installConsoleCapture()
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
@@ -16,21 +16,44 @@ import { cardLookupRoutes } from './modules/loyalty/cardLookup'
 import { directoryRoutes } from './modules/directory/routes'
 import { syncRoutes } from './modules/sync/routes'
 import { uploadRoutes } from './modules/upload/routes'
+import { clientLogRoutes } from './modules/logs/routes'
 
 const app = new Hono()
-app.use('*', async (c, next) => {
+/** Routes that already write their own, richer log lines (or are polled by the UI itself). */
+function skipHttpLog(method: string, path: string): boolean {
+  return (
+    (method === 'GET' && path === '/api/admin/logs') ||
+    (method === 'POST' && (path === '/api/client-logs' || path === '/api/devices/logs'))
+  )
+}
+
+/** One line per /api/* request: method, path (no query string), status, duration. Never headers or bodies. */
+app.use('/api/*', async (c, next) => {
   const start = Date.now()
   await next()
-  if (c.req.path.startsWith('/api')) {
-    logLine('HTTP', `${c.req.method} ${c.req.path} → ${c.res.status} ${Date.now() - start}ms`)
+  const method = c.req.method
+  const path = c.req.path
+  if (method === 'OPTIONS' || skipHttpLog(method, path)) return
+  const status = c.res.status
+  let msg = `${method} ${path} ${status} ${Date.now() - start}ms`
+  if (status >= 400) {
+    try {
+      if (c.res.headers.get('content-type')?.includes('application/json')) {
+        const body = (await c.res.clone().json()) as { error?: unknown }
+        if (typeof body?.error === 'string') msg += ` error="${body.error.slice(0, 120)}"`
+      }
+    } catch {
+      /* body not readable — status is enough */
+    }
   }
+  writeLog('server', status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info', redact(msg))
 })
 app.use('*', logger())
 app.use('/api/*', cors())
 
 app.onError((err, c) => {
   if (err instanceof HTTPException) return c.json({ error: err.message }, err.status)
-  console.error(err)
+  console.error('[http] unhandled', c.req.method, c.req.path, err)
   return c.json({ error: 'Internal server error' }, 500)
 })
 
@@ -56,6 +79,7 @@ const routes = app
   .route('/api/sync', syncRoutes)
   .route('/api/devices', deviceRoutes)
   .route('/api/dev', devRoutes)
+  .route('/api/client-logs', clientLogRoutes)
   .route('/api/admin', adminRoutes)
   .route('/api/admin/upload', uploadRoutes)
 

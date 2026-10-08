@@ -1,4 +1,5 @@
 import { db } from '../../db'
+import { log } from '../../lib/logBuffer'
 import { bad } from '../../lib/errors'
 import { buildCardProof, ensureCard, verifyCardProof } from '../loyalty/proof'
 import { freeEarned, cashbackOf } from '../loyalty/rules'
@@ -94,6 +95,7 @@ export function applyOnlineSale(deviceId: number, input: SaleInput): SaleResult 
     db.prepare(`INSERT INTO loyalty_ledger(card_id,operation,cups_delta,free_delta,cashback_delta,source_type,source_id,created_at)
       VALUES(?,?,?,?,?,?,?,?)`).run(user.card_id, 'EARN', paidCups, useFree, -cashbackUse, 'ONLINE_SALE', fiscalKey, now)
   })()
+  log.info('loyalty sell (online)', { device: deviceId, paidCups, free: useFree, cbKop: cashbackUse, amountKop: amountKopecks })
 
   const after = db.prepare('SELECT paid_total, free_used FROM cards WHERE user_id=?').get(userId) as { paid_total: number; free_used: number }
   const bal = db.prepare('SELECT cashback_balance FROM users WHERE id=?').get(userId) as { cashback_balance: number }

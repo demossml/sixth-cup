@@ -5,6 +5,9 @@ import { registerSW } from 'virtual:pwa-register'
 import App from './App'
 import { AppProvider } from './lib/app'
 import './styles.css'
+import { installClientLog } from './lib/clientLog'
+
+installClientLog()
 
 if (!import.meta.env.DEV) registerSW({ immediate: true })
 

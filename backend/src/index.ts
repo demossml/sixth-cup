@@ -7,11 +7,15 @@ import { db } from './db'
 import { evotorConfig } from './config'
 import { EvotorClient } from './integrations/evotor/client/EvotorClient'
 import { ProductPushService } from './integrations/evotor/sync/ProductPushService'
+import { installProcessErrorHooks, log, shortId } from './lib/logBuffer'
+
+installProcessErrorHooks()
 
 seedIfEmpty()
 
 serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(`6.7 Coffee API: http://localhost:${info.port}`)
+  log.info('server started', { port: info.port, env: config.isDev ? 'dev' : 'production', evotor: evotorConfig.enabled ? 'on' : 'off' })
 })
 
 if (evotorConfig.enabled) {
@@ -35,21 +39,28 @@ if (evotorConfig.enabled) {
       db.prepare(`INSERT OR IGNORE INTO evotor_sync_state(store_uuid,last_seen_close_ms) VALUES(?,0)`).run(uuid)
     }
   }
+  let lastIdleLogAt = 0
   const tick = async () => {
     if (running) return
     running = true
     try {
       const r = await poll.runFast()
       await refreshStores()
-      if (r.inserted) console.log('[evotor] fast poll', r)
+      for (const e of r.errors) log.error(`evotor poll failed: ${e.error.slice(0, 200)}`, { store: shortId(e.storeUuid) })
+      if (r.inserted) log.info('evotor poll', { stores: r.stores, newDocs: r.inserted, errors: r.errors.length })
+      else if (Date.now() - lastIdleLogAt > 10 * 60_000) {
+        // heartbeat so "is polling alive?" is answerable without flooding the buffer every minute
+        lastIdleLogAt = Date.now()
+        log.info('evotor poll idle (no new docs)', { stores: r.stores, errors: r.errors.length })
+      }
       const stores = db.prepare('SELECT store_uuid FROM evotor_stores').all() as { store_uuid: string }[]
       for (const store of stores) {
         if (!catalogBootstrapped) {
           const sync = await catalog.syncStore(store.store_uuid)
-          if (sync.pulled.imported || sync.pulled.updated || sync.pushed.pushed || sync.pushed.errors.length) console.log('[evotor] catalog bootstrap', store.store_uuid, sync)
+          if (sync.pulled.imported || sync.pulled.updated || sync.pushed.pushed || sync.pushed.errors.length) log[sync.pushed.errors.length ? 'warn' : 'info']('evotor catalog bootstrap', { store: shortId(store.store_uuid), pulled: sync.pulled.imported, updated: sync.pulled.updated, pushed: sync.pushed.pushed, errors: sync.pushed.errors.length, firstError: sync.pushed.errors[0]?.slice(0, 120) })
         } else {
           const sync = await catalog.pushToStore(store.store_uuid)
-          if (sync.pushed || sync.errors.length) console.log('[evotor] catalog push', store.store_uuid, sync)
+          if (sync.pushed || sync.errors.length) log[sync.errors.length ? 'warn' : 'info']('evotor catalog push', { store: shortId(store.store_uuid), pushed: sync.pushed, errors: sync.errors.length, firstError: sync.errors[0]?.slice(0, 120) })
         }
       }
       catalogBootstrapped = true
@@ -66,9 +77,9 @@ if (evotorConfig.enabled) {
       const stores = db.prepare('SELECT store_uuid FROM evotor_stores').all() as { store_uuid: string }[]
       for (const store of stores) {
         const sync = await catalog.syncStore(store.store_uuid)
-        if (sync.pulled.imported || sync.pulled.updated || sync.pushed.pushed) console.log('[evotor] catalog sync', store.store_uuid, sync)
+        if (sync.pulled.imported || sync.pulled.updated || sync.pushed.pushed) log.info('evotor catalog sync', { store: shortId(store.store_uuid), pulled: sync.pulled.imported, updated: sync.pulled.updated, pushed: sync.pushed.pushed })
       }
-      if (r.inserted) console.log('[evotor] hourly poll', r)
+      if (r.inserted) log.info('evotor hourly poll', { stores: r.stores, newDocs: r.inserted })
     } catch (e) {
       console.error('[evotor] hourly sync failed', String(e))
     }
