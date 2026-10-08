@@ -199,6 +199,18 @@ export const adminEvotorCatalog = new Hono()
     }
   })
 
+  
+  .post('/evotor/stores/:storeUuid/wipe-catalog', async (c) => {
+    const storeUuid = c.req.param('storeUuid')
+    const en = db.prepare(`SELECT COALESCE(sync_enabled,0) AS e FROM evotor_stores WHERE store_uuid=?`).get(storeUuid) as { e: number } | undefined
+    if (!en || en.e !== 1) {
+      throw bad('Store not found or sync disabled — enable the checkbox first', 400)
+    }
+    const push = new ProductPushService(db)
+    const result = await push.wipeCloudAndResync(storeUuid)
+    return c.json({ ok: true, storeUuid, ...result })
+  })
+
   .post('/evotor/poll', async (c) => {
     try { return c.json(await new PollService(db, client()).runFast()) }
     catch (e) { throw bad(String(e), 502) }

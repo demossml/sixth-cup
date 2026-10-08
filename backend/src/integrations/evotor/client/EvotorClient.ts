@@ -122,6 +122,23 @@ export class EvotorClient {
     return this.requestJson(evotorPaths.v2Product(storeId, productId), 'PUT', product)
   }
 
+  /**
+   * DELETE /stores/{id}/products?id=uuid1,uuid2 (max 1000).
+   * Official Cloud API: removes products from store inventory.
+   */
+  async deleteCloudProducts(storeId: string, productIds: string[]): Promise<unknown> {
+    if (!productIds.length) return { deleted: 0 }
+    const unique = [...new Set(productIds.filter(Boolean))]
+    const results: unknown[] = []
+    for (let i = 0; i < unique.length; i += 1000) {
+      const chunk = unique.slice(i, i + 1000)
+      const q = chunk.map(encodeURIComponent).join(',')
+      results.push(await this.requestJson(`${evotorPaths.v2Products(storeId)}?id=${q}`, 'DELETE'))
+    }
+    return { deleted: unique.length, batches: results.length }
+  }
+
+
   /** Legacy v1 bulk product write retained only for explicit recovery tooling. */
   async postProducts(storeId: string, products: Record<string, unknown>[]): Promise<unknown> {
     return this.requestJson(evotorPaths.products(storeId), 'POST', products)

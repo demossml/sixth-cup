@@ -448,6 +448,76 @@ export class ProductPushService {
     }
   }
 
+  
+  /**
+   * Like 1C "clear nomenclature": list all Cloud products → DELETE → clear our links → push from 6.7.
+   * Does not delete rows in local `products` table — only Evotor side + link table.
+   */
+  async wipeCloudAndResync(storeUuid: string): Promise<{
+    listed: number
+    deleted: number
+    deleteErrors: string[]
+    linksCleared: number
+    pushed: number
+    pushErrors: string[]
+  }> {
+    const deleteErrors: string[] = []
+    let listed = 0
+    let deleted = 0
+    try {
+      const remote = await this.remoteProducts(storeUuid)
+      listed = remote.length
+      const ids = remote
+        .map((r) => String(r.uuid ?? r.id ?? '').trim())
+        .filter(Boolean)
+      // Prefer DELETE; on failure collect and continue
+      try {
+        if (ids.length) {
+          await this.client.deleteCloudProducts(storeUuid, ids)
+          deleted = ids.length
+        }
+      } catch (e) {
+        // Fallback: try one-by-one so one bad id does not block all
+        for (const id of ids) {
+          try {
+            await this.client.deleteCloudProducts(storeUuid, [id])
+            deleted++
+          } catch (e2) {
+            deleteErrors.push(`${id.slice(0, 8)}: ${String(e2).slice(0, 160)}`)
+          }
+        }
+        if (!ids.length) deleteErrors.push(String(e).slice(0, 200))
+      }
+    } catch (e) {
+      deleteErrors.push(`list: ${String(e).slice(0, 200)}`)
+    }
+
+    const clear = this.db
+      .prepare(`DELETE FROM product_store_links WHERE store_uuid=?`)
+      .run(storeUuid)
+    const linksCleared = Number(clear.changes ?? 0)
+
+    // Also clear any denormalized evotor uuid on products if column exists
+    try {
+      const cols = this.db.prepare(`PRAGMA table_info(products)`).all() as { name: string }[]
+      if (cols.some((c) => c.name === 'evotor_uuid')) {
+        this.db.prepare(`UPDATE products SET evotor_uuid=NULL WHERE evotor_uuid IS NOT NULL`).run()
+      }
+    } catch {
+      /* ignore */
+    }
+
+    const push = await this.pushToStore(storeUuid)
+    return {
+      listed,
+      deleted,
+      deleteErrors: deleteErrors.slice(0, 20),
+      linksCleared,
+      pushed: push.pushed,
+      pushErrors: push.errors.slice(0, 20),
+    }
+  }
+
   async verifyStore(storeUuid: string): Promise<{ drift: { productId: number; evotorUuid: string; issue: string }[]; count: number }> {
     this.ensureSchema()
     const raw = await this.remoteProducts(storeUuid)
