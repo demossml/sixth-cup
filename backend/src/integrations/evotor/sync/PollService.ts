@@ -8,6 +8,24 @@ import { evotorConfig } from '../../../config'
 import { handlePayback, handleSell } from '../processing/SellHandler'
 import { log, shortId } from '../../../lib/logBuffer'
 
+
+/** Only stores the owner marked for sync in admin (sync_enabled=1). */
+function enabledStoreUuids(db: Database.Database): string[] {
+  try {
+    const cols = db.prepare(`PRAGMA table_info(evotor_stores)`).all() as { name: string }[]
+    if (!cols.some((c) => c.name === 'sync_enabled')) {
+      db.exec(`ALTER TABLE evotor_stores ADD COLUMN sync_enabled INTEGER NOT NULL DEFAULT 0`)
+    }
+    return (
+      db.prepare(`SELECT store_uuid FROM evotor_stores WHERE COALESCE(sync_enabled,0)=1`).all() as {
+        store_uuid: string
+      }[]
+    ).map((r) => r.store_uuid)
+  } catch {
+    return []
+  }
+}
+
 function asArray(data: unknown): unknown[] {
   if (Array.isArray(data)) return data
   if (data && typeof data === 'object' && Array.isArray((data as { transactions?: unknown[] }).transactions)) {
@@ -156,7 +174,17 @@ export class PollService {
 
   async runFast(): Promise<{ stores: number; inserted: number; errors: { storeUuid: string; error: string }[] }> {
     if (!this.client.isConfigured) return { stores: 0, inserted: 0, errors: [] }
-    const stores = await this.ensureStores()
+    // Refresh store list from Cloud (names), but poll ONLY sync_enabled=1
+    try {
+      await this.ensureStores()
+    } catch (e) {
+      log.error('evotor ensureStores failed', { error: String(e).slice(0, 200) })
+    }
+    const stores = enabledStoreUuids(this.db)
+    if (stores.length === 0) {
+      log.info('evotor poll skipped — no stores with sync_enabled=1')
+      return { stores: 0, inserted: 0, errors: [] }
+    }
     let inserted = 0
     const errors: { storeUuid: string; error: string }[] = []
     const overlap = evotorConfig.fastOverlapMin * 60 * 1000
@@ -177,7 +205,9 @@ export class PollService {
 
   async runHourly(): Promise<{ stores: number; inserted: number }> {
     if (!this.client.isConfigured) return { stores: 0, inserted: 0 }
-    const stores = await this.ensureStores()
+    try { await this.ensureStores() } catch { /* list refresh best-effort */ }
+    const stores = enabledStoreUuids(this.db)
+    if (stores.length === 0) return { stores: 0, inserted: 0 }
     const since = Date.now() - evotorConfig.hourlyWindowHours * 3_600_000
     let inserted = 0
     for (const s of stores) inserted += await this.pollStore(s, since)
@@ -187,7 +217,9 @@ export class PollService {
 
   async runDaily(): Promise<{ stores: number; inserted: number }> {
     if (!this.client.isConfigured) return { stores: 0, inserted: 0 }
-    const stores = await this.ensureStores()
+    try { await this.ensureStores() } catch { /* list refresh best-effort */ }
+    const stores = enabledStoreUuids(this.db)
+    if (stores.length === 0) return { stores: 0, inserted: 0 }
     const since = Date.now() - evotorConfig.dailyWindowDays * 86_400_000
     let inserted = 0
     for (const s of stores) inserted += await this.pollStore(s, since)

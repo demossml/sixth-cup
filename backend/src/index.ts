@@ -19,6 +19,14 @@ serve({ fetch: app.fetch, port: config.port }, (info) => {
 })
 
 if (evotorConfig.enabled) {
+  // Ensure sync_enabled column exists (admin checkboxes)
+  try {
+    const cols = db.prepare(`PRAGMA table_info(evotor_stores)`).all() as { name: string }[]
+    if (!cols.some((c) => c.name === 'sync_enabled')) {
+      db.exec(`ALTER TABLE evotor_stores ADD COLUMN sync_enabled INTEGER NOT NULL DEFAULT 0`)
+    }
+  } catch { /* ignore */ }
+
   const poll = new PollService(db)
   let running = false
   let catalogBootstrapped = false
@@ -53,7 +61,7 @@ if (evotorConfig.enabled) {
         lastIdleLogAt = Date.now()
         log.info('evotor poll idle (no new docs)', { stores: r.stores, errors: r.errors.length })
       }
-      const stores = db.prepare('SELECT store_uuid FROM evotor_stores').all() as { store_uuid: string }[]
+      const stores = db.prepare('SELECT store_uuid FROM evotor_stores WHERE COALESCE(sync_enabled,0)=1').all() as { store_uuid: string }[]
       for (const store of stores) {
         if (!catalogBootstrapped) {
           const sync = await catalog.syncStore(store.store_uuid)
@@ -74,7 +82,7 @@ if (evotorConfig.enabled) {
     try {
       const r = await poll.runHourly()
       await refreshStores()
-      const stores = db.prepare('SELECT store_uuid FROM evotor_stores').all() as { store_uuid: string }[]
+      const stores = db.prepare('SELECT store_uuid FROM evotor_stores WHERE COALESCE(sync_enabled,0)=1').all() as { store_uuid: string }[]
       for (const store of stores) {
         const sync = await catalog.syncStore(store.store_uuid)
         if (sync.pulled.imported || sync.pulled.updated || sync.pushed.pushed) log.info('evotor catalog sync', { store: shortId(store.store_uuid), pulled: sync.pulled.imported, updated: sync.pulled.updated, pushed: sync.pushed.pushed })
