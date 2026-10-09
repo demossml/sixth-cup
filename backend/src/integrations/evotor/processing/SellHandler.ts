@@ -23,7 +23,12 @@ function obj(value: unknown): Record<string, unknown> | null {
 }
 
 function number(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const n = Number(value.replace(',', '.').trim())
+    return Number.isFinite(n) ? n : 0
+  }
+  return 0
 }
 
 function transactions(doc: Record<string, unknown>): Tx[] {
@@ -36,7 +41,15 @@ function transactions(doc: Record<string, unknown>): Tx[] {
 }
 
 function productUuid(tx: Tx): string | null {
-  const value = tx.productUuid ?? tx.product_uuid ?? tx.productId ?? tx.product_id ?? tx.code
+  // Evotor Cloud V1 REGISTER_POSITION: commodityUuid (confirmed on live API 2026-10-09).
+  const value =
+    tx.commodityUuid ??
+    tx.commodity_uuid ??
+    tx.productUuid ??
+    tx.product_uuid ??
+    tx.productId ??
+    tx.product_id ??
+    tx.code
   return typeof value === 'string' && value ? value : null
 }
 
@@ -45,13 +58,34 @@ function qty(tx: Tx): number {
 }
 
 function amountKopecks(doc: Record<string, unknown>, txs: Tx[]): number {
+  /**
+   * Evotor money scale is store-dependent:
+   * - cloud / some stores: price=15000 for 150.00 RUB (already kopecks)
+   * - some physical stores: price=150 for 150 RUB (rubles)
+   * Detect by REGISTER_POSITION unit price: >= 1000 ⇒ already kopecks.
+   */
+  const positions = txs.filter((tx) => {
+    const t = String(tx.type ?? '')
+    return t === 'REGISTER_POSITION' || t === 'POSITION' || productUuid(tx) != null
+  })
+  const unitPrices = positions.map((tx) => number(tx.price ?? tx.resultPrice ?? tx.result_price)).filter((p) => p > 0)
+  const alreadyKopecks = unitPrices.some((p) => p >= 1000)
+
   const body = obj(doc.body)
-  const candidates = [doc.closeSum, doc.close_sum, body?.closeSum, body?.close_sum, body?.sum, doc.closeResultSum, doc.close_result_sum, body?.result_sum, doc.result_sum, doc.sum]
+  const candidates = [
+    doc.closeResultSum, doc.close_result_sum, doc.closeSum, doc.close_sum,
+    body?.closeResultSum, body?.closeSum, body?.sum, doc.sum,
+  ]
   for (const value of candidates) {
     const n = number(value)
-    if (n > 0) return Math.round(n * 100)
+    if (n > 0) return Math.round(alreadyKopecks ? n : n * 100)
   }
-  return Math.round(txs.reduce((sum, tx) => sum + number(tx.result_sum ?? tx.sum ?? 0), 0) * 100)
+  const posSum = positions.reduce(
+    (sum, tx) => sum + number(tx.resultSum ?? tx.result_sum ?? tx.sum ?? 0),
+    0,
+  )
+  if (posSum > 0) return Math.round(alreadyKopecks ? posSum : posSum * 100)
+  return 0
 }
 
 
@@ -81,10 +115,12 @@ function cupsForDocument(db: Database.Database, storeUuid: string, txs: Tx[]): n
     WHERE l.store_uuid=? AND l.evotor_uuid=?
   `)
   for (const tx of txs) {
+    const t = String(tx.type ?? '')
+    if (t && t !== 'REGISTER_POSITION' && t !== 'POSITION') continue
     const uuid = productUuid(tx)
     if (!uuid) continue
-    const row = byEvotor.get(storeUuid, uuid) as { countsAsCup: number } | undefined
-      ?? byLink.get(storeUuid, uuid) as { countsAsCup: number } | undefined
+    const row = (byEvotor.get(storeUuid, uuid) as { countsAsCup: number } | undefined)
+      ?? (byLink.get(storeUuid, uuid) as { countsAsCup: number } | undefined)
     if (row?.countsAsCup) cups += Math.max(0, Math.floor(qty(tx)))
   }
   return cups
