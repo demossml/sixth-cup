@@ -54,6 +54,13 @@ function amountKopecks(doc: Record<string, unknown>, txs: Tx[]): number {
   return Math.round(txs.reduce((sum, tx) => sum + number(tx.result_sum ?? tx.sum ?? 0), 0) * 100)
 }
 
+
+/** Evotor Cloud documents use `uuid`; some payloads use `id`. */
+function documentIdOf(doc: Record<string, unknown>): string | null {
+  const id = doc.uuid ?? doc.id
+  return typeof id === 'string' && id ? id : null
+}
+
 function getSc(doc: Record<string, unknown>): ScClaim | null {
   const raw = extractScRaw(doc.extras)
   const sc = typeof raw === 'string' ? (() => { try { return JSON.parse(raw) } catch { return null } })() : obj(raw)
@@ -84,7 +91,7 @@ function cupsForDocument(db: Database.Database, storeUuid: string, txs: Tx[]): n
 }
 
 export function handleSell(db: Database.Database, storeUuid: string, doc: Record<string, unknown>): { processed: boolean; reason?: string } {
-  const docId = typeof doc.id === 'string' ? doc.id : null
+  const docId = documentIdOf(doc)
   if (!docId) return { processed: false, reason: 'missing document id' }
   const sc = getSc(doc)
   if (!sc) return { processed: false, reason: 'no loyalty extra' }
@@ -195,7 +202,7 @@ export function handleSell(db: Database.Database, storeUuid: string, doc: Record
 }
 
 export function handlePayback(db: Database.Database, storeUuid: string, doc: Record<string, unknown>): { processed: boolean; reason?: string } {
-  const docId = typeof doc.id === 'string' ? doc.id : null
+  const docId = documentIdOf(doc)
   if (!docId) return { processed: false, reason: 'missing document id' }
   if (db.prepare('SELECT 1 FROM loyalty_ops WHERE doc_store=? AND doc_id=?').get(storeUuid, docId)) return { processed: true, reason: 'duplicate' }
   const body = obj(doc.body)
