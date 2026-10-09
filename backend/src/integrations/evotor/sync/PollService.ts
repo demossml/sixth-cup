@@ -6,6 +6,7 @@ import type Database from 'better-sqlite3'
 import { EvotorClient, formatDateWithTime } from '../client/EvotorClient'
 import { evotorConfig } from '../../../config'
 import { handlePayback, handleSell } from '../processing/SellHandler'
+import { hasLoyaltySc } from '../loyaltyExtras'
 import { log, shortId } from '../../../lib/logBuffer'
 
 
@@ -99,10 +100,11 @@ export class PollService {
     const type = String(doc.type ?? '')
     if (type !== 'SELL' && type !== 'PAYBACK') return
     const extras = doc.extras && typeof doc.extras === 'object' ? doc.extras as Record<string, unknown> : {}
-    const hasSc = extras.sc != null
+    const hasSc = hasLoyaltySc(extras)
     if (!hasSc) {
       this.db.prepare(`UPDATE evotor_docs SET status='PROCESSED', processed_at=? WHERE store_uuid=? AND doc_id=?`)
         .run(Date.now(), storeUuid, docIdOf(doc))
+      log.info(`evotor ${type} skip no loyalty extra`, { doc: shortId(docIdOf(doc), 8), store: shortId(storeUuid) })
       return
     }
     try {

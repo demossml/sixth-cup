@@ -3,6 +3,7 @@ import { verifyServerToken } from '../../../lib/crypto'
 import { normalizeCardCode } from '../../../modules/loyalty/proof'
 import { cashbackOf, freeEarned } from '../../../modules/loyalty/rules'
 import { consumeReservation } from '../../../modules/loyalty/reservations'
+import { extractScRaw } from '../loyaltyExtras'
 
 type Tx = Record<string, unknown>
 
@@ -54,8 +55,7 @@ function amountKopecks(doc: Record<string, unknown>, txs: Tx[]): number {
 }
 
 function getSc(doc: Record<string, unknown>): ScClaim | null {
-  const extras = obj(doc.extras)
-  const raw = extras?.sc
+  const raw = extractScRaw(doc.extras)
   const sc = typeof raw === 'string' ? (() => { try { return JSON.parse(raw) } catch { return null } })() : obj(raw)
   if (!sc || typeof sc.v !== 'number' || sc.v < 2 || typeof sc.c !== 'string') return null
   return sc as unknown as ScClaim
