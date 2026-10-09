@@ -2,7 +2,7 @@
  * Admin: groups (categories) CRUD + toppings (modifiers) + schemes + product links.
  * Backend routes already exist: /categories, /modifiers, /modifier-schemes, /products
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 const API = (import.meta as any).env?.VITE_API_URL ?? ''
 
@@ -22,7 +22,7 @@ async function adminFetch<T>(path: string, token: string, init?: RequestInit): P
   return res.json() as Promise<T>
 }
 
-type Tab = 'overview' | 'stores' | 'products' | 'categories' | 'modifiers' | 'sales' | 'evotor'
+type Tab = 'overview' | 'stores' | 'products' | 'categories' | 'modifiers' | 'sales' | 'evotor' | 'logs'
 
 type Overview = {
   stores: number
@@ -72,6 +72,25 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'modifiers', label: 'Добавки' },
   { id: 'sales', label: 'Продажи' },
   { id: 'evotor', label: 'Эвотор' },
+  { id: 'logs', label: 'Логи' },
+]
+
+
+type LogSourceFilter = 'all' | 'server' | 'client' | 'device'
+type LogLevelFilter = 'all' | 'error' | 'warn' | 'info'
+
+const LOG_COUNTS = [20, 30, 50, 60, 80, 100, 150, 200, 300, 500]
+const LOG_SOURCES: { id: LogSourceFilter; label: string }[] = [
+  { id: 'all', label: 'Все' },
+  { id: 'server', label: 'Сервер' },
+  { id: 'client', label: 'Клиент' },
+  { id: 'device', label: 'Касса' },
+]
+const LOG_LEVELS: { id: LogLevelFilter; label: string }[] = [
+  { id: 'all', label: 'Все уровни' },
+  { id: 'error', label: 'error' },
+  { id: 'warn', label: 'warn' },
+  { id: 'info', label: 'info' },
 ]
 
 const GROUP_KEYS = [
@@ -98,6 +117,18 @@ export default function AdminPage() {
   const [modEdit, setModEdit] = useState<Partial<Modifier> | null>(null)
   const [schemeEdit, setSchemeEdit] = useState<{ id?: number; name: string; modifierIds: number[]; copyFromId?: number } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [logLines, setLogLines] = useState<string[]>([])
+  const [logCount, setLogCount] = useState(50)
+  const [logSource, setLogSource] = useState<LogSourceFilter>('all')
+  const [logLevel, setLogLevel] = useState<LogLevelFilter>('all')
+  const [logAuto, setLogAuto] = useState(false)
+  const [logLoading, setLogLoading] = useState(false)
+  const [logLoaded, setLogLoaded] = useState(false)
+  const [logErr, setLogErr] = useState('')
+  const [logAvailable, setLogAvailable] = useState<number | null>(null)
+  const [logAt, setLogAt] = useState<number | null>(null)
+  const [logCopied, setLogCopied] = useState<'' | 'ok' | 'fail'>('')
+  const logReq = useRef(0)
 
   const login = async () => {
     setErr('')
@@ -108,6 +139,63 @@ export default function AdminPage() {
     } catch (e: any) {
       setErr(e.message || 'Неверный токен')
     }
+  }
+
+  
+  const loadLogs = useCallback(async () => {
+    if (!token) return
+    const req = ++logReq.current
+    setLogLoading(true)
+    setLogErr('')
+    try {
+      const qs = new URLSearchParams({ lines: String(logCount), source: logSource, level: logLevel })
+      const data = await adminFetch<{ lines: string[]; available?: number; generatedAt?: number }>(`/logs?${qs}`, token)
+      if (req !== logReq.current) return
+      setLogLines(Array.isArray(data.lines) ? data.lines : [])
+      setLogAvailable(typeof data.available === 'number' ? data.available : null)
+      setLogAt(data.generatedAt ?? Date.now())
+      setLogLoaded(true)
+    } catch (e: any) {
+      if (req !== logReq.current) return
+      setLogErr(e?.message || String(e))
+      setLogLoaded(true)
+    } finally {
+      if (req === logReq.current) setLogLoading(false)
+    }
+  }, [token, logCount, logSource, logLevel])
+
+  const testLog = async () => {
+    setLogErr('')
+    try {
+      await adminFetch('/logs/test', token, { method: 'POST', body: '{}' })
+      await loadLogs()
+    } catch (e: any) {
+      setLogErr(e?.message || String(e))
+    }
+  }
+
+  const copyLogs = async () => {
+    const text = logLines.join('\n')
+    let ok = false
+    try {
+      await navigator.clipboard.writeText(text)
+      ok = true
+    } catch {
+      try {
+        const ta = document.createElement('textarea')
+        ta.value = text
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        ok = document.execCommand('copy')
+        document.body.removeChild(ta)
+      } catch {
+        ok = false
+      }
+    }
+    setLogCopied(ok ? 'ok' : 'fail')
+    setTimeout(() => setLogCopied(''), 2000)
   }
 
   const load = useCallback(async () => {
@@ -145,6 +233,17 @@ export default function AdminPage() {
       setErr(e.message)
     }
   }
+
+  
+  useEffect(() => {
+    if (authed && tab === 'logs') void loadLogs()
+  }, [authed, tab, loadLogs])
+
+  useEffect(() => {
+    if (!authed || tab !== 'logs' || !logAuto) return
+    const id = setInterval(() => void loadLogs(), 5000)
+    return () => clearInterval(id)
+  }, [authed, tab, logAuto, loadLogs])
 
   if (!authed) {
     return (
@@ -942,6 +1041,81 @@ export default function AdminPage() {
             <button className="border rounded-lg py-2 w-full" onClick={() => void loadSales()}>
               Обновить
             </button>
+          </div>
+        )}
+
+
+        {tab === 'logs' && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2 justify-between">
+              <h2 className="font-semibold">Логи</h2>
+              <p className="text-xs text-slate-500">
+                {logAvailable != null ? `в буфере ~${logAvailable}` : ''}
+                {logAt ? ` · ${new Date(logAt).toLocaleTimeString()}` : ''}
+              </p>
+            </div>
+            <p className="text-xs text-slate-500">
+              Сервер (API), клиент (PWA) и касса (device). Скопируйте нужное число строк и пришлите при разборе ошибок.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="text-sm text-slate-600" htmlFor="log-count">Строк:</label>
+              <select
+                id="log-count"
+                className="border rounded-lg px-2 py-1.5 text-sm"
+                value={logCount}
+                onChange={(e) => setLogCount(Number(e.target.value))}
+              >
+                {LOG_COUNTS.map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+              <label className="text-sm text-slate-600" htmlFor="log-level">Уровень:</label>
+              <select
+                id="log-level"
+                className="border rounded-lg px-2 py-1.5 text-sm"
+                value={logLevel}
+                onChange={(e) => setLogLevel(e.target.value as LogLevelFilter)}
+              >
+                {LOG_LEVELS.map((l) => (
+                  <option key={l.id} value={l.id}>{l.label}</option>
+                ))}
+              </select>
+              <label className="text-sm text-slate-600 flex items-center gap-1 ml-auto">
+                <input type="checkbox" checked={logAuto} onChange={(e) => setLogAuto(e.target.checked)} />
+                Авто (5 с)
+              </label>
+            </div>
+            <div className="flex flex-wrap gap-1" role="tablist" aria-label="Источник логов">
+              {LOG_SOURCES.map((o) => (
+                <button
+                  key={o.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={logSource === o.id}
+                  className={`px-3 py-1.5 rounded-lg text-sm ${logSource === o.id ? 'bg-[#002FA7] text-white' : 'bg-slate-100'}`}
+                  onClick={() => setLogSource(o.id)}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="px-3 py-1.5 rounded-lg bg-slate-100 text-sm disabled:opacity-50" disabled={logLoading} onClick={() => void loadLogs()}>
+                {logLoading ? 'Загрузка…' : 'Обновить'}
+              </button>
+              <button type="button" className="px-3 py-1.5 rounded-lg bg-slate-100 text-sm" onClick={() => void testLog()}>
+                Тест
+              </button>
+              <button type="button" className="px-3 py-1.5 rounded-lg bg-[#002FA7] text-white text-sm disabled:opacity-50" disabled={!logLines.length} onClick={() => void copyLogs()}>
+                {logCopied === 'ok' ? '✓ Скопировано' : logCopied === 'fail' ? 'Не удалось' : 'Копировать'}
+              </button>
+            </div>
+            {logErr && <p className="text-sm text-red-600">{logErr}</p>}
+            <pre className="bg-slate-900 text-slate-100 text-xs p-3 rounded-xl overflow-auto max-h-[70vh] whitespace-pre-wrap break-all">
+              {logLoaded && !logLines.length && !logErr
+                ? 'Пока пусто. Нажмите «Тест» или подождите событий API.'
+                : logLines.join('\n')}
+            </pre>
           </div>
         )}
 
