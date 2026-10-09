@@ -44,6 +44,7 @@ export const evotorConfig = {
   dailyWindowDays: Number(process.env.EVOTOR_DAILY_WINDOW_DAYS ?? 7),
   silenceHours: Number(process.env.EVOTOR_SILENCE_HOURS ?? 8),
   appId: process.env.EVOTOR_APP_ID ?? '151071e8-88a4-44f6-b71a-b17c559f9b7d',
+  pushExtras: process.env.EVOTOR_PUSH_EXTRAS === '1',
   webhookToken: process.env.EVOTOR_WEBHOOK_TOKEN ?? '',
   proxyUrl: process.env.EVOTOR_PROXY_URL ?? '',
   enabled: Boolean(process.env.EVOTOR_API_TOKEN?.trim()),

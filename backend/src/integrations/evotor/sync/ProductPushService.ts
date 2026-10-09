@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import { EvotorClient } from '../client/EvotorClient'
 import { evotorConfig } from '../../../config'
+import { log, shortId } from '../../../lib/logBuffer'
 
 const UUID_NS = '151071e8-88a4-44f6-b71a-b17c559f9b7d'
 
@@ -17,6 +18,12 @@ export function uuidv5(name: string, namespace = UUID_NS): string {
   digest[8] = (digest[8] & 0x3f) | 0x80
   const h = digest.toString('hex').slice(0, 32)
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`
+}
+
+
+export function outboxRetryDelay(attempts: number): number {
+  const delays = [60_000, 120_000, 300_000, 900_000, 3_600_000]
+  return delays[Math.min(Math.max(0, attempts - 1), delays.length - 1)]
 }
 
 function hashPayload(payload: unknown): string {
@@ -175,7 +182,7 @@ export class ProductPushService {
     const needsSync = !last?.evotor_uuid || last.status !== 'SYNCED' || last.last_hash !== payloadHash
     if (!needsSync && !pending) return false
     if (pending) {
-      this.db.prepare(`UPDATE evotor_outbox SET payload_hash=?,next_at=?,last_error=NULL WHERE id=?`).run(payloadHash, Date.now(), pending.id)
+      this.db.prepare(`UPDATE evotor_outbox SET payload_hash=?,last_error=NULL WHERE id=?`).run(payloadHash, pending.id)
       return true
     }
     this.db.prepare(`INSERT INTO evotor_outbox(store_uuid,entity,entity_key,op,payload_hash,priority,status,attempts,next_at)
@@ -214,7 +221,7 @@ export class ProductPushService {
   }
 
   private async pushExtras(storeUuid: string, product: LocalProduct, productUuid: string): Promise<void> {
-    if (!evotorConfig.appId) return
+    if (!evotorConfig.pushExtras || !evotorConfig.appId) return
     const data = this.buildExtra(product, productUuid)
     if (!data) return
     await this.client.postProductExtras(storeUuid, [{
@@ -240,16 +247,18 @@ export class ProductPushService {
         VALUES(?,?,?,?,?,?,?,'',NULL)
         ON CONFLICT(product_id,variant,store_uuid) DO UPDATE SET evotor_uuid=excluded.evotor_uuid,last_synced_at=excluded.last_synced_at,status='SYNCED',last_error=NULL`)
         .run(product.id, '', storeUuid, evotorUuid, '', now, 'SYNCED')
-      if (!product.evotor_uuid) {
-        this.db.prepare(`UPDATE products SET evotor_uuid=?, updated_at=COALESCE(updated_at,?) WHERE id=?`).run(evotorUuid, now, product.id)
-      }
+      // products.evotor_uuid is legacy/deprecated; links are the sole source of store-specific IDs.
     })()
   }
 
   private async ensureRemoteId(storeUuid: string, product: LocalProduct, remote: Record<string, unknown>[]): Promise<string> {
     const saved = this.db.prepare(`SELECT evotor_uuid FROM product_store_links WHERE product_id=? AND store_uuid=? AND evotor_uuid IS NOT NULL`)
       .get(product.id, storeUuid) as { evotor_uuid: string } | undefined
-    if (saved?.evotor_uuid) return saved.evotor_uuid
+    if (saved?.evotor_uuid) {
+      if (remote.some((item) => remoteId(item) === saved.evotor_uuid)) return saved.evotor_uuid
+      // Stale store-specific mapping: never PUT to a product that no longer exists.
+      this.db.prepare(`UPDATE product_store_links SET evotor_uuid=NULL,last_error='Stale Evotor UUID; recreating' WHERE product_id=? AND store_uuid=?`).run(product.id, storeUuid)
+    }
 
     // Legacy single-store mappings are safe only when the same UUID is present in this store's remote catalog.
     if (product.evotor_uuid && remote.some((item) => remoteId(item) === product.evotor_uuid)) {
@@ -293,42 +302,51 @@ export class ProductPushService {
     return nameOk && priceOk && costOk && allowOk && measureOk && taxOk && descriptionOk
   }
 
-  private async pushToStoreInternal(storeUuid: string): Promise<{ pushed: number; errors: string[]; linked: number }> {
+  private async pushToStoreInternal(storeUuid: string): Promise<{ pushed: number; errors: string[]; linked: number; extrasFailed: number }> {
     this.ensureSchema()
-    if (!this.client.isConfigured) return { pushed: 0, linked: 0, errors: ['EVOTOR_API_TOKEN not set'] }
+    if (!this.client.isConfigured) return { pushed: 0, linked: 0, errors: ['[list] GET products status=0 EVOTOR_API_TOKEN not set'], extrasFailed: 0 }
 
     // Only products created/managed in 6.7 are outbound masters. Pure Evotor imports stay read-only.
     const products = this.listLocal(false)
-    if (!products.length) return { pushed: 0, linked: 0, errors: [] }
+    if (!products.length) return { pushed: 0, linked: 0, errors: [], extrasFailed: 0 }
     for (const p of products) this.enqueue(storeUuid, p)
 
     const ready = this.db.prepare(`SELECT id,entity_key,attempts FROM evotor_outbox
       WHERE store_uuid=? AND entity='PRODUCT' AND status='PENDING' AND next_at<=?
       ORDER BY priority,id LIMIT 200`).all(storeUuid, Date.now()) as { id: number; entity_key: string; attempts: number }[]
-    if (!ready.length) return { pushed: 0, linked: 0, errors: [] }
+    if (!ready.length) return { pushed: 0, linked: 0, errors: [], extrasFailed: 0 }
 
     const remote = await this.remoteProducts(storeUuid)
     const byId = new Map(products.map((p) => [p.id, p]))
     let pushed = 0
     let linked = 0
+    let extrasFailed = 0
     const errors: string[] = []
 
     for (const item of ready) {
       const p = byId.get(Number(item.entity_key))
       if (!p) continue
       try {
+        const knownBefore = remote.some((r) => remoteId(r) === (this.db.prepare(`SELECT evotor_uuid FROM product_store_links WHERE product_id=? AND store_uuid=?`).get(p.id, storeUuid) as { evotor_uuid: string | null } | undefined)?.evotor_uuid)
         const productUuid = await this.ensureRemoteId(storeUuid, p, remote)
         const payload = toEvotorProduct(p, storeUuid)
-        // Outbox is already change-gated by syncHash, so a ready UPSERT is safe to send as PUT.
-        // This guarantees all managed fields (including tax/measure/cost/description) converge.
-        await this.client.replaceCloudProduct(storeUuid, productUuid, payload)
         const existingRemote = remote.find((r) => remoteId(r) === productUuid)
-        await this.pushExtras(storeUuid, p, productUuid)
+        if (existingRemote || knownBefore) await this.client.replaceCloudProduct(storeUuid, productUuid, payload)
+        try {
+          await this.pushExtras(storeUuid, p, productUuid)
+        } catch (extraError) {
+          extrasFailed++
+          const warning = `[extras] POST ${evotorConfig.apiBaseUrl}/api/v1/inventories/stores/${storeUuid}/products/extras: ${String(extraError).slice(0, 400)}`
+          log.warn('evotor catalog extras failed', { store: shortId(storeUuid), productId: p.id, stage: 'extras', method: 'POST', path: `/api/v1/inventories/stores/${storeUuid}/products/extras`, error: warning })
+          this.db.prepare(`UPDATE product_store_links SET last_error=? WHERE product_id=? AND store_uuid=?`).run(warning, p.id, storeUuid)
+        }
         const now = Date.now()
         this.db.transaction(() => {
           this.db.prepare(`UPDATE evotor_outbox SET status='DONE',attempts=attempts+1,last_error=NULL,next_at=? WHERE id=?`).run(now, item.id)
-          this.db.prepare(`UPDATE evotor_products SET evotor_uuid=?,last_hash=?,last_synced_at=?,status='SYNCED',last_error=NULL WHERE product_id=? AND variant='' AND store_uuid=?`)
-            .run(productUuid, this.syncHash(p), now, p.id, storeUuid)
+          this.db.prepare(`INSERT INTO evotor_products(product_id,variant,store_uuid,evotor_uuid,last_hash,last_synced_at,status,last_error,raw_json)
+            VALUES(?,'',?,?,?,?,? ,NULL,NULL)
+            ON CONFLICT(product_id,variant,store_uuid) DO UPDATE SET evotor_uuid=excluded.evotor_uuid,last_hash=excluded.last_hash,last_synced_at=excluded.last_synced_at,status='SYNCED',last_error=NULL`)
+            .run(p.id, storeUuid, productUuid, this.syncHash(p), now, 'SYNCED')
           this.db.prepare(`UPDATE product_store_links SET evotor_uuid=?,last_pushed_at=?,last_error=NULL WHERE product_id=? AND store_uuid=?`)
             .run(productUuid, now, p.id, storeUuid)
         })()
@@ -336,8 +354,8 @@ export class ProductPushService {
         if (!existingRemote) linked++
       } catch (e) {
         const attempts = item.attempts + 1
-        const nextAt = Date.now() + Math.min(3_600_000, 5_000 * 2 ** Math.min(attempts, 8))
-        const message = String(e)
+        const nextAt = Date.now() + outboxRetryDelay(attempts)
+        const message = String(e).slice(0, 500)
         this.db.prepare(`UPDATE evotor_outbox SET attempts=?,next_at=?,last_error=? WHERE id=?`).run(attempts, nextAt, message, item.id)
         this.db.prepare(`INSERT INTO product_store_links(product_id,store_uuid,evotor_uuid,last_pushed_at,last_error)
           VALUES(?,?,?,?,?) ON CONFLICT(product_id,store_uuid) DO UPDATE SET last_error=excluded.last_error`)
@@ -345,12 +363,13 @@ export class ProductPushService {
         errors.push(`${p.id}: ${message}`)
       }
     }
-    return { pushed, linked, errors }
+    log[errors.length ? 'warn' : 'info']('evotor catalog push', { store: shortId(storeUuid), pushed, failed: errors.length, extrasFailed, sampleErrors: errors.slice(0, 5) })
+    return { pushed, linked, errors, extrasFailed }
   }
 
-  async pushToStore(storeUuid: string): Promise<{ pushed: number; errors: string[]; linked: number }> {
+  async pushToStore(storeUuid: string): Promise<{ pushed: number; errors: string[]; linked: number; extrasFailed: number }> {
     if (ProductPushService.runningStores.has(storeUuid)) {
-      return { pushed: 0, linked: 0, errors: ['EVOTOR_SYNC_ALREADY_RUNNING'] }
+      return { pushed: 0, linked: 0, errors: ['EVOTOR_SYNC_ALREADY_RUNNING'], extrasFailed: 0 }
     }
     ProductPushService.runningStores.add(storeUuid)
     try {
@@ -434,9 +453,9 @@ export class ProductPushService {
     return { imported, updated, links }
   }
 
-  async syncStore(storeUuid: string): Promise<{ pulled: { imported: number; updated: number; links: number }; pushed: { pushed: number; linked: number; errors: string[] } }> {
+  async syncStore(storeUuid: string): Promise<{ pulled: { imported: number; updated: number; links: number }; pushed: { pushed: number; linked: number; errors: string[]; extrasFailed: number } }> {
     if (ProductPushService.runningStores.has(storeUuid)) {
-      return { pulled: { imported: 0, updated: 0, links: 0 }, pushed: { pushed: 0, linked: 0, errors: ['EVOTOR_SYNC_ALREADY_RUNNING'] } }
+      return { pulled: { imported: 0, updated: 0, links: 0 }, pushed: { pushed: 0, linked: 0, errors: ['EVOTOR_SYNC_ALREADY_RUNNING'], extrasFailed: 0 } }
     }
     ProductPushService.runningStores.add(storeUuid)
     try {
@@ -460,6 +479,7 @@ export class ProductPushService {
     linksCleared: number
     pushed: number
     pushErrors: string[]
+    extrasFailed: number
   }> {
     const deleteErrors: string[] = []
     let listed = 0
@@ -467,9 +487,9 @@ export class ProductPushService {
     try {
       const remote = await this.remoteProducts(storeUuid)
       listed = remote.length
-      const ids = remote
-        .map((r) => String(r.uuid ?? r.id ?? '').trim())
-        .filter(Boolean)
+      const linked = new Set((this.db.prepare(`SELECT evotor_uuid FROM product_store_links WHERE store_uuid=? AND evotor_uuid IS NOT NULL`).all(storeUuid) as { evotor_uuid: string }[]).map((x) => x.evotor_uuid))
+      const ids = remote.filter((r) => { const id = remoteId(r); const article = remoteArticleNumber(r); return Boolean((id && linked.has(id)) || (article && /^sc-\d+$/.test(article))) })
+        .map((r) => remoteId(r)).filter((id): id is string => Boolean(id))
       // Prefer DELETE; on failure collect and continue
       try {
         if (ids.length) {
@@ -497,16 +517,6 @@ export class ProductPushService {
       .run(storeUuid)
     const linksCleared = Number(clear.changes ?? 0)
 
-    // Also clear any denormalized evotor uuid on products if column exists
-    try {
-      const cols = this.db.prepare(`PRAGMA table_info(products)`).all() as { name: string }[]
-      if (cols.some((c) => c.name === 'evotor_uuid')) {
-        this.db.prepare(`UPDATE products SET evotor_uuid=NULL WHERE evotor_uuid IS NOT NULL`).run()
-      }
-    } catch {
-      /* ignore */
-    }
-
     const push = await this.pushToStore(storeUuid)
     return {
       listed,
@@ -515,6 +525,7 @@ export class ProductPushService {
       linksCleared,
       pushed: push.pushed,
       pushErrors: push.errors.slice(0, 20),
+      extrasFailed: push.extrasFailed,
     }
   }
 

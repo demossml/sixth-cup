@@ -267,7 +267,7 @@ export default function AdminPage() {
                       onClick={async () => {
                         if (
                           !confirm(
-                            'Очистить ВСЮ номенклатуру в облаке Эвотор для «' +
+                            'Удалить только товары 6.7 (связанные через links или article sc-*) в облаке Эвотор для «' +
                               (s.name || s.uuid) +
                               '» и залить заново из 6.7?\n\nКак очистка в 1С. После: на кассе Ещё → Обмен → Загрузить в терминал.',
                           )
@@ -280,6 +280,7 @@ export default function AdminPage() {
                             listed: number
                             deleted: number
                             pushed: number
+                            extrasFailed?: number
                             deleteErrors?: string[]
                             pushErrors?: string[]
                           }>(`/evotor/stores/${encodeURIComponent(s.uuid)}/wipe-catalog`, token, {
@@ -299,6 +300,8 @@ export default function AdminPage() {
                               r.deleted +
                               ', залито ' +
                               r.pushed +
+                              ', extrasFailed ' +
+                              (r.extrasFailed ?? 0) +
                               delErr +
                               pushErr,
                           )
@@ -952,7 +955,13 @@ export default function AdminPage() {
               onClick={async () => {
                 setBusy(true)
                 try {
-                  await adminFetch('/evotor/sync', token, { method: 'POST', body: '{}' })
+                  const r = await adminFetch<{ ok?: boolean; failed?: number; extrasFailed?: number; extrasEnabled?: boolean; catalog?: { storeUuid: string; pushed?: { pushed?: number }; failed?: number; extrasFailed?: number; errors?: string[] }[] }>('/evotor/sync', token, { method: 'POST', body: '{}' })
+                  const rows = r.catalog || []
+                  const pushed = rows.reduce((n, x) => n + (x.pushed?.pushed || 0), 0)
+                  const failed = r.failed ?? rows.reduce((n, x) => n + (x.failed || 0), 0)
+                  const extras = r.extrasFailed ?? rows.reduce((n, x) => n + (x.extrasFailed || 0), 0)
+                  const errors = rows.flatMap((x) => x.errors || []).slice(0, 3)
+                  alert(`Синхронизация: ${failed ? 'ОШИБКА' : extras ? 'ЧАСТИЧНО' : 'УСПЕХ'}\nТоваров отправлено: ${pushed}\nОшибок записи товара: ${failed}\nОшибок extras: ${extras}${errors.length ? '\n\n' + errors.join('\n') : ''}${!r.extrasEnabled ? '\n\nМетаданные extras отключены (EVOTOR_PUSH_EXTRAS=0); каталог товаров синхронизируется отдельно.' : extras ? '\n\nОшибки extras не блокируют синхронизацию товаров.' : ''}`)
                   await load()
                 } catch (e: any) {
                   setErr(e.message)

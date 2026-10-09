@@ -5,7 +5,7 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { db } from '../../db'
-import { AssignmentSync } from '../../integrations/evotor/sync/AssignmentSync'
+import { ProductPushService } from '../../integrations/evotor/sync/ProductPushService'
 import { bad } from '../../lib/errors'
 
 function ensureLinkColumns() {
@@ -113,7 +113,14 @@ export const adminAssignments = new Hono()
     ensureLinkColumns()
     const productId = Number(c.req.param('id'))
     try {
-      return c.json(await new AssignmentSync(db).syncProductAssignments(productId))
+      const product = db.prepare(`SELECT id FROM products WHERE id=?`).get(productId) as { id: number } | undefined
+      if (!product) throw bad('Product not found', 404)
+      const stores = db.prepare(`SELECT store_uuid FROM evotor_stores WHERE COALESCE(sync_enabled,0)=1`).all() as { store_uuid: string }[]
+      const results = []
+      const svc = new ProductPushService(db)
+      for (const store of stores) results.push({ storeUuid: store.store_uuid, ...(await svc.pushToStore(store.store_uuid)) })
+      const failed = results.reduce((n, r) => n + r.errors.length, 0)
+      return c.json({ productId, ok: failed === 0, note: 'Sync uses CatalogSync/ProductPushService; this operation reconciles all pending catalog items at enabled stores.', results })
     } catch (e) {
       throw bad(String(e), 502)
     }

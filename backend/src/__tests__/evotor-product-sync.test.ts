@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'vitest'
-import { toEvotorProduct } from '../integrations/evotor/sync/ProductPushService'
+import { outboxRetryDelay, toEvotorProduct } from '../integrations/evotor/sync/ProductPushService'
 
 describe('Evotor product sync', () => {
+  test('outbox retry delay is capped exponential backoff', () => {
+    expect([1, 2, 3, 4, 5, 6].map(outboxRetryDelay)).toEqual([60_000, 120_000, 300_000, 900_000, 3_600_000, 3_600_000])
+  })
+
   test('does not invent an Evotor product UUID and keeps RUB price units', () => {
     const payload = toEvotorProduct({
       id: 42,

@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { db } from '../../db'
 import { EvotorClient } from '../../integrations/evotor/client/EvotorClient'
 import { ProductPushService } from '../../integrations/evotor/sync/ProductPushService'
+import { evotorConfig } from '../../config'
 import { PollService } from '../../integrations/evotor/sync/PollService'
 import { bad } from '../../lib/errors'
 
@@ -130,17 +131,22 @@ export const adminEvotorCatalog = new Hono()
       if (!stores.length) {
         return c.json({ stores: 0, catalog: [], employees: 0, note: 'Нет магазинов с галочкой sync. Включите точку во вкладке Точки.' })
       }
-      const result: Record<string, unknown> = { stores: stores.length, catalog: [] }
-      const catalog: unknown[] = []
-      for (const storeUuid of stores) catalog.push({ storeUuid, ...(await svc.syncStore(storeUuid)) })
-      result.catalog = catalog
-      const employeeRaw = asArray(await evotor.getEmployees())
-      persistEmployees(employeeRaw)
-      const employees = employeeRaw.map((o) => ({
-        uuid: o.uuid ?? o.id ?? o.employeeUuid, name: o.name ?? o.fullName ?? null,
-        storeUuid: o.storeUuid ?? o.store_id ?? null,
-      }))
-      result.employees = employees.length
+      const catalog: { storeUuid: string; pulled: unknown; pushed: unknown; failed: number; extrasFailed: number; errors: string[] }[] = []
+      for (const storeUuid of stores) {
+        const r = await svc.syncStore(storeUuid)
+        catalog.push({ storeUuid, pulled: r.pulled, pushed: r.pushed, failed: r.pushed.errors.length, extrasFailed: r.pushed.extrasFailed, errors: r.pushed.errors.slice(0, 5) })
+      }
+      const failed = catalog.reduce((n, s) => n + s.failed, 0)
+      const extrasFailed = catalog.reduce((n, s) => n + s.extrasFailed, 0)
+      const result: Record<string, unknown> = { ok: failed === 0, stores: stores.length, catalog, failed, extrasFailed, extrasEnabled: evotorConfig.pushExtras }
+      try {
+        const employeeRaw = asArray(await evotor.getEmployees())
+        persistEmployees(employeeRaw)
+        result.employees = employeeRaw.length
+      } catch (employeeError) {
+        result.employees = 0
+        result.employeeError = String(employeeError).slice(0, 300)
+      }
       return c.json(result)
     } catch (e) {
       throw bad(String(e), 502)
@@ -154,7 +160,9 @@ export const adminEvotorCatalog = new Hono()
       const en = db.prepare(`SELECT COALESCE(sync_enabled,0) AS e FROM evotor_stores WHERE store_uuid=?`).get(storeUuid) as { e: number } | undefined
       if (!en || en.e !== 1) throw bad('Магазин не включён для sync (поставьте галочку в Точки)', 403)
       const svc = new ProductPushService(db, client())
-      return c.json(await svc.syncStore(storeUuid))
+      const r = await svc.syncStore(storeUuid)
+      const failed = r.pushed.errors.length
+      return c.json({ ok: failed === 0, storeUuid, pulled: r.pulled, pushed: r.pushed.pushed, linked: r.pushed.linked, failed, extrasFailed: r.pushed.extrasFailed, errors: r.pushed.errors.slice(0, 5) })
     } catch (e) {
       if (String(e).includes('403') || String((e as any)?.status) === '403') throw e
       throw bad(String(e), 502)
@@ -164,7 +172,8 @@ export const adminEvotorCatalog = new Hono()
   .post('/evotor/stores/:storeUuid/push-products', async (c) => {
     const storeUuid = c.req.param('storeUuid')
     try {
-      return c.json(await new ProductPushService(db, client()).pushToStore(storeUuid))
+      const r = await new ProductPushService(db, client()).pushToStore(storeUuid)
+      return c.json({ ok: r.errors.length === 0, ...r, failed: r.errors.length, errors: r.errors.slice(0, 5) })
     } catch (e) {
       throw bad(String(e), 502)
     }
@@ -208,7 +217,8 @@ export const adminEvotorCatalog = new Hono()
     }
     const push = new ProductPushService(db)
     const result = await push.wipeCloudAndResync(storeUuid)
-    return c.json({ ok: true, storeUuid, ...result })
+    const ok = result.deleteErrors.length === 0 && result.pushErrors.length === 0
+    return c.json({ ok, storeUuid, ...result }, ok ? 200 : 502)
   })
 
   .post('/evotor/poll', async (c) => {

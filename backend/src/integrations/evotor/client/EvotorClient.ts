@@ -14,6 +14,9 @@ export class EvotorApiError extends Error {
     message: string,
     public status: number,
     public path: string,
+    public method = 'GET',
+    public stage = 'request',
+    public bodyEmpty = false,
   ) {
     super(message)
     this.name = 'EvotorApiError'
@@ -53,8 +56,8 @@ export class EvotorClient {
     return url
   }
 
-  private async requestJson(pathOrUrl: string, method = 'GET', body?: unknown): Promise<unknown> {
-    if (!this.isConfigured) throw new EvotorApiError('EVOTOR_API_TOKEN not set', 0, pathOrUrl)
+  private async requestJson(pathOrUrl: string, method = 'GET', body?: unknown, stage = 'request'): Promise<unknown> {
+    if (!this.isConfigured) throw new EvotorApiError(`[${stage}] ${method} ${pathOrUrl} status=0 EVOTOR_API_TOKEN not set bodyEmpty=true`, 0, pathOrUrl, method, stage, true)
     const url = this.buildUrl(pathOrUrl)
     const backoffs = [1000, 2000, 4000, 8000]
     let lastStatus = 0
@@ -74,19 +77,19 @@ export class EvotorClient {
         })
         lastStatus = res.status
         lastBody = await res.text()
-        if (res.status === 401) throw new EvotorApiError('Unauthorized — check EVOTOR_API_TOKEN', 401, pathOrUrl)
+        if (res.status === 401) throw new EvotorApiError(`[${stage}] ${method} ${pathOrUrl} status=401 body=${lastBody.slice(0, 400) || '<empty>'} bodyEmpty=${!lastBody}`, 401, pathOrUrl, method, stage, !lastBody)
         if ([408, 429, 500, 502, 503, 504].includes(res.status) && attempt < 4) {
           await new Promise((r) => setTimeout(r, backoffs[attempt] + Math.random() * 300))
           continue
         }
-        if (!res.ok) throw new EvotorApiError(`HTTP ${res.status}: ${lastBody.slice(0, 400)}`, res.status, pathOrUrl)
+        if (!res.ok) throw new EvotorApiError(`[${stage}] ${method} ${pathOrUrl} status=${res.status} body=${lastBody.slice(0, 400) || '<empty>'} bodyEmpty=${!lastBody}`, res.status, pathOrUrl, method, stage, !lastBody)
         if (!lastBody) return null
         try { return JSON.parse(lastBody) } catch { return lastBody }
       } finally {
         clearTimeout(timer)
       }
     }
-    throw new EvotorApiError(`HTTP ${lastStatus}: ${lastBody.slice(0, 400)}`, lastStatus, pathOrUrl)
+    throw new EvotorApiError(`[${stage}] ${method} ${pathOrUrl} status=${lastStatus} body=${lastBody.slice(0, 400) || '<empty>'} bodyEmpty=${!lastBody}`, lastStatus, pathOrUrl, method, stage, !lastBody)
   }
 
   async getStores(): Promise<unknown> {
@@ -98,7 +101,7 @@ export class EvotorClient {
   }
 
   async getProducts(storeId: string): Promise<unknown> {
-    return this.requestJson(evotorPaths.products(storeId))
+    return this.requestJson(evotorPaths.products(storeId), 'GET', undefined, 'list')
   }
 
   async getDocuments(storeId: string, since: string, until: string, types?: string, cursor?: string): Promise<unknown> {
@@ -114,12 +117,12 @@ export class EvotorClient {
 
   /** Cloud Catalog API: Cloud generates the product id on first POST. */
   async createCloudProduct(storeId: string, product: Record<string, unknown>): Promise<unknown> {
-    return this.requestJson(evotorPaths.v2Products(storeId), 'POST', product)
+    return this.requestJson(evotorPaths.v2Products(storeId), 'POST', product, 'create')
   }
 
   /** Cloud Catalog API: replace/update an already identified product. */
   async replaceCloudProduct(storeId: string, productId: string, product: Record<string, unknown>): Promise<unknown> {
-    return this.requestJson(evotorPaths.v2Product(storeId, productId), 'PUT', product)
+    return this.requestJson(evotorPaths.v2Product(storeId, productId), 'PUT', product, 'replace')
   }
 
   /**
@@ -145,6 +148,6 @@ export class EvotorClient {
   }
 
   async postProductExtras(storeId: string, extras: Record<string, unknown>[]): Promise<unknown> {
-    return this.requestJson(evotorPaths.productExtras(storeId), 'POST', extras)
+    return this.requestJson(evotorPaths.productExtras(storeId), 'POST', extras, 'extras')
   }
 }
