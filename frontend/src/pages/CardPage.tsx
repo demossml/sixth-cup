@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import Qr from '../components/Qr'
 import { useApp } from '../lib/app'
 import { activeVouchers } from '../lib/proof'
+import { formatRub } from '../lib/money'
 import { AppIcon, Gift, RefreshCw, Ticket, Users, Wallet, Wifi, WifiOff } from '../lib/icons'
 
 /**
@@ -23,7 +24,8 @@ export default function CardPage() {
   const freeLeft = me?.freeAvailable ?? 0
   const left = Math.max(0, N - paidProgress)
   const pct = dir?.referralCashbackPercent ?? 3
-  const cashbackRub = Math.floor((me?.cashbackBalance ?? 0) / 100)
+  const cashbackText = formatRub(me?.cashbackBalance)
+  const fromFriendsKop = me?.fromFriendsKopecks ?? (me?.fromFriendsRub ?? 0) * 100
   const vouchers = activeVouchers({ v: me?.vouchers ?? [] } as never)
 
   async function onSync() {
@@ -139,8 +141,9 @@ export default function CardPage() {
           <>
             {/* QR кассиру — сразу, как в рабочей версии */}
             <div className="card text-center">
-              <p className="text-sm font-medium text-ink mb-1">Покажите код кассиру</p>
-              <Qr value={best.token} />
+              <p className="text-sm font-medium text-ink mb-1">QR карты — покажите кассиру</p>
+              <p className="text-xs text-ink-tertiary mb-1">Только для кассы. Чтобы пригласить друга, откройте «Пригласить друга» выше.</p>
+              <Qr value={best.token} alt="QR карты для кассы" />
               {me?.cardCode && (
                 <div className="mt-3 rounded-xl bg-surface px-3 py-2">
                   <div className="text-xs text-ink-tertiary">Номер карты — если QR не сканируется</div>
@@ -162,18 +165,18 @@ export default function CardPage() {
                 <Wallet size={20} className="text-accent-green" />
               </div>
               <div>
-                <div className="text-sm font-semibold text-ink">Кэшбэк {cashbackRub} ₽</div>
+                <div className="text-sm font-semibold text-ink">Кэшбэк {cashbackText} ₽</div>
                 <div className="text-xs text-ink-secondary">Можно списать на кассе</div>
               </div>
             </div>
 
-            {(me.friendsCount ?? 0) > 0 || (me.fromFriendsRub ?? 0) > 0 ? (
+            {(me.friendsCount ?? 0) > 0 || fromFriendsKop > 0 ? (
               <div className="card flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-brand-soft flex items-center justify-center">
                   <Gift size={20} className="text-brand" />
                 </div>
                 <div>
-                  <div className="text-sm font-semibold text-ink">От друзей получено +{me.fromFriendsRub ?? 0} ₽</div>
+                  <div className="text-sm font-semibold text-ink">От друзей получено +{formatRub(fromFriendsKop)} ₽</div>
                   <div className="text-xs text-ink-secondary">Друзей приглашено: {me.friendsCount ?? 0}</div>
                 </div>
               </div>

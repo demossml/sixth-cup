@@ -5,6 +5,8 @@ import { api, unwrap } from '../api'
 import Qr from '../components/Qr'
 import { setJwt } from '../api'
 import { ensureGuest, restoreAccount } from '../lib/ensureGuest'
+import { clearInvite } from '../lib/invite'
+import { formatRub } from '../lib/money'
 import { useApp } from '../lib/app'
 import { clearUserData } from '../lib/db'
 import { LogOut, RefreshCw, Share2, Users, Wallet } from '../lib/icons'
@@ -59,6 +61,7 @@ export default function ProfilePage() {
     if (!confirm('Сбросить карту на этом устройстве? Без сохранённого QR восстановления кэшбэк и стаканы станут недоступны. Лучше не выходить.')) return
     if (!confirm('Точно создать новую пустую карту?')) return
     setJwt(null)
+    clearInvite() // a deliberately reset card starts clean: no referrer from an earlier visit
     await clearUserData()
     localStorage.removeItem('sc-guest-nonce')
     await ensureGuest()
@@ -76,7 +79,7 @@ export default function ProfilePage() {
         {me && me.cashbackBalance > 0 && (
           <div className="mt-3 inline-flex items-center gap-2 bg-white/15 rounded-xl px-3 py-2">
             <Wallet size={16} />
-            <span className="text-sm font-semibold">Кэшбэк {Math.floor(me.cashbackBalance / 100)} ₽</span>
+            <span className="text-sm font-semibold">Кэшбэк {formatRub(me.cashbackBalance)} ₽</span>
           </div>
         )}
         {me?.cardCode && (

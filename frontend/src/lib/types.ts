@@ -37,7 +37,7 @@ export type Me = {
   id: number; cardId: string; cardCode: string; nickname: string; inviteCode: string; cashbackBalance: number
   /** Серверное состояние лояльности (источник истины — backend). */
   cupsTowardFree?: number; freeAvailable?: number; cupsForFree?: number
-  fromFriendsRub?: number; friendsCount?: number
+  fromFriendsRub?: number; fromFriendsKopecks?: number; friendsCount?: number
   vouchers?: Voucher[]
 }
 export type StoredReceipt = { id: string; token: string; uploaded: 0 | 1; userId: number; q: number }

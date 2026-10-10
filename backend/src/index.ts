@@ -55,11 +55,11 @@ if (evotorConfig.enabled) {
       const r = await poll.runFast()
       await refreshStores()
       for (const e of r.errors) log.error(`evotor poll failed: ${e.error.slice(0, 200)}`, { store: shortId(e.storeUuid) })
-      if (r.inserted) log.info('evotor poll', { stores: r.stores, newDocs: r.inserted, errors: r.errors.length })
+      if (r.inserted) log.info('evotor poll', { stores: r.stores, newDocs: r.inserted, seen: r.seen, sell: r.sellSeen, errors: r.errors.length })
       else if (Date.now() - lastIdleLogAt > 10 * 60_000) {
         // heartbeat so "is polling alive?" is answerable without flooding the buffer every minute
         lastIdleLogAt = Date.now()
-        log.info('evotor poll idle (no new docs)', { stores: r.stores, errors: r.errors.length })
+        log.info('evotor poll idle (no new docs)', { stores: r.stores, seen: r.seen, sell: r.sellSeen, errors: r.errors.length })
       }
       const stores = db.prepare('SELECT store_uuid FROM evotor_stores WHERE COALESCE(sync_enabled,0)=1').all() as { store_uuid: string }[]
       for (const store of stores) {

@@ -49,11 +49,14 @@ export default function InvitePage() {
 
       <div className="px-4 pt-4 space-y-4">
         <div className="card text-center">
-          <p className="text-sm font-semibold text-ink mb-1">Покажите QR другу</p>
+          <p className="text-sm font-semibold text-ink mb-1">QR приглашения — покажите другу</p>
+          <p className="text-xs text-amber-800 bg-amber-50 rounded-lg px-2 py-1 mb-1">
+            Это не QR карты. Кассе его показывать не нужно — он нужен только новому клиенту.
+          </p>
           <p className="text-xs text-ink-secondary mb-2">
             Пусть отсканирует камерой телефона — откроется приложение и привяжется к вашему приглашению.
           </p>
-          <Qr value={link} />
+          <Qr value={link} alt="QR приглашения друга" />
           <p className="text-[11px] text-ink-tertiary break-all mt-1 px-2">{link}</p>
         </div>
 

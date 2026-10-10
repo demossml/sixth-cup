@@ -93,6 +93,8 @@ describe('Evotor SELL fixture → loyalty', () => {
       .run(STORE, 'f22cb7a7-x', 'SELL', Date.now(), 'poll', 'PROCESSED', Date.now())
     db.prepare(`INSERT INTO evotor_sync_state(store_uuid,last_fast_at) VALUES(?,?)`).run(STORE, 1_700_000_000_000)
     const sum = await (await app.request('/api/admin/sales/summary', { headers: admin })).json() as any
+    const ov = await (await app.request('/api/admin/overview', { headers: admin })).json() as any
+    expect(ov.lastPollAt).toBe(1_700_000_000_000)
     expect(sum.sellDocs).toBe(1)
     expect(sum.lastPollAt).toBe(1_700_000_000_000)
     expect(sum.loyalty.ops).toBeGreaterThanOrEqual(1)

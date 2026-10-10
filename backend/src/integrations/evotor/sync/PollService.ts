@@ -71,6 +71,9 @@ function whitelist(row: Record<string, unknown>): string {
 }
 
 export class PollService {
+  /** Per-run counters so the heartbeat can tell "Cloud returned nothing" from "documents already known". */
+  private stats = { seen: 0, sellSeen: 0 }
+
   constructor(
     private readonly db: Database.Database,
     private readonly client = new EvotorClient(),
@@ -136,6 +139,8 @@ export class PollService {
       if (!cursor) break
     }
     let inserted = 0
+    this.stats.seen += items.length
+    this.stats.sellSeen += items.filter((d) => String(d.type ?? '') === 'SELL').length
     const ins = this.db.prepare(`
       INSERT OR IGNORE INTO evotor_docs(
         store_uuid, doc_id, type, device_uuid, session_id, number, close_date_ms,
@@ -174,8 +179,9 @@ export class PollService {
     return inserted
   }
 
-  async runFast(): Promise<{ stores: number; inserted: number; errors: { storeUuid: string; error: string }[] }> {
-    if (!this.client.isConfigured) return { stores: 0, inserted: 0, errors: [] }
+  async runFast(): Promise<{ stores: number; inserted: number; seen: number; sellSeen: number; errors: { storeUuid: string; error: string }[] }> {
+    this.stats = { seen: 0, sellSeen: 0 }
+    if (!this.client.isConfigured) return { stores: 0, inserted: 0, seen: 0, sellSeen: 0, errors: [] }
     // Refresh store list from Cloud (names), but poll ONLY sync_enabled=1
     try {
       await this.ensureStores()
@@ -185,7 +191,7 @@ export class PollService {
     const stores = enabledStoreUuids(this.db)
     if (stores.length === 0) {
       log.info('evotor poll skipped — no stores with sync_enabled=1')
-      return { stores: 0, inserted: 0, errors: [] }
+      return { stores: 0, inserted: 0, seen: 0, sellSeen: 0, errors: [] }
     }
     let inserted = 0
     const errors: { storeUuid: string; error: string }[] = []
@@ -202,7 +208,7 @@ export class PollService {
         this.db.prepare(`UPDATE evotor_sync_state SET status='ERROR',last_error=? WHERE store_uuid=?`).run(error, s)
       }
     }
-    return { stores: stores.length, inserted, errors }
+    return { stores: stores.length, inserted, seen: this.stats.seen, sellSeen: this.stats.sellSeen, errors }
   }
 
   async runHourly(): Promise<{ stores: number; inserted: number }> {

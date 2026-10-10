@@ -32,7 +32,7 @@ export function stateView(userId: number) {
 export function friendsView(userId: number) {
   const g = db.prepare('SELECT COALESCE(SUM(amount),0) AS n FROM cashback_ledger WHERE beneficiary_id=?').get(userId) as { n: number }
   const f = db.prepare('SELECT COUNT(*) AS n FROM users WHERE invited_by=?').get(userId) as { n: number }
-  return { fromFriendsRub: Math.floor(Math.max(0, g.n) / 100), friendsCount: f.n }
+  return { fromFriendsRub: Math.floor(Math.max(0, g.n) / 100), fromFriendsKopecks: Math.max(0, g.n), friendsCount: f.n }
 }
 
 function cardView(userId: number) {

@@ -60,9 +60,9 @@ export const adminAssignments = new Hono()
     ).n
     let lastPollAt: number | null = null
     try {
-      lastPollAt = (db.prepare(`SELECT MAX(last_poll_at) AS t FROM evotor_sync_state`).get() as { t: number | null }).t
+      lastPollAt = (db.prepare(`SELECT MAX(COALESCE(last_fast_at, 0), COALESCE(last_hourly_at, 0)) AS t FROM evotor_sync_state ORDER BY t DESC LIMIT 1`).get() as { t: number | null } | undefined)?.t || null
     } catch {
-      /* column may differ */
+      /* table may be empty */
     }
     return c.json({ stores, products, linked, pending, errors, lastPollAt })
   })
