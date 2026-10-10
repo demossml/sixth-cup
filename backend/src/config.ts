@@ -7,6 +7,7 @@ export const config = {
   isDev,
   jwtSecret: process.env.JWT_SECRET ?? 'dev-secret-change-me',
   adminToken: process.env.ADMIN_TOKEN ?? 'dev-admin',
+  adminAllowReset: process.env.ADMIN_ALLOW_RESET === '1' || process.env.ADMIN_ALLOW_RESET === 'true',
   dbPath: process.env.DB_PATH ?? './data/sixth-cup.db',
   keysPath: process.env.KEYS_PATH ?? './data/keys.json',
   uploadsDir: process.env.UPLOADS_DIR ?? resolve('./data/uploads'),

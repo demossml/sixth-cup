@@ -90,6 +90,7 @@ export const adminRoutes = new Hono()
     mode: z.enum(['loyalty', 'catalog', 'full']),
     confirm: z.literal(true),
   })), (c) => {
+    if (!config.adminAllowReset) throw bad('Reset disabled (ADMIN_ALLOW_RESET≠1)', 403)
     const { mode } = c.req.valid('json')
     if (mode === 'loyalty' || mode === 'full') resetLoyaltyData()
     if (mode === 'catalog' || mode === 'full') resetCatalogData()

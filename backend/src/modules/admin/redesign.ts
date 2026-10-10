@@ -146,7 +146,7 @@ export const adminRedesign = new Hono()
     const stores = db
       .prepare(
         `SELECT s.store_uuid AS storeUuid, s.name, COALESCE(s.sync_enabled,0) AS syncEnabled,
-                s.status AS status,
+                st.status AS status,
                 st.last_fast_at AS lastFastAt, st.last_hourly_at AS lastHourlyAt
          FROM evotor_stores s
          LEFT JOIN evotor_sync_state st ON st.store_uuid = s.store_uuid
@@ -207,7 +207,7 @@ export const adminRedesign = new Hono()
   .get('/evotor/health', (c) => {
     const stores = db
       .prepare(
-        `SELECT s.store_uuid AS storeUuid, s.name, COALESCE(s.sync_enabled,0) AS syncEnabled, s.status,
+        `SELECT s.store_uuid AS storeUuid, s.name, COALESCE(s.sync_enabled,0) AS syncEnabled, st.status AS status,
                 st.last_fast_at AS lastFastAt, st.last_hourly_at AS lastHourlyAt
          FROM evotor_stores s
          LEFT JOIN evotor_sync_state st ON st.store_uuid = s.store_uuid`,
@@ -273,8 +273,8 @@ export const adminRedesign = new Hono()
     }
     if (q) {
       where.push(`(d.doc_id LIKE ? OR o.card_id LIKE ? OR EXISTS (
-        SELECT 1 FROM users u JOIN cards c ON c.user_id=u.id
-        WHERE c.card_id = o.card_id AND (u.card_code LIKE ? OR CAST(u.id AS TEXT) = ?)
+        SELECT 1 FROM users u
+        WHERE u.card_id = o.card_id AND (u.card_code LIKE ? OR CAST(u.id AS TEXT) = ?)
       ))`)
       const like = `%${q}%`
       params.push(like, like, like, q)
@@ -301,9 +301,9 @@ export const adminRedesign = new Hono()
       if (r.cardId) {
         const u = db
           .prepare(
-            `SELECT u.card_code FROM users u JOIN cards c ON c.user_id=u.id WHERE c.card_id=? OR u.card_id=? LIMIT 1`,
+            `SELECT u.card_code FROM users u WHERE u.card_id=? LIMIT 1`,
           )
-          .get(r.cardId, r.cardId) as { card_code: string } | undefined
+          .get(r.cardId) as { card_code: string } | undefined
         cardCode = u?.card_code ?? null
       }
       return { ...r, cardCode }
