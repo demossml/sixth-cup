@@ -142,13 +142,39 @@ export const adminAssignments = new Hono()
     } catch {
       lines = []
     }
+    // Tables are evotor_docs / evotor_sync_state (the old query used non-existent evotor_documents / last_poll_at
+    // and silently returned nothing).
     let lastPollAt: number | null = null
     let sellDocs = 0
+    let sellFailed = 0
     try {
-      lastPollAt = (db.prepare(`SELECT MAX(last_poll_at) AS t FROM evotor_sync_state`).get() as { t: number | null }).t
-      sellDocs = (db.prepare(`SELECT COUNT(*) AS n FROM evotor_documents WHERE type='SELL'`).get() as { n: number }).n
+      lastPollAt = (db.prepare(`SELECT MAX(COALESCE(last_fast_at, 0), COALESCE(last_hourly_at, 0)) AS t FROM evotor_sync_state ORDER BY t DESC LIMIT 1`).get() as { t: number | null } | undefined)?.t || null
+      sellDocs = (db.prepare(`SELECT COUNT(*) AS n FROM evotor_docs WHERE type='SELL' AND received_at >= ?`).get(dayStart) as { n: number }).n
+      sellFailed = (db.prepare(`SELECT COUNT(*) AS n FROM evotor_docs WHERE type='SELL' AND status='FAILED' AND received_at >= ?`).get(dayStart) as { n: number }).n
     } catch {
       /* */
     }
-    return c.json({ since: dayStart, lastPollAt, sellDocs, lines })
+    let loyalty = { ops: 0, cups: 0, lastOpAt: null as number | null }
+    try {
+      const r = db.prepare(`SELECT COUNT(*) AS ops, COALESCE(SUM(cups_counted),0) AS cups, MAX(created_at) AS lastOpAt
+        FROM loyalty_ops WHERE kind='SELL' AND created_at >= ?`).get(dayStart) as { ops: number; cups: number; lastOpAt: number | null }
+      loyalty = r
+    } catch {
+      /* */
+    }
+    return c.json({ since: dayStart, lastPollAt, sellDocs, sellFailed, loyalty, lines })
+  })
+
+  /** Latest loyalty operations written from Evotor SELL/PAYBACK documents (what the till actually credited). */
+  .get('/loyalty/ops', (c) => {
+    const limit = Math.min(200, Math.max(1, Number(c.req.query('limit') ?? 50) || 50))
+    const rows = db.prepare(`
+      SELECT o.doc_store AS storeUuid, o.doc_id AS docId, o.kind, u.card_code AS cardCode,
+             o.cups_counted AS cups, o.free, o.cb AS cashbackKopecks, o.result_rub AS resultRub, o.created_at AS createdAt
+      FROM loyalty_ops o LEFT JOIN users u ON u.card_id = o.card_id
+      ORDER BY o.created_at DESC LIMIT ?
+    `).all(limit) as { storeUuid: string; docId: string; [k: string]: unknown }[]
+    return c.json({
+      ops: rows.map((r) => ({ ...r, storeUuid: r.storeUuid.slice(0, 8), docId: r.docId.slice(0, 8) })),
+    })
   })

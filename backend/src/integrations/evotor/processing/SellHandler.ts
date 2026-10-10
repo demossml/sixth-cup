@@ -126,6 +126,9 @@ function cupsForDocument(db: Database.Database, storeUuid: string, txs: Tx[]): n
   return cups
 }
 
+/** Pure helpers, exported so tests exercise the real code (not copies). */
+export const sellInternals = { documentIdOf, productUuid, number, amountKopecks, transactions, getSc, cupsForDocument }
+
 export function handleSell(db: Database.Database, storeUuid: string, doc: Record<string, unknown>): { processed: boolean; reason?: string } {
   const docId = documentIdOf(doc)
   if (!docId) return { processed: false, reason: 'missing document id' }

@@ -1,4 +1,5 @@
 import { adminAssignments } from './assignments'
+import { looksLikeDrink } from '../loyalty/rules'
 import { randomBytes } from 'node:crypto'
 import { Hono } from 'hono'
 import { createMiddleware } from 'hono/factory'
@@ -428,11 +429,11 @@ export const adminRoutes = new Hono()
         p.description ?? null, p.categoryId ?? null, p.imageUrl ?? null,
         p.sortOrder, t, t,
         p.modifierSchemeId ?? null, p.recipeText ?? null, p.recipeCostRub ?? null, p.recipeSeconds ?? null,
-        p.countsAsCup ? 1 : 0, p.freeEligible ? 1 : 0, p.tax ?? 'NO_VAT', p.measure ?? 'шт',
+        (p.countsAsCup ?? looksLikeDrink(p.name, p.icon)) ? 1 : 0, p.freeEligible ? 1 : 0, p.tax ?? 'NO_VAT', p.measure ?? 'шт',
         p.costPriceKopecks ?? 0, p.seasonStartAt ?? null, p.seasonEndAt ?? null, p.evotorExtraJson ?? null
       )
     }
-    const productId = p.id ?? Number(db.prepare('SELECT last_insert_rowid() AS id').get() as { id: number })
+    const productId = p.id ?? (db.prepare('SELECT last_insert_rowid() AS id').get() as { id: number }).id
     enqueueProductSync([productId])
     return c.json({ ok: true, id: productId })
   })

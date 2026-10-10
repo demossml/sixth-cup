@@ -47,8 +47,24 @@ type Product = {
   tax?: string | null
   measure?: string | null
   modifierSchemeId?: number | null
+  countsAsCup?: number | boolean
   evotorLinks?: { storeUuid: string; evotorUuid: string | null; enabled?: number; lastError?: string | null }[]
 }
+type SalesSummary = {
+  lines: any[]
+  lastPollAt: number | null
+  sellDocs: number
+  sellFailed?: number
+  loyalty?: { ops: number; cups: number; lastOpAt: number | null }
+}
+type LoyaltyOp = { storeUuid: string; docId: string; kind: string; cardCode: string | null; cups: number | null; free: number | null; cashbackKopecks: number | null; resultRub: number | null; createdAt: number }
+
+/** Same default as the backend for NEW products (drinks count as a cup). */
+const drinkGuess = (name?: string | null) => {
+  const n = (name || '').toLowerCase()
+  return !n.includes('печень') && /латте|капуч|американо|раф|кофе|эспрессо|флэт|флет/.test(n)
+}
+
 type Category = { id: number; name: string; sortOrder?: number; available?: number }
 type Modifier = {
   id: number
@@ -111,7 +127,8 @@ export default function AdminPage() {
   const [categories, setCategories] = useState<Category[]>([])
   const [modifiers, setModifiers] = useState<Modifier[]>([])
   const [schemes, setSchemes] = useState<Scheme[]>([])
-  const [sales, setSales] = useState<{ lines: any[]; lastPollAt: number | null; sellDocs: number } | null>(null)
+  const [sales, setSales] = useState<SalesSummary | null>(null)
+  const [ops, setOps] = useState<LoyaltyOp[]>([])
   const [edit, setEdit] = useState<(Partial<Product> & { storeUuids: string[] }) | null>(null)
   const [catEdit, setCatEdit] = useState<Partial<Category> | null>(null)
   const [modEdit, setModEdit] = useState<Partial<Modifier> | null>(null)
@@ -227,8 +244,12 @@ export default function AdminPage() {
 
   const loadSales = async () => {
     try {
-      const s = await adminFetch<{ lines: any[]; lastPollAt: number | null; sellDocs: number }>('/sales/summary', token)
+      const [s, o] = await Promise.all([
+        adminFetch<SalesSummary>('/sales/summary', token),
+        adminFetch<{ ops: LoyaltyOp[] }>('/loyalty/ops?limit=30', token),
+      ])
       setSales(s)
+      setOps(o.ops || [])
     } catch (e: any) {
       setErr(e.message)
     }
@@ -827,6 +848,9 @@ export default function AdminPage() {
                 <div className="font-medium">
                   {p.name} · {p.price} ₽
                 </div>
+                <div className={`text-xs ${p.countsAsCup ? 'text-emerald-700' : 'text-slate-400'}`}>
+                  {p.countsAsCup ? 'Считается стаканом (акция 6-й напиток)' : 'Не считается стаканом'}
+                </div>
                 <div className="text-xs text-slate-500">
                   {p.categoryName || (p.categoryId ? `группа #${p.categoryId}` : 'без группы')}
                   {p.modifierSchemeId
@@ -948,6 +972,18 @@ export default function AdminPage() {
                     value={edit.recipeText || edit.description || ''}
                     onChange={(e) => setEdit({ ...edit, recipeText: e.target.value, description: e.target.value })}
                   />
+                  <label className="flex items-start gap-2 text-sm rounded-lg border px-3 py-2">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={edit.countsAsCup === undefined ? drinkGuess(edit.name) : !!edit.countsAsCup}
+                      onChange={(e) => setEdit({ ...edit, countsAsCup: e.target.checked ? 1 : 0 })}
+                    />
+                    <span>
+                      <span className="font-medium">Считается стаканом</span>
+                      <span className="block text-xs text-slate-500">Участвует в акции «6-й напиток»: каждая единица в чеке даёт стакан в карте клиента</span>
+                    </span>
+                  </label>
                   <div className="text-sm font-medium">Где продаётся</div>
                   <div className="space-y-1 max-h-40 overflow-y-auto border rounded-lg p-2">
                     {stores.map((s) => {
@@ -992,6 +1028,7 @@ export default function AdminPage() {
                             imageUrl: edit.imageUrl ?? null,
                             tax: edit.tax || 'NO_VAT',
                             measure: edit.measure || 'шт',
+                            countsAsCup: edit.countsAsCup === undefined ? drinkGuess(edit.name) : !!edit.countsAsCup,
                             storeUuids: edit.storeUuids || [],
                           }
                           const saved = await adminFetch<{ product?: { id: number }; id?: number }>('/products', token, {
@@ -1029,8 +1066,12 @@ export default function AdminPage() {
           <div className="space-y-3">
             <h2 className="font-semibold">Продажи (24ч)</h2>
             <p className="text-xs text-slate-500">
-              Документов SELL: {sales?.sellDocs ?? '—'} · poll:{' '}
+              Документов SELL: {sales?.sellDocs ?? '—'}
+              {sales?.sellFailed ? ` (с ошибкой: ${sales.sellFailed})` : ''} · poll:{' '}
               {sales?.lastPollAt ? new Date(sales.lastPollAt).toLocaleString('ru-RU') : '—'}
+            </p>
+            <p className="text-xs text-slate-500">
+              Начислено по карте за 24ч: чеков {sales?.loyalty?.ops ?? 0}, стаканов {sales?.loyalty?.cups ?? 0}
             </p>
             {(sales?.lines || []).map((l, i) => (
               <div key={i} className="bg-white rounded-xl p-3 text-sm shadow-sm">
@@ -1038,6 +1079,23 @@ export default function AdminPage() {
               </div>
             ))}
             {!sales?.lines?.length && <p className="text-sm text-slate-500">Нет строк за сутки.</p>}
+            <h3 className="font-semibold text-sm pt-2">Последние начисления по картам</h3>
+            {ops.map((o) => (
+              <div key={`${o.storeUuid}-${o.docId}-${o.createdAt}`} className="bg-white rounded-xl p-3 text-sm shadow-sm">
+                <div className="flex justify-between gap-2">
+                  <span>
+                    Карта {o.cardCode ? o.cardCode.padStart(4, '0') : '—'} · {o.kind === 'PAYBACK' ? 'возврат' : 'продажа'}
+                  </span>
+                  <span className="font-medium">{o.kind === 'PAYBACK' ? '−' : '+'}{o.cups ?? 0} ст.</span>
+                </div>
+                <div className="text-xs text-slate-500">
+                  {new Date(o.createdAt).toLocaleString('ru-RU')} · чек {o.docId}… · {o.resultRub ?? 0} ₽
+                  {o.free ? ` · подарок ${o.free}` : ''}
+                  {o.cashbackKopecks ? ` · кэшбэк −${Math.round(o.cashbackKopecks / 100)} ₽` : ''}
+                </div>
+              </div>
+            ))}
+            {!ops.length && <p className="text-sm text-slate-500">Начислений пока нет. Если чеки с картой были — проверьте у товаров «Считается стаканом» и вкладку «Логи».</p>}
             <button className="border rounded-lg py-2 w-full" onClick={() => void loadSales()}>
               Обновить
             </button>
