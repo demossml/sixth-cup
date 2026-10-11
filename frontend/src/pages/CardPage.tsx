@@ -4,7 +4,7 @@ import Qr from '../components/Qr'
 import { useApp } from '../lib/app'
 import { activeVouchers } from '../lib/proof'
 import { formatRub } from '../lib/money'
-import { Gift, RefreshCw, Ticket, Users, Wallet, Wifi, WifiOff } from '../lib/icons'
+import { Coffee, Gift, RefreshCw, Ticket, Users, Wallet, Wifi, WifiOff } from '../lib/icons'
 
 /**
  * Главный экран: QR кассиру виден сразу (0 лишних тапов).
@@ -91,26 +91,44 @@ export default function CardPage() {
           </button>
         </div>
 
-        {/* Прогресс — одна строка, не вытесняет QR */}
-        <div className="mt-3 flex items-center gap-3">
-          <div className="flex gap-1.5 flex-1" aria-label={`Прогресс ${paidProgress} из ${N}`}>
-            {Array.from({ length: N }, (_, i) => (
-              <span
-                key={i}
-                className={`h-2.5 flex-1 rounded-full ${i < paidProgress ? 'bg-white' : 'bg-white/25'}`}
-              />
-            ))}
-            <span
-              className={`h-2.5 w-2.5 rounded-full shrink-0 ${freeLeft > 0 ? 'bg-orange' : 'bg-white/25'}`}
-              title="Подарок"
-            />
-          </div>
-          <div className="text-right shrink-0">
-            <div className="text-xl font-bold tabular-nums leading-none">{paidProgress}/{N}</div>
-            <div className="text-[10px] text-white/80">
-              {freeLeft > 0 ? `Подарок ×${freeLeft}` : left > 0 ? `ещё ${left}` : 'цикл'}
+        {/* Кружки-штампы: сколько куплено и сколько ещё до подарка */}
+        <div className="mt-4" aria-label={`Прогресс ${paidProgress} из ${N}`}>
+          <div className="flex items-end justify-between gap-1">
+            {Array.from({ length: N }, (_, i) => {
+              const filled = i < paidProgress
+              return (
+                <div key={i} className="flex flex-col items-center gap-1 flex-1 min-w-0">
+                  <div
+                    className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                      filled ? 'bg-white text-brand' : 'bg-white/15 text-white/45 border border-white/30'
+                    }`}
+                  >
+                    <Coffee size={20} strokeWidth={filled ? 2.25 : 1.75} />
+                  </div>
+                  <span className={`text-[10px] ${filled ? 'text-white' : 'text-white/50'}`}>{i + 1}</span>
+                </div>
+              )
+            })}
+            <div className="flex flex-col items-center gap-1 flex-1 min-w-0">
+              <div
+                className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                  freeLeft > 0
+                    ? 'bg-accent-orange text-white'
+                    : 'bg-white/15 text-white/45 border border-dashed border-white/40'
+                }`}
+              >
+                <Gift size={18} strokeWidth={2} />
+              </div>
+              <span className="text-[10px] text-white/80">бесплатно</span>
             </div>
           </div>
+          <p className="mt-2.5 text-sm text-white font-medium text-center">
+            {freeLeft > 0
+              ? `Есть подарок: ${freeLeft} ${freeLeft === 1 ? 'напиток' : 'напитка'} — скажите бариста`
+              : left > 0
+                ? `Ещё ${left} ${left === 1 ? 'стакан' : left < 5 ? 'стакана' : 'стаканов'} до бесплатного`
+                : `Купите ${N} ${N === 1 ? 'стакан' : 'стаканов'} — следующий в подарок`}
+          </p>
         </div>
       </div>
 
