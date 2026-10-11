@@ -4,7 +4,7 @@ import Qr from '../components/Qr'
 import { useApp } from '../lib/app'
 import { activeVouchers } from '../lib/proof'
 import { formatRub } from '../lib/money'
-import { AppIcon, Gift, RefreshCw, Ticket, Users, Wallet, Wifi, WifiOff } from '../lib/icons'
+import { AppIcon, Gift, RefreshCw, Ticket, Users, Wallet, Wifi, WifiOff, QrCode } from '../lib/icons'
 
 /**
  * Главный экран карты.
@@ -19,7 +19,9 @@ export default function CardPage() {
 
   // Всё состояние берётся с сервера (me); QR — только удостоверение клиента.
   const N = me?.cupsForFree ?? dir?.cupsForFree ?? 5
-  const online = Date.now() - lastSync < 5 * 60_000
+  const hasNetwork = typeof navigator === 'undefined' ? true : navigator.onLine
+  const stale = !!lastSync && Date.now() - lastSync >= 5 * 60_000
+  const online = hasNetwork
   const paidProgress = me?.cupsTowardFree ?? 0
   const freeLeft = me?.freeAvailable ?? 0
   const left = Math.max(0, N - paidProgress)
@@ -49,12 +51,12 @@ export default function CardPage() {
       <div className="bg-brand text-white px-4 pt-10 pb-5 rounded-b-3xl">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <p className="text-white/70 text-xs">Моя карта</p>
-            <h1 className="text-xl font-bold">Карта лояльности</h1>
+            <p className="text-white/75 text-xs">6.7 Coffee</p>
+            <h1 className="text-xl font-bold">Моя карта</h1>
           </div>
           <span className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full ${online ? 'bg-white/20' : 'bg-black/20'}`}>
             {syncing ? <RefreshCw size={12} className="animate-spin" /> : online ? <Wifi size={12} /> : <WifiOff size={12} />}
-            {syncing ? 'синк…' : online ? 'на связи' : 'офлайн'}
+            {syncing ? 'синк…' : !online ? 'нет сети' : stale ? 'давно не обновлялась' : 'на связи'}
           </span>
         </div>
 
@@ -99,6 +101,8 @@ export default function CardPage() {
       </div>
 
       <div className="px-4 -mt-2 space-y-2">
+        <button type="button" onClick={() => nav('/card-qr')} className="btn w-full min-h-12 flex items-center justify-center gap-2 text-base"><QrCode size={21}/>Показать QR на кассе</button>
+        {stale && <p className="text-xs text-ink-secondary px-1">Данные могут быть устаревшими · последняя синхронизация {new Date(lastSync).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}</p>}
         {/* Пригласить друга — активный баннер */}
         <button
           type="button"
@@ -139,21 +143,6 @@ export default function CardPage() {
           </div>
         ) : (
           <>
-            {/* QR кассиру — сразу, как в рабочей версии */}
-            <div className="card text-center">
-              <p className="text-sm font-medium text-ink mb-1">QR карты — покажите кассиру</p>
-              <p className="text-xs text-ink-tertiary mb-1">Только для кассы. Чтобы пригласить друга, откройте «Пригласить друга» выше.</p>
-              <Qr value={best.token} alt="QR карты для кассы" />
-              {me?.cardCode && (
-                <div className="mt-3 rounded-xl bg-surface px-3 py-2">
-                  <div className="text-xs text-ink-tertiary">Номер карты — если QR не сканируется</div>
-                  <div className="mt-0.5 text-3xl font-bold tracking-[0.2em] tabular-nums text-ink">
-                    {me.cardCode.padStart(4, '0')}
-                  </div>
-                </div>
-              )}
-            </div>
-
             {freeLeft > 0 && (
               <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 text-center text-sm font-semibold text-amber-800">
                 Следующий стакан бесплатно · доступно: {freeLeft}
@@ -166,7 +155,7 @@ export default function CardPage() {
               </div>
               <div>
                 <div className="text-sm font-semibold text-ink">Кэшбэк {cashbackText} ₽</div>
-                <div className="text-xs text-ink-secondary">Можно списать на кассе</div>
+                <div className="text-xs text-ink-secondary">Списать можно у бариста на кассе</div>
               </div>
             </div>
 

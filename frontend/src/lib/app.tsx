@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useState, useRef, type ReactNode } from 'react'
 import { getJwt } from '../api'
 import { computeBest, syncCustomer, type Best } from './customer'
 import { kvGet } from './db'
@@ -22,6 +22,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null)
   const [best, setBest] = useState<Best | null>(null)
   const [syncing, setSyncing] = useState(false)
+  const syncFlight = useRef<Promise<string> | null>(null)
   const [lastSync, setLastSync] = useState(Number(localStorage.getItem('sc-last-sync') ?? 0))
 
   const reload = useCallback(async () => {
@@ -34,12 +35,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const sync = useCallback(async () => {
-    if (!getJwt()) { await refreshDirectory(); await reload(); return 'noauth' }
-    setSyncing(true)
-    const r = await syncCustomer()
-    setSyncing(false)
-    await reload()
-    return r
+    if (syncFlight.current) return syncFlight.current
+    const task = (async () => {
+      try {
+        if (!getJwt()) { await refreshDirectory(); await reload(); return 'noauth' }
+        setSyncing(true)
+        const r = await syncCustomer(); await reload(); return r
+      } finally { setSyncing(false); syncFlight.current = null }
+    })()
+    syncFlight.current = task
+    return task
   }, [reload])
 
   useEffect(() => {

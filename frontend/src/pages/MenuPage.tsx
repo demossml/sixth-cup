@@ -1,10 +1,13 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useApp } from '../lib/app'
 import { AppIcon, Store } from '../lib/icons'
 
 export default function MenuPage() {
   const { dir } = useApp()
   const [catId, setCatId] = useState<number | 'all'>('all')
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => { setNow(Date.now()) }, [dir?.generatedAt])
+  const stale = !!dir?.generatedAt && now - dir.generatedAt > 5 * 60_000
 
   const categories = dir?.categories ?? []
   const products = useMemo(() => {
@@ -29,7 +32,7 @@ export default function MenuPage() {
         <h1 className="text-xl font-bold text-ink">Меню</h1>
         <p className="text-ink-secondary text-sm mt-1">
           Заказ и оплата у бариста. Карта — для скидок и стаканов.
-        </p>
+        </p>{dir.generatedAt > 0 && <p className="text-xs text-ink-tertiary mt-2">{stale ? 'Каталог может быть устаревшим · данные на ' : 'Данные каталога на '}{new Date(dir.generatedAt).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}</p>}
       </div>
 
       <div className="px-4 pt-3">

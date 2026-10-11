@@ -7,9 +7,12 @@ import OnboardingPage from './pages/OnboardingPage'
 import ProfilePage from './pages/ProfilePage'
 import PromosPage from './pages/PromosPage'
 import InvitePage from './pages/InvitePage'
+import MorePage from './pages/MorePage'
+import HistoryPage from './pages/HistoryPage'
+import CardQrPage from './pages/CardQrPage'
 import { ensureGuest } from './lib/ensureGuest'
 import InstallBanner from './components/InstallBanner'
-import { Home, LayoutGrid, Megaphone, User } from './lib/icons'
+import { Home, LayoutGrid, MoreHorizontal } from './lib/icons'
 
 function RequireSession() {
   const [ready, setReady] = useState(!!getJwt())
@@ -84,17 +87,8 @@ function Layout() {
             Меню
           </>)}
         </NavLink>
-        <NavLink to="/promos" className={({ isActive }) => `flex-1 flex flex-col items-center gap-0.5 py-2.5 text-[11px] no-underline ${isActive ? 'text-brand font-semibold' : 'text-ink-tertiary'}`}>
-          {({ isActive }) => (<>
-            <Megaphone size={22} strokeWidth={isActive ? 2.25 : 1.75} />
-            Акции
-          </>)}
-        </NavLink>
-        <NavLink to="/me" className={({ isActive }) => `flex-1 flex flex-col items-center gap-0.5 py-2.5 text-[11px] no-underline ${isActive ? 'text-brand font-semibold' : 'text-ink-tertiary'}`}>
-          {({ isActive }) => (<>
-            <User size={22} strokeWidth={isActive ? 2.25 : 1.75} />
-            Профиль
-          </>)}
+        <NavLink to="/more" className={({ isActive }) => `flex-1 flex flex-col items-center gap-1 py-2.5 text-xs no-underline ${isActive ? 'text-brand font-semibold' : 'text-ink-tertiary'}`}>
+          {({ isActive }) => (<><MoreHorizontal size={22} strokeWidth={isActive ? 2.25 : 1.75} />Ещё</>)}
         </NavLink>
       </nav>
     </div>
@@ -112,6 +106,9 @@ export default function App() {
           <Route path="/promos" element={<PromosPage />} />
           <Route path="/me" element={<ProfilePage />} />
           <Route path="/invite" element={<InvitePage />} />
+          <Route path="/more" element={<MorePage />} />
+          <Route path="/history" element={<HistoryPage />} />
+          <Route path="/card-qr" element={<CardQrPage />} />
         </Route>
       </Route>
       <Route path="/login" element={<Navigate to="/" replace />} />

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import {
   dismissInstallBanner,
   isDismissed,
@@ -14,6 +15,7 @@ import {
  * Не показывается в standalone и 14 дней после «Позже».
  */
 export default function InstallBanner() {
+  const location = useLocation()
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null)
   const [iosHint, setIosHint] = useState(false)
   const [visible, setVisible] = useState(false)
@@ -46,7 +48,7 @@ export default function InstallBanner() {
     }
   }, [])
 
-  if (!visible || isStandalone()) return null
+  if (!visible || isStandalone() || location.pathname === '/card-qr') return null
 
   async function install() {
     if (!deferred) {
