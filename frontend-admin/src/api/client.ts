@@ -1,34 +1,64 @@
-const TOKEN_KEY = 'admin_token'
+/** One place that talks to /api/admin. The token lives in localStorage under the same key as the legacy admin. */
+const API = (import.meta as any).env?.VITE_API_URL ?? ''
+const KEY = 'admin_token'
 
-export function getAdminToken() {
-  return localStorage.getItem(TOKEN_KEY) ?? ''
-}
-export function setAdminToken(t: string) {
-  localStorage.setItem(TOKEN_KEY, t)
-}
-export function clearAdminToken() {
-  localStorage.removeItem(TOKEN_KEY)
+export const tokenStore = {
+  get(): string {
+    try { return localStorage.getItem(KEY) || '' } catch { return '' }
+  },
+  set(v: string) {
+    try { localStorage.setItem(KEY, v) } catch { /* private mode: token lives only until reload */ }
+  },
+  clear() {
+    try { localStorage.removeItem(KEY) } catch { /* ignore */ }
+  },
 }
 
-export async function adminFetch<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers)
-  headers.set('X-Admin-Token', getAdminToken())
-  if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
-  const res = await fetch(`/api/admin${path}`, { ...init, headers })
-  if (res.status === 403) {
-    clearAdminToken()
-    throw new Error('Forbidden')
+export class ApiError extends Error {
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.status = status
   }
+}
+
+let onUnauthorized: (() => void) | null = null
+export function setUnauthorizedHandler(fn: (() => void) | null) {
+  onUnauthorized = fn
+}
+
+type Init = { method?: string; body?: unknown; signal?: AbortSignal }
+
+async function raw(path: string, init: Init = {}): Promise<Response> {
+  const res = await fetch(`${API}/api/admin${path}`, {
+    method: init.method ?? 'GET',
+    signal: init.signal,
+    headers: { 'Content-Type': 'application/json', 'X-Admin-Token': tokenStore.get() },
+    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+  })
   if (!res.ok) {
-    let msg = res.statusText
-    try {
-      const j = await res.json()
-      msg = (j as any).error ?? msg
-    } catch { /* */ }
-    throw new Error(msg)
+    const err = (await res.json().catch(() => ({}))) as { error?: string }
+    const message = err.error || res.statusText || `Ошибка ${res.status}`
+    // Only a rejected token logs the user out; other 403s (e.g. "reset disabled") are ordinary errors.
+    if (res.status === 403 && message === 'Forbidden') onUnauthorized?.()
+    throw new ApiError(message, res.status)
   }
-  if (res.headers.get('content-type')?.includes('text/csv')) {
-    return (await res.text()) as T
-  }
-  return res.json() as Promise<T>
+  return res
+}
+
+export async function api<T>(path: string, init?: Init): Promise<T> {
+  return (await raw(path, init)).json() as Promise<T>
+}
+
+/** Download a file endpoint (CSV) with the token header, then hand it to the browser. */
+export async function download(path: string, filename: string) {
+  const blob = await (await raw(path)).blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }

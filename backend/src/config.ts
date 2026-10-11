@@ -7,12 +7,13 @@ export const config = {
   isDev,
   jwtSecret: process.env.JWT_SECRET ?? 'dev-secret-change-me',
   adminToken: process.env.ADMIN_TOKEN ?? 'dev-admin',
-  adminAllowReset: process.env.ADMIN_ALLOW_RESET === '1' || process.env.ADMIN_ALLOW_RESET === 'true',
   dbPath: process.env.DB_PATH ?? './data/sixth-cup.db',
   keysPath: process.env.KEYS_PATH ?? './data/keys.json',
   uploadsDir: process.env.UPLOADS_DIR ?? resolve('./data/uploads'),
   publicBaseUrl: process.env.PUBLIC_BASE_URL ?? '',
   adminHost: process.env.ADMIN_HOST ?? '',
+  /** POST /api/admin/reset. Defaults to allowed outside production; production must opt in with ADMIN_ALLOW_RESET=1. */
+  adminAllowReset: process.env.ADMIN_ALLOW_RESET != null ? process.env.ADMIN_ALLOW_RESET === '1' : isDev,
   cupsForFree: Number(process.env.CUPS_FOR_FREE ?? 5),
   cardQrTtlSec: Number(process.env.CARD_QR_TTL_SEC ?? 30 * 86400),
   /** Time a till reservation holds a bonus before it is released. */

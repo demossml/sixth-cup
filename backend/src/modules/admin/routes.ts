@@ -1,4 +1,8 @@
 import { adminAssignments } from './assignments'
+import { adminConsole } from './console'
+import { auditMiddleware } from './audit'
+import { enqueueProductSync } from './enqueue'
+import { timingSafeEqual } from 'node:crypto'
 import { looksLikeDrink } from '../loyalty/rules'
 import { randomBytes } from 'node:crypto'
 import { Hono } from 'hono'
@@ -11,39 +15,27 @@ import { bad } from '../../lib/errors'
 import { grantVoucher } from '../vouchers/service'
 import { resetLoyaltyData, resetCatalogData } from '../../db/seed'
 import { adminEvotorCatalog } from './evotorCatalog'
-import { adminRedesign } from './redesign'
 import { queryLogs, log, LOG_SOURCES, LOG_LEVELS, type LogLevel, type LogSource } from '../../lib/logBuffer'
 import { ProductPushService } from '../../integrations/evotor/sync/ProductPushService'
 
+/** Constant-time token comparison (no early exit on the first differing byte). */
+function tokenOk(given: string | undefined): boolean {
+  if (typeof given !== 'string') return false
+  const a = Buffer.from(given)
+  const b = Buffer.from(config.adminToken)
+  return a.length === b.length && timingSafeEqual(a, b)
+}
+
 const adminAuth = createMiddleware(async (c, next) => {
-  if (c.req.header('X-Admin-Token') !== config.adminToken) throw bad('Forbidden', 403)
+  if (!tokenOk(c.req.header('X-Admin-Token'))) throw bad('Forbidden', 403)
   await next()
 })
 
 const taxRegimeZ = z.enum(TAX_REGIMES)
 
-function enqueueProductSync(productIds: number[]) {
-  const ids = [...new Set(productIds.filter((id) => Number.isInteger(id) && id > 0))]
-  if (!ids.length) return
-  // Outbox only for stores with sync_enabled=1
-  const cols = db.prepare(`PRAGMA table_info(evotor_stores)`).all() as { name: string }[]
-  if (!cols.some((c) => c.name === 'sync_enabled')) {
-    db.exec(`ALTER TABLE evotor_stores ADD COLUMN sync_enabled INTEGER NOT NULL DEFAULT 0`)
-  }
-  const stores = db.prepare('SELECT store_uuid FROM evotor_stores WHERE COALESCE(sync_enabled,0)=1').all() as { store_uuid: string }[]
-  for (const store of stores) {
-    for (const productId of ids) {
-      const existing = db.prepare(`SELECT id FROM evotor_outbox WHERE store_uuid=? AND entity='PRODUCT' AND entity_key=? AND status='PENDING' LIMIT 1`)
-        .get(store.store_uuid, String(productId)) as { id: number } | undefined
-      if (existing) db.prepare(`UPDATE evotor_outbox SET next_at=?,last_error=NULL WHERE id=?`).run(Date.now(), existing.id)
-      else db.prepare(`INSERT INTO evotor_outbox(store_uuid,entity,entity_key,op,priority,status,attempts,next_at) VALUES(?,?,?,?,5,'PENDING',0,?)`)
-        .run(store.store_uuid, 'PRODUCT', String(productId), 'UPSERT', Date.now())
-    }
-  }
-}
-
 export const adminRoutes = new Hono()
   .use('*', adminAuth)
+  .use('*', auditMiddleware)
 
   /**
    * GET /api/admin/logs?lines=50&source=all|server|client|device&level=all|error|warn|info
@@ -90,7 +82,7 @@ export const adminRoutes = new Hono()
     mode: z.enum(['loyalty', 'catalog', 'full']),
     confirm: z.literal(true),
   })), (c) => {
-    if (!config.adminAllowReset) throw bad('Reset disabled (ADMIN_ALLOW_RESET≠1)', 403)
+    if (!config.adminAllowReset) throw bad('Сброс данных отключён на этом сервере (ADMIN_ALLOW_RESET=0)', 403)
     const { mode } = c.req.valid('json')
     if (mode === 'loyalty' || mode === 'full') resetLoyaltyData()
     if (mode === 'catalog' || mode === 'full') resetCatalogData()
@@ -357,7 +349,7 @@ export const adminRoutes = new Hono()
       ORDER BY p.sort_order, p.id
     `).all() as Record<string, unknown>[]
     const links = db.prepare(`
-      SELECT product_id AS productId, store_uuid AS storeUuid, evotor_uuid AS evotorUuid,
+      SELECT product_id AS productId, store_uuid AS storeUuid, evotor_uuid AS evotorUuid, COALESCE(enabled,1) AS enabled,
              last_pushed_at AS lastPushedAt, last_pulled_at AS lastPulledAt, last_error AS lastError
       FROM product_store_links ORDER BY store_uuid, product_id
     `).all() as Record<string, unknown>[]
@@ -610,5 +602,5 @@ export const adminRoutes = new Hono()
   // Evotor catalog admin (stores from cloud + product push, no local device enroll)
   .route('/', adminEvotorCatalog)
 
-adminRoutes.route('/', adminRedesign)
 adminRoutes.route('/', adminAssignments)
+adminRoutes.route('/', adminConsole)

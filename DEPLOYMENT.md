@@ -35,6 +35,11 @@ DB_PATH=./data/sixth-cup.db
 UPLOADS_DIR=./data/uploads
 # опционально точный host админки:
 ADMIN_HOST=admin.example.com
+# сброс данных из админки: в production по умолчанию ВЫКЛЮЧЕН; включать только осознанно
+# ADMIN_ALLOW_RESET=1
+# пороги статуса кассы, минуты с последнего успешного опроса (по умолчанию 5 / 30)
+# EVOTOR_HEALTH_WARN_MIN=5
+# EVOTOR_HEALTH_CRIT_MIN=30
 ```
 
 Backend по заголовку `Host`:

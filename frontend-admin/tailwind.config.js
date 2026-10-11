@@ -25,6 +25,7 @@ export default {
         },
         line: '#E8E8E8',
         ok: '#2B7D5B',
+        warn: '#B26A00',
         bad: '#E53935',
       },
       fontFamily: {
