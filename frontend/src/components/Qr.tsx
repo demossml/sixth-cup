@@ -1,10 +1,38 @@
 import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
 
-export default function Qr({ value, alt = 'QR-код' }: { value: string; alt?: string }) {
+/** Тёмный QR на светлом поле; size — пиксели канваса (читаемость у кассы). */
+export default function Qr({
+  value,
+  alt = 'QR-код',
+  size = 360,
+}: {
+  value: string
+  alt?: string
+  size?: number
+}) {
   const [src, setSrc] = useState('')
   useEffect(() => {
-    QRCode.toDataURL(value, { errorCorrectionLevel: 'L', margin: 2, width: 360 }).then(setSrc)
-  }, [value])
-  return src ? <img src={src} alt={alt} className="w-full max-w-[340px] mx-auto my-2 block" style={{ imageRendering: 'pixelated' }} /> : null
+    let cancelled = false
+    QRCode.toDataURL(value, {
+      errorCorrectionLevel: 'M',
+      margin: 2,
+      width: size,
+      color: { dark: '#111111', light: '#FFFFFF' },
+    }).then((url) => {
+      if (!cancelled) setSrc(url)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [value, size])
+  if (!src) return <div className="mx-auto bg-line/40 rounded-lg animate-pulse" style={{ width: Math.min(size, 340), height: Math.min(size, 340) }} aria-hidden />
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className="mx-auto block bg-white"
+      style={{ width: '100%', maxWidth: Math.min(size, 340), imageRendering: 'pixelated' }}
+    />
+  )
 }

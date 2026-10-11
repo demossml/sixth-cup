@@ -1,3 +1,13 @@
+## Patch QR-first (после pwa-redesign-fixed)
+
+- `frontend/src/pages/CardPage.tsx` — QR proof сразу на home, прогресс компактный.
+- `frontend/src/components/Qr.tsx` — size/alt, errorCorrection M, светлый фон.
+- `frontend/src/pages/CardQrPage.tsx` — только увеличение на весь экран.
+- `docs/PWA-QR-FIRST.md`
+
+Тапов до QR на кассе: **0** (после появления карты). Fullscreen — по желанию.
+
+
 # REPORT — PWA 6.7 Coffee redesign
 
 ## Изменённые пути
