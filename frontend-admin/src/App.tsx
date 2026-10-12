@@ -15,6 +15,8 @@ import Menu from './pages/Menu'
 import Cash from './pages/Cash'
 import Marketing from './pages/Marketing'
 import Referrals from './pages/Referrals'
+import Compare from './pages/Compare'
+import BusinessEvents from './pages/BusinessEvents'
 import System from './pages/System'
 
 
@@ -80,6 +82,8 @@ export default function App() {
             <Route path="cash" element={<Cash />} />
             <Route path="marketing" element={<Marketing />} />
             <Route path="referrals" element={<Referrals />} />
+            <Route path="compare" element={<Compare />} />
+            <Route path="events" element={<BusinessEvents />} />
             <Route path="system" element={<System />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

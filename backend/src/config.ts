@@ -13,6 +13,8 @@ export const config = {
   publicBaseUrl: process.env.PUBLIC_BASE_URL ?? '',
   adminHost: process.env.ADMIN_HOST ?? '',
   /** POST /api/admin/reset. Defaults to allowed outside production; production must opt in with ADMIN_ALLOW_RESET=1. */
+  /** Optional second token: read-only admin (GET only). */
+  adminViewerToken: process.env.ADMIN_VIEWER_TOKEN || '',
   adminAllowReset: process.env.ADMIN_ALLOW_RESET != null ? process.env.ADMIN_ALLOW_RESET === '1' : isDev,
   cupsForFree: Number(process.env.CUPS_FOR_FREE ?? 5),
   cardQrTtlSec: Number(process.env.CARD_QR_TTL_SEC ?? 30 * 86400),

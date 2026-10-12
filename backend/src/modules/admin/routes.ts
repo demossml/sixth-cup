@@ -18,24 +18,47 @@ import { adminEvotorCatalog } from './evotorCatalog'
 import { queryLogs, log, LOG_SOURCES, LOG_LEVELS, type LogLevel, type LogSource } from '../../lib/logBuffer'
 import { ProductPushService } from '../../integrations/evotor/sync/ProductPushService'
 
-/** Constant-time token comparison (no early exit on the first differing byte). */
-function tokenOk(given: string | undefined): boolean {
-  if (typeof given !== 'string') return false
+/** Constant-time token comparison. */
+function safeEq(given: string, expected: string): boolean {
+  if (!expected) return false
   const a = Buffer.from(given)
-  const b = Buffer.from(config.adminToken)
+  const b = Buffer.from(expected)
   return a.length === b.length && timingSafeEqual(a, b)
 }
 
+type AdminRole = 'owner' | 'viewer'
+
+function resolveAdminRole(given: string | undefined): AdminRole | null {
+  if (typeof given !== 'string') return null
+  if (safeEq(given, config.adminToken)) return 'owner'
+  if (config.adminViewerToken && safeEq(given, config.adminViewerToken)) return 'viewer'
+  return null
+}
+
 const adminAuth = createMiddleware(async (c, next) => {
-  if (!tokenOk(c.req.header('X-Admin-Token'))) throw bad('Forbidden', 403)
+  const role = resolveAdminRole(c.req.header('X-Admin-Token'))
+  if (!role) throw bad('Forbidden', 403)
+  c.set('adminRole' as never, role as never)
+  // Viewer: only safe methods
+  if (role === 'viewer' && !['GET', 'HEAD', 'OPTIONS'].includes(c.req.method)) {
+    throw bad('Read-only admin token', 403)
+  }
   await next()
 })
+
+/** Who am I (for UI). */
+
 
 const taxRegimeZ = z.enum(TAX_REGIMES)
 
 export const adminRoutes = new Hono()
   .use('*', adminAuth)
   .use('*', auditMiddleware)
+
+  .get('/me', (c) => {
+    const role = (c as { get: (k: string) => string }).get('adminRole') || 'owner'
+    return c.json({ role, canWrite: role === 'owner', canReset: role === 'owner' && config.adminAllowReset })
+  })
 
   /**
    * GET /api/admin/logs?lines=50&source=all|server|client|device&level=all|error|warn|info

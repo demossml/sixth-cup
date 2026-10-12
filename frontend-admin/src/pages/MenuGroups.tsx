@@ -24,6 +24,7 @@ function Groups({ products }: { products: Product[] }) {
   const { data, error, loading, reload } = useApi<{ categories: Category[] }>('/categories')
   const save = useSave(reload)
   const [edit, setEdit] = useState<Partial<Category> | null>(null)
+  const [preview, setPreview] = useState<{ scheme: { id: number; name: string }; items: any[]; products: any[] } | null>(null)
   const [del, setDel] = useState<Category | null>(null)
   const used = (id: number) => products.filter((p) => p.categoryId === id).length
   if (loading && !data) return <Spinner />
@@ -67,6 +68,7 @@ function Modifiers({ schemes }: { schemes: Scheme[] }) {
   const { data, error, loading, reload } = useApi<{ modifiers: Modifier[] }>('/modifiers')
   const save = useSave(reload)
   const [edit, setEdit] = useState<Partial<Modifier> | null>(null)
+  const [preview, setPreview] = useState<{ scheme: { id: number; name: string }; items: any[]; products: any[] } | null>(null)
   const [del, setDel] = useState<Modifier | null>(null)
   const inSchemes = (id: number) => schemes.filter((s) => s.items.some((i) => i.modifierId === id)).length
   if (loading && !data) return <Spinner />
@@ -104,10 +106,12 @@ function Modifiers({ schemes }: { schemes: Scheme[] }) {
 
 /* ───────── schemes ───────── */
 function Schemes({ products }: { products: Product[] }) {
+  const toast = useToast()
   const { data, error, loading, reload } = useApi<{ schemes: Scheme[] }>('/modifier-schemes')
   const mods = useApi<{ modifiers: Modifier[] }>('/modifiers')
   const save = useSave(reload)
   const [edit, setEdit] = useState<{ id?: number; name: string; modifierIds: number[]; copyFromId?: number } | null>(null)
+  const [preview, setPreview] = useState<{ scheme: { id: number; name: string }; items: any[]; products: any[] } | null>(null)
   const [del, setDel] = useState<Scheme | null>(null)
   const used = (id: number) => products.filter((p) => p.modifierSchemeId === id).length
   if (loading && !data) return <Spinner />
@@ -116,7 +120,12 @@ function Schemes({ products }: { products: Product[] }) {
     { key: 'name', header: 'Схема', primary: true, render: (s) => s.name },
     { key: 'm', header: 'Добавок', align: 'right', render: (s) => s.items.length },
     { key: 'p', header: 'Товаров', align: 'right', render: (s) => used(s.id) },
-    { key: 'x', header: '', align: 'right', render: (s) => <span onClick={(e) => e.stopPropagation()}><Button size="sm" variant="ghost" icon={<Trash2 size={14} />} aria-label={`Удалить ${s.name}`} onClick={() => setDel(s)} /></span> },
+    { key: 'x', header: '', align: 'right', render: (s) => <span className="inline-flex gap-1" onClick={(e) => e.stopPropagation()}>
+      <Button size="sm" variant="ghost" onClick={async () => {
+        try { setPreview(await api(`/modifier-schemes/${s.id}/preview`)) } catch (e) { toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad') }
+      }}>Просмотр</Button>
+      <Button size="sm" variant="ghost" icon={<Trash2 size={14} />} aria-label={`Удалить ${s.name}`} onClick={() => setDel(s)} />
+    </span> },
   ]
   return (
     <>
@@ -141,7 +150,34 @@ function Schemes({ products }: { products: Product[] }) {
         onConfirm={async () => { if (del) await save(() => api(`/modifier-schemes/${del.id}`, { method: 'DELETE' }), 'Схема удалена'); setDel(null) }}>
         «{del?.name}» будет удалена. {del && used(del.id) ? <b>У товаров ({used(del.id)}) пропадут добавки.</b> : 'Ни один товар её не использует.'}
       </ConfirmDialog>
-    </>
+    
+      <Drawer open={!!preview} onClose={() => setPreview(null)} title={preview ? `Схема: ${preview.scheme.name}` : ''}>
+        {preview && (
+          <div className="space-y-3 text-sm">
+            <div>
+              <div className="font-semibold mb-1">Добавки</div>
+              {!preview.items.length ? <p className="text-ink-secondary">Пусто</p> : (
+                <ul className="space-y-1">{preview.items.map((it: any) => (
+                  <li key={it.id}>{it.name} · {it.price} ₽ {it.required ? '(обяз.)' : ''} max {it.maxCount}</li>
+                ))}</ul>
+              )}
+            </div>
+            <div>
+              <div className="font-semibold mb-1">Товары</div>
+              {!preview.products.length ? <p className="text-ink-secondary">Не привязана</p> : (
+                <ul className="space-y-1">{preview.products.map((p: any) => <li key={p.id}>{p.name}</li>)}</ul>
+              )}
+            </div>
+            <Button onClick={async () => {
+              await api('/modifier-schemes', { method: 'POST', body: { name: preview.scheme.name + ' (копия)', copyFromSchemeId: preview.scheme.id, modifierIds: [] } })
+              setPreview(null)
+              // parent reload via location
+              window.location.reload()
+            }}>Копировать схему</Button>
+          </div>
+        )}
+      </Drawer>
+</>
   )
 }
 

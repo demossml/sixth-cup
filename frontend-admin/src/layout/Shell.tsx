@@ -18,6 +18,8 @@ const MORE: NavItem[] = [
   { to: '/cash', label: 'Касса', icon: <Store size={20} /> },
   { to: '/marketing', label: 'Контент', icon: <Gift size={20} /> },
   { to: '/referrals', label: 'Рефералка', icon: <Gift size={20} /> },
+  { to: '/compare', label: 'Сравнение', icon: <Gift size={20} /> },
+  { to: '/events', label: 'События', icon: <Gift size={20} /> },
   { to: '/system', label: 'Система', icon: <Settings size={20} /> },
   { to: '/legacy', label: 'Старая версия', icon: <History size={20} /> },
 ]
