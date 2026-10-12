@@ -111,6 +111,151 @@ export const deviceRoutes = new Hono<DeviceEnv>()
       })
     })
 
+
+  /** Каталог 6.7 для кассы: топинги, рецепт, фото, upsell. Тот же proxy-канал, что resolve. */
+  .get('/catalog',
+    evotorProxyStrict,
+    (c) => {
+      if (!config.evotorProxyToken) throw bad('proxy_not_configured', 503)
+      const storeUuid = (c.req.header('X-Evotor-Store-Uuid') ?? '').trim()
+      const base = (config.publicBaseUrl || '').replace(/\/+$/, '')
+      const abs = (url: string | null | undefined): string | null => {
+        if (!url) return null
+        if (/^https?:\/\//i.test(url)) return url
+        if (!base) return url
+        return url.startsWith('/') ? `${base}${url}` : `${base}/${url}`
+      }
+
+      type Link = { product_id: number; evotor_uuid: string; store_uuid: string }
+      let links: Link[]
+      if (storeUuid) {
+        links = db.prepare(`
+          SELECT product_id, evotor_uuid, store_uuid FROM product_store_links
+          WHERE store_uuid=? AND evotor_uuid IS NOT NULL AND TRIM(evotor_uuid) != ''
+        `).all(storeUuid) as Link[]
+        // если по магазину пусто — отдать все линки (dev / один магазин)
+        if (!links.length) {
+          links = db.prepare(`
+            SELECT product_id, evotor_uuid, store_uuid FROM product_store_links
+            WHERE evotor_uuid IS NOT NULL AND TRIM(evotor_uuid) != ''
+          `).all() as Link[]
+        }
+      } else {
+        links = db.prepare(`
+          SELECT product_id, evotor_uuid, store_uuid FROM product_store_links
+          WHERE evotor_uuid IS NOT NULL AND TRIM(evotor_uuid) != ''
+        `).all() as Link[]
+      }
+
+      const byProduct = new Map<number, Link[]>()
+      for (const l of links) {
+        const arr = byProduct.get(l.product_id) ?? []
+        arr.push(l)
+        byProduct.set(l.product_id, arr)
+      }
+      const productIds = [...byProduct.keys()]
+      if (!productIds.length) {
+        return c.json({ v: 1, t: Math.floor(Date.now() / 1000), products: [], upsellDefault: [] })
+      }
+
+      const placeholders = productIds.map(() => '?').join(',')
+      const products = db.prepare(`
+        SELECT id, name, price, description, image_url AS imageUrl,
+               recipe_text AS recipe, recipe_cost_rub AS recipeCostRub, recipe_seconds AS recipeSeconds,
+               counts_as_cup AS countsAsCup, free_eligible AS freeEligible,
+               modifier_scheme_id AS schemeId, available
+        FROM products
+        WHERE id IN (${placeholders}) AND available=1
+      `).all(...productIds) as Array<{
+        id: number; name: string; price: number; description: string | null; imageUrl: string | null
+        recipe: string | null; recipeCostRub: number | null; recipeSeconds: number | null
+        countsAsCup: number; freeEligible: number; schemeId: number | null; available: number
+      }>
+
+      const schemeIds = [...new Set(products.map((p) => p.schemeId).filter((x): x is number => x != null))]
+      const toppingsByScheme = new Map<number, Array<{ id: number; name: string; priceRub: number; groupKey: string; maxCount: number }>>()
+      if (schemeIds.length) {
+        const sp = schemeIds.map(() => '?').join(',')
+        const rows = db.prepare(`
+          SELECT i.scheme_id AS schemeId, m.id, m.name, m.price AS priceRub, m.group_key AS groupKey,
+                 COALESCE(i.max_count, 2) AS maxCount
+          FROM modifier_scheme_items i
+          JOIN modifiers m ON m.id = i.modifier_id
+          WHERE i.scheme_id IN (${sp}) AND m.available=1
+          ORDER BY m.sort_order, m.id
+        `).all(...schemeIds) as Array<{ schemeId: number; id: number; name: string; priceRub: number; groupKey: string; maxCount: number }>
+        for (const r of rows) {
+          const arr = toppingsByScheme.get(r.schemeId) ?? []
+          arr.push({ id: r.id, name: r.name, priceRub: r.priceRub, groupKey: r.groupKey || 'extra', maxCount: r.maxCount })
+          toppingsByScheme.set(r.schemeId, arr)
+        }
+      }
+
+      // upsell: товары с #upsell в description или group_key-like — по description tag
+      const upsellCandidates = db.prepare(`
+        SELECT id, name, price, image_url AS imageUrl FROM products
+        WHERE available=1 AND (
+          lower(COALESCE(description,'')) LIKE '%#upsell%'
+          OR lower(COALESCE(name,'')) LIKE '%круассан%'
+        )
+        ORDER BY sort_order, id LIMIT 20
+      `).all() as Array<{ id: number; name: string; price: number; imageUrl: string | null }>
+
+      const out = products.map((p) => {
+        const plinks = byProduct.get(p.id) ?? []
+        const primary = storeUuid ? (plinks.find((l) => l.store_uuid === storeUuid) ?? plinks[0]) : plinks[0]
+        const toppings = p.schemeId != null ? (toppingsByScheme.get(p.schemeId) ?? []) : []
+        const upsell = upsellCandidates
+          .filter((u) => u.id !== p.id)
+          .slice(0, 5)
+          .map((u) => {
+            const ul = byProduct.get(u.id)?.[0]
+            return {
+              productId: u.id,
+              evotorUuid: ul?.evotor_uuid ?? null,
+              name: u.name,
+              priceRub: u.price,
+              imageUrl: abs(u.imageUrl),
+            }
+          })
+        return {
+          productId: p.id,
+          evotorUuid: primary?.evotor_uuid ?? null,
+          name: p.name,
+          priceRub: p.price,
+          imageUrl: abs(p.imageUrl),
+          recipe: p.recipe,
+          recipeCostRub: p.recipeCostRub,
+          recipeSeconds: p.recipeSeconds,
+          countsAsCup: p.countsAsCup === 1,
+          freeEligible: p.freeEligible === 1,
+          schemeId: p.schemeId,
+          toppings,
+          upsell,
+        }
+      }).filter((p) => p.evotorUuid)
+
+      const upsellDefault = upsellCandidates.slice(0, 8).map((u) => {
+        const ul = byProduct.get(u.id)?.[0]
+        return {
+          productId: u.id,
+          evotorUuid: ul?.evotor_uuid ?? null,
+          name: u.name,
+          priceRub: u.price,
+          imageUrl: abs(u.imageUrl),
+        }
+      }).filter((u) => u.evotorUuid)
+
+      log.info('device catalog', { store: shortId(storeUuid || 'any'), n: out.length, toppingsSchemes: schemeIds.length })
+      return c.json({
+        v: 1,
+        t: Math.floor(Date.now() / 1000),
+        products: out,
+        upsellDefault,
+      })
+    })
+
+
   .use('/sync', requireDevice)
   .post('/sync', zValidator('json', z.object({ receipts: z.array(z.string().max(3000)).max(200) })), (c) => {
     const result = applyReceipts(c.req.valid('json').receipts)
