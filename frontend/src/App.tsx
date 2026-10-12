@@ -10,6 +10,7 @@ import InvitePage from './pages/InvitePage'
 import MorePage from './pages/MorePage'
 import HistoryPage from './pages/HistoryPage'
 import StoresPage from './pages/StoresPage'
+import GamePage from './pages/GamePage'
 import CardQrPage from './pages/CardQrPage'
 import { ensureGuest } from './lib/ensureGuest'
 import { useApp } from './lib/app'
@@ -130,6 +131,7 @@ export default function App() {
           <Route path="/more" element={<MorePage />} />
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/stores" element={<StoresPage />} />
+          <Route path="/game" element={<GamePage />} />
           <Route path="/card-qr" element={<CardQrPage />} />
         </Route>
       </Route>
