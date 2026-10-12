@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Qr from '../components/Qr'
 import { useApp } from '../lib/app'
@@ -6,20 +7,21 @@ import { Share2, Users } from '../lib/icons'
 export default function InvitePage() {
   const { me, dir } = useApp()
   const nav = useNavigate()
+  const [copied, setCopied] = useState(false)
   const pct = dir?.referralCashbackPercent ?? 3
   const link = me ? `${location.origin}/?invite=${encodeURIComponent(me.inviteCode)}` : ''
 
   async function share() {
     if (!link) return
     if (navigator.share) {
-      await navigator.share({
+      try { await navigator.share({
         title: '6.7 Coffee',
         text: `Присоединяйся к 6.7 Coffee. Каждый 6-й кофе бесплатно. По этой ссылке ты в программе лояльности.`,
         url: link,
-      })
+      }) } catch { /* пользователь закрыл меню «Поделиться» */ }
     } else {
       await navigator.clipboard?.writeText(link)
-      alert('Ссылка скопирована')
+      setCopied(true)
     }
   }
 
@@ -34,8 +36,8 @@ export default function InvitePage() {
 
   return (
     <div className="pb-8">
-      <div className="bg-brand text-white px-4 pt-10 pb-6 rounded-b-3xl">
-        <button type="button" className="text-white/80 text-sm mb-2" onClick={() => nav(-1)}>← Назад</button>
+      <div className="bg-brand text-white px-4 pt-[max(1.25rem,env(safe-area-inset-top))] pb-6 rounded-b-3xl">
+        <button type="button" className="text-white/90 text-sm mb-2 min-h-11" onClick={() => nav(-1)}>← Назад</button>
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 rounded-2xl bg-white/15 flex items-center justify-center">
             <Users size={24} />
@@ -49,14 +51,17 @@ export default function InvitePage() {
 
       <div className="px-4 pt-4 space-y-4">
         <div className="card text-center">
+          <p className="inline-block text-sm font-bold text-amber-900 bg-amber-100 rounded-lg px-3 py-1.5 mb-2">
+            Не для кассы
+          </p>
           <p className="text-sm font-semibold text-ink mb-1">QR приглашения — покажите другу</p>
-          <p className="text-xs text-amber-800 bg-amber-50 rounded-lg px-2 py-1 mb-1">
-            Это не QR карты. Кассе его показывать не нужно — он нужен только новому клиенту.
+          <p className="text-xs text-ink-secondary mb-1">
+            Это не QR карты: кассе его показывать не нужно. QR для кассы — на главном экране.
           </p>
           <p className="text-xs text-ink-secondary mb-2">
             Пусть отсканирует камерой телефона — откроется приложение и привяжется к вашему приглашению.
           </p>
-          <Qr value={link} alt="QR приглашения друга" />
+          <Qr value={link} size={280} alt="QR приглашения друга" />
           <p className="text-[11px] text-ink-tertiary break-all mt-1 px-2">{link}</p>
         </div>
 
@@ -71,9 +76,10 @@ export default function InvitePage() {
           </ol>
         </div>
 
-        <button type="button" className="btn flex items-center justify-center gap-2" onClick={() => void share()}>
+        <button type="button" className="btn min-h-12 flex items-center justify-center gap-2" onClick={() => void share()}>
           <Share2 size={18} /> Поделиться ссылкой
         </button>
+        {copied && <p className="text-sm text-ok text-center">Ссылка скопирована</p>}
       </div>
     </div>
   )

@@ -1,29 +1,22 @@
-import { useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import Qr from '../components/Qr'
 import { useApp } from '../lib/app'
+import { formatCardCode } from '../lib/card'
+import { syncStatus } from '../lib/syncStatus'
+import { useWakeLock } from '../lib/wakeLock'
 import { ArrowLeft, WifiOff } from '../lib/icons'
 
-/** Полноэкранное увеличение QR (с главной код уже виден без этого экрана). */
+/** Полноэкранное увеличение QR (с главной код уже виден без этого экрана). Баннеры и меню скрыты. */
 export default function CardQrPage() {
-  const { me, best, lastSync } = useApp()
+  const { me, best, lastSync, syncing } = useApp()
   const nav = useNavigate()
+  const loc = useLocation()
   const proof = best?.token
   const cardCode = me?.cardCode ?? ''
+  const online = typeof navigator === 'undefined' ? true : navigator.onLine
+  const status = syncStatus({ online, syncing, lastSync })
 
-  useEffect(() => {
-    let lock: { release: () => Promise<void> } | null = null
-    let active = true
-    const wake = navigator as Navigator & { wakeLock?: { request: (t: 'screen') => Promise<{ release: () => Promise<void> }> } }
-    void wake.wakeLock?.request('screen').then((l) => {
-      if (active) lock = l
-      else void l.release()
-    }).catch(() => {})
-    return () => {
-      active = false
-      if (lock) void lock.release().catch(() => {})
-    }
-  }, [])
+  useWakeLock(true)
 
   return (
     <main
@@ -35,28 +28,25 @@ export default function CardQrPage() {
     >
       <button
         type="button"
-        onClick={() => nav(-1)}
-        className="absolute left-3 flex items-center gap-2 p-3 text-brand min-h-12"
+        onClick={() => (loc.key === 'default' ? nav('/', { replace: true }) : nav(-1))}
+        className="absolute left-3 flex items-center gap-2 px-3 text-brand min-h-12 font-medium"
         style={{ top: 'max(0.75rem, env(safe-area-inset-top))' }}
       >
         <ArrowLeft size={20} /> Назад
       </button>
       <p className="text-sm font-medium text-ink-secondary mb-3">QR карты для кассы</p>
       {proof ? (
-        <Qr value={proof} size={400} alt="QR карты для кассы" />
+        <div className="w-full" style={{ maxWidth: 'min(92vw, 62vh, 440px)' }}>
+          <Qr value={proof} size={440} alt="QR карты для кассы" />
+        </div>
       ) : (
-        <p className="text-sm text-ink-secondary">Код недоступен — обновите карту на главной.</p>
+        <p className="text-sm text-ink-secondary">Код недоступен — вернитесь на главную и обновите карту.</p>
       )}
-      <p className="mt-4 text-4xl font-bold tracking-widest tabular-nums">{cardCode || '—'}</p>
-      <p className="text-xs text-ink-tertiary mt-2 text-center max-w-xs">
-        Если не сканируется — назовите номер карты бариста
-      </p>
-      {typeof navigator !== 'undefined' && !navigator.onLine && (
+      <p className="mt-4 text-4xl font-bold tracking-[0.18em] tabular-nums">{formatCardCode(cardCode)}</p>
+      <p className="text-sm text-ink-secondary mt-2 text-center max-w-xs">Если не сканируется — назовите номер карты бариста</p>
+      {status.kind !== 'fresh' && status.detail && (
         <p className="mt-3 text-xs text-ink-secondary inline-flex items-center gap-1">
-          <WifiOff size={14} /> Офлайн
-          {lastSync
-            ? ` · данные на ${new Date(lastSync).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`
-            : ''}
+          {status.kind === 'offline' && <WifiOff size={14} />} {status.detail}
         </p>
       )}
     </main>

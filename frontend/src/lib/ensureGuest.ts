@@ -1,8 +1,16 @@
 import { api, getJwt, setJwt, unwrap } from '../api'
 import { clearInvite, getInvite, isInvalidInviteError } from './invite'
 
-/** Anonymous account without phone/SMS. */
-export async function ensureGuest(): Promise<'ok' | 'offline'> {
+let guestFlight: Promise<'ok' | 'offline'> | null = null
+
+/** Anonymous account without phone/SMS. Single-flight: параллельные вызовы (StrictMode, гонки) не создают две карты. */
+export function ensureGuest(): Promise<'ok' | 'offline'> {
+  if (getJwt()) return Promise.resolve('ok')
+  if (!guestFlight) guestFlight = createGuest().finally(() => { guestFlight = null })
+  return guestFlight
+}
+
+async function createGuest(): Promise<'ok' | 'offline'> {
   if (getJwt()) return 'ok'
   const invite = getInvite()
   const create = (inviteCode?: string) =>

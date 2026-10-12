@@ -1,5 +1,7 @@
 import type { ComponentType } from 'react'
 import {
+  Copy,
+  Download,
   Coffee,
   CupSoda,
   Milk,
@@ -56,6 +58,8 @@ export function AppIcon({ name, className, size = 20, ...rest }: { name: string;
 }
 
 export {
+  Copy,
+  Download,
   Coffee,
   CupSoda,
   Milk,

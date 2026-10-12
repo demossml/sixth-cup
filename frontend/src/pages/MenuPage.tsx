@@ -28,10 +28,10 @@ export default function MenuPage() {
 
   return (
     <div className="pb-4">
-      <div className="bg-white px-4 pt-10 pb-4 border-b border-line">
+      <div className="bg-white px-4 pt-[max(1.25rem,env(safe-area-inset-top))] pb-4 border-b border-line">
         <h1 className="text-xl font-bold text-ink">Меню</h1>
         <p className="text-ink-secondary text-sm mt-1">
-          Заказ и оплата у бариста. Карта — для скидок и стаканов.
+          Только просмотр. Заказ и оплата — у бариста.
         </p>{dir.generatedAt > 0 && <p className="text-xs text-ink-tertiary mt-2">{stale ? 'Каталог может быть устаревшим · данные на ' : 'Данные каталога на '}{new Date(dir.generatedAt).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}</p>}
       </div>
 
@@ -52,7 +52,7 @@ export default function MenuPage() {
             <button
               type="button"
               onClick={() => setCatId('all')}
-              className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium ${
+              className={`shrink-0 px-4 min-h-11 rounded-full text-sm font-medium ${
                 catId === 'all' ? 'bg-brand text-white' : 'bg-white text-ink-secondary border border-line'
               }`}
             >
@@ -63,7 +63,7 @@ export default function MenuPage() {
                 key={c.id}
                 type="button"
                 onClick={() => setCatId(c.id)}
-                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium ${
+                className={`shrink-0 px-4 min-h-11 rounded-full text-sm font-medium ${
                   catId === c.id ? 'bg-brand text-white' : 'bg-white text-ink-secondary border border-line'
                 }`}
               >

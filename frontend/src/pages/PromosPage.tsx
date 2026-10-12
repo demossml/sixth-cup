@@ -11,7 +11,7 @@ export default function PromosPage() {
   const nav = useNavigate()
   return (
     <div className="pb-4">
-      <div className="bg-white px-4 pt-10 pb-4 border-b border-line">
+      <div className="bg-white px-4 pt-[max(1.25rem,env(safe-area-inset-top))] pb-4 border-b border-line">
         <h1 className="text-xl font-bold text-ink">Акции</h1>
         <p className="text-ink-secondary text-sm mt-1">Новинки и предложения</p>
       </div>

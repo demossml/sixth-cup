@@ -1,135 +1,49 @@
-import { useEffect, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import {
-  dismissInstallBanner,
-  isDismissed,
-  isIos,
-  isStandalone,
-  type BeforeInstallPromptEvent,
-} from '../lib/install'
+import { useInstall } from '../lib/installStore'
 
 /**
- * Баннер «Установить на экран» — как у банковских PWA.
- * Android/Chrome: системный prompt.
- * iOS: подсказка Поделиться → На экран «Домой».
- * Не показывается в standalone и 14 дней после «Позже».
+ * Установка PWA без блокировки ценности.
+ *  - variant="inline": карточка в потоке страницы (на главной — ниже QR, QR не перекрывает);
+ *  - variant="fixed": плавающая плашка над меню на остальных экранах.
+ * Не показывается в standalone, на fullscreen QR и 14 дней после «Позже».
  */
-export default function InstallBanner() {
+export default function InstallBanner({ variant = 'fixed' }: { variant?: 'inline' | 'fixed' }) {
   const location = useLocation()
-  const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null)
-  const [iosHint, setIosHint] = useState(false)
-  const [visible, setVisible] = useState(false)
-  const [busy, setBusy] = useState(false)
+  const { visible, canPrompt, ios, install, later } = useInstall()
+  if (!visible) return null
+  if (location.pathname === '/card-qr') return null
+  if (variant === 'fixed' && location.pathname === '/') return null
 
-  useEffect(() => {
-    if (isStandalone() || isDismissed()) return
-
-    const onBip = (e: Event) => {
-      e.preventDefault()
-      setDeferred(e as BeforeInstallPromptEvent)
-      setVisible(true)
-    }
-    window.addEventListener('beforeinstallprompt', onBip)
-
-    // iOS: нет beforeinstallprompt — свой баннер через короткую паузу
-    let iosTimer: ReturnType<typeof setTimeout> | undefined
-    if (isIos()) {
-      iosTimer = setTimeout(() => {
-        if (!isStandalone() && !isDismissed()) {
-          setIosHint(true)
-          setVisible(true)
-        }
-      }, 2500)
-    }
-
-    return () => {
-      window.removeEventListener('beforeinstallprompt', onBip)
-      if (iosTimer) clearTimeout(iosTimer)
-    }
-  }, [])
-
-  if (!visible || isStandalone() || location.pathname === '/card-qr') return null
-
-  async function install() {
-    if (!deferred) {
-      // iOS — просто раскрыли подсказку, кнопка уже «Понятно»
-      return
-    }
-    setBusy(true)
-    try {
-      await deferred.prompt()
-      const { outcome } = await deferred.userChoice
-      if (outcome === 'accepted') {
-        setVisible(false)
-        setDeferred(null)
-      } else {
-        dismissInstallBanner()
-        setVisible(false)
-      }
-    } catch {
-      dismissInstallBanner()
-      setVisible(false)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  function later() {
-    dismissInstallBanner()
-    setVisible(false)
-  }
-
-  return (
-    <div
-      className="fixed left-0 right-0 z-50 px-3"
-      style={{ bottom: 'calc(3.5rem + env(safe-area-inset-bottom, 0px) + 0.5rem)' }}
-    >
-      <div className="max-w-[480px] mx-auto bg-brand text-white rounded-2xl shadow-lg p-3 flex gap-3 items-start">
-        <img
-          src="/logo-mark.png"
-          alt=""
-          className="w-12 h-12 rounded-xl shrink-0 bg-white/10 object-cover"
-        />
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold leading-snug">Установить 6.7 Coffee</p>
-          {iosHint && !deferred ? (
-            <p className="text-white/85 text-xs mt-1 leading-relaxed">
-              Нажмите в Safari <b>Поделиться</b> (□↑), затем <b>«На экран „Домой“»</b> — ярлык появится как приложение.
-            </p>
-          ) : (
-            <p className="text-white/85 text-xs mt-1 leading-relaxed">
-              Карта и скидки на рабочем столе, удобнее чем во вкладке браузера.
-            </p>
-          )}
-          <div className="flex gap-2 mt-2.5">
-            {deferred ? (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void install()}
-                className="text-xs font-semibold bg-white text-brand px-3 py-1.5 rounded-lg disabled:opacity-60"
-              >
-                {busy ? '…' : 'Установить'}
-              </button>
-            ) : iosHint ? (
-              <button
-                type="button"
-                onClick={later}
-                className="text-xs font-semibold bg-white text-brand px-3 py-1.5 rounded-lg"
-              >
-                Понятно
-              </button>
-            ) : null}
-            <button
-              type="button"
-              onClick={later}
-              className="text-xs text-white/80 px-2 py-1.5"
-            >
-              Позже
+  const body = (
+    <div className="bg-brand text-white rounded-2xl p-3 flex gap-3 items-start shadow-card">
+      <img src="/logo-mark.png" alt="" className="w-11 h-11 rounded-xl shrink-0 bg-white/10 object-cover" />
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-semibold leading-snug">Добавьте 6.7 Coffee на экран</p>
+        <p className="text-white/85 text-xs mt-1 leading-relaxed">
+          {canPrompt
+            ? 'Карта будет под рукой, как обычное приложение.'
+            : ios
+              ? <>В Safari нажмите <b>Поделиться</b>, затем <b>«На экран „Домой“»</b>.</>
+              : 'Карта будет под рукой, как обычное приложение.'}
+        </p>
+        <div className="flex gap-2 mt-2">
+          {canPrompt && (
+            <button type="button" onClick={() => void install()} className="min-h-11 px-4 text-sm font-semibold bg-white text-brand rounded-lg">
+              Установить
             </button>
-          </div>
+          )}
+          <button type="button" onClick={later} className="min-h-11 px-3 text-sm text-white/90">
+            {canPrompt ? 'Позже' : 'Понятно'}
+          </button>
         </div>
       </div>
+    </div>
+  )
+
+  if (variant === 'inline') return <div className="mb-2.5">{body}</div>
+  return (
+    <div className="fixed left-0 right-0 z-30 px-3" style={{ bottom: 'calc(4rem + env(safe-area-inset-bottom, 0px) + 0.5rem)' }}>
+      <div className="max-w-[480px] mx-auto">{body}</div>
     </div>
   )
 }

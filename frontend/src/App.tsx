@@ -9,14 +9,24 @@ import PromosPage from './pages/PromosPage'
 import InvitePage from './pages/InvitePage'
 import MorePage from './pages/MorePage'
 import HistoryPage from './pages/HistoryPage'
+import StoresPage from './pages/StoresPage'
 import CardQrPage from './pages/CardQrPage'
 import { ensureGuest } from './lib/ensureGuest'
+import { useApp } from './lib/app'
 import InstallBanner from './components/InstallBanner'
 import { Home, LayoutGrid, MoreHorizontal } from './lib/icons'
 
 function RequireSession() {
+  const { sync } = useApp()
   const [ready, setReady] = useState(!!getJwt())
   const [fail, setFail] = useState(false)
+
+  // Новая карта: сразу синхронизируемся, чтобы QR появился без тапа «Получить карту».
+  const onGuestReady = () => {
+    setReady(true)
+    // Если параллельно шёл «безавторизационный» sync, он вернёт 'noauth' — повторяем уже с токеном.
+    void sync().then((r) => { if (r === 'noauth') void sync() })
+  }
 
   useEffect(() => {
     if (getJwt()) {
@@ -24,9 +34,10 @@ function RequireSession() {
       return
     }
     void ensureGuest().then((s) => {
-      if (s === 'ok') setReady(true)
+      if (s === 'ok') onGuestReady()
       else setFail(true)
     })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   if (fail) {
@@ -43,7 +54,7 @@ function RequireSession() {
           onClick={() => {
             setFail(false)
             void ensureGuest().then((s) => {
-              if (s === 'ok') setReady(true)
+              if (s === 'ok') onGuestReady()
               else setFail(true)
             })
           }}
@@ -69,27 +80,37 @@ function RequireSession() {
   return <Outlet />
 }
 
+const NAV = [
+  { to: '/', end: true, label: 'Карта', Icon: Home },
+  { to: '/menu', end: false, label: 'Меню', Icon: LayoutGrid },
+  { to: '/more', end: false, label: 'Ещё', Icon: MoreHorizontal },
+]
+
 function Layout() {
   return (
-    <div className="max-w-[480px] mx-auto min-h-screen bg-page pb-20">
+    <div className="max-w-[480px] mx-auto min-h-screen bg-page" style={{ paddingBottom: 'calc(4rem + env(safe-area-inset-bottom, 0px))' }}>
       <Outlet />
-      <InstallBanner />
-      <nav className="fixed bottom-0 left-0 right-0 max-w-[480px] mx-auto bg-white border-t border-line flex z-40">
-        <NavLink to="/" end className={({ isActive }) => `flex-1 flex flex-col items-center gap-0.5 py-2.5 text-[11px] no-underline ${isActive ? 'text-brand font-semibold' : 'text-ink-tertiary'}`}>
-          {({ isActive }) => (<>
-            <Home size={22} strokeWidth={isActive ? 2.25 : 1.75} />
-            Карта
-          </>)}
-        </NavLink>
-        <NavLink to="/menu" className={({ isActive }) => `flex-1 flex flex-col items-center gap-0.5 py-2.5 text-[11px] no-underline ${isActive ? 'text-brand font-semibold' : 'text-ink-tertiary'}`}>
-          {({ isActive }) => (<>
-            <LayoutGrid size={22} strokeWidth={isActive ? 2.25 : 1.75} />
-            Меню
-          </>)}
-        </NavLink>
-        <NavLink to="/more" className={({ isActive }) => `flex-1 flex flex-col items-center gap-1 py-2.5 text-xs no-underline ${isActive ? 'text-brand font-semibold' : 'text-ink-tertiary'}`}>
-          {({ isActive }) => (<><MoreHorizontal size={22} strokeWidth={isActive ? 2.25 : 1.75} />Ещё</>)}
-        </NavLink>
+      <InstallBanner variant="fixed" />
+      <nav
+        aria-label="Основное меню"
+        className="fixed bottom-0 left-0 right-0 max-w-[480px] mx-auto bg-white border-t border-line flex z-40"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+      >
+        {NAV.map(({ to, end, label, Icon }) => (
+          <NavLink
+            key={to}
+            to={to}
+            end={end}
+            className={({ isActive }) =>
+              `flex-1 min-h-14 flex flex-col items-center justify-center gap-0.5 text-xs no-underline ${isActive ? 'text-brand font-semibold' : 'text-ink-secondary'}`
+            }
+          >
+            {({ isActive }) => (<>
+              <Icon size={22} strokeWidth={isActive ? 2.25 : 1.75} />
+              {label}
+            </>)}
+          </NavLink>
+        ))}
       </nav>
     </div>
   )
@@ -108,6 +129,7 @@ export default function App() {
           <Route path="/invite" element={<InvitePage />} />
           <Route path="/more" element={<MorePage />} />
           <Route path="/history" element={<HistoryPage />} />
+          <Route path="/stores" element={<StoresPage />} />
           <Route path="/card-qr" element={<CardQrPage />} />
         </Route>
       </Route>

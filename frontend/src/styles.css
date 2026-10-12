@@ -34,3 +34,10 @@
     @apply w-full px-3.5 py-3 border border-line rounded-xl text-[15px] mb-2.5 font-sans bg-white text-ink placeholder:text-ink-tertiary focus:outline-none focus:border-brand-mid focus:ring-2 focus:ring-brand-soft;
   }
 }
+
+@layer base {
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+  }
+  button, a { -webkit-tap-highlight-color: transparent; }
+}
