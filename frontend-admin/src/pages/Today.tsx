@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { RefreshCw } from 'lucide-react'
 import { api } from '../api/client'
 import { useApi } from '../api/useApi'
+// quality strip from /catalog/quality
 import type { Dashboard, StoreHealth } from '../api/types'
 import { useSyncStores } from '../api/useStores'
 import { ago, fmtDateTime, fmtKop, fmtNum } from '../lib/format'
@@ -46,7 +47,9 @@ function TillCard({ s, now, onPoll, polling }: { s: StoreHealth; now: number; on
 }
 
 export default function Today() {
-  const [period, setPeriod] = useState<'24h' | '7d' | '30d'>('24h')
+  const quality = useApi<{ total: number; noPhoto: number; noCategory: number; noLink: number; noScheme: number }>('/catalog/quality')
+
+  const [period, setPeriod] = useState<'24h' | '7d' | '30d' | 'yesterday'>('24h')
   const [store, setStore] = useState('')
   const [polling, setPolling] = useState(false)
   const toast = useToast()
@@ -84,8 +87,40 @@ export default function Today() {
           </Select>
         }
       />
+      
+      {data?.coverage?.note && (
+        <p className="mb-2 text-xs text-ink-secondary">{data.coverage.note}</p>
+      )}
+      {Array.isArray(data?.exceptions) && data!.exceptions.length > 0 && (
+        <Card className="mb-3">
+          <div className="text-sm font-semibold mb-2">Исключения</div>
+          <ul className="space-y-1 text-sm">
+            {data!.exceptions.map((ex: { id: string; title: string; count: number; href: string; level: string }) => (
+              <li key={ex.id}>
+                <button type="button" className="text-left text-brand font-medium" onClick={() => nav(ex.href)}>
+                  {ex.title}: {ex.count} →
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+{quality.data && (quality.data.noPhoto > 0 || quality.data.noCategory > 0 || quality.data.noLink > 0) && (
+        <Card className="mb-3">
+          <div className="text-sm font-semibold mb-1">Качество каталога</div>
+          <div className="flex flex-wrap gap-3 text-xs text-ink-secondary">
+            <span>Без фото: <b className="text-bad">{quality.data.noPhoto}</b></span>
+            <span>Без категории: <b>{quality.data.noCategory}</b></span>
+            <span>Без связи с кассой: <b>{quality.data.noLink < 0 ? '—' : quality.data.noLink}</b></span>
+            <span>Напитки без схемы: <b>{quality.data.noScheme}</b></span>
+            <a className="text-brand font-semibold" href="#/menu">Исправить →</a>
+          </div>
+        </Card>
+      )}
+
       <Tabs
-        items={[{ key: '24h', label: '24 часа' }, { key: '7d', label: '7 дней' }, { key: '30d', label: '30 дней' }]}
+        items={[{ key: 'yesterday', label: 'Вчера' },
+        { key: '24h', label: '24 часа' }, { key: '7d', label: '7 дней' }, { key: '30d', label: '30 дней' }]}
         value={period}
         onChange={setPeriod}
       />

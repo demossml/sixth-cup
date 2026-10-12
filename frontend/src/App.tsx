@@ -44,7 +44,7 @@ function RequireSession() {
     return (
       <div className="max-w-[480px] mx-auto min-h-screen bg-page p-6 flex flex-col justify-center">
         <img src="/logo-mark.png" alt="" className="w-16 h-16 rounded-2xl mb-4" />
-        <h1 className="text-xl font-bold text-ink mb-2">Нужен интернет один раз</h1>
+        <h1 className="text-[22px] leading-7 font-semibold text-ink mb-2">Нужен интернет один раз</h1>
         <p className="text-ink-secondary text-sm mb-4">
           Чтобы выдать карту лояльности, подключитесь к сети. Телефон и SMS не требуются.
         </p>
@@ -67,8 +67,8 @@ function RequireSession() {
 
   if (!ready) {
     return (
-      <div className="max-w-[480px] mx-auto min-h-screen bg-page flex items-center justify-center text-ink-secondary text-sm">
-        Открываем карту…
+      <div className="max-w-[480px] mx-auto min-h-screen bg-page flex items-center justify-center" role="status" aria-label="Открываем карту">
+        <img src="/logo-mark.png" alt="" className="w-14 h-14 rounded-2xl" />
       </div>
     )
   }
@@ -93,7 +93,7 @@ function Layout() {
       <InstallBanner variant="fixed" />
       <nav
         aria-label="Основное меню"
-        className="fixed bottom-0 left-0 right-0 max-w-[480px] mx-auto bg-white border-t border-line flex z-40"
+        className="fixed bottom-0 left-0 right-0 max-w-[480px] mx-auto bg-page border-t border-line flex z-40"
         style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
       >
         {NAV.map(({ to, end, label, Icon }) => (
@@ -102,11 +102,11 @@ function Layout() {
             to={to}
             end={end}
             className={({ isActive }) =>
-              `flex-1 min-h-14 flex flex-col items-center justify-center gap-0.5 text-xs no-underline ${isActive ? 'text-brand font-semibold' : 'text-ink-secondary'}`
+              `flex-1 min-h-14 flex flex-col items-center justify-center gap-0.5 text-[12px] leading-4 font-semibold no-underline ${isActive ? 'text-brand' : 'text-ink-secondary'}`
             }
           >
             {({ isActive }) => (<>
-              <Icon size={22} strokeWidth={isActive ? 2.25 : 1.75} />
+              <Icon size={24} strokeWidth={1.75} />
               {label}
             </>)}
           </NavLink>

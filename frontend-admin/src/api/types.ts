@@ -42,9 +42,10 @@ export type OperationRow = {
   nickname: string | null
 }
 
+export type DashboardException = { id: string; level: string; title: string; href: string; count: number }
 export type Dashboard = {
   now: number
-  period: '24h' | '7d' | '30d'
+  period: '24h' | '7d' | '30d' | 'yesterday'
   health: Health
   docs: { sell: number; sellFailed: number; payback: number; paybackFailed: number }
   ops: { sells: number; paybacks: number; cups: number; cupsReturned: number; free: number; cashbackKopecks: number; resultRub: number; lastOpAt: number | null }
@@ -52,6 +53,12 @@ export type Dashboard = {
   customers: number
   newCustomers: number
   recent: OperationRow[]
+  exceptions: DashboardException[]
+  quality: { noPhoto: number; noCategory: number; noLink: number }
+  coverage: { source: string; note: string; complete: boolean }
+  failedDocs: number
+  pendingOutbox: number
+  asOf: number
 }
 
 export type CustomerRow = {
@@ -98,8 +105,17 @@ export type Product = {
 }
 export type Category = { id: number; name: string; sortOrder: number; available: number }
 export type Modifier = { id: number; name: string; price: number; groupKey: string; available: number; sortOrder: number }
-export type Scheme = { id: number; name: string; items: { schemeId: number; modifierId: number; required?: number; maxCount?: number }[] }
-export type EvotorStore = { uuid: string; name: string | null; address?: string | null; code?: string | null; syncEnabled: boolean }
+export type Scheme = { id: number; name: string; copyFromId?: number; items: { schemeId: number; modifierId: number; required?: number; maxCount?: number }[] }
+export type EvotorStore = {
+  uuid: string
+  id?: string | number
+  storeUuid?: string
+  name: string | null
+  address?: string | null
+  code?: string | null
+  syncEnabled?: boolean
+  sync_enabled?: number
+}
 export type Promo = { id: number; title: string; body: string; icon: string; sponsor: string | null; starts_at: number; ends_at: number }
 export type VoucherTemplate = { id: number; code: string; title: string; kind: string; value: number; validDays: number }
 export type AuditEntry = {

@@ -36,9 +36,19 @@ export function worstLevel(levels: HealthLevel[]): HealthLevel {
 }
 
 const DAY = 86_400_000
-export function periodSince(period: string | undefined, now: number): { period: '24h' | '7d' | '30d'; since: number } {
+export function periodSince(period: string | undefined, now: number): {
+  period: '24h' | 'yesterday' | '7d' | '30d'
+  since: number
+  until?: number
+} {
   if (period === '7d') return { period: '7d', since: now - 7 * DAY }
   if (period === '30d') return { period: '30d', since: now - 30 * DAY }
+  if (period === 'yesterday') {
+    const d = new Date(now)
+    d.setHours(0, 0, 0, 0)
+    const startToday = d.getTime()
+    return { period: 'yesterday', since: startToday - DAY, until: startToday }
+  }
   return { period: '24h', since: now - DAY }
 }
 

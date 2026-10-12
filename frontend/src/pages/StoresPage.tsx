@@ -8,9 +8,9 @@ export default function StoresPage() {
   const stores = dir?.stores ?? []
   return (
     <div className="pb-6">
-      <header className="bg-white px-4 pb-4 border-b border-line" style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
+      <header className="px-4 pb-3" style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
         <Link to="/more" className="inline-flex items-center gap-1 min-h-11 text-brand text-sm no-underline"><ArrowLeft size={18} /> Ещё</Link>
-        <h1 className="text-2xl font-bold text-ink">Кофейни</h1>
+        <h1 className="text-[22px] leading-7 font-semibold text-ink">Кофейни</h1>
       </header>
       <div className="p-4 space-y-2">
         {stores.length === 0 && (

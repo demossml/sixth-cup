@@ -19,6 +19,9 @@ type ResetStep = 'none' | 'offer' | 'final'
  * код восстановления → (если не сохранён) предложение сохранить перед сбросом → двойное подтверждение.
  */
 export default function ProfilePage() {
+  const [fav, setFav] = useState(() => { try { return localStorage.getItem('sc-favorite-drink') || '' } catch { return '' } })
+  const saveFav = () => { try { localStorage.setItem('sc-favorite-drink', fav); } catch {} }
+
   const { me, lastSync, syncing, sync, reload } = useApp()
   const nav = useNavigate()
   const [recovery, setRecovery] = useState('')
@@ -81,11 +84,11 @@ export default function ProfilePage() {
 
   return (
     <div className="pb-6">
-      <div className="bg-brand text-white px-4 pb-5 rounded-b-3xl" style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
+      <div className="hero text-white px-4 pb-5 rounded-b-3xl" style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
         <button type="button" className="inline-flex items-center gap-1 min-h-11 text-white/90 text-sm" onClick={() => nav('/more')}>
           <ArrowLeft size={18} /> Ещё
         </button>
-        <h1 className="text-xl font-bold">{me?.nickname ?? 'Профиль'}</h1>
+        <h1 className="text-[22px] leading-7 font-semibold">{me?.nickname ?? 'Профиль'}</h1>
         <p className="text-white/80 text-xs mt-1">{status.label}{status.detail ? ` · ${status.detail}` : ''}</p>
         {me && me.cashbackBalance > 0 && (
           <div className="mt-3 inline-flex items-center gap-2 bg-white/15 rounded-xl px-3 py-2">
@@ -96,7 +99,7 @@ export default function ProfilePage() {
         {me?.cardCode && (
           <div className="mt-3 rounded-xl bg-white/10 px-3 py-2">
             <div className="text-white/80 text-xs">Номер карты</div>
-            <div className="text-2xl font-bold tracking-[0.2em] tabular-nums">{formatCardCode(me.cardCode)}</div>
+            <div className="font-display text-[28px] leading-9 font-semibold tracking-[0.12em] num">{formatCardCode(me.cardCode)}</div>
           </div>
         )}
       </div>
@@ -182,6 +185,18 @@ export default function ProfilePage() {
       )}
 
       {scan && <ScanModal title="Отсканируйте QR восстановления" onResult={(t) => void doRestore(t)} onClose={() => setScan(false)} />}
-    </div>
+    
+      <div className="mt-4 p-4 rounded-2xl bg-white border border-line">
+        <div className="text-[15px] font-semibold text-ink mb-1">Обычный заказ (заметка)</div>
+        <p className="text-[12px] text-ink-secondary mb-2">Только для вас, не передаётся на кассу и не является заказом.</p>
+        <input
+          className="w-full border border-line rounded-xl px-3 py-2 text-[15px]"
+          value={fav}
+          onChange={(e) => setFav(e.target.value)}
+          onBlur={saveFav}
+          placeholder="Например: капучино, овсяное"
+        />
+      </div>
+</div>
   )
 }

@@ -2,24 +2,79 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Шрифты свои (woff2, без Google Fonts): работают офлайн, попадают в precache service worker.
+   Берём только latin + cyrillic. Знак ₽ в эти подмножества не входит — рисуется системным шрифтом. */
+@font-face {
+  font-family: 'Geologica Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('./assets/fonts/geologica-cyrillic-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'Geologica Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('./assets/fonts/geologica-latin-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Golos Text';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url('./assets/fonts/golos-text-cyrillic-400-normal.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'Golos Text';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url('./assets/fonts/golos-text-latin-400-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Golos Text';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500 700;
+  src: url('./assets/fonts/golos-text-cyrillic-600-normal.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'Golos Text';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500 700;
+  src: url('./assets/fonts/golos-text-latin-600-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 @layer base {
   body {
-    @apply bg-page text-ink antialiased;
+    @apply bg-page text-ink antialiased font-sans text-[15px] leading-[22px];
+  }
+  h1, h2, h3 {
+    @apply font-display;
   }
 }
 
 @layer components {
+  /* Кнопки: один синий CTA, вторичная — на tint, подарок — «крема». */
   .btn {
-    @apply bg-brand text-white border-0 rounded-xl px-4 py-3.5 text-[15px] font-semibold cursor-pointer w-full active:opacity-90 disabled:opacity-45 transition-opacity;
+    @apply bg-brand text-white border-0 rounded-xl px-4 py-3.5 text-[15px] font-semibold cursor-pointer w-full active:bg-brand-deep disabled:opacity-45 transition-colors;
   }
   .btn-mid {
     @apply bg-brand-mid text-white border-0 rounded-xl px-4 py-3.5 text-[15px] font-semibold cursor-pointer w-full active:opacity-90 disabled:opacity-45;
   }
   .btn-ghost {
-    @apply bg-brand-soft text-brand border-0 rounded-xl px-4 py-3.5 text-[15px] font-semibold cursor-pointer w-full;
+    @apply bg-brand-tint text-brand border-0 rounded-xl px-4 py-3.5 text-[15px] font-semibold cursor-pointer w-full active:opacity-80;
   }
   .btn-orange {
-    @apply bg-accent-orange text-white border-0 rounded-xl px-4 py-3.5 text-[15px] font-semibold cursor-pointer w-full active:opacity-90;
+    @apply bg-crema text-ink border-0 rounded-xl px-4 py-3.5 text-[15px] font-semibold cursor-pointer w-full active:opacity-90;
   }
   .btn-danger {
     @apply bg-red-50 text-bad border-0 rounded-xl px-4 py-3 text-[15px] font-medium cursor-pointer w-full;
@@ -27,11 +82,38 @@
   .btn-sm {
     @apply w-auto px-3 py-1.5 text-sm rounded-lg;
   }
+  /* Вторичная карточка: белая, hairline, тень уровня 1, радиус 16. */
   .card {
     @apply bg-card border border-line rounded-2xl p-3.5 mb-2.5 shadow-card;
   }
   .input {
-    @apply w-full px-3.5 py-3 border border-line rounded-xl text-[15px] mb-2.5 font-sans bg-white text-ink placeholder:text-ink-tertiary focus:outline-none focus:border-brand-mid focus:ring-2 focus:ring-brand-soft;
+    @apply w-full px-3.5 py-3 border border-line rounded-xl text-[15px] mb-2.5 font-sans bg-white text-ink placeholder:text-ink-tertiary focus:outline-none focus:border-brand-mid focus:ring-2 focus:ring-brand-tint;
+  }
+  /* Градиент шапки: мягкий свет из угла внутри семейства бренда. Под QR не заходит. */
+  .hero {
+    background: radial-gradient(120% 90% at 85% 0%, #1a4dd6 0%, #002fa7 45%, #001f6b 100%);
+  }
+  .hero-off {
+    background: radial-gradient(120% 90% at 85% 0%, #1b3f9e 0%, #0d2a86 45%, #0a1c55 100%);
+  }
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+  /* Появление штампов: один раз при открытии главной (motion #1). */
+  @keyframes stamp-in {
+    from { opacity: 0; transform: scale(0.85); }
+    to { opacity: 1; transform: scale(1); }
+  }
+  .stamp-in {
+    animation: stamp-in 220ms ease-out both;
+  }
+  /* Пульс подарка — один повтор, дальше замирает (motion #3). */
+  @keyframes gift-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.12); }
+  }
+  .gift-pulse {
+    animation: gift-pulse 700ms ease-in-out 1;
   }
 }
 
@@ -40,4 +122,5 @@
     *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
   }
   button, a { -webkit-tap-highlight-color: transparent; }
+  button:active:not(:disabled) { transform: scale(0.98); transition: transform 120ms; }
 }

@@ -107,7 +107,7 @@ function Schemes({ products }: { products: Product[] }) {
   const { data, error, loading, reload } = useApi<{ schemes: Scheme[] }>('/modifier-schemes')
   const mods = useApi<{ modifiers: Modifier[] }>('/modifiers')
   const save = useSave(reload)
-  const [edit, setEdit] = useState<{ id?: number; name: string; modifierIds: number[] } | null>(null)
+  const [edit, setEdit] = useState<{ id?: number; name: string; modifierIds: number[]; copyFromId?: number } | null>(null)
   const [del, setDel] = useState<Scheme | null>(null)
   const used = (id: number) => products.filter((p) => p.modifierSchemeId === id).length
   if (loading && !data) return <Spinner />
@@ -125,7 +125,7 @@ function Schemes({ products }: { products: Product[] }) {
       <Drawer open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? 'Схема добавок' : 'Новая схема'}
         footer={<><Button variant="secondary" onClick={() => setEdit(null)}>Отмена</Button><Button disabled={!edit?.name.trim()} onClick={async () => {
           if (!edit) return
-          if (await save(() => api('/modifier-schemes', { method: 'POST', body: { id: edit.id, name: edit.name.trim(), modifierIds: edit.modifierIds } }), 'Схема сохранена')) setEdit(null)
+          if (await save(() => api('/modifier-schemes', { method: 'POST', body: { id: edit.id, name: edit.name.trim(), modifierIds: edit.modifierIds, copyFromSchemeId: edit.copyFromId } }), 'Схема сохранена')) setEdit(null)
         }}>Сохранить</Button></>}>
         <Field label="Название"><Input value={edit?.name ?? ''} maxLength={80} onChange={(e) => edit && setEdit({ ...edit, name: e.target.value })} /></Field>
         <p className="mb-1 text-sm font-medium">Какие добавки входят</p>

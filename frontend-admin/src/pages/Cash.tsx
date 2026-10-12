@@ -30,7 +30,7 @@ function StoreCard({ s, health, now, onChanged }: { s: EvotorStore; health?: Hea
           {s.address && <div className="truncate text-xs text-ink-secondary">{s.address}</div>}
         </div>
         <div className="flex items-center gap-2 text-sm"><span>Синхронизация</span>
-          <Toggle checked={s.syncEnabled} label={`Синхронизация: ${s.name ?? ''}`} onChange={(v) => run('toggle', async () => { await api(`/evotor/stores/${s.uuid}`, { method: 'PATCH', body: { syncEnabled: v } }); return v ? 'Точка включена' : 'Точка выключена' })} />
+          <Toggle checked={!!s.syncEnabled} label={`Синхронизация: ${s.name ?? ''}`} onChange={(v) => run('toggle', async () => { await api(`/evotor/stores/${s.uuid}`, { method: 'PATCH', body: { syncEnabled: v } }); return v ? 'Точка включена' : 'Точка выключена' })} />
         </div>
       </div>
       {s.syncEnabled && health && (

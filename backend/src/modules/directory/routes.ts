@@ -4,7 +4,16 @@ import { db } from '../../db'
 import { serverKeys, serverPub } from '../../lib/crypto'
 import { requireDevice } from '../../middleware/device'
 
-function publicDirectory() {
+function absUrl(url: string | null | undefined): string | null {
+  if (!url) return null
+  if (/^https?:\/\//i.test(url)) return url
+  const base = (config.publicBaseUrl || '').replace(/\/+$/, '')
+  if (!base) return url
+  return url.startsWith('/') ? `${base}${url}` : `${base}/${url}`
+}
+
+/** Public catalog for PWA. Optional storeUuid filters per-store availability. */
+export function publicDirectory(storeUuid?: string | null) {
   const now = Math.floor(Date.now() / 1000)
   const nowMs = Date.now()
   const devices = db.prepare('SELECT id, public_key AS pub, revoked FROM devices WHERE public_key IS NOT NULL')
@@ -27,17 +36,32 @@ function publicDirectory() {
     FROM categories WHERE available=1 ORDER BY sort_order, id
   `).all() as { id: number; name: string; sortOrder: number }[]
 
-  const products = db.prepare(`
+  let products = db.prepare(`
     SELECT id, name, price, icon, description, category_id AS categoryId,
            image_url AS imageUrl, sort_order AS sortOrder,
            modifier_scheme_id AS modifierSchemeId,
-           counts_as_cup AS countsAsCup, free_eligible AS freeEligible
+           counts_as_cup AS countsAsCup, free_eligible AS freeEligible,
+           available AS globalAvailable
     FROM products
-    WHERE available=1
-      AND (season_start_at IS NULL OR season_start_at<=?)
+    WHERE (season_start_at IS NULL OR season_start_at<=?)
       AND (season_end_at IS NULL OR season_end_at>=?)
     ORDER BY sort_order, id
   `).all(nowMs, nowMs) as Record<string, unknown>[]
+
+  // availability: global flag + optional per-store override
+  if (storeUuid) {
+    const rows = db.prepare(
+      'SELECT product_id AS productId, available FROM product_store_availability WHERE store_uuid=?',
+    ).all(storeUuid) as { productId: number; available: number }[]
+    const map = new Map(rows.map((r) => [r.productId, r.available]))
+    products = products.filter((p) => {
+      const id = Number(p.id)
+      if (map.has(id)) return map.get(id) === 1
+      return Number(p.globalAvailable) === 1
+    })
+  } else {
+    products = products.filter((p) => Number(p.globalAvailable) === 1)
+  }
 
   const modifiers = db.prepare(`
     SELECT id, name, price, group_key AS groupKey, sort_order AS sortOrder
@@ -50,9 +74,30 @@ function publicDirectory() {
     FROM modifier_scheme_items
   `).all() as { schemeId: number; modifierId: number; required: number; maxCount: number }[]
 
-  const promos = db.prepare(`SELECT id, title, body, icon, sponsor, ends_at AS endsAt FROM promos
-                             WHERE starts_at<=? AND ends_at>=? ORDER BY id DESC`)
-    .all(now, now)
+  // CMS content: published + in date window
+  let content: unknown[] = []
+  try {
+    content = db.prepare(`
+      SELECT id, kind, title, body, image_url AS imageUrl, badge, product_id AS productId,
+             placement, cta_label AS ctaLabel, sort_order AS sortOrder,
+             starts_at AS startsAt, ends_at AS endsAt
+      FROM promos
+      WHERE COALESCE(status,'published')='published'
+        AND starts_at<=? AND ends_at>=?
+      ORDER BY sort_order ASC, id DESC
+    `).all(now, now) as Record<string, unknown>[]
+    content = (content as Record<string, unknown>[]).map((row) => ({
+      ...row,
+      imageUrl: absUrl(row.imageUrl as string | null),
+    }))
+  } catch {
+    // migration not applied yet — fall back to legacy promos shape
+    content = db.prepare(`SELECT id, title, body, icon, sponsor, ends_at AS endsAt FROM promos
+                          WHERE starts_at<=? AND ends_at>=? ORDER BY id DESC`).all(now, now)
+  }
+
+  // legacy promos alias for older clients
+  const promos = content
 
   return {
     serverPub,
@@ -90,18 +135,22 @@ function publicDirectory() {
       icon: p.icon,
       description: p.description,
       categoryId: p.categoryId,
-      imageUrl: p.imageUrl,
+      imageUrl: absUrl(p.imageUrl as string | null),
       sortOrder: p.sortOrder ?? 0,
       modifierSchemeId: p.modifierSchemeId ?? null,
       countsAsCup: !!(p as { countsAsCup?: number }).countsAsCup,
       freeEligible: !!(p as { freeEligible?: number }).freeEligible,
     })),
     promos,
+    content,
   }
 }
 
 export const directoryRoutes = new Hono()
-  .get('/', (c) => c.json(publicDirectory()))
+  .get('/', (c) => {
+    const storeUuid = c.req.query('storeUuid') || c.req.query('store') || null
+    return c.json(publicDirectory(storeUuid))
+  })
   /** Рецепты / себес — только устройство кассы. */
   .get('/staff', requireDevice, (c) => {
     const products = db.prepare(`

@@ -14,6 +14,7 @@ import CustomerCard from './pages/CustomerCard'
 import Menu from './pages/Menu'
 import Cash from './pages/Cash'
 import Marketing from './pages/Marketing'
+import Referrals from './pages/Referrals'
 import System from './pages/System'
 
 
@@ -78,6 +79,7 @@ export default function App() {
             <Route path="menu" element={<Menu />} />
             <Route path="cash" element={<Cash />} />
             <Route path="marketing" element={<Marketing />} />
+            <Route path="referrals" element={<Referrals />} />
             <Route path="system" element={<System />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

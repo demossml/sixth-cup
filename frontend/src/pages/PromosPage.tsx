@@ -11,8 +11,8 @@ export default function PromosPage() {
   const nav = useNavigate()
   return (
     <div className="pb-4">
-      <div className="bg-white px-4 pt-[max(1.25rem,env(safe-area-inset-top))] pb-4 border-b border-line">
-        <h1 className="text-xl font-bold text-ink">Акции</h1>
+      <div className="px-4 pt-[max(1.25rem,env(safe-area-inset-top))] pb-3">
+        <h1 className="text-[22px] leading-7 font-semibold text-ink">Акции</h1>
         <p className="text-ink-secondary text-sm mt-1">Новинки и предложения</p>
       </div>
 
@@ -47,13 +47,13 @@ export default function PromosPage() {
                 <div className="flex items-start justify-between gap-2">
                   <b className="text-sm text-ink">{p.title}</b>
                   {p.sponsor && (
-                    <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-accent-orange/10 text-accent-orange font-medium">реклама</span>
+                    <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-warn-bg text-warn font-medium">реклама</span>
                   )}
                 </div>
                 <div className="text-ink-secondary text-xs mt-1 leading-relaxed">{p.body}</div>
                 {invite && <div className="text-brand text-xs font-medium mt-1">Открыть QR приглашения →</div>}
                 {p.sponsor && <div className="text-ink-tertiary text-xs mt-1">Партнёр: {p.sponsor}</div>}
-                <div className="text-ink-tertiary text-xs mt-1">до {new Date(p.endsAt * 1000).toLocaleDateString()}</div>
+                {p.endsAt != null && <div className="text-ink-tertiary text-xs mt-1">до {new Date(p.endsAt * 1000).toLocaleDateString()}</div>}
               </div>
             </>
           )

@@ -36,23 +36,24 @@ export default function InvitePage() {
 
   return (
     <div className="pb-8">
-      <div className="bg-brand text-white px-4 pt-[max(1.25rem,env(safe-area-inset-top))] pb-6 rounded-b-3xl">
+      <div className="hero text-white px-4 pt-[max(1.25rem,env(safe-area-inset-top))] pb-6 rounded-b-3xl">
         <button type="button" className="text-white/90 text-sm mb-2 min-h-11" onClick={() => nav(-1)}>← Назад</button>
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 rounded-2xl bg-white/15 flex items-center justify-center">
             <Users size={24} />
           </div>
           <div>
-            <h1 className="text-xl font-bold">Пригласить друга</h1>
-            <p className="text-white/75 text-sm mt-0.5">Вы получаете {pct}% с его покупок</p>
+            <h1 className="text-[22px] leading-7 font-semibold">Пригласить друга</h1>
+            <p className="text-brand-sub text-sm mt-0.5">Вы получаете {pct}% с его покупок</p>
           </div>
         </div>
       </div>
 
       <div className="px-4 pt-4 space-y-4">
-        <div className="card text-center">
-          <p className="inline-block text-sm font-bold text-amber-900 bg-amber-100 rounded-lg px-3 py-1.5 mb-2">
-            Не для кассы
+        {/* Приглашение выглядит как билет с кремовой рамкой — не спутать с картой (белый квадрат с QR). */}
+        <div className="bg-white rounded-2xl p-4 text-center border-2 border-dashed border-crema shadow-card">
+          <p className="inline-block text-[12px] leading-4 font-semibold tracking-wide text-warn bg-warn-bg rounded-full px-3 py-1.5 mb-2">
+            Приглашение · не для кассы
           </p>
           <p className="text-sm font-semibold text-ink mb-1">QR приглашения — покажите другу</p>
           <p className="text-xs text-ink-secondary mb-1">
@@ -61,7 +62,7 @@ export default function InvitePage() {
           <p className="text-xs text-ink-secondary mb-2">
             Пусть отсканирует камерой телефона — откроется приложение и привяжется к вашему приглашению.
           </p>
-          <Qr value={link} size={280} alt="QR приглашения друга" />
+          <Qr value={link} size={240} alt="QR приглашения друга" />
           <p className="text-[11px] text-ink-tertiary break-all mt-1 px-2">{link}</p>
         </div>
 

@@ -192,7 +192,74 @@ export const adminConsole = new Hono<Env>()
     const recent = queryOperations({ limit: 10, store })
     const customers = (db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }).n
     const newCustomers = (db.prepare('SELECT COUNT(*) AS n FROM users WHERE created_at >= ?').get(since) as { n: number }).n
-    return c.json({ now, period, since, store: store ?? null, health, docs, ops, sellWithoutCard: noCard, customers, newCustomers, recent: recent.ops })
+    const failedDocs = (db.prepare(`
+      SELECT COUNT(*) AS n FROM evotor_docs WHERE received_at >= ? AND status='FAILED' ${store ? 'AND store_uuid = ?' : ''}
+    `).get(since, ...sArg) as { n: number }).n
+    const pendingOutbox = (db.prepare(`
+      SELECT COUNT(*) AS n FROM evotor_outbox WHERE status='PENDING'
+    `).get() as { n: number }).n
+    let quality = { noPhoto: 0, noCategory: 0, noLink: 0 }
+    try {
+      quality = {
+        noPhoto: (db.prepare(`SELECT COUNT(*) AS n FROM products WHERE available=1 AND (image_url IS NULL OR TRIM(image_url)='')`).get() as { n: number }).n,
+        noCategory: (db.prepare(`SELECT COUNT(*) AS n FROM products WHERE available=1 AND category_id IS NULL`).get() as { n: number }).n,
+        noLink: (db.prepare(`SELECT COUNT(*) AS n FROM products p WHERE p.available=1 AND NOT EXISTS (SELECT 1 FROM product_store_links l WHERE l.product_id=p.id AND l.evotor_uuid IS NOT NULL)`).get() as { n: number }).n,
+      }
+    } catch { /* */ }
+    const exceptions: { id: string; level: string; title: string; href: string; count: number }[] = []
+    if (docs.sellFailed + docs.paybackFailed + failedDocs > 0) {
+      exceptions.push({ id: 'failed_docs', level: 'bad', title: 'Чеки с ошибкой обработки', href: '/operations?view=errors', count: docs.sellFailed + docs.paybackFailed + failedDocs })
+    }
+    if (noCard > 0) {
+      exceptions.push({ id: 'nocard', level: 'warn', title: 'Продажи без карты лояльности', href: '/operations?view=nocard', count: noCard })
+    }
+    if (pendingOutbox > 0) {
+      exceptions.push({ id: 'outbox', level: 'warn', title: 'Очередь синхронизации товаров', href: '/cash', count: pendingOutbox })
+    }
+    if (quality.noPhoto > 0) {
+      exceptions.push({ id: 'nophoto', level: 'warn', title: 'Товары без фото', href: '/menu', count: quality.noPhoto })
+    }
+    const revenueSource = 'loyalty_ops_and_evotor_docs'
+    const coverageNote = 'Выручка и средний чек считаются по документам/операциям, полученным интеграцией 6.7, а не по полной кассе Эвотор.'
+    return c.json({
+      now, period, since, store: store ?? null, health, docs, ops,
+      sellWithoutCard: noCard, customers, newCustomers, recent: recent.ops,
+      exceptions, quality, failedDocs, pendingOutbox,
+      coverage: { source: revenueSource, note: coverageNote, complete: false },
+      asOf: now,
+    })
+  })
+
+  /** Business event feed for admin (read-only aggregate). */
+  .get('/business-events', (c) => {
+    const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') || 40)))
+    const events: { at: number; kind: string; title: string; ref?: string }[] = []
+    const docs = db.prepare(`
+      SELECT received_at AS at, type, status, doc_id AS docId, store_uuid AS store, last_error AS err
+      FROM evotor_docs ORDER BY received_at DESC LIMIT ?
+    `).all(limit) as { at: number; type: string; status: string; docId: string; store: string; err: string | null }[]
+    for (const d of docs) {
+      events.push({
+        at: d.at,
+        kind: `doc_${d.status.toLowerCase()}`,
+        title: `${d.type} ${d.status}${d.err ? ': ' + String(d.err).slice(0, 80) : ''}`,
+        ref: `${d.store}/${d.docId}`,
+      })
+    }
+    const ops = db.prepare(`
+      SELECT created_at AS at, kind, doc_id AS docId, cups_counted AS cups, result_rub AS rub
+      FROM loyalty_ops ORDER BY created_at DESC LIMIT ?
+    `).all(Math.ceil(limit / 2)) as { at: number; kind: string; docId: string; cups: number; rub: number }[]
+    for (const o of ops) {
+      events.push({
+        at: typeof o.at === 'number' ? o.at : Date.parse(String(o.at)) || 0,
+        kind: 'loyalty_' + o.kind.toLowerCase(),
+        title: `Лояльность ${o.kind}: ${o.cups} ст. · ${o.rub} ₽`,
+        ref: o.docId,
+      })
+    }
+    events.sort((a, b) => b.at - a.at)
+    return c.json({ events: events.slice(0, limit) })
   })
 
   // ---------- operations journal ----------

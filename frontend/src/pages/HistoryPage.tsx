@@ -84,14 +84,14 @@ export default function HistoryPage() {
 
   return (
     <div className="pb-6">
-      <header className="bg-white px-4 pb-4 border-b border-line" style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
+      <header className="px-4 pb-3" style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
         <Link to="/more" className="inline-flex items-center gap-1 min-h-11 text-brand text-sm no-underline"><ArrowLeft size={18} /> Ещё</Link>
-        <h1 className="text-2xl font-bold text-ink">История</h1>
+        <h1 className="text-[22px] leading-7 font-semibold text-ink">История</h1>
         <p className="text-ink-secondary text-sm mt-1">Только операции, подтверждённые сервером</p>
         {fromCache && cachedAt > 0 && <p className="text-xs text-ink-secondary mt-1">Сохранённая копия на {fmtClock(cachedAt)}</p>}
       </header>
       <div className="p-4 space-y-3">
-        {error && <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{error}</p>}
+        {error && <p className="rounded-xl bg-warn-bg p-3 text-sm text-warn">{error}</p>}
         {!items.length && !busy && !error && (
           <div className="card text-center py-8">
             <b>Пока нет подтверждённых операций</b>
@@ -100,7 +100,7 @@ export default function HistoryPage() {
         )}
         {groups.map((g) => (
           <section key={g.label} className="space-y-2">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-secondary px-1">{g.label}</h2>
+            <h2 className="text-[12px] leading-4 font-semibold tracking-wide text-ink-secondary px-1">{g.label}</h2>
             {g.rows.map((i) => (
               <article key={i.id} className="card !mb-0 flex gap-3 items-start">
                 <div className="min-w-0 flex-1">
@@ -110,7 +110,7 @@ export default function HistoryPage() {
                     {i.cupsDelta !== 0 && ` · ${i.cupsDelta > 0 ? '+' : '−'}${Math.abs(i.cupsDelta)} ${cupsWord(Math.abs(i.cupsDelta))}`}
                   </p>
                 </div>
-                <div className="text-right text-sm font-semibold tabular-nums text-ink">{amountOf(i)}</div>
+                <div className="text-right text-[15px] font-display font-semibold num text-ink">{amountOf(i)}</div>
               </article>
             ))}
           </section>

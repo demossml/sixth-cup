@@ -479,6 +479,24 @@ export const adminRoutes = new Hono()
     return c.json({ ok: true })
   })
 
+
+  .get('/modifier-schemes/:id/preview', (c) => {
+    const id = Number(c.req.param('id'))
+    const scheme = db.prepare('SELECT id, name FROM modifier_schemes WHERE id=?').get(id) as { id: number; name: string } | undefined
+    if (!scheme) throw bad('Scheme not found', 404)
+    const items = db.prepare(`
+      SELECT m.id, m.name, m.price, i.required, i.max_count AS maxCount
+      FROM modifier_scheme_items i
+      JOIN modifiers m ON m.id = i.modifier_id
+      WHERE i.scheme_id=?
+      ORDER BY m.sort_order, m.id
+    `).all(id)
+    const products = db.prepare(
+      'SELECT id, name FROM products WHERE modifier_scheme_id=? ORDER BY sort_order, id',
+    ).all(id)
+    return c.json({ scheme, items, products })
+  })
+
   .get('/modifier-schemes', (c) => {
     const schemes = db.prepare('SELECT id, name FROM modifier_schemes ORDER BY id').all() as { id: number; name: string }[]
     const items = db.prepare(`
@@ -535,46 +553,204 @@ export const adminRoutes = new Hono()
     return c.json({ ok: true })
   })
 
-  // —— Promos / vouchers / disputes / cashback (existing) ——
+
+  // —— Catalog quality ——
+  .get('/catalog/quality', (c) => {
+    const total = (db.prepare(`SELECT COUNT(*) AS n FROM products WHERE available=1`).get() as { n: number }).n
+    const noPhoto = (db.prepare(`SELECT COUNT(*) AS n FROM products WHERE available=1 AND (image_url IS NULL OR TRIM(image_url)='')`).get() as { n: number }).n
+    const noCategory = (db.prepare(`SELECT COUNT(*) AS n FROM products WHERE available=1 AND category_id IS NULL`).get() as { n: number }).n
+    let noLink = 0
+    try {
+      noLink = (db.prepare(`
+        SELECT COUNT(*) AS n FROM products p
+        WHERE p.available=1 AND NOT EXISTS (
+          SELECT 1 FROM product_store_links l WHERE l.product_id=p.id AND l.evotor_uuid IS NOT NULL AND TRIM(l.evotor_uuid)!=''
+        )
+      `).get() as { n: number }).n
+    } catch {
+      noLink = -1
+    }
+    const noScheme = (db.prepare(`
+      SELECT COUNT(*) AS n FROM products WHERE available=1 AND counts_as_cup=1 AND modifier_scheme_id IS NULL
+    `).get() as { n: number }).n
+    return c.json({ total, noPhoto, noCategory, noLink, noScheme })
+  })
+
+  // —— Per-store availability ——
+  .get('/products/:id/availability', (c) => {
+    const id = Number(c.req.param('id'))
+    const rows = db.prepare(
+      `SELECT store_uuid AS storeUuid, available, updated_at AS updatedAt, updated_by AS updatedBy
+       FROM product_store_availability WHERE product_id=?`,
+    ).all(id)
+    return c.json({ productId: id, rows })
+  })
+
+  .put('/products/:id/availability', zValidator('json', z.object({
+    storeUuid: z.string().min(1).max(80),
+    available: z.boolean(),
+  })), (c) => {
+    const id = Number(c.req.param('id'))
+    const p = c.req.valid('json')
+    const now = Date.now()
+    db.prepare(`
+      INSERT INTO product_store_availability(product_id, store_uuid, available, updated_at, updated_by)
+      VALUES(?,?,?,?,?)
+      ON CONFLICT(product_id, store_uuid) DO UPDATE SET
+        available=excluded.available, updated_at=excluded.updated_at, updated_by=excluded.updated_by
+    `).run(id, p.storeUuid, p.available ? 1 : 0, now, 'admin')
+    return c.json({ ok: true })
+  })
+
+  // —— Referrals summary ——
+  .get('/referrals', (c) => {
+    const rows = db.prepare(`
+      SELECT u.id AS referrerId, u.card_code AS referrerCard,
+             (SELECT COUNT(*) FROM users f WHERE f.invited_by=u.id) AS invited,
+             (SELECT COUNT(DISTINCT f.id) FROM users f
+                JOIN loyalty_ops o ON o.card_id=f.card_id AND o.kind='SELL'
+                WHERE f.invited_by=u.id) AS withPurchase,
+             COALESCE((SELECT SUM(amount) FROM cashback_ledger WHERE beneficiary_id=u.id),0) AS cashbackKop
+      FROM users u
+      WHERE EXISTS (SELECT 1 FROM users f WHERE f.invited_by=u.id)
+      ORDER BY cashbackKop DESC
+      LIMIT 100
+    `).all()
+    return c.json({ referrers: rows })
+  })
+
+  // —— Promos / content CMS ——
   .get('/promos', (c) => {
-    const promos = db.prepare(
-      'SELECT id, title, body, icon, sponsor, starts_at AS startsAt, ends_at AS endsAt FROM promos ORDER BY id DESC'
-    ).all()
-    return c.json({ promos })
+    try {
+      const promos = db.prepare(`
+        SELECT id, title, body, icon, sponsor, starts_at AS startsAt, ends_at AS endsAt,
+               image_url AS imageUrl, placement, status, sort_order AS sortOrder,
+               cta_label AS ctaLabel, product_id AS productId, badge, kind,
+               published_at AS publishedAt
+        FROM promos ORDER BY sort_order ASC, id DESC
+      `).all()
+      return c.json({ promos })
+    } catch {
+      const promos = db.prepare(
+        'SELECT id, title, body, icon, sponsor, starts_at AS startsAt, ends_at AS endsAt FROM promos ORDER BY id DESC',
+      ).all()
+      return c.json({ promos })
+    }
   })
 
   .post('/promos', zValidator('json', z.object({
-    title: z.string().min(1).max(80), body: z.string().max(300), icon: z.string().max(24).default('Sparkles'),
-    sponsor: z.string().max(80).optional(), days: z.number().int().min(1).max(365),
+    title: z.string().min(1).max(80),
+    body: z.string().max(500).optional().default(''),
+    icon: z.string().max(24).default('Sparkles'),
+    sponsor: z.string().max(80).optional().nullable(),
+    days: z.number().int().min(1).max(365).optional(),
+    startsAt: z.number().int().optional(),
+    endsAt: z.number().int().optional(),
+    imageUrl: z.string().max(500).optional().nullable(),
+    placement: z.enum(['home', 'menu', 'both']).optional().default('home'),
+    status: z.enum(['draft', 'published', 'archived']).optional().default('draft'),
+    sortOrder: z.number().int().optional().default(0),
+    ctaLabel: z.string().max(40).optional().nullable(),
+    productId: z.number().int().optional().nullable(),
+    badge: z.enum(['new', 'hit', 'seasonal']).optional().nullable(),
+    kind: z.enum(['promo', 'featured_product']).optional().default('promo'),
   })), (c) => {
     const p = c.req.valid('json')
     const now = Math.floor(Date.now() / 1000)
-    db.prepare('INSERT INTO promos(title,body,icon,sponsor,starts_at,ends_at) VALUES(?,?,?,?,?,?)')
-      .run(p.title, p.body, p.icon, p.sponsor ?? null, now, now + p.days * 86_400)
+    const starts = p.startsAt ?? now
+    const ends = p.endsAt ?? (p.days != null ? now + p.days * 86_400 : now + 30 * 86_400)
+    const publishedAt = p.status === 'published' ? now : null
+    try {
+      db.prepare(`
+        INSERT INTO promos(title,body,icon,sponsor,starts_at,ends_at,image_url,placement,status,sort_order,cta_label,product_id,badge,kind,published_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      `).run(
+        p.title, p.body ?? '', p.icon, p.sponsor ?? null, starts, ends,
+        p.imageUrl ?? null, p.placement, p.status, p.sortOrder,
+        p.ctaLabel ?? null, p.productId ?? null, p.badge ?? null, p.kind, publishedAt,
+      )
+    } catch {
+      db.prepare('INSERT INTO promos(title,body,icon,sponsor,starts_at,ends_at) VALUES(?,?,?,?,?,?)')
+        .run(p.title, p.body ?? '', p.icon, p.sponsor ?? null, starts, ends)
+    }
     return c.json({ ok: true })
   })
 
   .patch('/promos/:id', zValidator('json', z.object({
     title: z.string().min(1).max(80).optional(),
-    body: z.string().max(300).optional(),
+    body: z.string().max(500).optional(),
     icon: z.string().max(24).optional(),
     sponsor: z.string().max(80).optional().nullable(),
     days: z.number().int().min(1).max(365).optional(),
+    startsAt: z.number().int().optional(),
+    endsAt: z.number().int().optional(),
+    imageUrl: z.string().max(500).optional().nullable(),
+    placement: z.enum(['home', 'menu', 'both']).optional(),
+    status: z.enum(['draft', 'published', 'archived']).optional(),
+    sortOrder: z.number().int().optional(),
+    ctaLabel: z.string().max(40).optional().nullable(),
+    productId: z.number().int().optional().nullable(),
+    badge: z.enum(['new', 'hit', 'seasonal']).optional().nullable(),
+    kind: z.enum(['promo', 'featured_product']).optional(),
   })), (c) => {
     const id = Number(c.req.param('id'))
     const p = c.req.valid('json')
     const row = db.prepare('SELECT * FROM promos WHERE id=?').get(id) as Record<string, unknown> | undefined
     if (!row) throw bad('Promo not found', 404)
     const now = Math.floor(Date.now() / 1000)
-    const ends = p.days != null ? now + p.days * 86_400 : row.ends_at
-    db.prepare(`UPDATE promos SET title=?, body=?, icon=?, sponsor=?, ends_at=? WHERE id=?`).run(
-      p.title ?? row.title,
-      p.body ?? row.body,
-      p.icon ?? row.icon,
-      p.sponsor !== undefined ? p.sponsor : row.sponsor,
-      ends,
-      id,
-    )
+    const ends = p.endsAt ?? (p.days != null ? now + p.days * 86_400 : row.ends_at)
+    const starts = p.startsAt ?? row.starts_at
+    const status = p.status ?? row.status ?? 'published'
+    const publishedAt = status === 'published'
+      ? (row.published_at ?? now)
+      : row.published_at
+    try {
+      db.prepare(`
+        UPDATE promos SET title=?, body=?, icon=?, sponsor=?, starts_at=?, ends_at=?,
+          image_url=?, placement=?, status=?, sort_order=?, cta_label=?, product_id=?, badge=?, kind=?, published_at=?
+        WHERE id=?
+      `).run(
+        p.title ?? row.title,
+        p.body ?? row.body,
+        p.icon ?? row.icon,
+        p.sponsor !== undefined ? p.sponsor : row.sponsor,
+        starts, ends,
+        p.imageUrl !== undefined ? p.imageUrl : row.image_url,
+        p.placement ?? row.placement ?? 'home',
+        status,
+        p.sortOrder ?? row.sort_order ?? 0,
+        p.ctaLabel !== undefined ? p.ctaLabel : row.cta_label,
+        p.productId !== undefined ? p.productId : row.product_id,
+        p.badge !== undefined ? p.badge : row.badge,
+        p.kind ?? row.kind ?? 'promo',
+        publishedAt,
+        id,
+      )
+    } catch {
+      db.prepare(`UPDATE promos SET title=?, body=?, icon=?, sponsor=?, ends_at=? WHERE id=?`).run(
+        p.title ?? row.title, p.body ?? row.body, p.icon ?? row.icon,
+        p.sponsor !== undefined ? p.sponsor : row.sponsor, ends, id,
+      )
+    }
+    return c.json({ ok: true })
+  })
+
+  .post('/promos/:id/publish', (c) => {
+    const id = Number(c.req.param('id'))
+    const now = Math.floor(Date.now() / 1000)
+    try {
+      db.prepare(`UPDATE promos SET status='published', published_at=? WHERE id=?`).run(now, id)
+    } catch {
+      /* ignore if columns missing */
+    }
+    return c.json({ ok: true })
+  })
+
+  .post('/promos/:id/unpublish', (c) => {
+    const id = Number(c.req.param('id'))
+    try {
+      db.prepare(`UPDATE promos SET status='draft' WHERE id=?`).run(id)
+    } catch { /* */ }
     return c.json({ ok: true })
   })
 
@@ -583,7 +759,7 @@ export const adminRoutes = new Hono()
     return c.json({ ok: true })
   })
 
-  .post('/vouchers/grant-all', zValidator('json', z.object({ code: z.string() })), (c) => {
+    .post('/vouchers/grant-all', zValidator('json', z.object({ code: z.string() })), (c) => {
     const ids = db.prepare('SELECT id FROM users').all() as { id: number }[]
     db.transaction(() => { for (const u of ids) grantVoucher(u.id, c.req.valid('json').code) })()
     return c.json({ granted: ids.length })

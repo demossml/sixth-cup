@@ -15,11 +15,11 @@ export default function InstallBanner({ variant = 'fixed' }: { variant?: 'inline
   if (variant === 'fixed' && location.pathname === '/') return null
 
   const body = (
-    <div className="bg-brand text-white rounded-2xl p-3 flex gap-3 items-start shadow-card">
-      <img src="/logo-mark.png" alt="" className="w-11 h-11 rounded-xl shrink-0 bg-white/10 object-cover" />
+    <div className="bg-white border border-line text-ink rounded-2xl p-3 flex gap-3 items-start shadow-card">
+      <img src="/logo-mark.png" alt="" className="w-12 h-12 rounded-xl shrink-0 object-cover" />
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold leading-snug">Добавьте 6.7 Coffee на экран</p>
-        <p className="text-white/85 text-xs mt-1 leading-relaxed">
+        <p className="text-[15px] font-semibold leading-snug">Добавьте 6.7 Coffee на экран</p>
+        <p className="text-ink-secondary text-[13px] leading-[18px] mt-1">
           {canPrompt
             ? 'Карта будет под рукой, как обычное приложение.'
             : ios
@@ -28,11 +28,11 @@ export default function InstallBanner({ variant = 'fixed' }: { variant?: 'inline
         </p>
         <div className="flex gap-2 mt-2">
           {canPrompt && (
-            <button type="button" onClick={() => void install()} className="min-h-11 px-4 text-sm font-semibold bg-white text-brand rounded-lg">
+            <button type="button" onClick={() => void install()} className="min-h-11 px-4 text-sm font-semibold bg-brand text-white rounded-xl">
               Установить
             </button>
           )}
-          <button type="button" onClick={later} className="min-h-11 px-3 text-sm text-white/90">
+          <button type="button" onClick={later} className="min-h-11 px-3 text-sm font-semibold text-brand">
             {canPrompt ? 'Позже' : 'Понятно'}
           </button>
         </div>

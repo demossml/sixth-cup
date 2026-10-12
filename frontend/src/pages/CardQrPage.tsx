@@ -4,7 +4,7 @@ import { useApp } from '../lib/app'
 import { formatCardCode } from '../lib/card'
 import { syncStatus } from '../lib/syncStatus'
 import { useWakeLock } from '../lib/wakeLock'
-import { ArrowLeft, WifiOff } from '../lib/icons'
+import { WifiOff, X } from '../lib/icons'
 
 /** Полноэкранное увеличение QR (с главной код уже виден без этого экрана). Баннеры и меню скрыты. */
 export default function CardQrPage() {
@@ -29,12 +29,12 @@ export default function CardQrPage() {
       <button
         type="button"
         onClick={() => (loc.key === 'default' ? nav('/', { replace: true }) : nav(-1))}
-        className="absolute left-3 flex items-center gap-2 px-3 text-brand min-h-12 font-medium"
+        className="absolute right-3 flex items-center justify-center w-11 h-11 rounded-full text-ink active:bg-line/60"
         style={{ top: 'max(0.75rem, env(safe-area-inset-top))' }}
+        aria-label="Закрыть"
       >
-        <ArrowLeft size={20} /> Назад
+        <X size={24} strokeWidth={1.75} />
       </button>
-      <p className="text-sm font-medium text-ink-secondary mb-3">QR карты для кассы</p>
       {proof ? (
         <div className="w-full" style={{ maxWidth: 'min(92vw, 62vh, 440px)' }}>
           <Qr value={proof} size={440} alt="QR карты для кассы" />
@@ -42,11 +42,11 @@ export default function CardQrPage() {
       ) : (
         <p className="text-sm text-ink-secondary">Код недоступен — вернитесь на главную и обновите карту.</p>
       )}
-      <p className="mt-4 text-4xl font-bold tracking-[0.18em] tabular-nums">{formatCardCode(cardCode)}</p>
-      <p className="text-sm text-ink-secondary mt-2 text-center max-w-xs">Если не сканируется — назовите номер карты бариста</p>
+      <p className="mt-4 font-display font-semibold text-4xl tracking-[0.12em] num">{formatCardCode(cardCode)}</p>
+      <p className="text-[13px] leading-[18px] text-ink-secondary mt-2 text-center max-w-xs">Покажите код бариста. Не читается — назовите номер</p>
       {status.kind !== 'fresh' && status.detail && (
         <p className="mt-3 text-xs text-ink-secondary inline-flex items-center gap-1">
-          {status.kind === 'offline' && <WifiOff size={14} />} {status.detail}
+          {status.kind === 'offline' && <WifiOff size={14} strokeWidth={1.75} />} {status.detail}
         </p>
       )}
     </main>

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Archive, Download, Plus, Pencil } from 'lucide-react'
 import { api, download } from '../api/client'
@@ -33,7 +33,22 @@ function ProductDrawer({ draft, onClose, onSaved, categories, schemes, stores }:
   const key = draft ? `${draft.id ?? 'new'}` : ''
   const [seen, setSeen] = useState(key)
   if (key !== seen) { setSeen(key); setD(draft); setErr('') }
-  if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} />
+  
+  const [storeAvail, setStoreAvail] = useState<Record<string, boolean>>({})
+  useEffect(() => {
+    if (!draft?.id) { setStoreAvail({}); return }
+    let cancelled = false
+    api<{ rows: { storeUuid: string; available: number }[] }>(`/products/${draft.id}/availability`)
+      .then((r) => {
+        if (cancelled) return
+        const m: Record<string, boolean> = {}
+        for (const row of r.rows) m[row.storeUuid] = !!row.available
+        setStoreAvail(m)
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [draft?.id])
+if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} />
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD({ ...d, [k]: v })
 
   const save = async () => {
@@ -81,6 +96,36 @@ function ProductDrawer({ draft, onClose, onSaved, categories, schemes, stores }:
       </Field>
       <div className="mb-3 rounded-xl border border-line p-3">
         <div className="mb-1 flex items-center justify-between gap-3"><span className="text-[15px]">В продаже</span><Toggle checked={!!d.available} onChange={(v) => set('available', v ? 1 : 0)} label="В продаже" /></div>
+        {d.id && stores.length > 0 && (
+          <div className="mb-3 rounded-xl border border-line p-3">
+            <div className="text-sm font-semibold mb-2">Доступность по точкам (PWA)</div>
+            <p className="text-xs text-ink-secondary mb-2">Если не задано — действует глобальный «В продаже». На кассу Эвотор это не пушится автоматически.</p>
+            <div className="space-y-2">
+              {stores.filter((s) => s.sync_enabled !== 0).map((s) => {
+                const uuid = String(s.uuid || s.storeUuid || s.id)
+                const checked = storeAvail[uuid] !== undefined ? storeAvail[uuid] : !!d.available
+                return (
+                  <div key={String(uuid)} className="flex items-center justify-between gap-2 text-sm">
+                    <span className="truncate">{s.name || uuid}</span>
+                    <Toggle
+                      checked={checked}
+                      label={s.name || uuid}
+                      onChange={async (v) => {
+                        setStoreAvail((m) => ({ ...m, [uuid]: v }))
+                        try {
+                          await api(`/products/${d.id}/availability`, { method: 'PUT', body: { storeUuid: uuid, available: v } })
+                        } catch (e) {
+                          toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+                        }
+                      }}
+                    />
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
         <Check checked={!!d.countsAsCup} onChange={(v) => set('countsAsCup', v ? 1 : 0)} label="Считается чашкой (идёт в счётчик лояльности)" />
         <Check checked={!!d.freeEligible} onChange={(v) => set('freeEligible', v ? 1 : 0)} label="Можно выдать бесплатно по лояльности" />
       </div>
