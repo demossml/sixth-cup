@@ -27,6 +27,15 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_admin_audit_entity ON admin_audit(entity, entity_id);
 `)
 
+/** Older DBs predate the `status`/`summary` columns added in the redesign; CREATE IF NOT EXISTS does not add columns to an existing table, so ensure them at startup. */
+function ensureAuditColumns() {
+  const cols = db.prepare(`PRAGMA table_info(admin_audit)`).all() as { name: string }[]
+  const names = new Set(cols.map((c) => c.name))
+  if (!names.has('status')) db.exec(`ALTER TABLE admin_audit ADD COLUMN status INTEGER NOT NULL DEFAULT 0`)
+  if (!names.has('summary')) db.exec(`ALTER TABLE admin_audit ADD COLUMN summary TEXT`)
+}
+ensureAuditColumns()
+
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 const SECRET_KEY = /token|secret|password|authorization|hash/i
 const MAX_JSON = 4000
