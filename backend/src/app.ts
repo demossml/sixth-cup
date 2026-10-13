@@ -18,6 +18,7 @@ import { syncRoutes } from './modules/sync/routes'
 import { uploadRoutes } from './modules/upload/routes'
 import { clientLogRoutes } from './modules/logs/routes'
 import { gameRoutes } from './modules/game/routes'
+import { runnerRoutes } from './modules/game/runner'
 
 const app = new Hono()
 /** Routes that already write their own, richer log lines (or are polled by the UI itself). */
@@ -82,6 +83,7 @@ const routes = app
   .route('/api/dev', devRoutes)
   .route('/api/client-logs', clientLogRoutes)
   .route('/api/game', gameRoutes)
+  .route('/api/game/runner', runnerRoutes)
   .route('/api/admin', adminRoutes)
   .route('/api/admin/upload', uploadRoutes)
 

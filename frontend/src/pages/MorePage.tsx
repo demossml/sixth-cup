@@ -7,7 +7,7 @@ const entries = [
   { to: '/promos', title: 'Акции', detail: 'Предложения 6.7 Coffee', Icon: Ticket },
   { to: '/stores', title: 'Кофейни', detail: 'Адреса', Icon: Store },
   { to: '/invite', title: 'Пригласить друга', detail: 'Ссылка и QR для друга — не для кассы', Icon: Users },
-  { to: '/game', title: 'Собери альпаку', detail: 'Мини-игра · бонус 1 раз в день после синка', Icon: Coffee },
+  { to: '/game', title: 'Приключения ламы', detail: '2D-раннер · зёрна и препятствия', Icon: Coffee },
 ]
 
 /** «Ещё»: одна сгруппированная белая плашка с hairline вместо стопки равновеликих карточек. */
