@@ -202,6 +202,19 @@ export const deviceRoutes = new Hono<DeviceEnv>()
           evotorUuid: uuidByProduct.get(Number(p.id)) || null,
         }))
 
+      // Category names for chips on the cashier (Evotor parent groups may be empty).
+      const catRows = db.prepare(
+        `SELECT id, name, sort_order AS sortOrder FROM categories ORDER BY sort_order, id`,
+      ).all() as { id: number; name: string; sortOrder: number }[]
+      const catNameById = new Map(catRows.map((r) => [r.id, r.name]))
+
+      const isFeatured = (name: string, description: string | null | undefined) => {
+        const d = String(description || '')
+        if (/#focus\b/i.test(d) || /#combo\b/i.test(d)) return true
+        if (String(name || '').includes(' + ')) return true
+        return false
+      }
+
       const out = products.map((p) => {
         const id = Number(p.id)
         const schemeId = p.schemeId != null ? Number(p.schemeId) : null
@@ -214,6 +227,7 @@ export const deviceRoutes = new Hono<DeviceEnv>()
                   id: m.id,
                   name: m.name,
                   price: m.price,
+                  priceRub: m.price,
                   groupKey: m.groupKey,
                   required: !!it.required,
                   maxCount: it.maxCount,
@@ -222,27 +236,40 @@ export const deviceRoutes = new Hono<DeviceEnv>()
               .filter(Boolean)
           : []
         const upsell = upsellPool.filter((u) => u.id !== id).slice(0, 6)
+        const description = (p.description as string | null) ?? null
+        const categoryId = p.categoryId != null ? Number(p.categoryId) : null
+        const categoryName = categoryId != null ? (catNameById.get(categoryId) || null) : null
         return {
           id,
+          productId: id,
           name: p.name,
           price: p.price,
-          description: p.description ?? null,
+          priceRub: p.price,
+          description,
           imageUrl: abs(p.imageUrl as string | null),
           sortOrder: p.sortOrder ?? 0,
-          categoryId: p.categoryId ?? null,
+          categoryId,
+          categoryName,
+          featured: isFeatured(String(p.name || ''), description),
           countsAsCup: !!p.countsAsCup,
           freeEligible: !!p.freeEligible,
           recipeText: p.recipeText ?? null,
+          recipe: p.recipeText ?? null,
           evotorUuid: uuidByProduct.get(id) || null,
           toppings,
           upsell,
         }
       })
 
+      const categories = catRows
+        .filter((r) => out.some((p) => p.categoryId === r.id))
+        .map((r) => ({ id: r.id, name: r.name, sortOrder: r.sortOrder }))
+
       return c.json({
         ok: true,
         generatedAt: Math.floor(Date.now() / 1000),
         storeUuid: storeUuid || null,
+        categories,
         products: out,
       })
     })
