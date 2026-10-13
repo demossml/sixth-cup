@@ -98,7 +98,7 @@ if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} /
         <div className="mb-1 flex items-center justify-between gap-3"><span className="text-[15px]">В продаже</span><Toggle checked={!!d.available} onChange={(v) => set('available', v ? 1 : 0)} label="В продаже" /></div>
         {d.id && stores.length > 0 && (
           <div className="mb-3 rounded-xl border border-line p-3">
-            <div className="text-sm font-semibold mb-2">Доступность по точкам (PWA)</div>
+            <div className="text-sm font-semibold mb-2">Доступность по точкам (приложение 6.7; не скрывает позицию в меню Эвотор)</div>
             <p className="text-xs text-ink-secondary mb-2">Если не задано — действует глобальный «В продаже». На кассу Эвотор это не пушится автоматически.</p>
             <div className="space-y-2">
               {stores.filter((s) => s.sync_enabled !== 0).map((s) => {

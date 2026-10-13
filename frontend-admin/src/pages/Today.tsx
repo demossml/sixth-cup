@@ -11,6 +11,7 @@ import { qs } from '../lib/query'
 import { Badge, Button, Card, EmptyState, ErrorBox, KpiTile, PageHeader, Select, Skeleton, Tabs, useToast } from '../ui/kit'
 import type { Tone } from '../ui/kit'
 import { CardRef, DocStatusBadge, opResult, typeLabel } from './shared'
+import { SimpleBarChart } from '../components/SimpleChart'
 
 const LEVEL: Record<string, { tone: Tone; label: string }> = {
   ok: { tone: 'ok', label: 'Работает' },
@@ -49,12 +50,17 @@ function TillCard({ s, now, onPoll, polling }: { s: StoreHealth; now: number; on
 export default function Today() {
   const quality = useApi<{ total: number; noPhoto: number; noCategory: number; noLink: number; noScheme: number }>('/catalog/quality')
 
-  const [period, setPeriod] = useState<'24h' | '7d' | '30d' | 'yesterday'>('24h')
+  const [period, setPeriod] = useState<'24h' | 'yesterday' | '7d' | '30d'>('24h')
   const [store, setStore] = useState('')
   const [polling, setPolling] = useState(false)
   const toast = useToast()
   const nav = useNavigate()
   const { data, error, loading, reload } = useApi<Dashboard>(`/dashboard${qs({ period, store })}`, { refreshMs: 60_000 })
+  const series = useApi<{
+    points: { t: string; sellDocs: number; cups: number; revenueRub: number }[]
+    totals: { sellDocs: number; cups: number }
+    coverage?: { note?: string }
+  }>(`/analytics/series${qs({ period, store })}`)
   const { stores: syncStores } = useSyncStores()
 
   const poll = async () => {
@@ -114,6 +120,7 @@ export default function Today() {
             <span>Без связи с кассой: <b>{quality.data.noLink < 0 ? '—' : quality.data.noLink}</b></span>
             <span>Напитки без схемы: <b>{quality.data.noScheme}</b></span>
             <a className="text-brand font-semibold" href="#/menu">Исправить →</a>
+            <a className="text-brand font-semibold" href="#/assistant">Помощник →</a>
           </div>
         </Card>
       )}
@@ -150,6 +157,25 @@ export default function Today() {
             <KpiTile label="Клиентов" value={fmtNum(data.customers)} sub={`новых за период: ${data.newCustomers}`} />
             <KpiTile label="Последняя операция" value={<span className="text-lg">{data.ops.lastOpAt ? ago(data.ops.lastOpAt, data.now) : '—'}</span>} sub={data.ops.lastOpAt ? fmtDateTime(data.ops.lastOpAt) : 'за период не было'} />
           </div>
+
+
+          {series.data && series.data.points?.length > 0 && (
+            <Card className="mb-4">
+              <div className="mb-2 text-sm font-semibold">Динамика чеков и чашек</div>
+              <p className="mb-2 text-xs text-ink-secondary">Источник: 6.7 ops / документы. Не полный отчёт Эвотор.</p>
+              <SimpleBarChart
+                label="Чеки SELL"
+                points={series.data.points.map((p) => ({ t: p.t, value: p.sellDocs }))}
+              />
+              <div className="mt-3">
+                <SimpleBarChart
+                  label="Чашки"
+                  color="#0d9488"
+                  points={series.data.points.map((p) => ({ t: p.t, value: p.cups }))}
+                />
+              </div>
+            </Card>
+          )}
 
           {(data.docs.sellFailed + data.docs.paybackFailed > 0 || data.sellWithoutCard > 0) && (
             <div className="mb-4 flex flex-wrap gap-2">

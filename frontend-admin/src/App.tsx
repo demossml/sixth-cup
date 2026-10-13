@@ -17,6 +17,7 @@ import Marketing from './pages/Marketing'
 import Referrals from './pages/Referrals'
 import Compare from './pages/Compare'
 import BusinessEvents from './pages/BusinessEvents'
+import Assistant from './pages/Assistant'
 import System from './pages/System'
 
 
@@ -84,6 +85,7 @@ export default function App() {
             <Route path="referrals" element={<Referrals />} />
             <Route path="compare" element={<Compare />} />
             <Route path="events" element={<BusinessEvents />} />
+            <Route path="assistant" element={<Assistant />} />
             <Route path="system" element={<System />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

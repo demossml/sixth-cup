@@ -15,6 +15,13 @@ export const config = {
   /** POST /api/admin/reset. Defaults to allowed outside production; production must opt in with ADMIN_ALLOW_RESET=1. */
   /** Optional second token: read-only admin (GET only). */
   adminViewerToken: process.env.ADMIN_VIEWER_TOKEN || '',
+  /** Read + content/analytics write, no reset/dangerous ops. */
+  adminMarketerToken: process.env.ADMIN_MARKETER_TOKEN || '',
+  /** AI assistant master switch */
+  aiAssistant: process.env.AI_ASSISTANT === '1',
+  aiApiKey: process.env.AI_API_KEY || '',
+  aiBaseUrl: process.env.AI_BASE_URL || 'https://api.openai.com/v1',
+  aiModel: process.env.AI_MODEL || 'gpt-4o-mini',
   adminAllowReset: process.env.ADMIN_ALLOW_RESET != null ? process.env.ADMIN_ALLOW_RESET === '1' : isDev,
   cupsForFree: Number(process.env.CUPS_FOR_FREE ?? 5),
   cardQrTtlSec: Number(process.env.CARD_QR_TTL_SEC ?? 30 * 86400),

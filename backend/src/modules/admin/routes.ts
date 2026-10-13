@@ -17,6 +17,8 @@ import { resetLoyaltyData, resetCatalogData } from '../../db/seed'
 import { adminEvotorCatalog } from './evotorCatalog'
 import { queryLogs, log, LOG_SOURCES, LOG_LEVELS, type LogLevel, type LogSource } from '../../lib/logBuffer'
 import { ProductPushService } from '../../integrations/evotor/sync/ProductPushService'
+import { adminAnalytics } from './analytics'
+import { adminAi } from './ai'
 
 /** Constant-time token comparison. */
 function safeEq(given: string, expected: string): boolean {
@@ -26,11 +28,12 @@ function safeEq(given: string, expected: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b)
 }
 
-type AdminRole = 'owner' | 'viewer'
+type AdminRole = 'owner' | 'manager' | 'viewer'
 
 function resolveAdminRole(given: string | undefined): AdminRole | null {
   if (typeof given !== 'string') return null
   if (safeEq(given, config.adminToken)) return 'owner'
+  if (config.adminMarketerToken && safeEq(given, config.adminMarketerToken)) return 'manager'
   if (config.adminViewerToken && safeEq(given, config.adminViewerToken)) return 'viewer'
   return null
 }
@@ -42,6 +45,10 @@ const adminAuth = createMiddleware(async (c, next) => {
   // Viewer: only safe methods
   if (role === 'viewer' && !['GET', 'HEAD', 'OPTIONS'].includes(c.req.method)) {
     throw bad('Read-only admin token', 403)
+  }
+  // manager: no reset / wipe-style routes
+  if (role === 'manager' && c.req.method !== 'GET' && /\/reset|\/wipe|\/organizations/.test(c.req.path)) {
+    throw bad('Insufficient role', 403)
   }
   await next()
 })
@@ -56,8 +63,18 @@ export const adminRoutes = new Hono()
   .use('*', auditMiddleware)
 
   .get('/me', (c) => {
-    const role = (c as { get: (k: string) => string }).get('adminRole') || 'owner'
-    return c.json({ role, canWrite: role === 'owner', canReset: role === 'owner' && config.adminAllowReset })
+    const role = ((c as { get: (k: string) => string }).get('adminRole') || 'owner') as string
+    return c.json({
+      role,
+      canWrite: role === 'owner' || role === 'manager',
+      canReset: role === 'owner' && config.adminAllowReset,
+      aiEnabled: !!config.aiAssistant,
+      permissions: role === 'owner'
+        ? ['read', 'write', 'content', 'analytics', 'ai', 'reset']
+        : role === 'manager'
+          ? ['read', 'write', 'content', 'analytics', 'ai']
+          : ['read'],
+    })
   })
 
   /**
@@ -802,4 +819,6 @@ export const adminRoutes = new Hono()
   .route('/', adminEvotorCatalog)
 
 adminRoutes.route('/', adminAssignments)
+adminRoutes.route('/', adminAnalytics)
+adminRoutes.route('/', adminAi)
 adminRoutes.route('/', adminConsole)
