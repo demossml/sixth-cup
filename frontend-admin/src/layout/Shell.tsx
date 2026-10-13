@@ -7,12 +7,12 @@ import type { Health } from '../api/types'
 import { ago } from '../lib/format'
 import { Drawer, StatusDot, cx } from '../ui/kit'
 
-type NavItem = { to: string; label: string; icon: ReactNode; end?: boolean }
+type NavItem = { to: string; label: string; short?: string; icon: ReactNode; end?: boolean }
 const MAIN: NavItem[] = [
-  { to: '/', label: 'Сегодня', icon: <LayoutDashboard size={20} />, end: true },
-  { to: '/operations', label: 'Операции', icon: <Activity size={20} /> },
-  { to: '/customers', label: 'Клиенты', icon: <Users size={20} /> },
-  { to: '/menu', label: 'Меню', icon: <Coffee size={20} /> },
+  { to: '/', label: 'Сегодня', short: 'Сегодня', icon: <LayoutDashboard size={20} />, end: true },
+  { to: '/operations', label: 'Операции', short: 'Операции', icon: <Activity size={20} /> },
+  { to: '/customers', label: 'Клиенты', short: 'Клиенты', icon: <Users size={20} /> },
+  { to: '/menu', label: 'Меню', short: 'Меню', icon: <Coffee size={20} /> },
 ]
 const MORE: NavItem[] = [
   { to: '/cash', label: 'Касса', icon: <Store size={20} /> },
@@ -89,7 +89,7 @@ export default function Shell({ onLogout }: { onLogout: () => void }) {
   const link = ({ isActive }: { isActive: boolean }) =>
     cx('flex min-h-[44px] items-center gap-3 rounded-xl px-3 text-[15px] font-medium', isActive ? 'bg-brand-soft text-brand' : 'text-ink-secondary hover:bg-gray-100')
   return (
-    <div className="min-h-screen bg-page md:flex">
+    <div className="min-h-screen min-w-0 overflow-x-hidden bg-page md:flex">
       <aside className="hidden w-60 shrink-0 flex-col border-r border-line bg-white p-3 md:flex">
         <div className="mb-4 px-3 pt-2 text-lg font-extrabold text-brand">6.7 Coffee <span className="block text-xs font-medium text-ink-secondary">Админка</span></div>
         <nav className="flex flex-1 flex-col gap-1" aria-label="Разделы">
@@ -103,24 +103,26 @@ export default function Shell({ onLogout }: { onLogout: () => void }) {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex items-center gap-2 border-b border-line bg-white/95 px-4 py-2 backdrop-blur">
+        <header className="sticky top-0 z-30 flex min-w-0 items-center gap-2 border-b border-line bg-white/95 px-3 py-2 backdrop-blur sm:px-4">
           <span className="text-base font-extrabold text-brand md:hidden">6.7</span>
           <GlobalSearch />
           <TillStatus />
         </header>
-        <main className="mx-auto w-full max-w-6xl flex-1 px-4 pb-28 pt-4 md:pb-8">
+        <main className="mx-auto w-full min-w-0 max-w-6xl flex-1 overflow-x-hidden px-3 pb-[calc(4.5rem+env(safe-area-inset-bottom))] pt-3 sm:px-4 md:pb-8 md:pt-4">
           <Outlet />
         </main>
       </div>
 
-      <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-line bg-white pb-[env(safe-area-inset-bottom)] md:hidden" aria-label="Разделы">
+      <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-line bg-white/95 pb-[max(8px,env(safe-area-inset-bottom))] backdrop-blur md:hidden" aria-label="Разделы">
         {MAIN.map((n) => (
-          <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => cx('flex min-h-[56px] flex-col items-center justify-center gap-0.5 text-[11px] font-semibold', isActive ? 'text-brand' : 'text-ink-secondary')}>
-            {n.icon}{n.label}
+          <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => cx('flex min-h-[52px] max-w-full flex-col items-center justify-center gap-0.5 px-0.5 text-[10px] font-semibold leading-tight', isActive ? 'text-brand' : 'text-ink-secondary')}>
+            <span className="shrink-0">{n.icon}</span>
+            <span className="max-w-full truncate">{n.short ?? n.label}</span>
           </NavLink>
         ))}
-        <button type="button" onClick={() => setMore(true)} className={cx('flex min-h-[56px] flex-col items-center justify-center gap-0.5 text-[11px] font-semibold', moreActive ? 'text-brand' : 'text-ink-secondary')}>
-          <MoreHorizontal size={20} />Ещё
+        <button type="button" onClick={() => setMore(true)} className={cx('flex min-h-[52px] flex-col items-center justify-center gap-0.5 px-0.5 text-[10px] font-semibold leading-tight', moreActive ? 'text-brand' : 'text-ink-secondary')}>
+          <MoreHorizontal size={20} />
+          <span>Ещё</span>
         </button>
       </nav>
 

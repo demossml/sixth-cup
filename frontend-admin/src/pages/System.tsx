@@ -7,10 +7,10 @@ import { useApi } from '../api/useApi'
 import type { AuditEntry } from '../api/types'
 import { fmtDateTime } from '../lib/format'
 import { qs, setParams } from '../lib/query'
-import { Badge, Banner, Button, Card, Check, ConfirmDialog, DataTable, Drawer, EmptyState, ErrorBox, PageHeader, Select, Spinner, Tabs, useToast } from '../ui/kit'
+import { Badge, Banner, Button, Card, Check, ConfirmDialog, DataTable, Drawer, EmptyState, ErrorBox, Input, PageHeader, Select, Spinner, Tabs, useToast } from '../ui/kit'
 import type { Column } from '../ui/kit'
 
-type Tab = 'logs' | 'audit' | 'danger'
+type Tab = 'logs' | 'audit' | 'ai' | 'danger'
 
 /* ───────── logs ───────── */
 function Logs() {
@@ -114,6 +114,108 @@ function Audit() {
   )
 }
 
+
+/* ───────── AI / DeepSeek ───────── */
+function AiSettings() {
+  const toast = useToast()
+  const [busy, setBusy] = useState(false)
+  const [enabled, setEnabled] = useState(false)
+  const [model, setModel] = useState('deepseek-chat')
+  const [apiKey, setApiKey] = useState('')
+  const [hasKey, setHasKey] = useState(false)
+  const [keyHint, setKeyHint] = useState('')
+  const [models, setModels] = useState<string[]>(['deepseek-chat', 'deepseek-reasoner'])
+  const [ready, setReady] = useState(false)
+  const load = useCallback(async () => {
+    try {
+      const r = await api<{
+        enabled: boolean
+        model: string
+        hasKey: boolean
+        keyHint: string
+        models: string[]
+        ready: boolean
+      }>('/ai/settings')
+      setEnabled(!!r.enabled)
+      setModel(r.model || 'deepseek-chat')
+      setHasKey(!!r.hasKey)
+      setKeyHint(r.keyHint || '')
+      setModels(r.models?.length ? r.models : ['deepseek-chat'])
+      setReady(!!r.ready)
+      setApiKey('')
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Не удалось загрузить настройки ИИ', 'bad')
+    }
+  }, [toast])
+  useEffect(() => { void load() }, [load])
+  const save = async (clearKey = false) => {
+    setBusy(true)
+    try {
+      const body: Record<string, unknown> = { enabled, model }
+      if (clearKey) body.clearKey = true
+      else if (apiKey.trim()) body.apiKey = apiKey.trim()
+      const r = await api<{ ready: boolean; hasKey: boolean; keyHint: string }>('/ai/settings', { method: 'PUT', body })
+      setHasKey(!!r.hasKey)
+      setKeyHint(r.keyHint || '')
+      setReady(!!r.ready)
+      setApiKey('')
+      toast.push(r.ready ? 'ИИ готов: DeepSeek подключён' : 'Сохранено. Включите ИИ и укажите ключ, чтобы Помощник работал.')
+      await load()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка сохранения', 'bad')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <>
+      <Banner tone={ready ? 'ok' : 'warn'}>
+        {ready
+          ? 'DeepSeek подключён. Раздел «Помощник» отвечает живой моделью.'
+          : 'Пока ключ не сохранён, Помощник не вызывает модель. Ключ хранится только на сервере, в интерфейс не отдаётся.'}
+      </Banner>
+      <Card>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <div className="font-semibold">Включить ИИ</div>
+            <div className="text-xs text-ink-secondary">Без галочки эндпоинты /ai/* отвечают 503</div>
+          </div>
+          <Check checked={enabled} onChange={setEnabled} label="ИИ" />
+        </div>
+        <label className="mb-1 block text-sm font-medium">Провайдер</label>
+        <Select value="deepseek" disabled aria-label="Провайдер">
+          <option value="deepseek">DeepSeek</option>
+        </Select>
+        <label className="mb-1 mt-3 block text-sm font-medium">Модель</label>
+        <Select value={model} onChange={(e) => setModel(e.target.value)} aria-label="Модель">
+          {models.map((m) => (
+            <option key={m} value={m}>{m}</option>
+          ))}
+        </Select>
+        <label className="mb-1 mt-3 block text-sm font-medium">API-ключ DeepSeek</label>
+        <Input
+          type="password"
+          autoComplete="off"
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          placeholder={hasKey ? `Сохранён: ${keyHint}` : 'sk-… из platform.deepseek.com'}
+          aria-label="API-ключ DeepSeek"
+        />
+        <p className="mb-3 text-xs text-ink-secondary">
+          Ключ берётся на platform.deepseek.com. В git и в браузерный бандл не попадает — только в app_settings на сервере.
+        </p>
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+          <Button loading={busy} onClick={() => save(false)} className="w-full sm:w-auto">Сохранить</Button>
+          {hasKey && (
+            <Button loading={busy} variant="secondary" onClick={() => save(true)} className="w-full sm:w-auto">Удалить ключ</Button>
+          )}
+          <Button variant="ghost" onClick={() => void load()} className="w-full sm:w-auto">Обновить статус</Button>
+        </div>
+      </Card>
+    </>
+  )
+}
+
 /* ───────── danger zone ───────── */
 function Danger() {
   const meta = useMeta()
@@ -154,8 +256,8 @@ export default function System() {
   return (
     <>
       <PageHeader title="Система" subtitle={meta.production ? 'Рабочий сервер' : 'Режим разработки'} />
-      <Tabs items={[{ key: 'logs', label: 'Логи' }, { key: 'audit', label: 'Журнал действий' }, { key: 'danger', label: 'Опасная зона' }]} value={tab} onChange={(k) => setSp(setParams(sp, { tab: k }), { replace: true })} />
-      {tab === 'logs' ? <Logs /> : tab === 'audit' ? <Audit /> : <Danger />}
+      <Tabs items={[{ key: 'logs', label: 'Логи' }, { key: 'audit', label: 'Журнал' }, { key: 'ai', label: 'ИИ' }, { key: 'danger', label: 'Опасная зона' }]} value={tab} onChange={(k) => setSp(setParams(sp, { tab: k }), { replace: true })} />
+      {tab === 'logs' ? <Logs /> : tab === 'audit' ? <Audit /> : tab === 'ai' ? <AiSettings /> : <Danger />}
     </>
   )
 }

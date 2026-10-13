@@ -186,10 +186,10 @@ export function Banner({ tone = 'warn', children }: { tone?: Tone; children: Rea
 
 export function KpiTile({ label, value, sub, tone }: { label: string; value: ReactNode; sub?: ReactNode; tone?: Tone }) {
   return (
-    <div className="rounded-2xl border border-line bg-card p-3.5 shadow-card">
-      <div className="text-xs font-medium text-ink-secondary">{label}</div>
-      <div className={cx('mt-1 text-2xl font-bold tabular-nums', tone === 'bad' && 'text-bad', tone === 'warn' && 'text-warn')}>{value}</div>
-      {sub && <div className="mt-0.5 text-xs text-ink-secondary">{sub}</div>}
+    <div className="min-w-0 rounded-2xl border border-line bg-card p-3 shadow-card sm:p-3.5">
+      <div className="truncate text-[11px] font-medium text-ink-secondary sm:text-xs">{label}</div>
+      <div className={cx('mt-1 break-words text-xl font-bold tabular-nums sm:text-2xl', tone === 'bad' && 'text-bad', tone === 'warn' && 'text-warn')}>{value}</div>
+      {sub && <div className="mt-0.5 line-clamp-2 text-[11px] text-ink-secondary sm:text-xs">{sub}</div>}
     </div>
   )
 }

@@ -19,6 +19,7 @@ import { queryLogs, log, LOG_SOURCES, LOG_LEVELS, type LogLevel, type LogSource 
 import { ProductPushService } from '../../integrations/evotor/sync/ProductPushService'
 import { adminAnalytics } from './analytics'
 import { adminAi } from './ai'
+import { getAiSettingsPublic } from '../../lib/aiSettings'
 
 /** Constant-time token comparison. */
 function safeEq(given: string, expected: string): boolean {
@@ -64,11 +65,14 @@ export const adminRoutes = new Hono()
 
   .get('/me', (c) => {
     const role = ((c as { get: (k: string) => string }).get('adminRole') || 'owner') as string
+    const ai = getAiSettingsPublic()
     return c.json({
       role,
       canWrite: role === 'owner' || role === 'manager',
       canReset: role === 'owner' && config.adminAllowReset,
-      aiEnabled: !!config.aiAssistant,
+      aiEnabled: ai.enabled,
+      aiReady: ai.ready,
+      aiModel: ai.model,
       permissions: role === 'owner'
         ? ['read', 'write', 'content', 'analytics', 'ai', 'reset']
         : role === 'manager'

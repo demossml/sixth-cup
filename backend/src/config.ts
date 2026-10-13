@@ -20,8 +20,8 @@ export const config = {
   /** AI assistant master switch */
   aiAssistant: process.env.AI_ASSISTANT === '1',
   aiApiKey: process.env.AI_API_KEY || '',
-  aiBaseUrl: process.env.AI_BASE_URL || 'https://api.openai.com/v1',
-  aiModel: process.env.AI_MODEL || 'gpt-4o-mini',
+  aiBaseUrl: process.env.AI_BASE_URL || 'https://api.deepseek.com',
+  aiModel: process.env.AI_MODEL || 'deepseek-chat',
   adminAllowReset: process.env.ADMIN_ALLOW_RESET != null ? process.env.ADMIN_ALLOW_RESET === '1' : isDev,
   cupsForFree: Number(process.env.CUPS_FOR_FREE ?? 5),
   cardQrTtlSec: Number(process.env.CARD_QR_TTL_SEC ?? 30 * 86400),

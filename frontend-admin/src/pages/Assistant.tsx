@@ -49,9 +49,9 @@ export default function Assistant() {
     <>
       <PageHeader
         title="Помощник"
-        subtitle="Черновики и подсказки. Ничего не публикуется автоматически. Без ключа — mock-ответы."
+        subtitle="Черновики и подсказки. Ничего не публикуется само. Ключ и модель — в Система → ИИ (DeepSeek)."
       />
-      <div className="mb-4 grid gap-2 sm:grid-cols-2">
+      <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
         <Button loading={busy} onClick={() => run('catalog')}>Разобрать каталог</Button>
         <Button loading={busy} variant="secondary" onClick={() => run('anomaly')}>Почему мало чашек</Button>
         <Button loading={busy} variant="secondary" onClick={() => run('shift')}>Сводка за день</Button>

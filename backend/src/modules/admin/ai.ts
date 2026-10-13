@@ -1,14 +1,14 @@
 /**
  * Admin AI assistant — drafts only, no auto-writes to DB.
- * Mock provider when AI_ASSISTANT=0 or no API key.
+ * Provider: DeepSeek (OpenAI-compatible). Settings from env + app_settings (admin UI).
  */
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
-import { config } from '../../config'
 import { periodSince } from './consoleLib'
+import { DEEPSEEK_MODELS, getAiSettingsPublic, resolveAiConfig, saveAiSettings } from '../../lib/aiSettings'
 
 type Role = 'owner' | 'manager' | 'viewer'
 
@@ -19,43 +19,41 @@ function roleOf(c: { get: (k: string) => unknown }): Role {
 function requireWriteAi(c: { get: (k: string) => unknown }) {
   const r = roleOf(c)
   if (r === 'viewer') throw bad('Read-only admin token', 403)
-  if (!config.aiAssistant) throw bad('AI assistant disabled', 503)
+  const cfg = resolveAiConfig()
+  if (!cfg.enabled) throw bad('ИИ выключен. Включите в Система → ИИ.', 503)
+  if (!cfg.hasKey) throw bad('Нет API-ключа DeepSeek. Укажите в Система → ИИ.', 503)
 }
 
 async function callProvider(system: string, user: string): Promise<string> {
-  if (!config.aiApiKey || !config.aiAssistant) {
-    // Deterministic mock for offline/dev
+  const cfg = resolveAiConfig()
+  if (!cfg.enabled || !cfg.hasKey) {
     return [
-      '【черновик · mock】',
-      system.slice(0, 80),
+      '【черновик · mock — ключ не задан】',
+      'Откройте Система → ИИ, выберите DeepSeek и сохраните API-ключ.',
       '',
-      user.slice(0, 400),
-      '',
-      '• Проверьте товары без фото',
-      '• Сверьте чашки с counts_as_cup',
-      '• Это подсказка, не отчёт Эвотор',
+      user.slice(0, 300),
     ].join('\n')
   }
-  const url = (config.aiBaseUrl || 'https://api.openai.com/v1').replace(/\/$/, '') + '/chat/completions'
+  const url = cfg.baseUrl.replace(/\/$/, '') + '/chat/completions'
   const res = await fetch(url, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${config.aiApiKey}`,
+      Authorization: `Bearer ${cfg.apiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: config.aiModel,
+      model: cfg.model,
       temperature: 0.4,
       messages: [
         { role: 'system', content: system },
         { role: 'user', content: user },
       ],
     }),
-    signal: typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal ? AbortSignal.timeout(25000) : undefined,
+    signal: typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal ? AbortSignal.timeout(45000) : undefined,
   })
   if (!res.ok) {
     const t = await res.text().catch(() => '')
-    throw bad(`AI provider error ${res.status}: ${t.slice(0, 120)}`, 502)
+    throw bad(`DeepSeek error ${res.status}: ${t.slice(0, 180)}`, 502)
   }
   const j = (await res.json()) as { choices?: { message?: { content?: string } }[] }
   return j.choices?.[0]?.message?.content?.trim() || 'Пустой ответ модели'
@@ -65,6 +63,36 @@ const SYSTEM =
   'Ты помощник кофейни 6.7 Coffee. Отвечай по-русски кратко. Не выдумывай выручку. Не раскрывай персональные данные карт. Цифры только из переданного JSON. Это черновик для человека, не приказ.'
 
 export const adminAi = new Hono()
+  .get('/ai/settings', (c) => {
+    return c.json(getAiSettingsPublic())
+  })
+  .put(
+    '/ai/settings',
+    zValidator(
+      'json',
+      z.object({
+        enabled: z.boolean().optional(),
+        model: z.enum(DEEPSEEK_MODELS as unknown as [string, ...string[]]).optional(),
+        apiKey: z.string().max(200).optional().nullable(),
+        clearKey: z.boolean().optional(),
+      }),
+    ),
+    (c) => {
+      if (roleOf(c) === 'viewer') throw bad('Read-only', 403)
+      try {
+        const body = c.req.valid('json')
+        const pub = saveAiSettings({
+          enabled: body.enabled,
+          model: body.model,
+          apiKey: body.apiKey,
+          clearKey: body.clearKey,
+        })
+        return c.json({ ok: true, ...pub })
+      } catch (e) {
+        throw bad(e instanceof Error ? e.message : 'Save failed', 400)
+      }
+    },
+  )
   .post(
     '/ai/catalog-advice',
     zValidator('json', z.object({}).optional()),
@@ -72,84 +100,58 @@ export const adminAi = new Hono()
       requireWriteAi(c)
       const quality = {
         noPhoto: (
-          db
-            .prepare(
-              `SELECT COUNT(*) AS n FROM products WHERE available=1 AND (image_url IS NULL OR TRIM(image_url)='')`,
-            )
-            .get() as { n: number }
-        ).n,
-        noCategory: (
-          db.prepare(`SELECT COUNT(*) AS n FROM products WHERE available=1 AND category_id IS NULL`).get() as {
+          db.prepare(`SELECT COUNT(*) AS n FROM products WHERE available=1 AND (image_url IS NULL OR image_url='')`).get() as {
             n: number
           }
         ).n,
-        noLink: (
-          db
-            .prepare(
-              `SELECT COUNT(*) AS n FROM products p WHERE p.available=1 AND NOT EXISTS (SELECT 1 FROM product_store_links l WHERE l.product_id=p.id AND l.evotor_uuid IS NOT NULL)`,
-            )
-            .get() as { n: number }
+        noCategory: (
+          db.prepare(`SELECT COUNT(*) AS n FROM products WHERE available=1 AND (category_id IS NULL OR category_id=0)`).get() as {
+            n: number
+          }
         ).n,
+        total: (db.prepare(`SELECT COUNT(*) AS n FROM products WHERE available=1`).get() as { n: number }).n,
       }
-      const sample = db
-        .prepare(
-          `SELECT id, name FROM products WHERE available=1 AND (image_url IS NULL OR TRIM(image_url)='') ORDER BY id LIMIT 15`,
-        )
-        .all() as { id: number; name: string }[]
       const text = await callProvider(
         SYSTEM,
-        `Качество каталога: ${JSON.stringify(quality)}. Товары без фото: ${JSON.stringify(sample)}. Дай приоритетный список действий для администратора.`,
+        `Каталог JSON: ${JSON.stringify(quality)}. Дай 5 конкретных шагов улучшить меню (фото, группы, counts_as_cup). Без выдуманных SKU.`,
       )
-      return c.json({ ok: true, provider: config.aiApiKey ? 'remote' : 'mock', text })
+      return c.json({ ok: true, provider: resolveAiConfig().hasKey ? 'deepseek' : 'mock', text, quality })
     },
   )
   .post(
     '/ai/content-draft',
-    zValidator(
-      'json',
-      z.object({
-        productName: z.string().max(80).optional(),
-        tone: z.string().max(40).optional(),
-        badge: z.string().max(20).optional(),
-      }),
-    ),
+    zValidator('json', z.object({ productName: z.string().max(120).optional() }).optional()),
     async (c) => {
       requireWriteAi(c)
-      const body = c.req.valid('json')
+      const body = (c.req.valid('json') || {}) as { productName?: string }
+      const name = body.productName?.trim() || 'Новинка'
       const text = await callProvider(
         SYSTEM,
-        `Сделай черновик новинки для PWA: title, body (2 предложения), ctaLabel, badge. Товар: ${body.productName || 'напиток сезона'}. Тон: ${body.tone || 'дружелюбный'}. Badge: ${body.badge || 'Новинка'}. Верни структурированно.`,
+        `Составь короткий маркетинговый текст для напитка «${name}» в кофейне 6.7 Coffee: заголовок, 2 предложения, CTA, badge (одно слово).`,
       )
       return c.json({
         ok: true,
-        provider: config.aiApiKey ? 'remote' : 'mock',
+        provider: 'deepseek',
         text,
         draft: {
-          title: body.productName ? `Попробуйте ${body.productName}` : 'Новинка недели',
-          body: text.slice(0, 280),
-          ctaLabel: 'Подробнее',
-          badge: body.badge || 'Новинка',
+          title: name,
+          body: text,
+          ctaLabel: 'В меню',
+          badge: 'Новинка',
         },
       })
     },
   )
   .post(
     '/ai/anomaly-explain',
-    zValidator('json', z.object({ period: z.string().max(20).optional() })),
+    zValidator('json', z.object({ period: z.string().max(20).optional() }).optional()),
     async (c) => {
       requireWriteAi(c)
       const now = Date.now()
-      const { since } = periodSince(c.req.valid('json').period || '24h', now)
-      const ops = db
-        .prepare(
-          `SELECT COALESCE(SUM(CASE WHEN kind='SELL' THEN 1 ELSE 0 END),0) AS sells,
-                  COALESCE(SUM(CASE WHEN kind='SELL' THEN cups_counted ELSE 0 END),0) AS cups
-           FROM loyalty_ops WHERE created_at >= ? OR 1=1`,
-        )
-        .get(since) as { sells: number; cups: number }
-      // Prefer filtering in JS if created_at messy
+      const body = (c.req.valid('json') || {}) as { period?: string }
+      const { since } = periodSince(body.period || '24h', now)
       const list = db
-        .prepare(`SELECT created_at AS at, kind, cups_counted AS cups FROM loyalty_ops`)
+        .prepare(`SELECT created_at AS at, kind, cups_counted AS cups FROM loyalty_ops ORDER BY created_at DESC LIMIT 500`)
         .all() as { at: unknown; kind: string; cups: number }[]
       let sells = 0
       let cups = 0
@@ -165,7 +167,12 @@ export const adminAi = new Hono()
         SYSTEM,
         `Период since=${since}. Продаж с картой: ${sells}, чашек: ${cups}. Дай 3–5 гипотез почему метрики могут быть низкими (карта не сканируется, sync выкл, counts_as_cup). Без выдуманных чисел.`,
       )
-      return c.json({ ok: true, provider: config.aiApiKey ? 'remote' : 'mock', text, snapshot: { sells, cups, since } })
+      return c.json({
+        ok: true,
+        provider: 'deepseek',
+        text,
+        snapshot: { sells, cups, since },
+      })
     },
   )
   .post(
@@ -177,14 +184,14 @@ export const adminAi = new Hono()
       const body = (c.req.valid('json') || {}) as { period?: string }
       const { since, period } = periodSince(body.period || '24h', now)
       const docs = (
-        db
-          .prepare(`SELECT COUNT(*) AS n FROM evotor_docs WHERE type='SELL' AND received_at>=?`)
-          .get(since) as { n: number }
+        db.prepare(`SELECT COUNT(*) AS n FROM evotor_docs WHERE type='SELL' AND received_at>=?`).get(since) as {
+          n: number
+        }
       ).n
       const text = await callProvider(
         SYSTEM,
         `Сводка смены (${period}): чеков SELL в 6.7 docs=${docs}. Напиши 5–8 строк для владельца кофейни, спокойным тоном.`,
       )
-      return c.json({ ok: true, provider: config.aiApiKey ? 'remote' : 'mock', text })
+      return c.json({ ok: true, provider: 'deepseek', text })
     },
   )
