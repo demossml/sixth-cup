@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="240" viewBox="0 0 256 240">
+  <rect width="256" height="240" fill="#555B6B"/>
+  <!-- тротуар -->
+  <rect y="0" width="256" height="38" fill="#EADFC9"/>
+  <rect y="0" width="256" height="7" fill="#F8F1E3"/>
+  <path d="M0,38 H256" stroke="#4A3828" stroke-width="4"/>
+  <path d="M64,0 V38 M128,0 V38 M192,0 V38 M0,19 H256" stroke="#CDBE9F" stroke-width="3" opacity="0.8"/>
+  <!-- бордюр -->
+  <rect y="40" width="256" height="16" fill="#C9C2B3"/>
+  <rect y="40" width="256" height="5" fill="#E2DCCD"/>
+  <path d="M0,56 H256" stroke="#4A3828" stroke-width="4"/>
+  <!-- дорога -->
+  <rect y="58" width="256" height="182" fill="#575D6E"/>
+  <rect y="58" width="256" height="14" fill="#4A4F5F"/>
+  <rect x="40" y="136" width="110" height="12" rx="5" fill="#F8F1E3" opacity="0.9"/>
+  <circle cx="20" cy="104" r="2.5" fill="#6A7084"/><circle cx="196" cy="180" r="2.5" fill="#6A7084"/><circle cx="110" cy="206" r="2" fill="#6A7084"/>
+</svg>

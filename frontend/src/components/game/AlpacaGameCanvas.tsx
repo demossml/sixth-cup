@@ -11,20 +11,23 @@ type Props = {
   sceneRef: React.MutableRefObject<RunnerScene | null>
 }
 
+/** Один Phaser-инстанс на монтирование; занимает всего родителя (родитель — почти весь viewport). */
 export function AlpacaGameCanvas({ onStatus, onHud, onRunEnd, sceneRef }: Props) {
   const hostRef = useRef<HTMLDivElement>(null)
-  const gameRef = useRef<Phaser.Game | null>(null)
   const cbRef = useRef({ onStatus, onHud, onRunEnd })
   cbRef.current = { onStatus, onHud, onRunEnd }
 
   useEffect(() => {
     const host = hostRef.current
-    if (!host || gameRef.current) return
+    if (!host) return
 
     const bridge: GameBridge = {
       onStatus: (s) => cbRef.current.onStatus(s),
       onHud: (h) => cbRef.current.onHud(h),
       onRunEnd: (r) => cbRef.current.onRunEnd(r),
+      onScene: (s) => {
+        sceneRef.current = s
+      },
     }
 
     let game: Phaser.Game
@@ -35,41 +38,19 @@ export function AlpacaGameCanvas({ onStatus, onHud, onRunEnd, sceneRef }: Props)
       console.error('[runner] Phaser failed', e)
       return
     }
-    gameRef.current = game
 
     const onVis = () => {
       if (document.hidden) game.events.emit('visibility-pause')
     }
     document.addEventListener('visibilitychange', onVis)
 
-    game.events.once('ready', () => {
-      const scene = game.scene.getScene('Runner') as RunnerScene | null
-      sceneRef.current = scene
-    })
-    // scene available after Boot → Runner
-    const t = window.setInterval(() => {
-      const scene = game.scene.getScene('Runner') as RunnerScene | null
-      if (scene?.sys?.isActive()) {
-        sceneRef.current = scene
-        window.clearInterval(t)
-      }
-    }, 100)
-
     return () => {
-      window.clearInterval(t)
       document.removeEventListener('visibilitychange', onVis)
       sceneRef.current = null
-      game.destroy(true)
-      gameRef.current = null
+      game.destroy(true) // снимает canvas, WebGL-контекст и слушатели; повторный вход создаёт новый инстанс
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  return (
-    <div
-      ref={hostRef}
-      className="w-full max-w-3xl mx-auto rounded-2xl overflow-hidden border border-line bg-[#87B5E8] touch-none"
-      style={{ aspectRatio: '16 / 9' }}
-    />
-  )
+  return <div ref={hostRef} className="absolute inset-0 touch-none select-none" style={{ touchAction: 'none' }} />
 }

@@ -1,98 +1,118 @@
 import Phaser from 'phaser'
+import alpacaUrl from '../assets/alpaca.png'
+import crateUrl from '../assets/crate.png'
+import bannerUrl from '../assets/banner.png'
+import beanUrl from '../assets/bean.png'
+import finishUrl from '../assets/finish.png'
+import groundUrl from '../assets/ground.png'
+import cloudsUrl from '../assets/bg-clouds.png'
+import farUrl from '../assets/bg-far.png'
+import midUrl from '../assets/bg-mid.png'
+import nearUrl from '../assets/bg-near.png'
+import { ALPACA_FRAME_SIZE, ALPACA_FRAMES } from '../entities/Alpaca'
+import { RUNNER_CONFIG } from '../config'
 
-/** Generate replaceable placeholder textures (no external CDN). */
+/** Грузит ассеты (PNG из assets/, локально, без CDN), создаёт анимации и мелкие процедурные текстуры. */
 export class BootScene extends Phaser.Scene {
   constructor() {
     super('Boot')
   }
 
   preload() {
-    // Procedural textures — SVG-like placeholders without network
-    this.makeTex('ground', 64, 32, (g) => {
-      g.fillStyle(0x5a4632, 1)
-      g.fillRect(0, 0, 64, 32)
-      g.fillStyle(0x6e563c, 1)
-      g.fillRect(0, 0, 64, 8)
-    })
-    this.makeTex('alpaca-run', 48, 56, (g) => this.drawAlpaca(g, 48, 56, false, false))
-    this.makeTex('alpaca-jump', 48, 56, (g) => this.drawAlpaca(g, 48, 56, true, false))
-    this.makeTex('alpaca-slide', 56, 36, (g) => this.drawAlpaca(g, 56, 36, false, true))
-    this.makeTex('bean', 20, 24, (g) => {
-      g.fillStyle(0x4a2c0a, 1)
-      g.fillEllipse(10, 12, 16, 20)
-      g.lineStyle(2, 0x2a1805, 1)
-      g.lineBetween(10, 4, 10, 20)
-    })
-    this.makeTex('crate', 56, 56, (g) => {
-      g.fillStyle(0xc4a574, 1)
-      g.fillRoundedRect(0, 0, 56, 56, 4)
-      g.lineStyle(2, 0x8b6914, 1)
-      g.strokeRoundedRect(2, 2, 52, 52, 4)
-      g.lineBetween(8, 8, 48, 48)
-      g.lineBetween(48, 8, 8, 48)
-    })
-    this.makeTex('overhead', 120, 36, (g) => {
-      g.fillStyle(0x002fa7, 1)
-      g.fillRoundedRect(0, 0, 120, 36, 6)
-      g.fillStyle(0xffffff, 1)
-      g.fillRect(10, 14, 100, 8)
-    })
-    this.makeTex('finish', 40, 160, (g) => {
-      g.fillStyle(0x002fa7, 1)
-      g.fillRect(0, 0, 12, 160)
-      g.fillRect(28, 0, 12, 160)
-      g.fillStyle(0xffffff, 1)
-      g.fillRect(8, 8, 24, 40)
-      g.fillStyle(0x002fa7, 1)
-    })
-    this.makeTex('bg-far', 320, 200, (g) => {
-      g.fillStyle(0x9ec9f0, 1)
-      g.fillRect(0, 0, 320, 200)
-      g.fillStyle(0x7a9bb8, 1)
-      g.fillRect(20, 80, 60, 120)
-      g.fillRect(100, 60, 80, 140)
-      g.fillRect(220, 90, 70, 110)
-    })
-    this.makeTex('bg-near', 200, 80, (g) => {
-      g.fillStyle(0x6b8f71, 1)
-      g.fillEllipse(40, 70, 100, 40)
-      g.fillEllipse(140, 75, 120, 50)
-    })
+    this.load.spritesheet('alpaca', alpacaUrl, { frameWidth: ALPACA_FRAME_SIZE, frameHeight: ALPACA_FRAME_SIZE })
+    this.load.image('crate', crateUrl)
+    this.load.image('banner', bannerUrl)
+    this.load.image('bean', beanUrl)
+    this.load.image('finish', finishUrl)
+    this.load.image('ground', groundUrl)
+    this.load.image('bg-clouds', cloudsUrl)
+    this.load.image('bg-far', farUrl)
+    this.load.image('bg-mid', midUrl)
+    this.load.image('bg-near', nearUrl)
   }
 
   create() {
+    this.makeSky()
+    this.makeParticles()
+    const a = this.anims
+    if (!a.exists('run')) {
+      a.create({
+        key: 'run',
+        frames: a.generateFrameNumbers('alpaca', { frames: [...ALPACA_FRAMES.run] }),
+        frameRate: 12,
+        repeat: -1,
+      })
+      a.create({
+        key: 'slide',
+        frames: a.generateFrameNumbers('alpaca', { frames: [...ALPACA_FRAMES.slide] }),
+        frameRate: 10,
+        repeat: -1,
+      })
+    }
     this.scene.start('Runner')
   }
 
-  private makeTex(key: string, w: number, h: number, draw: (g: Phaser.GameObjects.Graphics) => void) {
-    const g = this.make.graphics({ x: 0, y: 0 })
-    draw(g)
-    g.generateTexture(key, w, h)
-    g.destroy()
+  private makeSky() {
+    const { height } = RUNNER_CONFIG
+    const sky = this.textures.createCanvas('sky', 4, height)
+    if (sky) {
+      const ctx = sky.getContext()
+      const g = ctx.createLinearGradient(0, 0, 0, height)
+      g.addColorStop(0, '#5E9CEA')
+      g.addColorStop(0.45, '#A9D0F5')
+      g.addColorStop(0.8, '#FBE6C6')
+      g.addColorStop(1, '#FDEFD8')
+      ctx.fillStyle = g
+      ctx.fillRect(0, 0, 4, height)
+      sky.refresh()
+    }
+    const sun = this.textures.createCanvas('sun', 320, 320)
+    if (sun) {
+      const ctx = sun.getContext()
+      const g = ctx.createRadialGradient(160, 160, 8, 160, 160, 160)
+      g.addColorStop(0, 'rgba(255,248,214,1)')
+      g.addColorStop(0.25, 'rgba(255,240,190,0.85)')
+      g.addColorStop(1, 'rgba(255,240,190,0)')
+      ctx.fillStyle = g
+      ctx.fillRect(0, 0, 320, 320)
+      sun.refresh()
+    }
   }
 
-  private drawAlpaca(
-    g: Phaser.GameObjects.Graphics,
-    w: number,
-    h: number,
-    jump: boolean,
-    slide: boolean,
-  ) {
-    const bodyY = slide ? h * 0.45 : h * 0.4
-    const bodyH = slide ? h * 0.45 : h * 0.5
-    g.fillStyle(0xffffff, 1)
-    g.fillEllipse(w * 0.5, bodyY, w * 0.7, bodyH)
-    g.fillCircle(w * 0.72, h * (slide ? 0.35 : 0.28), w * 0.18)
-    g.fillStyle(0x002fa7, 1)
-    g.fillCircle(w * 0.78, h * (slide ? 0.32 : 0.25), 3)
-    if (!slide) {
-      g.fillStyle(0xffffff, 1)
-      g.fillTriangle(w * 0.65, h * 0.12, w * 0.72, h * 0.02, w * 0.78, h * 0.14)
-      g.fillTriangle(w * 0.78, h * 0.12, w * 0.85, h * 0.02, w * 0.9, h * 0.14)
+  private makeParticles() {
+    const dust = this.textures.createCanvas('dust', 32, 32)
+    if (dust) {
+      const ctx = dust.getContext()
+      const g = ctx.createRadialGradient(16, 16, 1, 16, 16, 16)
+      g.addColorStop(0, 'rgba(255,255,255,0.95)')
+      g.addColorStop(1, 'rgba(255,255,255,0)')
+      ctx.fillStyle = g
+      ctx.fillRect(0, 0, 32, 32)
+      dust.refresh()
     }
-    if (jump) {
-      g.fillStyle(0xffffff, 0.5)
-      g.fillEllipse(w * 0.3, h * 0.85, 12, 6)
+    const spark = this.textures.createCanvas('spark', 24, 24)
+    if (spark) {
+      const ctx = spark.getContext()
+      ctx.fillStyle = '#fff'
+      ctx.beginPath()
+      ctx.moveTo(12, 0)
+      ctx.lineTo(15, 9)
+      ctx.lineTo(24, 12)
+      ctx.lineTo(15, 15)
+      ctx.lineTo(12, 24)
+      ctx.lineTo(9, 15)
+      ctx.lineTo(0, 12)
+      ctx.lineTo(9, 9)
+      ctx.closePath()
+      ctx.fill()
+      spark.refresh()
+    }
+    const conf = this.textures.createCanvas('confetti', 10, 16)
+    if (conf) {
+      const ctx = conf.getContext()
+      ctx.fillStyle = '#fff'
+      ctx.fillRect(0, 0, 10, 16)
+      conf.refresh()
     }
   }
 }

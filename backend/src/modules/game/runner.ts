@@ -9,7 +9,7 @@ import { bad } from '../../lib/errors'
 import { requireAuth, type AuthEnv } from '../../middleware/auth'
 
 const LEVEL_ID = 'morning-coffee-city-01'
-const MAX_BEANS = 12
+const MAX_BEANS = 30
 const MAX_DURATION_MS = 600_000
 
 export const runnerRoutes = new Hono<AuthEnv>()

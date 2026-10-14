@@ -1,4 +1,21 @@
-# Assets
+# Ассеты «Приключений ламы»
 
-Placeholders are generated at runtime in `BootScene` (no CDN).
-Replace with real SVG/PNG and load in BootScene.preload without changing game logic.
+Все PNG **генерируются** скриптом `frontend/scripts/make-alpaca-assets.mjs` (SVG → PNG через `sharp`):
+
+```
+npm run alpaca:assets -w frontend
+```
+
+Исходные SVG лежат в `svg/` (их можно открыть и поправить глазами). Текстуры — «2x»: 1 мировой пиксель = 2 px текстуры.
+
+| Файл | Что | Размер |
+|------|-----|--------|
+| `alpaca.png` | spritesheet ламы, 5×2 кадра по 192×192: run 0–3, hit 4, jump 5–6, slide 7–8 | 960×384 |
+| `crate.png` | ящик (одна клетка, тайлится по ширине) | 112×112 |
+| `banner.png` | баннер 6.7, висит от верха экрана до просвета над землёй | 120×880 |
+| `bean.png` | кофейное зерно | 48×56 |
+| `finish.png` | арка «6.7 COFFEE» | 300×420 |
+| `ground.png` | тротуар + бордюр + дорога, бесшовный тайл | 256×240 |
+| `bg-clouds.png`, `bg-far.png`, `bg-mid.png`, `bg-near.png` | 4 слоя параллакса | см. скрипт |
+
+Небо, солнце и частицы (пыль, искры, конфетти) рисуются процедурно в `BootScene` (мелкие canvas-текстуры, один раз при загрузке).

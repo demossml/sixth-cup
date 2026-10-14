@@ -82,10 +82,10 @@ const routes = app
   .route('/api/devices', deviceRoutes)
   .route('/api/dev', devRoutes)
   .route('/api/client-logs', clientLogRoutes)
-  .route('/api/game', gameRoutes)
-  .route('/api/game/runner', runnerRoutes)
   .route('/api/admin', adminRoutes)
   .route('/api/admin/upload', uploadRoutes)
+  .route('/api/game', gameRoutes)
+  .route('/api/game/runner', runnerRoutes)
 
 export type AppType = typeof routes
 export { app }

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="112" height="112" viewBox="0 0 112 112">
+  <rect x="3" y="3" width="106" height="106" rx="9" fill="#C99358" stroke="#4A3828" stroke-width="5"/>
+  <rect x="3" y="3" width="106" height="14" rx="7" fill="#E3B77C" opacity="0.7"/>
+  <path d="M8,38 H104 M8,74 H104" stroke="#8C5A2B" stroke-width="3" opacity="0.55"/>
+  <!-- рамка -->
+  <rect x="12" y="12" width="88" height="88" rx="5" fill="none" stroke="#8C5A2B" stroke-width="5"/>
+  <path d="M16,16 L96,96 M96,16 L16,96" stroke="#8C5A2B" stroke-width="5" opacity="0.65"/>
+  <!-- синий ярлык бренда -->
+  <rect x="34" y="38" width="44" height="36" rx="7" fill="#002FA7" stroke="#4A3828" stroke-width="3.5"/>
+  <g transform="translate(56 56) rotate(-30)">
+    <ellipse cx="0" cy="0" rx="8.5" ry="12" fill="#F6F3EE"/>
+    <path d="M0,-11 C-4,-4 4,4 0,11" fill="none" stroke="#002FA7" stroke-width="2.6" stroke-linecap="round"/>
+  </g>
+  <circle cx="14" cy="14" r="3" fill="#4A3828"/><circle cx="98" cy="14" r="3" fill="#4A3828"/>
+  <circle cx="14" cy="98" r="3" fill="#4A3828"/><circle cx="98" cy="98" r="3" fill="#4A3828"/>
+</svg>

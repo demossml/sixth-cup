@@ -4,88 +4,108 @@ import { RUNNER_CONFIG } from '../config'
 type Handler = (action: GameAction) => void
 
 /**
- * Unified keyboard + touch → jump | slide | pause.
+ * Клавиатура + касания → jump | slide | pause.
+ *  • тап / Space / ↑ / W — прыжок; свайп вверх — прыжок
+ *  • свайп вниз / ↓ / S — скольжение (срабатывает сразу при движении пальца, без отрыва)
+ *  • Esc / P — пауза
  */
 export class InputController {
-  private onAction: Handler
   private enabled = true
-  private ptrStart: { x: number; y: number; t: number } | null = null
-  private keyHandler: ((e: KeyboardEvent) => void) | null = null
-  private boundDown: ((e: PointerEvent) => void) | null = null
-  private boundUp: ((e: PointerEvent) => void) | null = null
-  private boundCancel: (() => void) | null = null
-  private target: HTMLElement | Window
+  private ptr: { id: number; x: number; y: number; t: number; fired: boolean } | null = null
+  private readonly target: HTMLElement
+  private readonly onAction: Handler
 
-  constructor(target: HTMLElement | Window, onAction: Handler) {
+  private readonly onKey = (e: KeyboardEvent) => {
+    if (e.repeat) return
+    const k = e.code
+    if (k === 'Space' || k === 'ArrowUp' || k === 'KeyW') {
+      if (this.isFormTarget(e)) return
+      e.preventDefault()
+      this.emit('jump')
+    } else if (k === 'ArrowDown' || k === 'KeyS') {
+      e.preventDefault()
+      this.emit('slide')
+    } else if (k === 'Escape' || k === 'KeyP') {
+      e.preventDefault()
+      this.onAction('pause')
+    }
+  }
+
+  private readonly onDown = (e: PointerEvent) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    this.ptr = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), fired: false }
+    try {
+      this.target.setPointerCapture(e.pointerId)
+    } catch {
+      /* не критично */
+    }
+  }
+
+  private readonly onMove = (e: PointerEvent) => {
+    const p = this.ptr
+    if (!p || p.fired || e.pointerId !== p.id) return
+    const dx = e.clientX - p.x
+    const dy = e.clientY - p.y
+    const th = RUNNER_CONFIG.swipeThresholdPx
+    if (Math.abs(dy) >= th && Math.abs(dy) > Math.abs(dx)) {
+      p.fired = true
+      this.emit(dy > 0 ? 'slide' : 'jump')
+    }
+  }
+
+  private readonly onUp = (e: PointerEvent) => {
+    const p = this.ptr
+    if (!p || e.pointerId !== p.id) return
+    this.ptr = null
+    if (p.fired) return
+    const moved = Math.hypot(e.clientX - p.x, e.clientY - p.y)
+    if (moved < RUNNER_CONFIG.swipeThresholdPx && performance.now() - p.t < 450) this.emit('jump')
+  }
+
+  private readonly onCancel = () => {
+    this.ptr = null
+  }
+
+  private readonly onCtx = (e: Event) => e.preventDefault()
+  private readonly onTouchMove = (e: TouchEvent) => e.preventDefault()
+
+  constructor(target: HTMLElement, onAction: Handler) {
     this.target = target
     this.onAction = onAction
-    this.attach()
+    window.addEventListener('keydown', this.onKey)
+    window.addEventListener('blur', this.onCancel)
+    target.addEventListener('pointerdown', this.onDown)
+    target.addEventListener('pointermove', this.onMove)
+    target.addEventListener('pointerup', this.onUp)
+    target.addEventListener('pointercancel', this.onCancel)
+    target.addEventListener('contextmenu', this.onCtx)
+    // игра не должна скроллить страницу
+    target.addEventListener('touchmove', this.onTouchMove, { passive: false })
   }
 
   setEnabled(v: boolean) {
     this.enabled = v
+    if (!v) this.ptr = null
+  }
+
+  private isFormTarget(e: KeyboardEvent) {
+    const t = e.target as HTMLElement | null
+    return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'BUTTON')
   }
 
   private emit(a: GameAction) {
-    if (!this.enabled) return
-    this.onAction(a)
-  }
-
-  private attach() {
-    this.keyHandler = (e: KeyboardEvent) => {
-      if (e.repeat) return
-      if (e.code === 'Space' || e.code === 'ArrowUp') {
-        e.preventDefault()
-        this.emit('jump')
-      } else if (e.code === 'ArrowDown') {
-        e.preventDefault()
-        this.emit('slide')
-      } else if (e.code === 'Escape') {
-        e.preventDefault()
-        this.emit('pause')
-      }
-    }
-    window.addEventListener('keydown', this.keyHandler)
-
-    this.boundDown = (e: PointerEvent) => {
-      this.ptrStart = { x: e.clientX, y: e.clientY, t: Date.now() }
-    }
-    this.boundUp = (e: PointerEvent) => {
-      if (!this.ptrStart) return
-      const dx = e.clientX - this.ptrStart.x
-      const dy = e.clientY - this.ptrStart.y
-      const dt = Date.now() - this.ptrStart.t
-      this.ptrStart = null
-      if (dy > RUNNER_CONFIG.swipeThresholdPx && Math.abs(dy) > Math.abs(dx)) {
-        this.emit('slide')
-        return
-      }
-      if (Math.hypot(dx, dy) < RUNNER_CONFIG.swipeThresholdPx && dt < 400) {
-        this.emit('jump')
-      }
-    }
-    this.boundCancel = () => {
-      this.ptrStart = null
-    }
-    const el = this.target === window ? window : (this.target as HTMLElement)
-    el.addEventListener('pointerdown', this.boundDown as EventListener)
-    el.addEventListener('pointerup', this.boundUp as EventListener)
-    el.addEventListener('pointercancel', this.boundCancel as EventListener)
-    window.addEventListener('blur', this.boundCancel)
+    if (this.enabled) this.onAction(a)
   }
 
   destroy() {
-    if (this.keyHandler) window.removeEventListener('keydown', this.keyHandler)
-    const el = this.target === window ? window : (this.target as HTMLElement)
-    if (this.boundDown) el.removeEventListener('pointerdown', this.boundDown as EventListener)
-    if (this.boundUp) el.removeEventListener('pointerup', this.boundUp as EventListener)
-    if (this.boundCancel) {
-      el.removeEventListener('pointercancel', this.boundCancel as EventListener)
-      window.removeEventListener('blur', this.boundCancel)
-    }
-    this.keyHandler = null
-    this.boundDown = null
-    this.boundUp = null
-    this.boundCancel = null
+    window.removeEventListener('keydown', this.onKey)
+    window.removeEventListener('blur', this.onCancel)
+    const t = this.target
+    t.removeEventListener('pointerdown', this.onDown)
+    t.removeEventListener('pointermove', this.onMove)
+    t.removeEventListener('pointerup', this.onUp)
+    t.removeEventListener('pointercancel', this.onCancel)
+    t.removeEventListener('contextmenu', this.onCtx)
+    t.removeEventListener('touchmove', this.onTouchMove)
   }
 }

@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="420" viewBox="0 0 300 420">
+  <ellipse cx="150" cy="412" rx="130" ry="9" fill="#000" opacity="0.16"/>
+  <!-- колонны -->
+  <rect x="20" y="70" width="40" height="336" rx="6" fill="#F6F3EE" stroke="#4A3828" stroke-width="5"/>
+  <rect x="240" y="70" width="40" height="336" rx="6" fill="#F6F3EE" stroke="#4A3828" stroke-width="5"/>
+  <path d="M30,80 V400 M270,80 V400" stroke="#EADFC9" stroke-width="5"/>
+  <rect x="12" y="386" width="56" height="22" rx="5" fill="#002FA7" stroke="#4A3828" stroke-width="4"/>
+  <rect x="232" y="386" width="56" height="22" rx="5" fill="#002FA7" stroke="#4A3828" stroke-width="4"/>
+  <!-- арка -->
+  <path d="M6,92 Q150,-22 294,92 L294,118 Q150,18 6,118 Z" fill="#002FA7" stroke="#4A3828" stroke-width="5" stroke-linejoin="round"/>
+  <!-- вывеска -->
+  <g transform="translate(150 54)">
+    <rect x="-86" y="-26" width="172" height="56" rx="14" fill="#F6F3EE" stroke="#4A3828" stroke-width="5"/>
+    <text x="0" y="14" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-weight="700" font-size="27" fill="#002FA7">6.7 COFFEE</text>
+  </g>
+  <!-- флажки -->
+  <path d="M10,126 Q150,60 290,126" fill="none" stroke="#4A3828" stroke-width="3"/>
+  <path d="M16.56,112.53 L34.56,112.53 L25.56,132.53 Z" fill="#E2B25C" stroke="#4A3828" stroke-width="2.4" stroke-linejoin="round"/><path d="M47.67,90.33 L65.67,90.33 L56.67,110.33 Z" fill="#F6F3EE" stroke="#4A3828" stroke-width="2.4" stroke-linejoin="round"/><path d="M78.78,74.48 L96.78,74.48 L87.78,94.48 Z" fill="#1A4DD6" stroke="#4A3828" stroke-width="2.4" stroke-linejoin="round"/><path d="M109.89,64.97 L127.89,64.97 L118.89,84.97 Z" fill="#E2B25C" stroke="#4A3828" stroke-width="2.4" stroke-linejoin="round"/><path d="M141,61.8 L159,61.8 L150,81.8 Z" fill="#F6F3EE" stroke="#4A3828" stroke-width="2.4" stroke-linejoin="round"/><path d="M172.11,64.97 L190.11,64.97 L181.11,84.97 Z" fill="#1A4DD6" stroke="#4A3828" stroke-width="2.4" stroke-linejoin="round"/><path d="M203.22,74.48 L221.22,74.48 L212.22,94.48 Z" fill="#E2B25C" stroke="#4A3828" stroke-width="2.4" stroke-linejoin="round"/><path d="M234.33,90.33 L252.33,90.33 L243.33,110.33 Z" fill="#F6F3EE" stroke="#4A3828" stroke-width="2.4" stroke-linejoin="round"/><path d="M265.44,112.53 L283.44,112.53 L274.44,132.53 Z" fill="#1A4DD6" stroke="#4A3828" stroke-width="2.4" stroke-linejoin="round"/>
+  <!-- лента на земле -->
+  <rect x="60" y="398" width="180" height="10" fill="#F6F3EE" stroke="#4A3828" stroke-width="3"/>
+  <rect x="60" y="398" width="10" height="10" fill="#002FA7"/><rect x="80" y="398" width="10" height="10" fill="#002FA7"/><rect x="100" y="398" width="10" height="10" fill="#002FA7"/><rect x="120" y="398" width="10" height="10" fill="#002FA7"/><rect x="140" y="398" width="10" height="10" fill="#002FA7"/><rect x="160" y="398" width="10" height="10" fill="#002FA7"/><rect x="180" y="398" width="10" height="10" fill="#002FA7"/><rect x="200" y="398" width="10" height="10" fill="#002FA7"/><rect x="220" y="398" width="10" height="10" fill="#002FA7"/>
+</svg>

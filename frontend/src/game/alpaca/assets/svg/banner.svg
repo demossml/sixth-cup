@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="880" viewBox="0 0 120 880">
+  <ellipse cx="60" cy="870" rx="46" ry="9" fill="#000" opacity="0.18"/>
+  <!-- ткань -->
+  <path d="M6,0 H114 V758 L100,776 L87,762 L74,776 L60,762 L46,776 L33,762 L20,776 L6,758 Z"
+        fill="#002FA7" stroke="#4A3828" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M16,0 V748 M104,0 V748" stroke="#1A4DD6" stroke-width="5" opacity="0.7"/>
+  <rect x="26" y="0" width="68" height="746" fill="#001F6B" opacity="0.35"/>
+  <!-- «6.7» -->
+  <g transform="translate(60 586)">
+    <circle r="40" fill="#F6F3EE" stroke="#4A3828" stroke-width="4"/>
+    <text x="0" y="12" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-weight="700" font-size="34" fill="#002FA7">6.7</text>
+  </g>
+  <!-- чашка внизу ткани -->
+  <g transform="translate(60 684)">
+    <path d="M-20,-14 H20 V6 Q20,24 0,24 Q-20,24 -20,6 Z" fill="#F6F3EE" stroke="#4A3828" stroke-width="3.5" stroke-linejoin="round"/>
+    <path d="M20,-6 q14,0 14,10 q0,10 -14,10" fill="none" stroke="#F6F3EE" stroke-width="5"/>
+    <path d="M-8,-26 q-6,-8 0,-14 M6,-26 q-6,-8 0,-14" fill="none" stroke="#F6F3EE" stroke-width="3.5" stroke-linecap="round" opacity="0.9"/>
+  </g>
+  <!-- золотые кисточки -->
+  <path d="M20,772 v14 M46,772 v14 M74,772 v14 M100,772 v14" stroke="#E2B25C" stroke-width="5" stroke-linecap="round"/>
+</svg>
