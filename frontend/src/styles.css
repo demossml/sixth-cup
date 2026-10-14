@@ -124,3 +124,11 @@
   button, a { -webkit-tap-highlight-color: transparent; }
   button:active:not(:disabled) { transform: scale(0.98); transition: transform 120ms; }
 }
+
+/* Retail PWA polish: horizontal chip rails stay visually quiet; product sheet respects reduced motion. */
+.scrollbar-none { scrollbar-width: none; -ms-overflow-style: none; }
+.scrollbar-none::-webkit-scrollbar { display: none; }
+@keyframes sheet-up {
+  from { opacity: .65; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
+}
