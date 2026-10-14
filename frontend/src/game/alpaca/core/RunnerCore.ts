@@ -14,13 +14,15 @@ export type CoreEvent =
   | { type: 'land'; x: number; y: number; platform: boolean; impact: number }
   | { type: 'slideStart' }
   | { type: 'slideEnd' }
-  | { type: 'bean'; id: string; x: number; y: number }
-  | { type: 'hit'; by: 'crate' | 'overhead' }
+  | { type: 'bean'; id: string; x: number; y: number; special?: boolean }
+  | { type: 'hit'; by: 'crate' | 'overhead' | 'inspector' | 'projectile' }
   | { type: 'finish' }
 
 type Crate = { id: string; left: number; right: number; top: number; landable: boolean }
-type Banner = { id: string; left: number; right: number; bottom: number }
-type Bean = { id: string; x: number; y: number; taken: boolean }
+type Banner = { id: string; left: number; right: number; bottom: number; moving: boolean }
+type Bean = { id: string; x: number; y: number; taken: boolean; special: boolean }
+type Hazard = { id: string; type: 'inspector' | 'projectile'; x: number; y: number; width: number; height: number }
+type SpeedZone = { id: string; x: number; width: number }
 
 const BEAN_W = 22
 const BEAN_H = 26
@@ -49,19 +51,36 @@ export class RunnerCore {
   private readonly crates: Crate[] = []
   private readonly banners: Banner[] = []
   private readonly beanList: Bean[] = []
+  private readonly hazards: Hazard[] = []
+  private readonly inspectorTriggers: { id: string; x: number }[] = []
+  private readonly speedZones: SpeedZone[] = []
+  private readonly chaseMode: boolean
+  private readonly windMode: boolean
+  private doubleJumpAvailable = false
+  chaseActive = false
+  chaseGap = 150
   private readonly finishCenter: number
   readonly beanTotal: number
   readonly length: number
 
-  constructor(objects: LevelObject[], length: number) {
+  constructor(objects: LevelObject[], length: number, chaseMode = false, windMode = false) {
+    this.chaseMode = chaseMode
+    this.windMode = windMode
     const G = RUNNER_CONFIG.groundY
     for (const o of objects) {
       if (o.type === 'crate') {
         this.crates.push({ id: o.id, left: o.x, right: o.x + o.width, top: G - o.height, landable: o.landable !== false })
-      } else if (o.type === 'overhead') {
-        this.banners.push({ id: o.id, left: o.x, right: o.x + o.width, bottom: G - RUNNER_CONFIG.bannerGap })
+      } else if (o.type === 'overhead' || o.type === 'movingOverhead') {
+        this.banners.push({ id: o.id, left: o.x, right: o.x + o.width, bottom: G - RUNNER_CONFIG.bannerGap, moving: o.type === 'movingOverhead' })
       } else if (o.type === 'bean') {
-        this.beanList.push({ id: o.id, x: o.x, y: o.y, taken: false })
+        this.beanList.push({ id: o.id, x: o.x, y: o.y, taken: false, special: !!o.special })
+      } else if (o.type === 'inspector') {
+        if (this.chaseMode) this.inspectorTriggers.push({ id: o.id, x: o.x })
+        else this.hazards.push({ id: o.id, type: 'inspector', x: o.x, y: G - 68, width: 52, height: 68 })
+      } else if (o.type === 'projectile') {
+        this.hazards.push({ id: o.id, type: 'projectile', x: o.x, y: o.y, width: o.width, height: o.height })
+      } else if (o.type === 'closedZone') {
+        this.speedZones.push({ id: o.id, x: o.x, width: o.width })
       }
     }
     const fin = objects.find((o) => o.type === 'finish')
@@ -79,7 +98,10 @@ export class RunnerCore {
   }
 
   get speed(): number {
-    return RUNNER_CONFIG.worldSpeed * (1 + RUNNER_CONFIG.speedRamp * Math.min(1, this.worldX / this.length))
+    const base = RUNNER_CONFIG.worldSpeed * (1 + RUNNER_CONFIG.speedRamp * Math.min(1, this.worldX / this.length))
+    const inClosedZone = this.speedZones.some(zone => this.worldX >= zone.x && this.worldX <= zone.x + zone.width)
+    const windDrift = this.windMode ? 1 + Math.sin(this.playMs / 650) * 0.035 : 1
+    return base * (inClosedZone ? 1.22 : 1) * windDrift
   }
 
   get progress01(): number {
@@ -112,6 +134,10 @@ export class RunnerCore {
     if (this.status !== 'running') return
     if (this.grounded || this.coyoteMs > 0) {
       this.startJump()
+    } else if (this.doubleJumpAvailable) {
+      this.doubleJumpAvailable = false
+      this.vy = -JUMP_VELOCITY * 0.88
+      this.events.push({ type: 'jump', x: RUNNER_CONFIG.heroX, y: this.bottom })
     } else {
       this.bufferMs = RUNNER_CONFIG.jumpBufferMs
     }
@@ -159,6 +185,13 @@ export class RunnerCore {
     const G = RUNNER_CONFIG.groundY
     this.playMs += ms
     this.worldX += this.speed * dt
+    if (this.chaseMode) {
+      if (this.inspectorTriggers.some(trigger => this.worldX + RUNNER_CONFIG.heroX >= trigger.x)) this.chaseActive = true
+      if (this.chaseActive) {
+        this.chaseGap -= dt * 10.5
+        if (this.chaseGap <= 46) return this.die('inspector')
+      }
+    }
 
     if (this.sliding) {
       this.slideMs += ms
@@ -217,7 +250,19 @@ export class RunnerCore {
       const l = b.left - this.worldX
       const rr = b.right - this.worldX
       if (r2.right <= l || r2.left >= rr) continue
-      if (r2.top < b.bottom) return this.die('overhead')
+      const bannerBottom = b.bottom + (b.moving ? Math.sin(this.playMs / 500) * 8 : 0)
+      if (r2.top < bannerBottom) return this.die('overhead')
+    }
+
+    // Инспектор и летящие предметы: честные прямоугольные hitbox; прыжок позволяет избежать удара.
+    for (const h of this.hazards) {
+      const left = h.x - this.worldX
+      const right = left + h.width
+      const top = h.y
+      const bottom = h.y + h.height
+      if (r2.left < right && r2.right > left && r2.top < bottom && r2.bottom > top) {
+        return this.die(h.type)
+      }
     }
 
     // зёрна
@@ -233,7 +278,11 @@ export class RunnerCore {
       ) {
         b.taken = true
         this.beans++
-        this.events.push({ type: 'bean', id: b.id, x: bx, y: b.y })
+        if (b.special) {
+          this.doubleJumpAvailable = true
+          if (this.chaseMode && this.chaseActive) this.chaseGap = Math.min(190, this.chaseGap + 42)
+        }
+        this.events.push({ type: 'bean', id: b.id, x: bx, y: b.y, special: b.special })
       }
     }
 
@@ -250,11 +299,12 @@ export class RunnerCore {
     this.grounded = true
     this.platformId = platform
     this.coyoteMs = 0
+    this.doubleJumpAvailable = false
     this.events.push({ type: 'land', x: RUNNER_CONFIG.heroX, y, platform: platform !== null, impact })
     if (this.bufferMs > 0) this.startJump()
   }
 
-  private die(by: 'crate' | 'overhead') {
+  private die(by: 'crate' | 'overhead' | 'inspector' | 'projectile') {
     this.status = 'hit'
     this.sliding = false
     this.events.push({ type: 'hit', by })

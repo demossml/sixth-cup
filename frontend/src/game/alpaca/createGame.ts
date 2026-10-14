@@ -1,12 +1,14 @@
 import Phaser from 'phaser'
 import { RUNNER_CONFIG } from './config'
 import type { GameBridge } from './types'
+import { DEFAULT_LEVEL } from './levels'
 import { BootScene } from './scenes/BootScene'
 import { RunnerScene } from './scenes/RunnerScene'
 
 export function createRunnerConfig(
   parent: HTMLElement,
   bridge: GameBridge,
+  levelId = DEFAULT_LEVEL.id,
 ): Phaser.Types.Core.GameConfig {
   return {
     type: Phaser.AUTO,
@@ -31,6 +33,7 @@ export function createRunnerConfig(
     callbacks: {
       preBoot: (game) => {
         game.registry.set('bridge', bridge)
+        game.registry.set('levelId', levelId)
       },
     },
   }

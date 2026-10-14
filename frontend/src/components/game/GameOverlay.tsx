@@ -16,6 +16,8 @@ type Props = {
   onPause: () => void
   onFullscreen: () => void
   saveMsg?: string
+  tipText?: string
+  starsEarned?: number
 }
 
 export function GameOverlay(p: Props) {
@@ -41,6 +43,7 @@ export function GameOverlay(p: Props) {
           <Rule icon={<IconSwipe />} title="Скольжение" text="свайп вниз — проскочить под баннером" />
           <Rule icon={<IconCrate />} title="Ящики" text="можно перепрыгнуть или запрыгнуть на них" />
         </ul>
+        {p.tipText && <p className="text-sm text-ink-secondary mb-3">{p.tipText}</p>}
         <p className="text-xs text-ink-tertiary mb-3 [@media(max-height:420px)]:hidden">На клавиатуре: Пробел / ↑ — прыжок, ↓ — скольжение, Esc — пауза.</p>
         <Primary onClick={p.onTipDone}>Поехали</Primary>
       </Panel>
@@ -68,8 +71,9 @@ export function GameOverlay(p: Props) {
         <Text>
           Собрано зёрен: <b>{p.lastBeans}</b> из {hud.beansTotal}
         </Text>
+        <Text>{'Звёзды за уровень: ' + '★'.repeat(p.starsEarned ?? 0) + '☆'.repeat(3 - (p.starsEarned ?? 0))}</Text>
         {p.saveMsg && <p className="text-xs text-ink-tertiary mb-3">{p.saveMsg}</p>}
-        <p className="text-xs text-ink-tertiary mb-3">Результат идёт только в статистику игры — бонусы и кэшбэк не начисляются.</p>
+        <p className="text-xs text-ink-tertiary mb-3">Звёзды и открытие уровней — игровые достижения. Бонусы, кэшбэк и чашки за этот забег не начисляются.</p>
         <Primary onClick={p.onRestart}>Ещё раз</Primary>
         <Ghost onClick={p.onMenu}>В меню</Ghost>
       </Panel>

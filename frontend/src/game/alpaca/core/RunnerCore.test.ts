@@ -162,3 +162,53 @@ describe('отчёт об окнах (информационно)', () => {
     expect(true).toBe(true)
   })
 })
+
+
+describe('новые игровые механики', () => {
+  it('синие зёрна дают один дополнительный прыжок в воздухе', () => {
+    const core = new RunnerCore([
+      { type: 'bean', id: 'blue', x: 190, y: G - 95, special: true },
+      { type: 'finish', id: 'f', x: 5000 },
+    ], 5000)
+    core.jump()
+    let t = 0
+    while (t < 300 && !core.isBeanTaken('blue') && core.status === 'running') { core.step(8); t += 8 }
+    expect(core.isBeanTaken('blue')).toBe(true)
+    // Второй прыжок слабее первого (0.88·v0), поэтому берём момент, когда подъём уже замедлился.
+    while (t < 300 && core.vy < -400 && core.status === 'running') { core.step(8); t += 8 }
+    const before = core.vy
+    core.jump()
+    expect(core.vy).toBeLessThan(before)
+  })
+
+  it('летящий предмет сталкивается с бегущей ламой, но его можно перепрыгнуть', () => {
+    const core = new RunnerCore([
+      { type: 'projectile', id: 'p', x: 500, y: G - 78, width: 42, height: 38 },
+      { type: 'finish', id: 'f', x: 5000 },
+    ], 5000)
+    let t = 0
+    while (core.status === 'running' && t < 3000) { core.step(8); t += 8 }
+    expect(core.status).toBe('hit')
+  })
+
+  it('инспектор-погоня может догнать игрока, если тот не собирает синие зёрна', () => {
+    const core = new RunnerCore([
+      { type: 'inspector', id: 'chase', x: 200 },
+      { type: 'finish', id: 'f', x: 5000 },
+    ], 5000, true)
+    let t = 0
+    while (core.status === 'running' && t < 12_000) { core.step(8); t += 8 }
+    expect(core.chaseActive).toBe(true)
+    expect(core.status).toBe('hit')
+  })
+
+  it('закрытая зона ускоряет прокрутку мира на 22%', () => {
+    const core = new RunnerCore([
+      { type: 'closedZone', id: 'z', x: 200, width: 500 },
+      { type: 'finish', id: 'f', x: 5000 },
+    ], 5000)
+    const before = core.speed
+    core.step(1000)
+    expect(core.speed).toBeGreaterThan(before)
+  })
+})

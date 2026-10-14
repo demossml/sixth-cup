@@ -24,6 +24,11 @@ export function dequeueRunner(runId: string) {
   localStorage.setItem(KEY, JSON.stringify(loadRunnerQueue().filter((x) => x.runId !== runId)))
 }
 
+function isPermanentReject(message: string): boolean {
+  return /Сначала пройдите|runId уже|слишком быстро|Максимум зёрен|Неизвестный уровень|400|409/i.test(message)
+}
+
+/** Flush queue. Permanent 4xx drops the item; network errors stop the loop. */
 export async function flushRunnerQueue(
   post: (body: RunnerRunResult) => Promise<void>,
 ): Promise<number> {
@@ -33,7 +38,12 @@ export async function flushRunnerQueue(
       await post(r)
       dequeueRunner(r.runId)
       n++
-    } catch {
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      if (isPermanentReject(msg)) {
+        dequeueRunner(r.runId)
+        continue
+      }
       break
     }
   }

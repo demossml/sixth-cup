@@ -13,11 +13,18 @@ export type AlpacaState = 'running' | 'jumping' | 'sliding' | 'hit' | 'finished'
 export type GameAction = 'jump' | 'slide' | 'pause'
 
 export type LevelObject =
-  | { type: 'bean'; id: string; x: number; y: number }
+  | { type: 'bean'; id: string; x: number; y: number; special?: boolean }
+  /** Инспектор — столкновение завершает забег; визуально оформляется отдельным персонажем. */
+  | { type: 'inspector'; id: string; x: number }
+  /** Брошенный инспектором предмет, который нужно перепрыгнуть. */
+  | { type: 'projectile'; id: string; x: number; y: number; width: number; height: number }
+  /** Участок «закрыто»: временно ускоряет движение мира. */
+  | { type: 'closedZone'; id: string; x: number; width: number }
   /** Ящик/платформа: на неё можно запрыгнуть (landable по умолчанию). width кратен crateUnit. */
   | { type: 'crate'; id: string; x: number; width: number; height: number; landable?: boolean }
   /** Баннер: висит от верха экрана до просвета над землёй, проходится только скольжением. */
   | { type: 'overhead'; id: string; x: number; width: number; height: number }
+  | { type: 'movingOverhead'; id: string; x: number; width: number; height: number }
   | { type: 'finish'; id: string; x: number }
 
 export interface RunnerRunResult {
@@ -26,6 +33,7 @@ export interface RunnerRunResult {
   beansCollected: number
   durationMs: number
   completed: boolean
+  stars?: number
 }
 
 export interface RunnerProgress {
@@ -34,6 +42,8 @@ export interface RunnerProgress {
   bestBeans: number
   bestDurationMs: number | null
   updatedAt: string
+  stars?: number
+  unlocked?: boolean
 }
 
 export interface GameHudSnapshot {

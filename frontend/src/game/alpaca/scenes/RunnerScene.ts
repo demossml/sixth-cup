@@ -1,12 +1,7 @@
 import Phaser from 'phaser'
 import { RUNNER_CONFIG, isDebugHitbox } from '../config'
-import {
-  FINISH_WIDTH,
-  LEVEL_01_BEAN_COUNT,
-  LEVEL_01_LENGTH,
-  LEVEL_01_NAME,
-  LEVEL_01_OBJECTS,
-} from '../level01'
+import { FINISH_WIDTH } from '../level01'
+import { getRunnerLevel, type RunnerLevel } from '../levels'
 import type { GameAction, GameBridge, GameStatus, RunnerRunResult } from '../types'
 import { InputController } from '../systems/InputController'
 import { RunnerCore, type CoreEvent } from '../core/RunnerCore'
@@ -28,6 +23,7 @@ type Item = { id: string; x: number; y: number; sprite: Phaser.GameObjects.Image
 
 export class RunnerScene extends Phaser.Scene {
   private bridge!: GameBridge
+  private level!: RunnerLevel
   private status: GameStatus = 'loading'
   private phase: Phase = 'idle'
   private core!: RunnerCore
@@ -55,6 +51,10 @@ export class RunnerScene extends Phaser.Scene {
   private beans: (Item & { base: number; idx: number })[] = []
   private crates: Item[] = []
   private banners: Item[] = []
+  private hazards: Item[] = []
+  private chaseInspector: Phaser.GameObjects.Image | null = null
+  private closedZoneLabel: Phaser.GameObjects.Text | null = null
+  private closedZoneX = 0
   private finish!: Item
 
   private dust!: Phaser.GameObjects.Particles.ParticleEmitter
@@ -71,6 +71,7 @@ export class RunnerScene extends Phaser.Scene {
   // ───────────────────────── жизненный цикл ─────────────────────────
   create() {
     this.bridge = this.game.registry.get('bridge') as GameBridge
+    this.level = getRunnerLevel(this.game.registry.get('levelId') as string | undefined)
     this.buildWorld()
     this.core = this.newCore()
     this.resetVisuals()
@@ -101,7 +102,7 @@ export class RunnerScene extends Phaser.Scene {
   }
 
   private newCore() {
-    return new RunnerCore(LEVEL_01_OBJECTS, LEVEL_01_LENGTH)
+    return new RunnerCore(this.level.objects, this.level.length, this.level.antagonist === 'chase', this.level.antagonist === 'throw')
   }
 
   private buildWorld() {
@@ -115,9 +116,11 @@ export class RunnerScene extends Phaser.Scene {
 
     const U = RUNNER_CONFIG.crateUnit
     let bi = 0
-    for (const o of LEVEL_01_OBJECTS) {
+    this.createHazardTextures()
+    for (const o of this.level.objects) {
       if (o.type === 'bean') {
         const s = this.add.image(o.x, o.y, 'bean').setScale(0.5).setDepth(7)
+        if (o.special) s.setTint(0x47b8ff)
         this.beans.push({ id: o.id, x: o.x, y: o.y, sprite: s, width: 24, base: o.y, idx: bi++ })
       } else if (o.type === 'crate') {
         const s = this.add
@@ -126,13 +129,30 @@ export class RunnerScene extends Phaser.Scene {
           .setTileScale(U / 112)
           .setDepth(6)
         this.crates.push({ id: o.id, x: o.x, y: G, sprite: s, width: o.width })
-      } else if (o.type === 'overhead') {
+      } else if (o.type === 'overhead' || o.type === 'movingOverhead') {
         const s = this.add.image(o.x, BANNER_TOP, 'banner').setOrigin(0, 0).setScale(0.5).setDepth(8)
         this.banners.push({ id: o.id, x: o.x, y: BANNER_TOP, sprite: s, width: o.width })
+      } else if (o.type === 'inspector') {
+        if (this.level.antagonist !== 'chase') {
+          const s = this.add.image(o.x, G, 'inspector').setOrigin(0, 1).setScale(0.72).setDepth(9)
+          this.hazards.push({ id: o.id, x: o.x, y: G, sprite: s, width: 52 })
+        }
+      } else if (o.type === 'projectile') {
+        const s = this.add.image(o.x, o.y + o.height / 2, 'projectile').setOrigin(0, 0.5).setDisplaySize(o.width, o.height).setDepth(9)
+        this.hazards.push({ id: o.id, x: o.x, y: o.y + o.height / 2, sprite: s, width: o.width })
+      } else if (o.type === 'closedZone') {
+        const s = this.add.image(o.x, G - 220, 'closed-zone').setOrigin(0, 0).setDisplaySize(240, 72).setDepth(7)
+        this.hazards.push({ id: o.id, x: o.x, y: G - 220, sprite: s, width: o.width })
+        this.closedZoneX = o.x
+        this.closedZoneLabel = this.add.text(o.x + 120, G - 197, 'ЗАКРЫТО', { fontFamily: FONT, fontSize: '19px', fontStyle: '800', color: '#333747', align: 'center' }).setOrigin(0.5).setDepth(8)
       } else if (o.type === 'finish') {
         const s = this.add.image(o.x, G + 6, 'finish').setOrigin(0, 1).setScale(0.5).setDepth(6)
         this.finish = { id: o.id, x: o.x, y: G + 6, sprite: s, width: FINISH_WIDTH }
       }
+    }
+
+    if (this.level.antagonist === 'chase') {
+      this.chaseInspector = this.add.image(RUNNER_CONFIG.heroX - 150, G, 'inspector').setOrigin(0.5, 1).setScale(0.66).setDepth(9).setVisible(false)
     }
 
     this.hero = this.add
@@ -185,6 +205,36 @@ export class RunnerScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(20)
       .setVisible(false)
+  }
+
+  private createHazardTextures() {
+    if (!this.textures.exists('inspector')) {
+      const g = this.make.graphics({ x: 0, y: 0 }, false)
+      // Нейтральный серый бариста без чужих логотипов: фартук, лицо и кепка.
+      g.fillStyle(0x777d88, 1).fillRoundedRect(18, 28, 42, 52, 10)
+      g.fillStyle(0xd4c6b5, 1).fillCircle(39, 22, 17)
+      g.fillStyle(0x4b515b, 1).fillRoundedRect(19, 3, 40, 10, 4)
+      g.fillStyle(0x5a606a, 1).fillRect(25, 44, 28, 25)
+      g.fillStyle(0x333944, 1).fillCircle(33, 22, 2).fillCircle(45, 22, 2)
+      g.generateTexture('inspector', 78, 82)
+      g.destroy()
+    }
+    if (!this.textures.exists('closed-zone')) {
+      const g = this.make.graphics({ x: 0, y: 0 }, false)
+      g.fillStyle(0x333747, 0.96).fillRoundedRect(0, 0, 240, 72, 12)
+      g.fillStyle(0xe7e9ee, 1).fillRoundedRect(14, 13, 212, 46, 8)
+      g.fillStyle(0x333747, 1).fillRect(28, 26, 18, 18).fillRect(194, 26, 18, 18)
+      g.generateTexture('closed-zone', 240, 72)
+      g.destroy()
+    }
+    if (!this.textures.exists('projectile')) {
+      const g = this.make.graphics({ x: 0, y: 0 }, false)
+      g.fillStyle(0x6f737b, 1).fillRoundedRect(2, 7, 38, 24, 7)
+      g.fillStyle(0xf2eee6, 1).fillRect(11, 1, 21, 9)
+      g.fillStyle(0x9a9fa7, 1).fillRect(8, 17, 28, 3)
+      g.generateTexture('projectile', 44, 36)
+      g.destroy()
+    }
   }
 
   /** Возвращает мир и героя в исходное состояние (на старте и при рестарте). */
@@ -316,6 +366,7 @@ export class RunnerScene extends Phaser.Scene {
     this.handleEvents(this.core.drainEvents())
     this.layout()
     for (const b of this.beans) this.bob(b, time)
+    for (const h of this.hazards) if (h.id.includes('-p')) h.sprite.setAngle(Math.sin(time / 90) * 14)
 
     if (this.phase !== 'running') return // событие hit/finish сменило фазу
     this.syncHero()
@@ -447,7 +498,7 @@ export class RunnerScene extends Phaser.Scene {
   private finalizeRun(completed: boolean) {
     const result: RunnerRunResult = {
       runId: this.runId,
-      levelId: RUNNER_CONFIG.levelId,
+      levelId: this.level.id,
       beansCollected: this.core.beans,
       durationMs: Math.max(1, Math.round(this.core.playMs)), // только игровое время (без пауз/отсчёта)
       completed,
@@ -467,7 +518,21 @@ export class RunnerScene extends Phaser.Scene {
     this.ground.tilePositionX = x
     for (const b of this.beans) b.sprite.x = b.x - x
     for (const c of this.crates) this.place(c, x)
-    for (const c of this.banners) this.place(c, x)
+    for (const c of this.banners) {
+      this.place(c, x)
+      const object = this.level.objects.find(o => o.id === c.id)
+      if (object?.type === 'movingOverhead') c.sprite.y = BANNER_TOP + Math.sin(this.core.playMs / 500) * 8
+    }
+    for (const h of this.hazards) this.place(h, x)
+    if (this.chaseInspector) {
+      this.chaseInspector.setVisible(this.core.chaseActive)
+      this.chaseInspector.x = RUNNER_CONFIG.heroX - this.core.chaseGap
+      this.chaseInspector.y = G
+    }
+    if (this.closedZoneLabel) {
+      this.closedZoneLabel.x = this.closedZoneX - x + 120
+      this.closedZoneLabel.setVisible(this.closedZoneLabel.x > -120 && this.closedZoneLabel.x < W + 120)
+    }
     this.place(this.finish, x)
   }
 
@@ -534,7 +599,7 @@ export class RunnerScene extends Phaser.Scene {
     const key = `${this.core.beans}|${Math.round(p * 100)}`
     if (!force && key === this.lastHud) return
     this.lastHud = key
-    this.bridge.onHud({ beans: this.core.beans, beansTotal: LEVEL_01_BEAN_COUNT, progress01: p, levelName: LEVEL_01_NAME })
+    this.bridge.onHud({ beans: this.core.beans, beansTotal: this.level.beansTotal, progress01: p, levelName: this.level.name })
   }
 
   private setStatus(s: GameStatus) {

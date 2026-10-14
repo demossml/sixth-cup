@@ -2,7 +2,7 @@ import { describe, expect, it, beforeAll } from 'vitest'
 import { db } from '../db'
 import { runMigrations } from '../db/migrate'
 
-describe('runner migration 015', () => {
+describe('runner migrations 015–016', () => {
   beforeAll(() => {
     runMigrations(db)
   })
@@ -12,5 +12,7 @@ describe('runner migration 015', () => {
     )
     expect(names).toContain('runner_runs')
     expect(names).toContain('runner_progress')
+    const columns = (db.prepare('PRAGMA table_info(runner_progress)').all() as { name: string }[]).map(c => c.name)
+    expect(columns).toContain('stars')
   })
 })

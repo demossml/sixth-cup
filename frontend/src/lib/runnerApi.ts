@@ -16,10 +16,13 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return body
 }
 
+export type RunnerLevelMeta = { levelId: string; name: string; beansTotal: number; unlocked: boolean; completedRuns: number; bestBeans: number; bestDurationMs: number | null; stars: number; updatedAt: string }
+
 export const runnerApi = {
   progress: () => req<{ ok: boolean; progress: RunnerProgress }>('/progress'),
+  meta: () => req<{ ok: boolean; levels: RunnerLevelMeta[]; streakDays: number; recentRuns: { levelId: string; levelName: string; beansCollected: number; durationMs: number; completed: boolean; createdAt: string }[]; rewardsEnabled: boolean; message: string }>('/meta'),
   submitRun: (body: RunnerRunResult) =>
-    req<{ ok: boolean; progress: RunnerProgress }>('/runs', {
+    req<{ ok: boolean; progress: RunnerProgress; starsEarned?: number; duplicate?: boolean }>('/runs', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
