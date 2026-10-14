@@ -6,8 +6,35 @@
   "background_color": "#002FA7",
   "theme_color": "#002FA7",
   "icons": [
-    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
-    { "src": "/logo-mark.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/logo-mark.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Карта",
+      "short_name": "Карта",
+      "url": "/",
+      "description": "QR и прогресс"
+    },
+    {
+      "name": "Меню",
+      "short_name": "Меню",
+      "url": "/menu",
+      "description": "Ассортимент"
+    }
   ]
 }

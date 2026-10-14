@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import InstallBanner from '../components/InstallBanner'
 import Qr from '../components/Qr'
@@ -10,6 +10,8 @@ import { cupsWord, friendsWord, progressPhrase } from '../lib/plural'
 import { syncStatus } from '../lib/syncStatus'
 import { useWakeLock } from '../lib/wakeLock'
 import { ChevronRight, Coffee, Gift, RefreshCw, Ticket, Users, Wallet, Wifi, WifiOff } from '../lib/icons'
+import { track } from '../lib/analytics'
+import { hapticSyncOk } from '../lib/haptics'
 
 /**
  * Главный экран: «открыл → понял → показал».
@@ -38,9 +40,15 @@ export default function CardPage() {
 
   useWakeLock(!!proof)
 
+  useEffect(() => {
+    if (proof) track('qr_visible')
+  }, [proof])
+
   async function onSync() {
     setMsg(null)
     const result = await sync()
+    if (result === 'ok') { hapticSyncOk(); track('sync_ok') }
+    else if (result === 'offline' || result === 'noauth') track('sync_fail', { reason: String(result) })
     if (result === 'auth') {
       const { ensureGuest } = await import('../lib/ensureGuest')
       const { setJwt } = await import('../api')

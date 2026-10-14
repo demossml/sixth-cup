@@ -9,8 +9,10 @@ import './lib/installStore'
 import { installClientLog } from './lib/clientLog'
 import { getJwt } from './api'
 import { captureInvite } from './lib/invite'
+import { track } from './lib/analytics'
 
 installClientLog()
+track('pwa_open')
 
 if (!import.meta.env.DEV) registerSW({ immediate: true })
 

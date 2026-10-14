@@ -1,3 +1,4 @@
+import { track } from '../lib/analytics'
 import { useEffect, useMemo, useState } from 'react'
 import { useApp } from '../lib/app'
 import { AppIcon, Store } from '../lib/icons'
@@ -8,6 +9,7 @@ import { AppIcon, Store } from '../lib/icons'
  * миниатюры скрываются у всех (текст-первый список) — без пустых серых квадратов.
  */
 export default function MenuPage() {
+  useEffect(() => { track('menu_open') }, [])
   const { dir } = useApp()
   const [catId, setCatId] = useState<number | 'all'>('all')
   const [now, setNow] = useState(Date.now())

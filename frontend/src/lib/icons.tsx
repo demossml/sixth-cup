@@ -35,6 +35,8 @@ import {
   LayoutGrid,
   Megaphone,
   Sparkles,
+  FileText,
+  Smartphone,
   type LucideProps,
 } from 'lucide-react'
 
@@ -50,6 +52,8 @@ const map: Record<string, ComponentType<LucideProps>> = {
   Wallet,
   Store,
   Sparkles,
+  FileText,
+  Smartphone,
 }
 
 export function AppIcon({ name, className, size = 20, ...rest }: { name: string; className?: string; size?: number } & LucideProps) {
@@ -93,4 +97,6 @@ export {
   LayoutGrid,
   Megaphone,
   Sparkles,
+  FileText,
+  Smartphone,
 }

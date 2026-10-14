@@ -8,6 +8,7 @@ import ProfilePage from './pages/ProfilePage'
 import PromosPage from './pages/PromosPage'
 import InvitePage from './pages/InvitePage'
 import MorePage from './pages/MorePage'
+import LegalPage from './pages/LegalPage'
 import HistoryPage from './pages/HistoryPage'
 import StoresPage from './pages/StoresPage'
 import CardQrPage from './pages/CardQrPage'
@@ -129,6 +130,7 @@ export default function App() {
           <Route path="/me" element={<ProfilePage />} />
           <Route path="/invite" element={<InvitePage />} />
           <Route path="/more" element={<MorePage />} />
+          <Route path="/legal" element={<LegalPage />} />
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/stores" element={<StoresPage />} />
           <Route path="/game" element={<GamePage />} />
