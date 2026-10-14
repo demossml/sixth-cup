@@ -153,10 +153,26 @@ if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} /
           maxLength={4000}
         />
       </Field>
-      <Field label="URL фото" hint="Или загрузите файл ниже">
+      <Field label="Фото товара" hint="JPEG/PNG/WebP до 2 МБ. Гость видит это фото в меню PWA.">
+        {d.imageUrl ? (
+          <div className="mb-2 flex items-start gap-3">
+            <img
+              src={d.imageUrl}
+              alt=""
+              className="h-20 w-20 rounded-xl object-cover border border-line bg-[#EDE7DC]"
+            />
+            <div className="flex flex-col gap-2">
+              <Button type="button" variant="ghost" onClick={() => set('imageUrl', null)}>
+                Удалить фото
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-ink-secondary mb-2">Фото ещё нет — в меню будет нейтральная заглушка.</p>
+        )}
         <Input value={d.imageUrl ?? ''} onChange={(e) => set('imageUrl', e.target.value || null)} placeholder="https://… или /uploads/…" />
       </Field>
-      <Field label="Загрузить фото">
+      <Field label="Загрузить файл">
         <input
           type="file"
           accept="image/jpeg,image/png,image/webp"
@@ -340,6 +356,14 @@ export default function MenuProducts() {
   }
 
   const cols: Column<Product>[] = [
+    {
+      key: 'photo',
+      header: '',
+      hideOnPhone: true,
+      render: (row) => row.imageUrl
+        ? <img src={row.imageUrl} alt="" className="h-10 w-10 rounded-lg object-cover bg-[#EDE7DC]" />
+        : <div className="h-10 w-10 rounded-lg bg-[#EDE7DC] text-[10px] text-brand/40 flex items-center justify-center font-semibold">6.7</div>,
+    },
     { key: 'name', header: 'Название', primary: true, sortKey: 'name', render: (p) => <span className={p.available ? '' : 'text-ink-tertiary'}>{p.name}</span> },
     { key: 'group', header: 'Группа', sortKey: 'category', render: (p) => p.categoryName ?? <span className="text-ink-tertiary">—</span> },
     {

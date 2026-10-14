@@ -42,6 +42,8 @@ export const uploadRoutes = new Hono()
     const buf = Buffer.from(await f.arrayBuffer())
     await pipeline(Readable.from(buf), createWriteStream(dest))
 
-    const url = `/uploads/${key}`
-    return c.json({ url, key })
+    const path = `/uploads/${key}`
+    const base = (config.publicBaseUrl || '').replace(/\/+$/, '')
+    const url = base ? `${base}${path}` : path
+    return c.json({ url, key, path })
   })
