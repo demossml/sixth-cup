@@ -1,3 +1,4 @@
+import BrandLogo from '../components/BrandLogo'
 import { Link } from 'react-router-dom'
 import { useApp } from '../lib/app'
 import { formatCardCode } from '../lib/card'

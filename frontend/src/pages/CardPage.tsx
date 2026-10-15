@@ -10,6 +10,7 @@ import { cupsWord, friendsWord, progressPhrase } from '../lib/plural'
 import { syncStatus } from '../lib/syncStatus'
 import { useWakeLock } from '../lib/wakeLock'
 import { mediaUrl } from '../lib/media'
+import BrandLogo, { BrandPanelMark } from '../components/BrandLogo'
 import { ChevronRight, Coffee, Gift, RefreshCw, Ticket, Users, Wallet, Wifi, WifiOff } from '../lib/icons'
 
 type CmsItem = {
@@ -134,17 +135,7 @@ export default function CardPage() {
           style={{ paddingTop: 'max(0.5rem, env(safe-area-inset-top))' }}
         >
           <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <img
-                src="/logo-mark.png"
-                alt=""
-                width={28}
-                height={28}
-                className="w-7 h-7 rounded-lg"
-                style={{ mixBlendMode: 'lighten' }}
-              />
-              <h1 className="font-display text-[17px] leading-6 font-semibold">6.7 Coffee</h1>
-            </div>
+            <BrandLogo tone="onDark" size="sm" />
             <button
               type="button"
               onClick={() => void onSync()}
@@ -295,14 +286,7 @@ export default function CardPage() {
           if (!featured) {
             return (
               <div className="rounded-3xl overflow-hidden bg-brand text-white p-5 flex items-center gap-4 shadow-card">
-                <img
-                  src="/logo-mark.png"
-                  alt=""
-                  width={44}
-                  height={44}
-                  className="w-11 h-11 rounded-xl shrink-0"
-                  style={{ mixBlendMode: 'lighten' }}
-                />
+                <BrandPanelMark />
                 <div>
                   <p className="font-display font-semibold text-[18px] leading-6">Каждый {N + 1}-й кофе в подарок</p>
                   <p className="text-[13px] text-white/80 mt-0.5">Покажите карту на кассе</p>

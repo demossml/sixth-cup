@@ -1,3 +1,4 @@
+import BrandLogo from '../components/BrandLogo'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { IllCard, IllScan, IllStamps } from '../components/Illustrations'
@@ -77,10 +78,7 @@ export default function OnboardingPage() {
         className="relative z-10 flex flex-col flex-1 px-6"
         style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))', paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}
       >
-        <div className="flex items-center gap-2">
-          <img src="/logo-mark.png" alt="" width={32} height={32} className="w-8 h-8 rounded-lg" style={{ mixBlendMode: 'lighten' }} />
-          <span className="font-display text-[15px] font-semibold leading-4">6.7<br />Coffee</span>
-        </div>
+        <BrandLogo tone="onDark" size="sm" />
 
         <div className="flex-1 flex items-center justify-center py-4">
           {!photoOk[i] && (
