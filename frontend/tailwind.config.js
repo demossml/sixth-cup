@@ -23,6 +23,7 @@ export default {
           gold: '#C8A26E',
           green: '#1F7A4D',
         },
+        night: { DEFAULT: '#0E0E0F', soft: '#1B1A17' }, // тёмные поверхности макета: шапка карты, онбординг, fullscreen QR
         page: '#F6F3EE',
         card: '#FFFFFF',
         ink: {

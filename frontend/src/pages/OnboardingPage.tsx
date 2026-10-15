@@ -55,76 +55,57 @@ export default function OnboardingPage() {
     nav('/', { replace: true })
   }
 
-  const heroBg =
-    s.tone === 'crema'
-      ? 'bg-gradient-to-br from-[#C8A26E] via-[#002FA7] to-[#001F6B]'
-      : s.tone === 'deep'
-        ? 'bg-gradient-to-br from-[#001F6B] via-[#002FA7] to-[#1a4dd6]'
-        : 'bg-gradient-to-br from-[#1a4dd6] via-[#002FA7] to-[#001F6B]'
+  // Необязательное фото слайда: положите public/onboarding/1.jpg … 3.jpg — оно появится само;
+  // нет файла — остаётся тёмный фон с иллюстрацией.
+  const [photoOk, setPhotoOk] = useState<Record<number, boolean>>({ 0: true, 1: true, 2: true })
 
   return (
-    <div className="max-w-[480px] mx-auto min-h-screen bg-page flex flex-col">
-      {/* Hero visual — ~45% first screen */}
-      <section className={`relative min-h-[42vh] overflow-hidden ${heroBg}`}>
-        <div className="absolute inset-0 bg-gradient-to-b from-black/5 via-transparent to-black/40" />
-        <div
-          className="relative z-10 flex flex-col h-full min-h-[42vh] px-5"
-          style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <img
-                src="/logo-mark.png"
-                alt=""
-                width={28}
-                height={28}
-                className="w-7 h-7 rounded-lg"
-                style={{ mixBlendMode: 'lighten' }}
-              />
-              <span className="text-[12px] font-semibold tracking-wide text-white/90">6.7 Coffee</span>
-            </div>
-            {!last && (
-              <button
-                type="button"
-                className="min-h-11 px-3 text-[14px] font-semibold text-white/90"
-                onClick={finish}
-              >
-                Пропустить
-              </button>
-            )}
-          </div>
+    <div className="max-w-[480px] mx-auto min-h-screen bg-night text-white flex flex-col relative overflow-hidden">
+      <div className="absolute inset-0 bg-[radial-gradient(110%_70%_at_80%_0%,#3a2c1b_0%,#16130f_55%,#0e0e0f_100%)]" />
+      {photoOk[i] && (
+        <img
+          key={i}
+          src={`/onboarding/${i + 1}.jpg`}
+          alt=""
+          className="absolute inset-0 w-full h-full object-cover opacity-80"
+          onError={() => setPhotoOk((m) => ({ ...m, [i]: false }))}
+        />
+      )}
+      <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black/90" />
 
-          <div className="flex-1 flex items-center justify-center py-4">
-            <div className="w-full max-w-[300px] aspect-[280/200] rounded-3xl bg-white/95 shadow-lift p-3">
+      <div
+        className="relative z-10 flex flex-col flex-1 px-6"
+        style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))', paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}
+      >
+        <div className="flex items-center gap-2">
+          <img src="/logo-mark.png" alt="" width={32} height={32} className="w-8 h-8 rounded-lg" style={{ mixBlendMode: 'lighten' }} />
+          <span className="font-display text-[15px] font-semibold leading-4">6.7<br />Coffee</span>
+        </div>
+
+        <div className="flex-1 flex items-center justify-center py-4">
+          {!photoOk[i] && (
+            <div className="w-full max-w-[280px] aspect-[280/200] rounded-3xl bg-white/10 backdrop-blur-sm border border-white/15 p-3">
               <Ill />
             </div>
-          </div>
+          )}
         </div>
-      </section>
 
-      {/* Copy + dots + CTA */}
-      <div className="flex-1 flex flex-col px-6 pt-6 text-center">
-        <h1 className="font-display text-[24px] leading-8 font-semibold text-ink">{s.title}</h1>
-        <p className="mt-2 text-ink-secondary text-[15px] leading-[22px] max-w-[320px] mx-auto">{s.text}</p>
+        <h1 className="font-display text-[28px] leading-8 font-semibold">{s.title}</h1>
+        <p className="mt-2 text-white/75 text-[15px] leading-[22px] max-w-[340px]">{s.text}</p>
 
-        <div className="flex gap-2 mt-6 justify-center" aria-hidden>
+        <div className="flex gap-2 mt-5" aria-hidden>
           {slides.map((_, idx) => (
-            <div
-              key={idx}
-              className={`h-1.5 rounded-full transition-all ${idx === i ? 'w-6 bg-brand' : 'w-1.5 bg-line'}`}
-            />
+            <div key={idx} className={`h-1.5 rounded-full transition-all ${idx === i ? 'w-6 bg-white' : 'w-1.5 bg-white/35'}`} />
           ))}
         </div>
 
-        <div className="flex-1" />
-
-        <div className="space-y-2 pb-2" style={{ paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}>
+        <div className="mt-6 space-y-1">
           <button type="button" className="btn min-h-12" onClick={() => (last ? finish() : setI(i + 1))}>
             {last ? 'К карте' : 'Далее'}
           </button>
-          {last ? (
-            <p className="text-[12px] leading-4 text-ink-tertiary">Заказ и оплата — на кассе</p>
-          ) : null}
+          <button type="button" className="w-full min-h-11 text-[14px] font-semibold text-white/80" onClick={finish}>
+            {last ? 'Заказ и оплата — на кассе' : 'Пропустить'}
+          </button>
         </div>
       </div>
     </div>

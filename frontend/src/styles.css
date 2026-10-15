@@ -96,6 +96,13 @@
   .hero-off {
     background: radial-gradient(120% 90% at 85% 0%, #1b3f9e 0%, #0d2a86 45%, #0a1c55 100%);
   }
+  /* Тёмная шапка карты по макету: графит с тёплым отсветом. Офлайн — холоднее и темнее. */
+  .hero-night {
+    background: radial-gradient(120% 100% at 100% 0%, #2a2218 0%, #161412 48%, #0e0e0f 100%);
+  }
+  .hero-night-off {
+    background: radial-gradient(120% 100% at 100% 0%, #1f242d 0%, #14171c 48%, #0e0e0f 100%);
+  }
   .num {
     font-variant-numeric: tabular-nums;
   }

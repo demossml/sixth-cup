@@ -130,11 +130,12 @@ export default function MenuPage() {
           <section role="dialog" aria-modal="true" aria-labelledby="product-sheet-title" className="relative w-full max-w-[480px] max-h-[88dvh] overflow-y-auto rounded-t-[28px] bg-page shadow-2xl animate-[sheet-up_220ms_ease-out]" style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
             <div className="relative overflow-hidden rounded-t-[28px]"><ProductPhoto product={selected} large /><button type="button" onClick={() => setSelected(null)} aria-label="Закрыть карточку товара" className="absolute right-3 top-3 w-11 h-11 rounded-full bg-white/95 flex items-center justify-center text-ink shadow-card"><X size={21} /></button></div>
             <div className="p-5">
-              <div className="flex items-start justify-between gap-3"><h2 id="product-sheet-title" className="font-display text-[24px] leading-7 font-semibold text-ink">{selected.name}</h2><span className="font-display text-[20px] leading-7 font-semibold num whitespace-nowrap">{Math.round(selected.price).toLocaleString('ru-RU')} ₽</span></div>
+              <h2 id="product-sheet-title" className="font-display text-[24px] leading-7 font-semibold text-ink">{selected.name}</h2>
+              <p className="font-display text-[22px] leading-7 font-semibold num text-ink mt-1">{Math.round(selected.price).toLocaleString('ru-RU')} ₽</p>
               {selected.description && <p className="text-[15px] leading-[22px] text-ink-secondary mt-3">{selected.description}</p>}
               {selected.freeEligible && <div className="inline-flex items-center gap-2 rounded-full bg-[#F1E6D6] text-[#78572F] px-3 py-2 text-[12px] font-semibold mt-4"><Gift size={15} />Участвует в подарке</div>}
-              <div className="rounded-2xl bg-white border border-line p-4 mt-5"><p className="text-[14px] leading-5 font-semibold text-ink">На кассе покажите карту</p><p className="text-[13px] leading-[18px] text-ink-secondary mt-1">Заказ и оплата — у бариста. В приложении нет корзины и онлайн-оплаты.</p></div>
-              <button type="button" onClick={() => { setSelected(null); nav('/') }} className="btn mt-4 min-h-12">Перейти к карте</button>
+              <p className="text-[13px] leading-[18px] text-ink-secondary mt-4">Заказ и оплата — у бариста. В приложении нет корзины и онлайн-оплаты.</p>
+              <button type="button" onClick={() => { setSelected(null); nav('/') }} className="btn mt-4 min-h-12">На кассе покажите карту</button>
             </div>
           </section>
         </div>

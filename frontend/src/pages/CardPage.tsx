@@ -66,20 +66,22 @@ export default function CardPage() {
 
   // Чип статуса: цвет + иконка + слово (состояние не только цветом).
   const chip =
-    hasGift && status.kind === 'fresh'
-      ? { cls: 'bg-crema text-ink', label: 'Подарок' }
+    status.kind === 'syncing'
+      ? { cls: 'border border-white/35 text-white', label: 'Синхронизация' }
       : status.kind === 'offline'
-        ? { cls: 'bg-off-bg text-off', label: status.label }
+        ? { cls: 'bg-off-bg text-off', label: 'Офлайн' }
         : status.kind === 'stale'
-          ? { cls: 'bg-warn-bg text-warn', label: status.label }
-          : { cls: 'bg-white/15 text-white', label: status.label }
+          ? { cls: 'bg-warn-bg text-warn', label: 'Устарело' }
+          : hasGift
+            ? { cls: 'bg-crema text-ink', label: 'Подарок доступен' }
+            : { cls: 'border border-white/35 text-white', label: status.kind === 'never' ? 'Не обновлялось' : 'Онлайн' }
   const dim = status.kind === 'offline'
 
   return (
     <div className="pb-4">
       {/* L1–L5: шапка (градиент, знак, чип, фраза, штампы). QR-карта наезжает на неё на 24 px. */}
       <div
-        className={`${dim ? 'hero-off' : 'hero'} text-white px-4 pb-12 rounded-b-3xl`}
+        className={`${dim ? 'hero-night-off' : 'hero-night'} text-white px-4 pb-12 rounded-b-3xl`}
         style={{ paddingTop: 'max(0.5rem, env(safe-area-inset-top))' }}
       >
         <div className="flex items-center justify-between gap-2">
@@ -92,8 +94,9 @@ export default function CardPage() {
             onClick={() => void onSync()}
             className={`inline-flex items-center gap-1.5 text-[12px] leading-4 font-semibold px-3 rounded-full min-h-11 ${chip.cls}`}
             aria-label={`Обновить данные. ${status.label}`}
+            title={status.kind === 'fresh' ? status.label : undefined}
           >
-            {hasGift && status.kind === 'fresh' ? <Gift size={14} strokeWidth={1.75} /> : hasNetwork ? <Wifi size={14} strokeWidth={1.75} /> : <WifiOff size={14} strokeWidth={1.75} />}
+            {hasGift && status.kind !== 'offline' && status.kind !== 'stale' ? <Gift size={14} strokeWidth={1.75} /> : hasNetwork ? <Wifi size={14} strokeWidth={1.75} /> : <WifiOff size={14} strokeWidth={1.75} />}
             {syncing ? <RefreshCw size={14} strokeWidth={1.75} className="animate-spin motion-reduce:animate-none" /> : null}
             {chip.label}
           </button>
@@ -110,7 +113,7 @@ export default function CardPage() {
               return (
                 <div key={i} className="flex justify-center min-w-0">
                   <div
-                    className={`w-full max-w-[36px] aspect-square rounded-full flex items-center justify-center ${filled ? 'bg-white text-brand stamp-in' : 'border border-white/40 text-white/50'}`}
+                    className={`w-full max-w-[36px] aspect-square rounded-full flex items-center justify-center ${filled ? 'bg-brand-mid text-white stamp-in' : 'border border-white/30 text-white/40'}`}
                     style={filled ? { animationDelay: `${i * 30}ms` } : undefined}
                   >
                     <Coffee size={18} strokeWidth={1.75} />
@@ -120,7 +123,7 @@ export default function CardPage() {
             })}
             <div className="flex justify-center min-w-0">
               <div
-                className={`w-full max-w-[36px] aspect-square rounded-full flex items-center justify-center ${hasGift ? 'bg-crema text-ink gift-pulse' : 'border border-dashed border-white/50 text-white/60'}`}
+                className={`w-full max-w-[36px] aspect-square rounded-full flex items-center justify-center ${hasGift ? 'bg-crema text-ink gift-pulse' : 'border border-crema/60 text-crema'}`}
               >
                 <Gift size={18} strokeWidth={1.75} />
               </div>
@@ -150,6 +153,12 @@ export default function CardPage() {
             </div>
           ) : (
             <>
+              {!hasNetwork && (
+                <div className="flex items-center gap-2 text-[13px] leading-[18px] text-off bg-off-bg rounded-xl px-3 py-2 mb-3" role="status">
+                  <WifiOff size={16} strokeWidth={1.75} className="shrink-0" />
+                  <span><b className="font-semibold">Нет сети</b> · QR из кэша доступен</span>
+                </div>
+              )}
               <button
                 type="button"
                 className="w-full flex flex-col items-center bg-white rounded-xl active:opacity-90 motion-reduce:transition-none"
@@ -164,9 +173,11 @@ export default function CardPage() {
                 </p>
                 <p className="text-[13px] leading-[18px] text-ink-secondary mt-1">Не читается — назовите номер бариста</p>
               </button>
-              {status.detail && status.kind !== 'fresh' && (
+              {!hasNetwork ? (
+                <p className="text-center text-[12px] leading-4 text-ink-secondary mt-2">Обновится при подключении{status.detail ? ` · ${status.detail.replace('QR работает · ', '')}` : ''}</p>
+              ) : status.detail && status.kind !== 'fresh' ? (
                 <p className="text-center text-[12px] leading-4 text-ink-secondary mt-2">{status.detail}</p>
-              )}
+              ) : null}
             </>
           )}
         </div>
@@ -176,13 +187,16 @@ export default function CardPage() {
         {/* L9: вторичное — одна группа с hairline вместо стопки одинаковых карточек. */}
         {me && (
           <div className="bg-white border border-line rounded-2xl shadow-card divide-y divide-line">
-            <div className="flex items-center gap-3 px-3.5 py-3 min-h-14">
-              <Wallet size={20} strokeWidth={1.75} className="text-brand shrink-0" />
-              <div className="min-w-0">
+            <button type="button" onClick={() => nav('/history')} className="w-full text-left flex items-center gap-3 px-3.5 py-3 min-h-14 active:bg-brand-tint/60">
+              <span className="w-9 h-9 rounded-full bg-[#F1E6D6] text-[#78572F] flex items-center justify-center shrink-0">
+                <Wallet size={18} strokeWidth={1.75} />
+              </span>
+              <div className="min-w-0 flex-1">
                 <div className="font-display font-semibold text-base num text-ink">Кэшбэк {formatRub(me.cashbackBalance)} ₽</div>
                 <div className="text-[13px] leading-[18px] text-ink-secondary">Списать можно только у бариста на кассе</div>
               </div>
-            </div>
+              <ChevronRight size={18} strokeWidth={1.75} className="text-ink-tertiary shrink-0" />
+            </button>
             <button type="button" onClick={() => nav('/invite')} className="w-full text-left flex items-center gap-3 px-3.5 py-3 min-h-14 active:bg-brand-tint/60">
               <Users size={20} strokeWidth={1.75} className="text-brand shrink-0" />
               <div className="min-w-0 flex-1">
@@ -210,25 +224,34 @@ export default function CardPage() {
             placement?: string; badge?: string | null; ctaLabel?: string | null
           }>
           const home = list.find((x) => x.placement === 'home_feature' || x.placement === 'home' || x.placement === 'both' || !x.placement)
-          if (!home) return null
+          // Нет баннера из админки — брендовая панель (fallback макета), а не пустой блок.
+          if (!home) {
+            return (
+              <div className="rounded-3xl overflow-hidden bg-brand text-white p-5 flex items-center gap-4 shadow-card">
+                <img src="/logo-mark.png" alt="" width={44} height={44} className="w-11 h-11 rounded-xl shrink-0" style={{ mixBlendMode: 'lighten' }} />
+                <p className="font-display font-semibold text-[20px] leading-6">Каждый {N + 1}-й кофе в подарок</p>
+              </div>
+            )
+          }
+          const badge = home.badge === 'new' ? 'Новинка' : home.badge === 'hit' ? 'Хит' : home.badge ? 'Сезон' : null
+          if (!home.imageUrl) {
+            return (
+              <button type="button" onClick={() => nav('/menu')} className="w-full text-left rounded-3xl bg-brand text-white p-5 shadow-card">
+                {badge ? <span className="inline-block text-[11px] font-semibold uppercase tracking-wide bg-crema text-ink rounded-full px-2.5 py-0.5 mb-2">{badge}</span> : null}
+                <div className="font-display font-semibold text-[20px] leading-6">{home.title}</div>
+                {home.body ? <p className="text-[13px] leading-[18px] text-white/80 mt-1 line-clamp-2">{home.body}</p> : null}
+                <div className="text-[13px] font-semibold mt-3 inline-flex items-center gap-1">{home.ctaLabel || 'Смотреть в меню'} <ChevronRight size={16} strokeWidth={1.75} /></div>
+              </button>
+            )
+          }
           return (
-            <button
-              type="button"
-              onClick={() => nav('/menu')}
-              className="w-full text-left rounded-3xl overflow-hidden bg-white border border-line shadow-card mb-3"
-            >
-              {home.imageUrl ? (
-                <img src={home.imageUrl} alt="" className="w-full h-36 object-cover bg-[#EDE7DC]" loading="lazy" />
-              ) : null}
-              <div className="p-3.5">
-                {home.badge ? (
-                  <span className="inline-block text-[11px] font-semibold uppercase tracking-wide text-brand bg-brand-tint rounded-full px-2 py-0.5 mb-1">
-                    {home.badge === 'new' ? 'Новинка' : home.badge === 'hit' ? 'Хит' : 'Сезон'}
-                  </span>
-                ) : null}
-                <div className="font-semibold text-[16px] text-ink">{home.title}</div>
-                {home.body ? <p className="text-[13px] text-ink-secondary mt-1 line-clamp-2">{home.body}</p> : null}
-                <div className="text-[13px] font-semibold text-brand mt-2">{home.ctaLabel || 'Смотреть в меню'}</div>
+            <button type="button" onClick={() => nav('/menu')} className="relative w-full text-left rounded-3xl overflow-hidden shadow-card block min-h-[168px] bg-night">
+              <img src={home.imageUrl} alt="" className="absolute inset-0 w-full h-full object-cover" loading="lazy" />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/35 to-black/5" />
+              <div className="relative p-4 flex flex-col justify-end min-h-[168px] text-white">
+                {badge ? <span className="self-start text-[11px] font-semibold uppercase tracking-wide bg-crema text-ink rounded-full px-2.5 py-0.5 mb-2">{badge}</span> : null}
+                <div className="font-display font-semibold text-[18px] leading-6">{home.title}</div>
+                <div className="text-[13px] leading-[18px] text-white/85 mt-0.5">{home.ctaLabel || home.body || 'Смотреть в меню'}</div>
               </div>
             </button>
           )

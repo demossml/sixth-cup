@@ -44,15 +44,17 @@ function RequireSession() {
 
   if (fail) {
     return (
-      <div className="max-w-[480px] mx-auto min-h-screen bg-page p-6 flex flex-col justify-center">
-        <img src="/logo-mark.png" alt="" className="w-16 h-16 rounded-2xl mb-4" />
+      <div className="max-w-[480px] mx-auto min-h-screen bg-page p-6 flex flex-col justify-center items-center text-center">
+        <div className="w-28 h-28 rounded-3xl bg-brand flex items-center justify-center mb-4">
+          <img src="/logo-alpaca.png" alt="" className="w-20 h-20 object-contain" />
+        </div>
         <h1 className="text-[22px] leading-7 font-semibold text-ink mb-2">Нужен интернет один раз</h1>
         <p className="text-ink-secondary text-sm mb-4">
           Чтобы выдать карту лояльности, подключитесь к сети. Телефон и SMS не требуются.
         </p>
         <button
           type="button"
-          className="btn"
+          className="btn max-w-[320px]"
           onClick={() => {
             setFail(false)
             void ensureGuest().then((s) => {
@@ -69,8 +71,10 @@ function RequireSession() {
 
   if (!ready) {
     return (
-      <div className="max-w-[480px] mx-auto min-h-screen bg-page flex items-center justify-center" role="status" aria-label="Открываем карту">
+      <div className="max-w-[480px] mx-auto min-h-screen bg-page flex flex-col items-center justify-center gap-3" role="status" aria-label="Открываем карту">
         <img src="/logo-mark.png" alt="" className="w-14 h-14 rounded-2xl" />
+        <p className="text-[15px] font-semibold text-ink">Обновляем данные…</p>
+        <p className="text-[13px] text-ink-secondary">Это займёт несколько секунд</p>
       </div>
     )
   }
