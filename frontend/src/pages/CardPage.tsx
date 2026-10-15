@@ -82,7 +82,10 @@ export default function CardPage() {
     placement?: string; badge?: string | null; ctaLabel?: string | null; sortOrder?: number
   }>
   const activeContent = [...content].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id)
-  const heroItems = activeContent.filter((x) => x.placement === 'home_hero' || x.placement === 'both')
+  // home_hero is a background for the existing logo/loyalty-stamps header, never a separate block above it.
+  const heroItems = activeContent.filter((x) => x.placement === 'home_hero')
+  const heroBackground = heroItems[0] ?? null
+  // home_feature is the separate promo card below the QR. Keep legacy home records compatible.
   const featureItems = activeContent.filter((x) => ['home_feature', 'home'].includes(x.placement || 'home'))
   const renderMedia = (item: typeof content[number], className: string) => item.imageUrl ? (
     item.mediaType === 'video' ? <video src={item.imageUrl} className={className} autoPlay muted loop playsInline preload="metadata" aria-label={item.title} /> :
@@ -103,12 +106,18 @@ export default function CardPage() {
 
   return (
     <div className="pb-4">
-      {heroItems.length > 0 && <div className="px-4 pt-3 space-y-2.5">{heroItems.map((item) => renderPromo(item, 'hero'))}</div>}
-      {/* L1–L5: шапка (градиент, знак, чип, фраза, штампы). QR-карта наезжает на неё на 24 px. */}
+      {/* Верхний слот — только фон существующей шапки с логотипом и чашками; ничего над шапкой не добавляем. */}
       <div
-        className={`${dim ? 'hero-night-off' : 'hero-night'} text-white px-4 pb-12 rounded-b-3xl`}
+        className={`${dim ? 'hero-night-off' : 'hero-night'} relative isolate overflow-hidden text-white px-4 pb-12 rounded-b-3xl`}
         style={{ paddingTop: 'max(0.5rem, env(safe-area-inset-top))' }}
       >
+        {heroBackground?.imageUrl ? (
+          <>
+            {renderMedia(heroBackground, 'absolute inset-0 z-0 w-full h-full object-cover')}
+            <div className="absolute inset-0 z-0 bg-gradient-to-b from-black/55 via-black/35 to-black/65" aria-hidden="true" />
+          </>
+        ) : null}
+        <div className="relative z-10">
         <div className="flex items-center justify-between gap-2">
           <AppLogo tone="onDark" size="sm" />
           <button
@@ -151,6 +160,7 @@ export default function CardPage() {
               </div>
             </div>
           </div>
+        </div>
         </div>
       </div>
 
@@ -219,12 +229,12 @@ export default function CardPage() {
             </button>
         )}
 
-        {featureItems.length > 0 ? featureItems.map((item) => renderPromo(item, 'feature')) : !heroItems.length ? (
+        {featureItems.length > 0 ? featureItems.map((item) => renderPromo(item, 'feature')) : (
           <div className="rounded-3xl overflow-hidden bg-brand text-white p-5 flex items-center gap-4 shadow-card">
             <img src="/logo-mark.png" alt="" width={44} height={44} className="w-11 h-11 rounded-xl shrink-0" />
             <p className="font-display font-semibold text-[20px] leading-6">Каждый {N + 1}-й кофе в подарок</p>
           </div>
-        ) : null}
+        )}
 
         {me && (
           <div className="bg-white border border-line rounded-2xl shadow-card divide-y divide-line">

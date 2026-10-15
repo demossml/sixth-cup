@@ -25,11 +25,11 @@ type PromoRow = {
 }
 
 const PLACEMENT_LABEL: Record<string, string> = {
-  home_hero: 'Верх главного экрана (над QR)',
+  home_hero: 'Фон шапки: логотип и чашки над QR',
   home_feature: 'Карточка под QR',
-  home: 'Главная (legacy)',
-  menu: 'Меню',
-  both: 'Главная + меню',
+  home: 'Карточка под QR (старый формат)',
+  menu: 'Меню (старый формат)',
+  both: 'Старый формат: главная + меню',
 }
 
 function Promos() {
@@ -81,7 +81,7 @@ function Promos() {
         <Card>
           <EmptyState
             title="Контента нет"
-            text="Создайте home_hero (фото-фон) или home_feature (карточка под QR). После «Опубликовать» появится в приложении без релиза."
+            text="Выберите одно из двух мест: фон шапки с логотипом и чашками над QR или отдельная карточка под QR. Верхняя публикация заменяет только фон шапки и не добавляет блок над ней."
           />
         </Card>
       ) : (
@@ -164,7 +164,7 @@ function Promos() {
           <div className="space-y-3">
             <Banner tone="brand">
               <b>Требования к медиа 6.7 Coffee</b><br />
-              Фото: JPG/WebP, до 2 МБ, 1200–1600 px по ширине; для верхнего баннера лучше 16:9, для карточки под QR — 4:3 или 16:9. PNG используйте для графики с прозрачностью.<br />
+              Фото: JPG/WebP, до 2 МБ, ширина 1200–1600 px; для фона шапки лучше 16:9, изображение будет кадрироваться под экран. Для карточки под QR — 4:3 или 16:9. PNG используйте для графики с прозрачностью.<br />
               Видео: MP4 (H.264) или WebM, до 20 МБ, 5–15 секунд, 720p/1080p, вертикальное 9:16 или горизонтальное 16:9. Автоповтор без звука.
             </Banner>
             <Field label="Заголовок">
@@ -228,11 +228,8 @@ function Promos() {
             </Field>
             <Field label="Куда показать (placement)">
               <Select value={edit.placement} onChange={(e) => setEdit({ ...edit, placement: e.target.value })}>
-                <option value="home_hero">Верх главного экрана — над QR</option>
+                <option value="home_hero">Фон шапки с логотипом и чашками (над QR)</option>
                 <option value="home_feature">Карточка под QR на главной</option>
-                <option value="home">Главная (legacy)</option>
-                <option value="menu">Меню</option>
-                <option value="both">Главная + меню</option>
               </Select>
             </Field>
             <Field label="Статус">
