@@ -85,10 +85,7 @@ export default function CardPage() {
         style={{ paddingTop: 'max(0.5rem, env(safe-area-inset-top))' }}
       >
         <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <img src="/logo-mark.png" alt="" width={28} height={28} className="w-7 h-7 rounded-lg" style={{ mixBlendMode: 'lighten' }} />
-            <h1 className="text-[12px] leading-4 font-semibold tracking-wide font-sans">6.7 Coffee</h1>
-          </div>
+          <h1 className="font-display text-[17px] leading-6 font-semibold">6.7 Coffee</h1>
           <button
             type="button"
             onClick={() => void onSync()}
@@ -102,7 +99,7 @@ export default function CardPage() {
           </button>
         </div>
 
-        <p className="mt-1 font-display font-semibold text-[20px] leading-[26px]">
+        <p className="mt-1 font-display font-semibold text-[22px] leading-[28px] max-w-[250px]">
           {progressPhrase({ n: N, left, freeAvailable: freeLeft })}
         </p>
 
@@ -134,7 +131,7 @@ export default function CardPage() {
 
       <div className="px-4 -mt-6 space-y-2.5">
         {/* L6–L8: карточка QR — главный объект. QR сразу, 0 тапов. Тёмный код на чистом белом, без градиента под ним. */}
-        <div className="bg-white rounded-3xl shadow-lift p-4 relative">
+        <div className="bg-white rounded-3xl shadow-lift px-4 pt-4 pb-3 relative">
           {!me && !proof ? (
             <div className="text-center py-8 space-y-3">
               <p className="text-sm text-ink-secondary">Нужен интернет один раз — карта и QR появятся сами.</p>
@@ -165,13 +162,13 @@ export default function CardPage() {
                 onClick={() => nav('/card-qr')}
                 aria-label="Увеличить QR на весь экран"
               >
-                <div className="w-full bg-white rounded-xl">
+                <div className="w-full max-w-[212px] bg-white rounded-xl">
                   <Qr value={proof} size={300} alt="QR карты для кассы" />
                 </div>
-                <p className="mt-2 font-display font-semibold text-[32px] leading-9 tracking-[0.12em] num text-ink">
+                <p className="mt-1 font-display font-semibold text-[28px] leading-9 tracking-[0.1em] num text-ink">
                   {formatCardCode(cardCode)}
                 </p>
-                <p className="text-[13px] leading-[18px] text-ink-secondary mt-1">Не читается — назовите номер бариста</p>
+                <p className="text-[12px] leading-4 text-ink-secondary mt-0.5">Не читается — назовите номер бариста</p>
               </button>
               {!hasNetwork ? (
                 <p className="text-center text-[12px] leading-4 text-ink-secondary mt-2">Обновится при подключении{status.detail ? ` · ${status.detail.replace('QR работает · ', '')}` : ''}</p>
@@ -184,11 +181,9 @@ export default function CardPage() {
 
         {msg && <p className={`text-sm ${msg.ok ? 'text-ok' : 'text-bad'}`}>{msg.text}</p>}
 
-        {/* L9: вторичное — одна группа с hairline вместо стопки одинаковых карточек. */}
         {me && (
-          <div className="bg-white border border-line rounded-2xl shadow-card divide-y divide-line">
-            <button type="button" onClick={() => nav('/history')} className="w-full text-left flex items-center gap-3 px-3.5 py-3 min-h-14 active:bg-brand-tint/60">
-              <span className="w-9 h-9 rounded-full bg-[#F1E6D6] text-[#78572F] flex items-center justify-center shrink-0">
+            <button type="button" onClick={() => nav('/history')} className="w-full text-left flex items-center gap-3 px-3.5 py-3 min-h-14 rounded-2xl bg-[#F6EEDF] border border-[#EADFC9] active:opacity-90">
+              <span className="w-9 h-9 rounded-full bg-crema/30 text-[#78572F] flex items-center justify-center shrink-0">
                 <Wallet size={18} strokeWidth={1.75} />
               </span>
               <div className="min-w-0 flex-1">
@@ -197,26 +192,7 @@ export default function CardPage() {
               </div>
               <ChevronRight size={18} strokeWidth={1.75} className="text-ink-tertiary shrink-0" />
             </button>
-            <button type="button" onClick={() => nav('/invite')} className="w-full text-left flex items-center gap-3 px-3.5 py-3 min-h-14 active:bg-brand-tint/60">
-              <Users size={20} strokeWidth={1.75} className="text-brand shrink-0" />
-              <div className="min-w-0 flex-1">
-                <div className="text-[15px] font-semibold text-ink">Пригласить друга</div>
-                <div className="text-[13px] leading-[18px] text-ink-secondary">{pct}% с его покупок · ссылка для друга, не для кассы</div>
-              </div>
-              <ChevronRight size={18} strokeWidth={1.75} className="text-ink-tertiary shrink-0" />
-            </button>
-            {(me?.friendsCount ?? 0) > 0 || fromFriendsKop > 0 ? (
-              <div className="flex items-center gap-3 px-3.5 py-3 min-h-14">
-                <Gift size={20} strokeWidth={1.75} className="text-brand shrink-0" />
-                <div>
-                  <div className="text-[15px] font-semibold text-ink num">От друзей +{formatRub(fromFriendsKop)} ₽</div>
-                  <div className="text-[13px] leading-[18px] text-ink-secondary">{me?.friendsCount ?? 0} {friendsWord(me?.friendsCount ?? 0)}</div>
-                </div>
-              </div>
-            ) : null}
-          </div>
         )}
-
 
         {(() => {
           const list = (dir?.content ?? dir?.promos ?? []) as Array<{
@@ -256,6 +232,29 @@ export default function CardPage() {
             </button>
           )
         })()}
+
+        {me && (
+          <div className="bg-white border border-line rounded-2xl shadow-card divide-y divide-line">
+
+            <button type="button" onClick={() => nav('/invite')} className="w-full text-left flex items-center gap-3 px-3.5 py-3 min-h-14 active:bg-brand-tint/60">
+              <Users size={20} strokeWidth={1.75} className="text-brand shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div className="text-[15px] font-semibold text-ink">Пригласить друга</div>
+                <div className="text-[13px] leading-[18px] text-ink-secondary">{pct}% с его покупок · ссылка для друга, не для кассы</div>
+              </div>
+              <ChevronRight size={18} strokeWidth={1.75} className="text-ink-tertiary shrink-0" />
+            </button>
+            {(me?.friendsCount ?? 0) > 0 || fromFriendsKop > 0 ? (
+              <div className="flex items-center gap-3 px-3.5 py-3 min-h-14">
+                <Gift size={20} strokeWidth={1.75} className="text-brand shrink-0" />
+                <div>
+                  <div className="text-[15px] font-semibold text-ink num">От друзей +{formatRub(fromFriendsKop)} ₽</div>
+                  <div className="text-[13px] leading-[18px] text-ink-secondary">{me?.friendsCount ?? 0} {friendsWord(me?.friendsCount ?? 0)}</div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        )}
 
         <InstallBanner variant="inline" />
 

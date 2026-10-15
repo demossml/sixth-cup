@@ -37,6 +37,9 @@ import {
   Sparkles,
   FileText,
   Smartphone,
+  Info,
+  CreditCard,
+  BookOpen,
   type LucideProps,
 } from 'lucide-react'
 
@@ -99,4 +102,7 @@ export {
   Sparkles,
   FileText,
   Smartphone,
+  Info,
+  CreditCard,
+  BookOpen,
 }

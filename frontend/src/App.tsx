@@ -9,6 +9,7 @@ import PromosPage from './pages/PromosPage'
 import InvitePage from './pages/InvitePage'
 import MorePage from './pages/MorePage'
 import LegalPage from './pages/LegalPage'
+import AboutPage from './pages/AboutPage'
 import HistoryPage from './pages/HistoryPage'
 import StoresPage from './pages/StoresPage'
 import CardQrPage from './pages/CardQrPage'
@@ -16,7 +17,7 @@ import GamePage from './pages/GamePage'
 import { ensureGuest } from './lib/ensureGuest'
 import { useApp } from './lib/app'
 import InstallBanner from './components/InstallBanner'
-import { Home, LayoutGrid, MoreHorizontal } from './lib/icons'
+import { CreditCard, BookOpen, MoreHorizontal } from './lib/icons'
 
 function RequireSession() {
   const { sync } = useApp()
@@ -87,8 +88,8 @@ function RequireSession() {
 }
 
 const NAV = [
-  { to: '/', end: true, label: 'Карта', Icon: Home },
-  { to: '/menu', end: false, label: 'Меню', Icon: LayoutGrid },
+  { to: '/', end: true, label: 'Карта', Icon: CreditCard },
+  { to: '/menu', end: false, label: 'Меню', Icon: BookOpen },
   { to: '/more', end: false, label: 'Ещё', Icon: MoreHorizontal },
 ]
 
@@ -135,6 +136,7 @@ export default function App() {
           <Route path="/invite" element={<InvitePage />} />
           <Route path="/more" element={<MorePage />} />
           <Route path="/legal" element={<LegalPage />} />
+          <Route path="/about" element={<AboutPage />} />
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/stores" element={<StoresPage />} />
           <Route path="/game" element={<GamePage />} />

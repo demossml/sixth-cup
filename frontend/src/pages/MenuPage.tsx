@@ -77,23 +77,13 @@ export default function MenuPage() {
     )
   }
 
-  const chip = (active: boolean) => `shrink-0 px-4 min-h-10 rounded-full text-[13px] font-semibold transition-colors ${active ? 'bg-brand text-white' : 'bg-white text-ink-secondary border border-line active:bg-brand-tint'}`
+  const chip = (active: boolean) => `shrink-0 px-4 min-h-9 rounded-full text-[13px] font-semibold transition-colors ${active ? 'bg-brand text-white' : 'bg-white text-ink-secondary border border-line active:bg-brand-tint'}`
 
   return (
     <main className="pb-5">
-      <header className="px-4 pb-3" style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-brand mb-0.5">6.7 Coffee</p>
-            <h1 className="text-[28px] leading-8 font-semibold text-ink">Меню</h1>
-          </div>
-          <div className="w-10 h-10 rounded-full bg-white border border-line flex items-center justify-center text-brand"><AppIcon name="Coffee" size={20} /></div>
-        </div>
-        <p className="text-[13px] leading-[18px] text-ink-secondary mt-2">Напитки и десерты к вашему кофе</p>
-        {dir.generatedAt > 0 && <p className="text-[11px] leading-4 text-ink-tertiary mt-1">{stale ? 'Каталог может быть устаревшим' : 'Меню обновлено'} · {new Date(dir.generatedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</p>}
+      <header className="px-4 pb-2" style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
+        <h1 className="text-[24px] leading-8 font-semibold text-ink">Меню</h1>
       </header>
-
-      {dir.stores.length > 0 && <div className="flex gap-2 overflow-x-auto px-4 pb-3 scrollbar-none">{dir.stores.map((s) => <div key={s.id} className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-full bg-brand-tint text-brand text-[12px] font-semibold"><Store size={13} strokeWidth={1.75} />{s.name}</div>)}</div>}
 
       <div className="sticky top-0 z-20 bg-page/95 backdrop-blur-sm px-4 pt-1 pb-3">
         <div className="flex gap-2 overflow-x-auto scrollbar-none" aria-label="Категории меню">
@@ -103,13 +93,13 @@ export default function MenuPage() {
       </div>
 
       {products.length > 0 ? (
-        <div className="grid grid-cols-2 gap-3 px-4">
+        <div className="grid grid-cols-2 gap-x-3 gap-y-4 px-4">
           {products.map((p) => (
-            <button key={p.id} type="button" onClick={() => setSelected(p)} className="text-left min-w-0 bg-white rounded-2xl border border-line overflow-hidden shadow-card active:shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">
-              <div className="relative overflow-hidden"><ProductPhoto product={p} />{p.freeEligible && <span className="absolute top-2 left-2 bg-white/95 text-brand text-[10px] leading-4 font-semibold px-2 py-1 rounded-full inline-flex items-center gap-1"><Gift size={11} />В подарок</span>}</div>
-              <div className="p-3">
-                <div className="text-[14px] leading-[19px] font-semibold text-ink min-h-[38px] line-clamp-2">{p.name}</div>
-                <div className="flex items-center justify-between gap-1 mt-2"><span className="font-display text-[17px] leading-5 font-semibold num text-ink">{Math.round(p.price).toLocaleString('ru-RU')} ₽</span><span className="w-7 h-7 rounded-full bg-brand-tint text-brand flex items-center justify-center shrink-0"><ChevronRight size={16} /></span></div>
+            <button key={p.id} type="button" onClick={() => setSelected(p)} className="text-left min-w-0 active:scale-[0.98] transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand rounded-2xl">
+              <div className="rounded-2xl overflow-hidden"><ProductPhoto product={p} /></div>
+              <div className="px-0.5 pt-2">
+                <div className="text-[13px] leading-[17px] font-medium text-ink line-clamp-2">{p.name}</div>
+                <div className="font-display text-[14px] leading-5 font-semibold num text-ink-secondary mt-0.5">{Math.round(p.price).toLocaleString('ru-RU')} ₽</div>
               </div>
             </button>
           ))}
@@ -122,22 +112,26 @@ export default function MenuPage() {
           {catId !== 'all' && <button type="button" onClick={() => setCatId('all')} className="text-brand font-semibold text-sm mt-3 min-h-11 px-3">Показать всё меню</button>}
         </div>
       )}
-      <p className="text-[12px] leading-[18px] text-ink-secondary text-center mt-5 px-4">Заказ и оплата — на кассе</p>
+      <p className="text-[12px] leading-[18px] text-ink-secondary text-center mt-5 px-4">Заказ и оплата — на кассе{dir.generatedAt > 0 ? ` · ${stale ? 'каталог может быть устаревшим' : 'меню обновлено'} ${new Date(dir.generatedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}` : ''}</p>
 
       {selected && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setSelected(null) }}>
-          <div className="absolute inset-0 bg-ink/45" />
-          <section role="dialog" aria-modal="true" aria-labelledby="product-sheet-title" className="relative w-full max-w-[480px] max-h-[88dvh] overflow-y-auto rounded-t-[28px] bg-page shadow-2xl animate-[sheet-up_220ms_ease-out]" style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
-            <div className="relative overflow-hidden rounded-t-[28px]"><ProductPhoto product={selected} large /><button type="button" onClick={() => setSelected(null)} aria-label="Закрыть карточку товара" className="absolute right-3 top-3 w-11 h-11 rounded-full bg-white/95 flex items-center justify-center text-ink shadow-card"><X size={21} /></button></div>
-            <div className="p-5">
-              <h2 id="product-sheet-title" className="font-display text-[24px] leading-7 font-semibold text-ink">{selected.name}</h2>
-              <p className="font-display text-[22px] leading-7 font-semibold num text-ink mt-1">{Math.round(selected.price).toLocaleString('ru-RU')} ₽</p>
+        <div className="fixed inset-0 z-50 bg-white overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="product-sheet-title">
+          <div className="max-w-[480px] mx-auto min-h-full flex flex-col animate-[sheet-up_220ms_ease-out]">
+            <div className="relative">
+              <div className="max-h-[52dvh] overflow-hidden"><ProductPhoto product={selected} large /></div>
+              <button type="button" onClick={() => setSelected(null)} aria-label="Закрыть карточку товара" className="absolute left-3 w-11 h-11 rounded-full bg-black/35 backdrop-blur-sm flex items-center justify-center text-white" style={{ top: 'max(0.75rem, env(safe-area-inset-top))' }}><X size={22} strokeWidth={1.75} /></button>
+            </div>
+            <div className="px-5 pt-5 flex-1">
+              <h2 id="product-sheet-title" className="font-display text-[22px] leading-7 font-semibold text-ink">{selected.name}</h2>
+              <p className="font-display text-[26px] leading-8 font-semibold num text-ink mt-1">{Math.round(selected.price).toLocaleString('ru-RU')} ₽</p>
               {selected.description && <p className="text-[15px] leading-[22px] text-ink-secondary mt-3">{selected.description}</p>}
               {selected.freeEligible && <div className="inline-flex items-center gap-2 rounded-full bg-[#F1E6D6] text-[#78572F] px-3 py-2 text-[12px] font-semibold mt-4"><Gift size={15} />Участвует в подарке</div>}
               <p className="text-[13px] leading-[18px] text-ink-secondary mt-4">Заказ и оплата — у бариста. В приложении нет корзины и онлайн-оплаты.</p>
-              <button type="button" onClick={() => { setSelected(null); nav('/') }} className="btn mt-4 min-h-12">На кассе покажите карту</button>
             </div>
-          </section>
+            <div className="px-5 pt-4" style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
+              <button type="button" onClick={() => { setSelected(null); nav('/') }} className="btn min-h-12">На кассе покажите карту</button>
+            </div>
+          </div>
         </div>
       )}
     </main>
