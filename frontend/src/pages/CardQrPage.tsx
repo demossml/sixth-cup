@@ -44,6 +44,7 @@ export default function CardQrPage() {
         <p className="text-sm text-white/70">Код недоступен — вернитесь на главную и обновите карту.</p>
       )}
       <p className="mt-4 font-display font-semibold text-4xl tracking-[0.12em] num text-white">{formatCardCode(cardCode)}</p>
+      <div className="mt-3"><AppLogo tone="onDark" size="md" /></div>
       <p className="text-[13px] leading-[18px] text-white/70 mt-2 text-center max-w-xs">6.7 Coffee · Покажите код бариста. Не читается — назовите номер</p>
       {status.kind !== 'fresh' && status.detail && (
         <p className="mt-3 text-xs text-white/70 inline-flex items-center gap-1">
