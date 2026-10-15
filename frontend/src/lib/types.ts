@@ -30,8 +30,8 @@ export type Directory = {
     sortOrder?: number
     freeEligible?: boolean
   }[]
-  promos: { id: number; title: string; body: string; icon?: string; sponsor?: string | null; endsAt?: number; imageUrl?: string | null; placement?: string; badge?: string | null; ctaLabel?: string | null; productId?: number | null; kind?: string }[]
-  content?: { id: number; title: string; body?: string; imageUrl?: string | null; placement?: string; badge?: string | null; ctaLabel?: string | null; productId?: number | null; kind?: string; sortOrder?: number }[]
+  promos: { id: number; title: string; body: string; icon?: string; sponsor?: string | null; endsAt?: number; imageUrl?: string | null; mediaType?: 'image' | 'video'; placement?: string; badge?: string | null; ctaLabel?: string | null; productId?: number | null; kind?: string }[]
+  content?: { id: number; title: string; body?: string; imageUrl?: string | null; mediaType?: 'image' | 'video'; placement?: string; badge?: string | null; ctaLabel?: string | null; productId?: number | null; kind?: string; sortOrder?: number }[]
 }
 
 export type Me = {

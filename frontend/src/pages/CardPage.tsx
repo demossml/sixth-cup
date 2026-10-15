@@ -77,9 +77,33 @@ export default function CardPage() {
             ? { cls: 'bg-crema text-ink', label: 'Подарок доступен' }
             : { cls: 'border border-white/35 text-white', label: status.kind === 'never' ? 'Не обновлялось' : 'Онлайн' }
   const dim = status.kind === 'offline'
+  const content = (dir?.content ?? dir?.promos ?? []) as Array<{
+    id: number; title: string; body?: string; imageUrl?: string | null; mediaType?: 'image' | 'video'
+    placement?: string; badge?: string | null; ctaLabel?: string | null; sortOrder?: number
+  }>
+  const activeContent = [...content].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id)
+  const heroItems = activeContent.filter((x) => x.placement === 'home_hero' || x.placement === 'both')
+  const featureItems = activeContent.filter((x) => ['home_feature', 'home'].includes(x.placement || 'home'))
+  const renderMedia = (item: typeof content[number], className: string) => item.imageUrl ? (
+    item.mediaType === 'video' ? <video src={item.imageUrl} className={className} autoPlay muted loop playsInline preload="metadata" aria-label={item.title} /> :
+      <img src={item.imageUrl} alt={item.title} className={className} loading="lazy" />
+  ) : null
+  const renderPromo = (item: typeof content[number], variant: 'hero' | 'feature') => {
+    const badge = item.badge === 'new' ? 'Новинка' : item.badge === 'hit' ? 'Хит' : item.badge ? 'Сезон' : null
+    return <button key={item.id} type="button" onClick={() => nav('/menu')} className={`relative w-full text-left rounded-3xl overflow-hidden shadow-card block bg-night ${variant === 'hero' ? 'min-h-[132px]' : 'min-h-[168px]'}`}>
+      {renderMedia(item, 'absolute inset-0 w-full h-full object-cover')}
+      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/35 to-black/5" />
+      <div className={`relative p-4 flex flex-col justify-end text-white ${variant === 'hero' ? 'min-h-[132px]' : 'min-h-[168px]'}`}>
+        {badge ? <span className="self-start text-[11px] font-semibold uppercase tracking-wide bg-crema text-ink rounded-full px-2.5 py-0.5 mb-2">{badge}</span> : null}
+        <div className="font-display font-semibold text-[18px] leading-6">{item.title}</div>
+        <div className="text-[13px] leading-[18px] text-white/85 mt-0.5">{item.ctaLabel || item.body || 'Смотреть в меню'}</div>
+      </div>
+    </button>
+  }
 
   return (
     <div className="pb-4">
+      {heroItems.length > 0 && <div className="px-4 pt-3 space-y-2.5">{heroItems.map((item) => renderPromo(item, 'hero'))}</div>}
       {/* L1–L5: шапка (градиент, знак, чип, фраза, штампы). QR-карта наезжает на неё на 24 px. */}
       <div
         className={`${dim ? 'hero-night-off' : 'hero-night'} text-white px-4 pb-12 rounded-b-3xl`}
@@ -195,44 +219,12 @@ export default function CardPage() {
             </button>
         )}
 
-        {(() => {
-          const list = (dir?.content ?? dir?.promos ?? []) as Array<{
-            id: number; title: string; body?: string; imageUrl?: string | null
-            placement?: string; badge?: string | null; ctaLabel?: string | null
-          }>
-          const home = list.find((x) => x.placement === 'home_feature' || x.placement === 'home' || x.placement === 'both' || !x.placement)
-          // Нет баннера из админки — брендовая панель (fallback макета), а не пустой блок.
-          if (!home) {
-            return (
-              <div className="rounded-3xl overflow-hidden bg-brand text-white p-5 flex items-center gap-4 shadow-card">
-                <img src="/logo-mark.png" alt="" width={44} height={44} className="w-11 h-11 rounded-xl shrink-0" />
-                <p className="font-display font-semibold text-[20px] leading-6">Каждый {N + 1}-й кофе в подарок</p>
-              </div>
-            )
-          }
-          const badge = home.badge === 'new' ? 'Новинка' : home.badge === 'hit' ? 'Хит' : home.badge ? 'Сезон' : null
-          if (!home.imageUrl) {
-            return (
-              <button type="button" onClick={() => nav('/menu')} className="w-full text-left rounded-3xl bg-brand text-white p-5 shadow-card">
-                {badge ? <span className="inline-block text-[11px] font-semibold uppercase tracking-wide bg-crema text-ink rounded-full px-2.5 py-0.5 mb-2">{badge}</span> : null}
-                <div className="font-display font-semibold text-[20px] leading-6">{home.title}</div>
-                {home.body ? <p className="text-[13px] leading-[18px] text-white/80 mt-1 line-clamp-2">{home.body}</p> : null}
-                <div className="text-[13px] font-semibold mt-3 inline-flex items-center gap-1">{home.ctaLabel || 'Смотреть в меню'} <ChevronRight size={16} strokeWidth={1.75} /></div>
-              </button>
-            )
-          }
-          return (
-            <button type="button" onClick={() => nav('/menu')} className="relative w-full text-left rounded-3xl overflow-hidden shadow-card block min-h-[168px] bg-night">
-              <img src={home.imageUrl} alt="" className="absolute inset-0 w-full h-full object-cover" loading="lazy" />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/35 to-black/5" />
-              <div className="relative p-4 flex flex-col justify-end min-h-[168px] text-white">
-                {badge ? <span className="self-start text-[11px] font-semibold uppercase tracking-wide bg-crema text-ink rounded-full px-2.5 py-0.5 mb-2">{badge}</span> : null}
-                <div className="font-display font-semibold text-[18px] leading-6">{home.title}</div>
-                <div className="text-[13px] leading-[18px] text-white/85 mt-0.5">{home.ctaLabel || home.body || 'Смотреть в меню'}</div>
-              </div>
-            </button>
-          )
-        })()}
+        {featureItems.length > 0 ? featureItems.map((item) => renderPromo(item, 'feature')) : !heroItems.length ? (
+          <div className="rounded-3xl overflow-hidden bg-brand text-white p-5 flex items-center gap-4 shadow-card">
+            <img src="/logo-mark.png" alt="" width={44} height={44} className="w-11 h-11 rounded-xl shrink-0" />
+            <p className="font-display font-semibold text-[20px] leading-6">Каждый {N + 1}-й кофе в подарок</p>
+          </div>
+        ) : null}
 
         {me && (
           <div className="bg-white border border-line rounded-2xl shadow-card divide-y divide-line">

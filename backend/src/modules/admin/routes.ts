@@ -668,7 +668,7 @@ export const adminRoutes = new Hono()
     try {
       const promos = db.prepare(`
         SELECT id, title, body, icon, sponsor, starts_at AS startsAt, ends_at AS endsAt,
-               image_url AS imageUrl, placement, status, sort_order AS sortOrder,
+               image_url AS imageUrl, media_type AS mediaType, placement, status, sort_order AS sortOrder,
                cta_label AS ctaLabel, product_id AS productId, badge, kind,
                published_at AS publishedAt
         FROM promos ORDER BY sort_order ASC, id DESC
@@ -691,6 +691,7 @@ export const adminRoutes = new Hono()
     startsAt: z.number().int().optional(),
     endsAt: z.number().int().optional(),
     imageUrl: z.string().max(500).optional().nullable(),
+    mediaType: z.enum(['image', 'video']).optional().default('image'),
     placement: z.enum(['home', 'menu', 'both', 'home_hero', 'home_feature']).optional().default('home'),
     status: z.enum(['draft', 'published', 'archived']).optional().default('draft'),
     sortOrder: z.number().int().optional().default(0),
@@ -706,11 +707,11 @@ export const adminRoutes = new Hono()
     const publishedAt = p.status === 'published' ? now : null
     try {
       db.prepare(`
-        INSERT INTO promos(title,body,icon,sponsor,starts_at,ends_at,image_url,placement,status,sort_order,cta_label,product_id,badge,kind,published_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO promos(title,body,icon,sponsor,starts_at,ends_at,image_url,media_type,placement,status,sort_order,cta_label,product_id,badge,kind,published_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       `).run(
         p.title, p.body ?? '', p.icon, p.sponsor ?? null, starts, ends,
-        p.imageUrl ?? null, p.placement, p.status, p.sortOrder,
+        p.imageUrl ?? null, p.mediaType, p.placement, p.status, p.sortOrder,
         p.ctaLabel ?? null, p.productId ?? null, p.badge ?? null, p.kind, publishedAt,
       )
     } catch {
@@ -729,6 +730,7 @@ export const adminRoutes = new Hono()
     startsAt: z.number().int().optional(),
     endsAt: z.number().int().optional(),
     imageUrl: z.string().max(500).optional().nullable(),
+    mediaType: z.enum(['image', 'video']).optional(),
     placement: z.enum(['home', 'menu', 'both', 'home_hero', 'home_feature']).optional(),
     status: z.enum(['draft', 'published', 'archived']).optional(),
     sortOrder: z.number().int().optional(),
@@ -751,7 +753,7 @@ export const adminRoutes = new Hono()
     try {
       db.prepare(`
         UPDATE promos SET title=?, body=?, icon=?, sponsor=?, starts_at=?, ends_at=?,
-          image_url=?, placement=?, status=?, sort_order=?, cta_label=?, product_id=?, badge=?, kind=?, published_at=?
+          image_url=?, media_type=?, placement=?, status=?, sort_order=?, cta_label=?, product_id=?, badge=?, kind=?, published_at=?
         WHERE id=?
       `).run(
         p.title ?? row.title,
@@ -760,6 +762,7 @@ export const adminRoutes = new Hono()
         p.sponsor !== undefined ? p.sponsor : row.sponsor,
         starts, ends,
         p.imageUrl !== undefined ? p.imageUrl : row.image_url,
+        p.mediaType ?? row.media_type ?? 'image',
         p.placement ?? row.placement ?? 'home',
         status,
         p.sortOrder ?? row.sort_order ?? 0,

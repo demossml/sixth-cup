@@ -69,10 +69,10 @@ app.get('/uploads/:file', async (c) => {
   const path = join(config.uploadsDir, file)
   if (!existsSync(path)) return c.notFound()
   const ext = file.split('.').pop()?.toLowerCase()
-  const type = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg'
+  const type = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : ext === 'mp4' ? 'video/mp4' : ext === 'webm' ? 'video/webm' : 'image/jpeg'
   const data = readFileSync(path)
   return new Response(data, {
-    headers: { 'Content-Type': type, 'Cache-Control': 'public, max-age=86400' },
+    headers: { 'Content-Type': type, 'Cache-Control': 'public, max-age=86400', ...(type.startsWith('video/') ? { 'Accept-Ranges': 'bytes' } : {}) },
   })
 })
 

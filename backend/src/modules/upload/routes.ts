@@ -12,6 +12,8 @@ const ALLOWED = new Map<string, string>([
   ['image/jpeg', '.jpg'],
   ['image/png', '.png'],
   ['image/webp', '.webp'],
+  ['video/mp4', '.mp4'],
+  ['video/webm', '.webm'],
 ])
 
 const adminAuth = createMiddleware(async (c, next) => {
@@ -34,8 +36,10 @@ export const uploadRoutes = new Hono()
     const f = file as File
     const mime = f.type || 'application/octet-stream'
     const ext = ALLOWED.get(mime)
-    if (!ext) throw bad('Only jpeg/png/webp allowed', 400)
-    if (f.size > config.maxUploadBytes) throw bad('File too large (max 2MB)', 400)
+    if (!ext) throw bad('Разрешены JPG, PNG, WebP, MP4 и WebM', 400)
+    const isVideo = mime.startsWith('video/')
+    const maxBytes = isVideo ? 20 * 1024 * 1024 : config.maxUploadBytes
+    if (f.size > maxBytes) throw bad(isVideo ? 'Видео слишком большое (максимум 20 МБ)' : 'Фото слишком большое (максимум 2 МБ)', 400)
 
     const key = `${Date.now()}-${randomBytes(8).toString('hex')}${ext}`
     const dest = join(config.uploadsDir, key)

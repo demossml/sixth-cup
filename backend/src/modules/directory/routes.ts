@@ -78,7 +78,7 @@ export function publicDirectory(storeUuid?: string | null) {
   let content: unknown[] = []
   try {
     content = db.prepare(`
-      SELECT id, kind, title, body, image_url AS imageUrl, badge, product_id AS productId,
+      SELECT id, kind, title, body, image_url AS imageUrl, media_type AS mediaType, badge, product_id AS productId,
              placement, cta_label AS ctaLabel, sort_order AS sortOrder,
              starts_at AS startsAt, ends_at AS endsAt
       FROM promos
@@ -89,6 +89,7 @@ export function publicDirectory(storeUuid?: string | null) {
     content = (content as Record<string, unknown>[]).map((row) => ({
       ...row,
       imageUrl: absUrl(row.imageUrl as string | null),
+      mediaType: row.mediaType || 'image',
     }))
   } catch {
     // migration not applied yet — fall back to legacy promos shape

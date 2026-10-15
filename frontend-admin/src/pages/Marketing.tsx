@@ -14,6 +14,7 @@ type PromoRow = {
   startsAt: number
   endsAt: number
   imageUrl?: string | null
+  mediaType?: 'image' | 'video'
   placement?: string
   status?: string
   sortOrder?: number
@@ -24,7 +25,7 @@ type PromoRow = {
 }
 
 const PLACEMENT_LABEL: Record<string, string> = {
-  home_hero: 'Hero на главной (фото-фон)',
+  home_hero: 'Верх главного экрана (над QR)',
   home_feature: 'Карточка под QR',
   home: 'Главная (legacy)',
   menu: 'Меню',
@@ -40,6 +41,7 @@ function Promos() {
     sponsor: '',
     days: 14,
     imageUrl: '',
+    mediaType: 'image' as 'image' | 'video',
     placement: 'home_feature' as string,
     status: 'draft' as string,
     sortOrder: 0,
@@ -91,7 +93,7 @@ function Promos() {
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex gap-3">
                     {p.imageUrl ? (
-                      <img src={p.imageUrl} alt="" className="w-16 h-16 rounded-xl object-cover shrink-0 bg-surface-secondary" />
+                      p.mediaType === 'video' ? <video src={p.imageUrl} muted playsInline className="w-16 h-16 rounded-xl object-cover shrink-0 bg-surface-secondary" /> : <img src={p.imageUrl} alt="" className="w-16 h-16 rounded-xl object-cover shrink-0 bg-surface-secondary" />
                     ) : (
                       <div className="w-16 h-16 rounded-xl bg-surface-secondary shrink-0 flex items-center justify-center text-xs text-ink-tertiary">
                         нет фото
@@ -121,6 +123,7 @@ function Promos() {
                         sponsor: p.sponsor ?? '',
                         days: Math.max(1, Math.ceil((p.endsAt - now) / 86400)),
                         imageUrl: p.imageUrl ?? '',
+                        mediaType: p.mediaType || 'image',
                         placement: p.placement || 'home',
                         status: (p.status as string) || 'draft',
                         sortOrder: p.sortOrder ?? 0,
@@ -159,6 +162,11 @@ function Promos() {
       <Drawer open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? 'Редактировать' : 'Новый контент'}>
         {edit && (
           <div className="space-y-3">
+            <Banner tone="brand">
+              <b>Требования к медиа 6.7 Coffee</b><br />
+              Фото: JPG/WebP, до 2 МБ, 1200–1600 px по ширине; для верхнего баннера лучше 16:9, для карточки под QR — 4:3 или 16:9. PNG используйте для графики с прозрачностью.<br />
+              Видео: MP4 (H.264) или WebM, до 20 МБ, 5–15 секунд, 720p/1080p, вертикальное 9:16 или горизонтальное 16:9. Автоповтор без звука.
+            </Banner>
             <Field label="Заголовок">
               <Input value={edit.title} onChange={(e) => setEdit({ ...edit, title: e.target.value })} />
             </Field>
@@ -173,12 +181,21 @@ function Promos() {
               />
             </Field>
             {edit.imageUrl ? (
-              <img src={edit.imageUrl} alt="" className="w-full max-h-40 object-cover rounded-xl bg-surface-secondary" />
+              edit.mediaType === 'video' ? <video src={edit.imageUrl} controls muted playsInline className="w-full max-h-48 rounded-xl bg-surface-secondary" /> : <img src={edit.imageUrl} alt="" className="w-full max-h-40 object-cover rounded-xl bg-surface-secondary" />
             ) : null}
-            <Field label="Загрузить фото">
+            <Field label="Тип медиа" hint="Фото или короткий ролик. Видео запускается без звука и по кругу.">
+              <Select value={edit.mediaType} onChange={(e) => setEdit({ ...edit, mediaType: e.target.value as 'image' | 'video' })}>
+                <option value="image">Фотография</option>
+                <option value="video">Короткое видео</option>
+              </Select>
+            </Field>
+            <Field label={edit.mediaType === 'video' ? 'URL видео' : 'URL фото'} hint="Можно вставить публичный URL или загрузить файл ниже">
+              <Input value={edit.imageUrl} onChange={(e) => setEdit({ ...edit, imageUrl: e.target.value })} placeholder="/uploads/… или https://…" />
+            </Field>
+            <Field label={edit.mediaType === 'video' ? 'Загрузить видео' : 'Загрузить фото'}>
               <input
                 type="file"
-                accept="image/jpeg,image/png,image/webp"
+                accept={edit.mediaType === 'video' ? "video/mp4,video/webm" : "image/jpeg,image/png,image/webp"}
                 className="block w-full text-sm"
                 disabled={uploading}
                 onChange={async (e) => {
@@ -198,8 +215,8 @@ function Promos() {
                     if (!res.ok) throw new Error((await res.text()) || res.statusText)
                     const j = (await res.json()) as { url?: string }
                     if (!j.url) throw new Error('Нет url в ответе')
-                    setEdit((prev) => (prev ? { ...prev, imageUrl: j.url! } : prev))
-                    toast.push('Фото загружено')
+                    setEdit((prev) => (prev ? { ...prev, imageUrl: j.url!, mediaType: f.type.startsWith('video/') ? 'video' : 'image' } : prev))
+                    toast.push(f.type.startsWith('video/') ? 'Видео загружено' : 'Фото загружено')
                   } catch (err) {
                     toast.push(err instanceof Error ? err.message : 'Ошибка загрузки', 'bad')
                   } finally {
@@ -211,7 +228,7 @@ function Promos() {
             </Field>
             <Field label="Куда показать (placement)">
               <Select value={edit.placement} onChange={(e) => setEdit({ ...edit, placement: e.target.value })}>
-                <option value="home_hero">Hero на главной (фото-фон экрана)</option>
+                <option value="home_hero">Верх главного экрана — над QR</option>
                 <option value="home_feature">Карточка под QR на главной</option>
                 <option value="home">Главная (legacy)</option>
                 <option value="menu">Меню</option>
@@ -267,6 +284,7 @@ function Promos() {
                     body: edit.body,
                     days: edit.days,
                     imageUrl: edit.imageUrl || null,
+                    mediaType: edit.mediaType,
                     placement: edit.placement,
                     status: edit.status,
                     sortOrder: edit.sortOrder,
