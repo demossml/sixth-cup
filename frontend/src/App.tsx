@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { NavLink, Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import { getJwt } from './api'
 import CardPage from './pages/CardPage'
@@ -13,7 +13,9 @@ import AboutPage from './pages/AboutPage'
 import HistoryPage from './pages/HistoryPage'
 import StoresPage from './pages/StoresPage'
 import CardQrPage from './pages/CardQrPage'
-import GamePage from './pages/GamePage'
+
+const GamePage = lazy(() => import('./pages/GamePage'))
+
 import { ensureGuest } from './lib/ensureGuest'
 import { useApp } from './lib/app'
 import InstallBanner from './components/InstallBanner'
@@ -139,7 +141,14 @@ export default function App() {
           <Route path="/about" element={<AboutPage />} />
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/stores" element={<StoresPage />} />
-          <Route path="/game" element={<GamePage />} />
+          <Route
+            path="/game"
+            element={
+              <Suspense fallback={<div className="p-6 text-center text-ink-secondary">Загрузка…</div>}>
+                <GamePage />
+              </Suspense>
+            }
+          />
           <Route path="/card-qr" element={<CardQrPage />} />
         </Route>
       </Route>

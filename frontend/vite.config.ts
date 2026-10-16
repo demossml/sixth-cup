@@ -25,6 +25,7 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,png,svg,ico,woff2}'],
+        globIgnores: ['**/GamePage*.js', '**/phaser*.js', '**/alpaca/**/*.js'],
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api\//],
       },
