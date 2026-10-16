@@ -94,6 +94,9 @@ export type Product = {
   recipeSeconds: number | null
   countsAsCup: number
   freeEligible: number
+  sizeValue: number | null
+  sizeUnit: 'g' | 'ml' | null
+  calories: number | null
   tax: string | null
   measure: string | null
   costPriceKopecks: number | null

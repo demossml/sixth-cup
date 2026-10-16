@@ -41,6 +41,7 @@ export function publicDirectory(storeUuid?: string | null) {
            image_url AS imageUrl, sort_order AS sortOrder,
            modifier_scheme_id AS modifierSchemeId,
            counts_as_cup AS countsAsCup, free_eligible AS freeEligible,
+           size_value AS sizeValue, size_unit AS sizeUnit, calories,
            available AS globalAvailable
     FROM products
     WHERE (season_start_at IS NULL OR season_start_at<=?)
@@ -141,6 +142,9 @@ export function publicDirectory(storeUuid?: string | null) {
       modifierSchemeId: p.modifierSchemeId ?? null,
       countsAsCup: !!(p as { countsAsCup?: number }).countsAsCup,
       freeEligible: !!(p as { freeEligible?: number }).freeEligible,
+      sizeValue: p.sizeValue ?? null,
+      sizeUnit: p.sizeUnit ?? null,
+      calories: p.calories ?? null,
     })),
     promos,
     content,

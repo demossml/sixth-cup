@@ -66,6 +66,7 @@ if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} /
           sortOrder: d.sortOrder ?? 0, modifierSchemeId: d.modifierSchemeId ?? null,
           recipeText: d.recipeText ?? null, recipeCostRub: d.recipeCostRub ?? null, recipeSeconds: d.recipeSeconds ?? null,
           countsAsCup: !!d.countsAsCup, freeEligible: !!d.freeEligible,
+          sizeValue: d.sizeValue ?? null, sizeUnit: d.sizeValue ? (d.sizeUnit ?? 'g') : null, calories: d.calories ?? null,
           tax: d.tax || undefined, measure: d.measure || undefined, costPriceKopecks: d.costPriceKopecks ?? undefined,
           seasonStartAt: d.seasonStartAt ?? null, seasonEndAt: d.seasonEndAt ?? null, evotorExtraJson: d.evotorExtraJson ?? null,
         },
@@ -143,6 +144,20 @@ if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} /
           <option value="">Без добавок</option>
           {schemes.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </Select>
+      </Field>
+      <Field label="Вес или объём" hint="Необязательно. Гость видит на карточке меню, например «250 мл».">
+        <div className="flex gap-2">
+          <Input type="number" inputMode="numeric" min={1} className="flex-1" value={d.sizeValue ?? ''} placeholder="250"
+            onChange={(e) => set('sizeValue', e.target.value === '' ? null : Number(e.target.value))} />
+          <Select className="w-28" value={d.sizeUnit ?? 'g'} onChange={(e) => set('sizeUnit', e.target.value as 'g' | 'ml')}>
+            <option value="g">г</option>
+            <option value="ml">мл</option>
+          </Select>
+        </div>
+      </Field>
+      <Field label="Калорийность, ккал" hint="Необязательно. На порцию; гость видит по нажатию на «i» в меню.">
+        <Input type="number" inputMode="numeric" min={0} value={d.calories ?? ''} placeholder="120"
+          onChange={(e) => set('calories', e.target.value === '' ? null : Number(e.target.value))} />
       </Field>
       <Field label="Описание"><Input value={d.description ?? ''} onChange={(e) => set('description', e.target.value)} maxLength={500} /></Field>
       <Field label="Рецепт (для бариста)" hint="Текст виден на кассе и в админке">

@@ -139,3 +139,15 @@
   from { opacity: .65; transform: translateY(18px); }
   to { opacity: 1; transform: translateY(0); }
 }
+/* === APPEND to frontend/src/styles.css (do NOT replace the whole file) === */
+/* Фото в sheet меню: еле заметный дрейф (Ken Burns). Только transform → GPU. */
+@keyframes photo-drift {
+  from { transform: translate3d(0, 0, 0) scale(1.02); }
+  to { transform: translate3d(var(--dx, 1.5%), var(--dy, -1%), 0) scale(1.09); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .photo-drift {
+    animation: photo-drift 26s ease-in-out infinite alternate;
+    will-change: transform;
+  }
+}

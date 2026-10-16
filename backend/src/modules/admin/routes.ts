@@ -384,6 +384,7 @@ export const adminRoutes = new Hono()
              p.recipe_cost_rub AS recipeCostRub,
              p.recipe_seconds AS recipeSeconds,
              p.counts_as_cup AS countsAsCup, p.free_eligible AS freeEligible,
+             p.size_value AS sizeValue, p.size_unit AS sizeUnit, p.calories AS calories,
              p.tax AS tax, p.measure AS measure, p.cost_price_kopecks AS costPriceKopecks,
              p.season_start_at AS seasonStartAt, p.season_end_at AS seasonEndAt,
              p.evotor_extra_json AS evotorExtraJson,
@@ -423,13 +424,16 @@ export const adminRoutes = new Hono()
     recipeSeconds: z.number().int().min(0).optional().nullable(),
     countsAsCup: z.boolean().optional(),
     freeEligible: z.boolean().optional(),
+    sizeValue: z.number().int().min(1).max(100000).optional().nullable(),
+    sizeUnit: z.enum(['g', 'ml']).optional().nullable(),
+    calories: z.number().int().min(0).max(10000).optional().nullable(),
     tax: z.string().max(32).optional(),
     measure: z.string().max(16).optional(),
     costPriceKopecks: z.number().int().min(0).optional(),
     seasonStartAt: z.number().int().nullable().optional(),
     seasonEndAt: z.number().int().nullable().optional(),
     evotorExtraJson: z.string().max(20000).nullable().optional(),
-  })), (c) => {
+  }).refine((v) => (v.sizeValue == null) === (v.sizeUnit == null), { message: 'Укажите и число, и единицу (г/мл) для веса/объёма', path: ['sizeUnit'] })), (c) => {
     const p = c.req.valid('json')
     if (p.categoryId != null) {
       const cat = db.prepare('SELECT id FROM categories WHERE id=?').get(p.categoryId)
@@ -445,7 +449,8 @@ export const adminRoutes = new Hono()
           modifier_scheme_id=?, recipe_text=?, recipe_cost_rub=?, recipe_seconds=?,
           counts_as_cup=COALESCE(?, counts_as_cup), free_eligible=COALESCE(?, free_eligible),
           tax=COALESCE(?, tax), measure=COALESCE(?, measure), cost_price_kopecks=COALESCE(?, cost_price_kopecks),
-          season_start_at=?, season_end_at=?, evotor_extra_json=?, catalog_source='SIXTH_CUP'
+          season_start_at=?, season_end_at=?, evotor_extra_json=?, catalog_source='SIXTH_CUP',
+          size_value=?, size_unit=?, calories=?
         WHERE id=?
       `).run(
         p.name, p.price, p.icon, p.available ? 1 : 0,
@@ -455,20 +460,22 @@ export const adminRoutes = new Hono()
         p.countsAsCup === undefined ? null : (p.countsAsCup ? 1 : 0),
         p.freeEligible === undefined ? null : (p.freeEligible ? 1 : 0),
         p.tax ?? null, p.measure ?? null, p.costPriceKopecks ?? null,
-        p.seasonStartAt ?? null, p.seasonEndAt ?? null, p.evotorExtraJson ?? null, p.id
+        p.seasonStartAt ?? null, p.seasonEndAt ?? null, p.evotorExtraJson ?? null,
+        p.sizeValue ?? null, p.sizeUnit ?? null, p.calories ?? null, p.id
       )
     } else {
       db.prepare(`
         INSERT INTO products(name,price,icon,available,description,category_id,image_url,sort_order,created_at,updated_at,
-          modifier_scheme_id,recipe_text,recipe_cost_rub,recipe_seconds,counts_as_cup,free_eligible,tax,measure,cost_price_kopecks,season_start_at,season_end_at,evotor_extra_json,catalog_source)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'SIXTH_CUP')
+          modifier_scheme_id,recipe_text,recipe_cost_rub,recipe_seconds,counts_as_cup,free_eligible,tax,measure,cost_price_kopecks,season_start_at,season_end_at,evotor_extra_json,catalog_source,size_value,size_unit,calories)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'SIXTH_CUP',?,?,?)
       `).run(
         p.name, p.price, p.icon, p.available ? 1 : 0,
         p.description ?? null, p.categoryId ?? null, p.imageUrl ?? null,
         p.sortOrder, t, t,
         p.modifierSchemeId ?? null, p.recipeText ?? null, p.recipeCostRub ?? null, p.recipeSeconds ?? null,
         (p.countsAsCup ?? looksLikeDrink(p.name, p.icon)) ? 1 : 0, p.freeEligible ? 1 : 0, p.tax ?? 'NO_VAT', p.measure ?? 'шт',
-        p.costPriceKopecks ?? 0, p.seasonStartAt ?? null, p.seasonEndAt ?? null, p.evotorExtraJson ?? null
+        p.costPriceKopecks ?? 0, p.seasonStartAt ?? null, p.seasonEndAt ?? null, p.evotorExtraJson ?? null,
+        p.sizeValue ?? null, p.sizeUnit ?? null, p.calories ?? null
       )
     }
     const productId = p.id ?? (db.prepare('SELECT last_insert_rowid() AS id').get() as { id: number }).id
