@@ -1,6 +1,6 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { createWriteStream, mkdirSync } from 'node:fs'
-import { join, extname } from 'node:path'
+import { join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { Readable } from 'node:stream'
 import { Hono } from 'hono'
@@ -8,6 +8,7 @@ import { createMiddleware } from 'hono/factory'
 import { config } from '../../config'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
+import { processProductImage } from '../../lib/productImage'
 
 const ALLOWED = new Map<string, string>([
   ['image/jpeg', '.jpg'],
@@ -24,7 +25,6 @@ function safeEq(given: string, expected: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b)
 }
 
-/** Same table as auth/routes — failed admin token attempts per IP. */
 function hitRate(key: string, max: number, windowMs: number) {
   const now = Date.now()
   const row = db.prepare('SELECT count, window_start FROM rate_limits WHERE key=?')
@@ -52,9 +52,13 @@ const adminAuth = createMiddleware(async (c, next) => {
   await next()
 })
 
+function publicBase(): string {
+  return (config.publicBaseUrl || 'https://app.67coffee.ru').replace(/\/+$/, '')
+}
+
 /**
  * POST /api/admin/upload  multipart field "file"
- * Returns { url, key } where url is public path /uploads/<file>
+ * Images → WebP thumb 480 (url) + full 960 (urlFull). Videos unchanged.
  */
 export const uploadRoutes = new Hono()
   .use('*', adminAuth)
@@ -72,14 +76,35 @@ export const uploadRoutes = new Hono()
     const maxBytes = isVideo ? 20 * 1024 * 1024 : config.maxUploadBytes
     if (f.size > maxBytes) throw bad(isVideo ? 'Видео слишком большое (максимум 20 МБ)' : 'Фото слишком большое (максимум 2 МБ)', 400)
 
-    const key = `${Date.now()}-${randomBytes(8).toString('hex')}${ext}`
-    const dest = join(config.uploadsDir, key)
     const buf = Buffer.from(await f.arrayBuffer())
-    await pipeline(Readable.from(buf), createWriteStream(dest))
+    const base = publicBase()
+    const idPrefix = `${Date.now()}-${randomBytes(8).toString('hex')}`
 
-    const path = `/uploads/${key}`
-    // Always absolute: cashier rejects relative URLs. Fallback matches production host.
-    const base = (config.publicBaseUrl || 'https://app.67coffee.ru').replace(/\/+$/, '')
-    const url = `${base}${path}`
-    return c.json({ url, key, path })
+    if (isVideo) {
+      const key = `${idPrefix}${ext}`
+      const dest = join(config.uploadsDir, key)
+      await pipeline(Readable.from(buf), createWriteStream(dest))
+      const path = `/uploads/${key}`
+      return c.json({ url: `${base}${path}`, key, path })
+    }
+
+    // Images: always resize + WebP for cashier performance
+    let processed
+    try {
+      processed = await processProductImage(buf, config.uploadsDir, idPrefix)
+    } catch {
+      throw bad('Не удалось обработать изображение', 400)
+    }
+
+    const thumbPath = `/uploads/${processed.thumbKey}`
+    const fullPath = `/uploads/${processed.fullKey}`
+    // `url` = light thumb — goes into products.image_url and Evotor catalog
+    return c.json({
+      url: `${base}${thumbPath}`,
+      urlFull: `${base}${fullPath}`,
+      key: processed.thumbKey,
+      keyFull: processed.fullKey,
+      path: thumbPath,
+      bytes: { thumb: processed.thumbBytes, full: processed.fullBytes },
+    })
   })
