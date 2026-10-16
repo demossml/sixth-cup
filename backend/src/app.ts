@@ -5,7 +5,7 @@ import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
 import { HTTPException } from 'hono/http-exception'
 import { serveStatic } from '@hono/node-server/serve-static'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { config } from './config'
 import { adminRoutes } from './modules/admin/routes'
@@ -69,10 +69,47 @@ app.get('/uploads/:file', async (c) => {
   const path = join(config.uploadsDir, file)
   if (!existsSync(path)) return c.notFound()
   const ext = file.split('.').pop()?.toLowerCase()
-  const type = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : ext === 'mp4' ? 'video/mp4' : ext === 'webm' ? 'video/webm' : 'image/jpeg'
+  const type =
+    ext === 'png' ? 'image/png'
+    : ext === 'webp' ? 'image/webp'
+    : ext === 'mp4' ? 'video/mp4'
+    : ext === 'webm' ? 'video/webm'
+    : 'image/jpeg'
+  const size = statSync(path).size
+  const cache = 'public, max-age=86400'
+  const range = c.req.header('range')
+  if (range) {
+    const m = /^bytes=(\d*)-(\d*)$/.exec(range.trim())
+    if (!m) return c.text('Malformed Range', 416)
+    let start = m[1] === '' ? 0 : Number(m[1])
+    let end = m[2] === '' ? size - 1 : Number(m[2])
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || start >= size) {
+      return new Response(null, {
+        status: 416,
+        headers: { 'Content-Range': `bytes */${size}`, 'Accept-Ranges': 'bytes' },
+      })
+    }
+    if (end >= size) end = size - 1
+    const data = readFileSync(path).subarray(start, end + 1)
+    return new Response(data, {
+      status: 206,
+      headers: {
+        'Content-Type': type,
+        'Content-Length': String(data.byteLength),
+        'Content-Range': `bytes ${start}-${end}/${size}`,
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': cache,
+      },
+    })
+  }
   const data = readFileSync(path)
   return new Response(data, {
-    headers: { 'Content-Type': type, 'Cache-Control': 'public, max-age=86400', ...(type.startsWith('video/') ? { 'Accept-Ranges': 'bytes' } : {}) },
+    headers: {
+      'Content-Type': type,
+      'Content-Length': String(size),
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': cache,
+    },
   })
 })
 
@@ -149,13 +186,36 @@ if (!config.isDev) {
         png: 'image/png',
         ico: 'image/x-icon',
         webmanifest: 'application/manifest+json',
+        woff2: 'font/woff2',
+        woff: 'font/woff',
+        jpg: 'image/jpeg',
+        jpeg: 'image/jpeg',
+        webp: 'image/webp',
+        mp4: 'video/mp4',
+        webm: 'video/webm',
       }
-      return new Response(data, { headers: { 'Content-Type': types[ext ?? ''] ?? 'application/octet-stream' } })
+      const isHashedAsset =
+        rel.startsWith('assets/') || /-[a-f0-9]{8,}\.[a-z0-9]+$/i.test(rel.split('/').pop() || '')
+      const cache =
+        ext === 'html' ? 'no-cache'
+        : isHashedAsset ? 'public, max-age=31536000, immutable'
+        : 'public, max-age=86400'
+      return new Response(data, {
+        headers: {
+          'Content-Type': types[ext ?? ''] ?? 'application/octet-stream',
+          'Cache-Control': cache,
+        },
+      })
     }
     // SPA fallback
     const index = join(root, 'index.html')
     if (existsSync(index)) {
-      return c.html(readFileSync(index, 'utf8'))
+      return new Response(readFileSync(index, 'utf8'), {
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-cache',
+        },
+      })
     }
     return c.text(`Frontend not built: ${root}`, 500)
   })

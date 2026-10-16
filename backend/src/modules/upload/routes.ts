@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { createWriteStream, mkdirSync } from 'node:fs'
 import { join, extname } from 'node:path'
 import { pipeline } from 'node:stream/promises'
@@ -6,6 +6,7 @@ import { Readable } from 'node:stream'
 import { Hono } from 'hono'
 import { createMiddleware } from 'hono/factory'
 import { config } from '../../config'
+import { db } from '../../db'
 import { bad } from '../../lib/errors'
 
 const ALLOWED = new Map<string, string>([
@@ -16,8 +17,38 @@ const ALLOWED = new Map<string, string>([
   ['video/webm', '.webm'],
 ])
 
+function safeEq(given: string, expected: string): boolean {
+  if (!expected) return false
+  const a = Buffer.from(given)
+  const b = Buffer.from(expected)
+  return a.length === b.length && timingSafeEqual(a, b)
+}
+
+/** Same table as auth/routes — failed admin token attempts per IP. */
+function hitRate(key: string, max: number, windowMs: number) {
+  const now = Date.now()
+  const row = db.prepare('SELECT count, window_start FROM rate_limits WHERE key=?')
+    .get(key) as { count: number; window_start: number } | undefined
+  if (!row || now - row.window_start > windowMs) {
+    db.prepare('INSERT OR REPLACE INTO rate_limits(key, count, window_start) VALUES(?,?,?)').run(key, 1, now)
+    return
+  }
+  if (row.count >= max) throw bad('Слишком много запросов. Попробуйте позже.', 429)
+  db.prepare('UPDATE rate_limits SET count = count + 1 WHERE key=?').run(key)
+}
+
+function clientIp(c: { req: { header: (n: string) => string | undefined } }): string {
+  return c.req.header('x-forwarded-for')?.split(',')[0]?.trim()
+    || c.req.header('x-real-ip')
+    || 'unknown'
+}
+
 const adminAuth = createMiddleware(async (c, next) => {
-  if (c.req.header('X-Admin-Token') !== config.adminToken) throw bad('Forbidden', 403)
+  const given = c.req.header('X-Admin-Token') ?? ''
+  if (!safeEq(given, config.adminToken)) {
+    hitRate(`admin-ip:${clientIp(c)}`, 30, 15 * 60_000)
+    throw bad('Forbidden', 403)
+  }
   await next()
 })
 

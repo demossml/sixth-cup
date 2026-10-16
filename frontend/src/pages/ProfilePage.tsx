@@ -1,6 +1,5 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import ScanModal from '../components/ScanModal'
 import Qr from '../components/Qr'
 import { api, setJwt, unwrap } from '../api'
 import { ensureGuest, restoreAccount } from '../lib/ensureGuest'
@@ -11,6 +10,8 @@ import { formatCardCode } from '../lib/card'
 import { clearUserData } from '../lib/db'
 import { syncStatus } from '../lib/syncStatus'
 import { ArrowLeft, Camera, Copy, Download, LogOut, RefreshCw, Users, Wallet } from '../lib/icons'
+
+const ScanModal = lazy(() => import('../components/ScanModal'))
 
 type ResetStep = 'none' | 'offer' | 'final'
 
@@ -184,7 +185,11 @@ export default function ProfilePage() {
         </div>
       )}
 
-      {scan && <ScanModal title="Отсканируйте QR восстановления" onResult={(t) => void doRestore(t)} onClose={() => setScan(false)} />}
+      {scan && (
+        <Suspense fallback={null}>
+          <ScanModal title="Отсканируйте QR восстановления" onResult={(t) => void doRestore(t)} onClose={() => setScan(false)} />
+        </Suspense>
+      )}
     
       <div className="mt-4 p-4 rounded-2xl bg-white border border-line">
         <div className="text-[15px] font-semibold text-ink mb-1">Обычный заказ (заметка)</div>

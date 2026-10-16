@@ -51,15 +51,21 @@ Backend по заголовку `Host`:
 
 ```text
 app.example.com {
+  encode zstd gzip
   reverse_proxy 127.0.0.1:3000
 }
 
 admin.example.com {
+  encode zstd gzip
   reverse_proxy 127.0.0.1:3000
 }
 ```
 
 Оба указывают на один Node-процесс.
+
+Сжатие на Caddy закрывает JSON API и HTML. Hashed `/assets/*` кэшируются
+заголовками backend (`Cache-Control: immutable`, см. p0-step04). `index.html` —
+`no-cache`, чтобы обновления доезжали.
 
 ## Dev
 

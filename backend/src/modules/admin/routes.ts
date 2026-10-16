@@ -39,9 +39,31 @@ function resolveAdminRole(given: string | undefined): AdminRole | null {
   return null
 }
 
+/** Same table as auth/routes — failed admin token attempts per IP. */
+function hitRate(key: string, max: number, windowMs: number) {
+  const now = Date.now()
+  const row = db.prepare('SELECT count, window_start FROM rate_limits WHERE key=?')
+    .get(key) as { count: number; window_start: number } | undefined
+  if (!row || now - row.window_start > windowMs) {
+    db.prepare('INSERT OR REPLACE INTO rate_limits(key, count, window_start) VALUES(?,?,?)').run(key, 1, now)
+    return
+  }
+  if (row.count >= max) throw bad('Слишком много запросов. Попробуйте позже.', 429)
+  db.prepare('UPDATE rate_limits SET count = count + 1 WHERE key=?').run(key)
+}
+
+function clientIp(c: { req: { header: (n: string) => string | undefined } }): string {
+  return c.req.header('x-forwarded-for')?.split(',')[0]?.trim()
+    || c.req.header('x-real-ip')
+    || 'unknown'
+}
+
 const adminAuth = createMiddleware(async (c, next) => {
   const role = resolveAdminRole(c.req.header('X-Admin-Token'))
-  if (!role) throw bad('Forbidden', 403)
+  if (!role) {
+    hitRate(`admin-ip:${clientIp(c)}`, 30, 15 * 60_000)
+    throw bad('Forbidden', 403)
+  }
   c.set('adminRole' as never, role as never)
   // Viewer: only safe methods
   if (role === 'viewer' && !['GET', 'HEAD', 'OPTIONS'].includes(c.req.method)) {

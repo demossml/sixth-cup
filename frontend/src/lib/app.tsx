@@ -17,6 +17,26 @@ type Ctx = {
 const AppCtx = createContext<Ctx>(null!)
 export const useApp = () => useContext(AppCtx)
 
+/** Stable fingerprint of Me fields that affect card/UI. */
+function meFingerprint(m: Me | null): string | null {
+  if (!m) return null
+  return JSON.stringify({
+    id: m.id,
+    cardId: m.cardId,
+    cardCode: m.cardCode,
+    nickname: m.nickname,
+    inviteCode: m.inviteCode,
+    cashbackBalance: m.cashbackBalance,
+    cupsTowardFree: m.cupsTowardFree ?? null,
+    freeAvailable: m.freeAvailable ?? null,
+    cupsForFree: m.cupsForFree ?? null,
+    fromFriendsRub: m.fromFriendsRub ?? null,
+    fromFriendsKopecks: m.fromFriendsKopecks ?? null,
+    friendsCount: m.friendsCount ?? null,
+    vouchers: m.vouchers ?? null,
+  })
+}
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [dir, setDir] = useState<Directory | null>(null)
   const [me, setMe] = useState<Me | null>(null)
@@ -24,13 +44,37 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [syncing, setSyncing] = useState(false)
   const syncFlight = useRef<Promise<string> | null>(null)
   const [lastSync, setLastSync] = useState(Number(localStorage.getItem('sc-last-sync') ?? 0))
+  const dirAt = useRef<number | null>(null)
+  const meKey = useRef<string | null>(null)
 
   const reload = useCallback(async () => {
     const d = (await loadDirectory()) ?? null
     const m = (await kvGet<Me>('me')) ?? null
-    setDir(d)
-    setMe(m)
-    setBest(d && m ? await computeBest(d, m) : null)
+
+    let dirChanged = false
+    let meChanged = false
+
+    const nextDirAt = d?.generatedAt ?? null
+    if (nextDirAt !== dirAt.current) {
+      dirAt.current = nextDirAt
+      setDir(d)
+      dirChanged = true
+    }
+
+    const nextMeKey = meFingerprint(m)
+    if (nextMeKey !== meKey.current) {
+      meKey.current = nextMeKey
+      setMe(m)
+      meChanged = true
+    }
+
+    if (dirChanged || meChanged) {
+      // Use latest objects we just decided to publish (or current state if only one side changed).
+      const dirForBest = dirChanged ? d : d // d is always the freshly loaded catalog
+      const meForBest = meChanged ? m : m
+      setBest(dirForBest && meForBest ? await computeBest(dirForBest, meForBest) : null)
+    }
+
     setLastSync(Number(localStorage.getItem('sc-last-sync') ?? 0))
   }, [])
 
