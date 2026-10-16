@@ -78,7 +78,8 @@ export const uploadRoutes = new Hono()
     await pipeline(Readable.from(buf), createWriteStream(dest))
 
     const path = `/uploads/${key}`
-    const base = (config.publicBaseUrl || '').replace(/\/+$/, '')
-    const url = base ? `${base}${path}` : path
+    // Always absolute: cashier rejects relative URLs. Fallback matches production host.
+    const base = (config.publicBaseUrl || 'https://app.67coffee.ru').replace(/\/+$/, '')
+    const url = `${base}${path}`
     return c.json({ url, key, path })
   })
