@@ -5,6 +5,7 @@ import { pipeline } from 'node:stream/promises'
 import { Readable } from 'node:stream'
 import { Hono } from 'hono'
 import { createMiddleware } from 'hono/factory'
+import { bodyLimit } from 'hono/body-limit'
 import { config } from '../../config'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
@@ -45,12 +46,25 @@ function clientIp(c: { req: { header: (n: string) => string | undefined } }): st
 
 const adminAuth = createMiddleware(async (c, next) => {
   const given = c.req.header('X-Admin-Token') ?? ''
-  if (!safeEq(given, config.adminToken)) {
+  const isOwner = safeEq(given, config.adminToken)
+  // Photos/videos are content: the manager (content) role may upload, the read-only viewer may not.
+  const isManager = !isOwner && !!config.adminMarketerToken && safeEq(given, config.adminMarketerToken)
+  if (!isOwner && !isManager) {
+    if (config.adminViewerToken && safeEq(given, config.adminViewerToken)) throw bad('Read-only admin token', 403)
     hitRate(`admin-ip:${clientIp(c)}`, 30, 15 * 60_000)
     throw bad('Forbidden', 403)
   }
   await next()
 })
+
+/** Container signature check: the declared MIME type comes from the client and cannot be trusted alone. */
+export function looksLikeVideo(buf: Buffer, mime: string): boolean {
+  if (mime === 'video/mp4') return buf.length > 12 && buf.subarray(4, 8).toString('latin1') === 'ftyp'
+  if (mime === 'video/webm') return buf.length > 4 && buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3
+  return false
+}
+
+const MAX_BODY = 20 * 1024 * 1024 + 64 * 1024
 
 function publicBase(): string {
   return (config.publicBaseUrl || 'https://app.67coffee.ru').replace(/\/+$/, '')
@@ -62,7 +76,7 @@ function publicBase(): string {
  */
 export const uploadRoutes = new Hono()
   .use('*', adminAuth)
-  .post('/', async (c) => {
+  .post('/', bodyLimit({ maxSize: MAX_BODY, onError: (c) => c.json({ error: 'Файл слишком большой' }, 413) }), async (c) => {
     mkdirSync(config.uploadsDir, { recursive: true })
     const body = await c.req.parseBody({ all: true })
     const file = body['file']
@@ -81,6 +95,7 @@ export const uploadRoutes = new Hono()
     const idPrefix = `${Date.now()}-${randomBytes(8).toString('hex')}`
 
     if (isVideo) {
+      if (!looksLikeVideo(buf, mime)) throw bad('Файл не похож на настоящее видео MP4/WebM', 400)
       const key = `${idPrefix}${ext}`
       const dest = join(config.uploadsDir, key)
       await pipeline(Readable.from(buf), createWriteStream(dest))

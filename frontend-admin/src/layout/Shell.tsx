@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { Activity, Coffee, Gift, History, LayoutDashboard, LogOut, MoreHorizontal, Search, Settings, Store, Users, X } from 'lucide-react'
+import { Activity, BarChart3, Bot, CalendarClock, Coffee, Gift, History, LayoutDashboard, LogOut, MoreHorizontal, Search, Settings, Share2, Store, Users, X } from 'lucide-react'
 import { useApi } from '../api/useApi'
 import type { Health } from '../api/types'
 import { ago } from '../lib/format'
@@ -17,10 +17,10 @@ const MAIN: NavItem[] = [
 const MORE: NavItem[] = [
   { to: '/cash', label: 'Касса', icon: <Store size={20} /> },
   { to: '/marketing', label: 'Контент', icon: <Gift size={20} /> },
-  { to: '/referrals', label: 'Рефералка', icon: <Gift size={20} /> },
-  { to: '/compare', label: 'Сравнение', icon: <Gift size={20} /> },
-  { to: '/events', label: 'События', icon: <Gift size={20} /> },
-  { to: '/assistant', label: 'Помощник', icon: <Gift size={20} /> },
+  { to: '/referrals', label: 'Рефералка', icon: <Share2 size={20} /> },
+  { to: '/compare', label: 'Сравнение', icon: <BarChart3 size={20} /> },
+  { to: '/events', label: 'События', icon: <CalendarClock size={20} /> },
+  { to: '/assistant', label: 'Помощник', icon: <Bot size={20} /> },
   { to: '/system', label: 'Система', icon: <Settings size={20} /> },
   { to: '/legacy', label: 'Старая версия', icon: <History size={20} /> },
 ]

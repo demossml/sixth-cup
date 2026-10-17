@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { api, setUnauthorizedHandler, tokenStore } from './api/client'
@@ -6,19 +6,19 @@ import { MetaCtx } from './meta'
 import type { Meta } from './meta'
 import Shell from './layout/Shell'
 import { Button, Input, ToastProvider, Spinner } from './ui/kit'
-import AdminPage from './pages/AdminPage'
-import Today from './pages/Today'
-import Operations from './pages/Operations'
-import Customers from './pages/Customers'
-import CustomerCard from './pages/CustomerCard'
-import Menu from './pages/Menu'
-import Cash from './pages/Cash'
-import Marketing from './pages/Marketing'
-import Referrals from './pages/Referrals'
-import Compare from './pages/Compare'
-import BusinessEvents from './pages/BusinessEvents'
-import Assistant from './pages/Assistant'
-import System from './pages/System'
+const AdminPage = lazy(() => import('./pages/AdminPage'))
+const Today = lazy(() => import('./pages/Today'))
+const Operations = lazy(() => import('./pages/Operations'))
+const Customers = lazy(() => import('./pages/Customers'))
+const CustomerCard = lazy(() => import('./pages/CustomerCard'))
+const Menu = lazy(() => import('./pages/Menu'))
+const Cash = lazy(() => import('./pages/Cash'))
+const Marketing = lazy(() => import('./pages/Marketing'))
+const Referrals = lazy(() => import('./pages/Referrals'))
+const Compare = lazy(() => import('./pages/Compare'))
+const BusinessEvents = lazy(() => import('./pages/BusinessEvents'))
+const Assistant = lazy(() => import('./pages/Assistant'))
+const System = lazy(() => import('./pages/System'))
 
 
 function Login({ onOk }: { onOk: (m: Meta) => void }) {
@@ -72,6 +72,7 @@ export default function App() {
   return (
     <MetaCtx.Provider value={meta}>
       <ToastProvider>
+        <Suspense fallback={<Spinner />}>
         <Routes>
           <Route path="/legacy" element={<AdminPage />} />
           <Route element={<Shell onLogout={logout} />}>
@@ -90,6 +91,7 @@ export default function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>
+        </Suspense>
       </ToastProvider>
     </MetaCtx.Provider>
   )

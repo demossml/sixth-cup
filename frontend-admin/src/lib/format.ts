@@ -9,6 +9,15 @@ export function fmtKop(kopecks: number | null | undefined): string {
   return sign + (cents ? `${whole},${String(cents).padStart(2, '0')}` : whole)
 }
 
+/** Kopecks → "4,50" / "4,00": always two decimals, for right-aligned columns where the comma must line up. */
+export function fmtKopFixed(kopecks: number | null | undefined): string {
+  const k = Math.round(Number(kopecks) || 0)
+  const sign = k < 0 ? '-' : ''
+  const abs = Math.abs(k)
+  const whole = String(Math.floor(abs / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
+  return `${sign}${whole},${String(abs % 100).padStart(2, '0')}`
+}
+
 /** Whole rubles / plain numbers with thin grouping. */
 export function fmtNum(n: number | null | undefined): string {
   if (n === null || n === undefined || !Number.isFinite(Number(n))) return '—'

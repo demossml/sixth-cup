@@ -12,6 +12,7 @@ import { bad } from '../../lib/errors'
 import { config } from '../../config'
 import { grantVoucher } from '../vouchers/service'
 import { enqueueProductSync } from './enqueue'
+import { writeAudit } from './audit'
 import type { AuditInput } from './audit'
 import {
   HEALTH_DEFAULTS, decodeCursor, diffProduct, encodeCursor, likeEscape, periodSince,
@@ -373,10 +374,18 @@ export const adminConsole = new Hono<Env>()
   // Real phone number only on an explicit request (and it is written to the audit journal).
   .get('/customers/:id/phone', (c) => {
     const id = Number(c.req.param('id'))
+    const role = (c as unknown as { get: (k: string) => string | undefined }).get('adminRole') || 'owner'
+    // A read-only token must not reveal personal data.
+    if (role === 'viewer') throw bad('Недостаточно прав для просмотра телефона', 403)
     const u = db.prepare('SELECT phone FROM users WHERE id = ?').get(id) as { phone: string } | undefined
     if (!u) throw bad('Клиент не найден', 404)
     if (String(u.phone).startsWith('guest:')) return c.json({ phone: null })
-    c.set('audit', { entity: 'customers', entityId: String(id), summary: 'Показан номер телефона клиента' })
+    // The audit middleware only records mutating calls, so this GET writes its own row (who looked at a phone, and when).
+    writeAudit({
+      method: 'GET', path: c.req.path, status: 200, entity: 'customers', entityId: String(id),
+      summary: 'Показан номер телефона клиента', actor: role,
+      ip: c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+    })
     return c.json({ phone: u.phone })
   })
 

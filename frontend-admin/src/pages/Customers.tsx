@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useApi } from '../api/useApi'
 import type { CustomerRow } from '../api/types'
-import { fmtDate, fmtKop, fmtNum } from '../lib/format'
+import { fmtDate, fmtKopFixed, fmtNum } from '../lib/format'
 import { qs, setParams } from '../lib/query'
 import { Button, DataTable, ErrorBox, Input, PageHeader, Select, Spinner } from '../ui/kit'
 import type { Column } from '../ui/kit'
@@ -25,7 +25,7 @@ export default function Customers() {
     { key: 'card', header: 'Карта', primary: true, sortKey: 'created', render: (c) => <span className="font-semibold">{c.cardCode ? `№${c.cardCode}` : `#${c.id}`} <span className="font-normal text-ink-secondary">{c.nickname}</span></span> },
     { key: 'cups', header: 'Чашек', align: 'right', sortKey: 'cups', render: (c) => fmtNum(c.cups) },
     { key: 'paid', header: 'Оплачено', align: 'right', sortKey: 'paid', render: (c) => fmtNum(c.paidTotal) },
-    { key: 'cb', header: 'Кэшбэк, ₽', align: 'right', sortKey: 'cashback', render: (c) => fmtKop(c.cashbackBalance) },
+    { key: 'cb', header: 'Кэшбэк, ₽', align: 'right', sortKey: 'cashback', render: (c) => fmtKopFixed(c.cashbackBalance) },
     { key: 'ref', header: 'Приглашено', align: 'right', sortKey: 'referrals', render: (c) => fmtNum(c.referrals) },
     { key: 'at', header: 'Регистрация', render: (c) => fmtDate(c.createdAt), hideOnPhone: true },
   ]

@@ -4,8 +4,8 @@ import { ArrowLeft, Eye } from 'lucide-react'
 import { api } from '../api/client'
 import { useApi } from '../api/useApi'
 import type { VoucherTemplate } from '../api/types'
-import { fmtDate, fmtDateTime, fmtKop, fmtNum, shortId } from '../lib/format'
-import { Badge, Banner, Button, Card, ConfirmDialog, ErrorBox, KpiTile, PageHeader, Select, Spinner, useToast } from '../ui/kit'
+import { fmtDate, fmtDateTime, fmtKop, fmtKopFixed, fmtNum, shortId } from '../lib/format'
+import { Badge, Banner, Button, Card, ConfirmDialog, cx, ErrorBox, KpiTile, PageHeader, Select, Spinner, useToast } from '../ui/kit'
 
 type Detail = {
   user: { id: number; nickname: string; cardId: string | null; cardCode: string | null; inviteCode: string; invitedBy: number | null; cashbackBalance: number; createdAt: number; paidTotal: number; freeUsed: number; seq: number }
@@ -108,7 +108,7 @@ export default function CustomerCard() {
             {data.cashback.map((c) => (
               <li key={c.id} className="flex justify-between gap-2 py-2">
                 <span>{fmtDateTime(c.createdAt)}{c.fromNickname ? ` · от ${c.fromNickname}` : ''}</span>
-                <b className={c.amount < 0 ? 'text-bad' : 'text-ok'}>{c.amount > 0 ? '+' : ''}{fmtKop(c.amount)} ₽</b>
+                <b className={cx('tabular-nums', c.amount < 0 ? 'text-bad' : 'text-ok')}>{c.amount > 0 ? '+' : ''}{fmtKopFixed(c.amount)} ₽</b>
               </li>
             ))}
           </ul>

@@ -74,6 +74,8 @@ export type AuditInput = {
   entity?: string | null
   entityId?: string | null
   summary?: string | null
+  /** Admin role (owner/manager/viewer) that made the call; defaults to "admin" for old callers. */
+  actor?: string | null
   before?: unknown
   after?: unknown
   ip?: string | null
@@ -85,7 +87,7 @@ export function writeAudit(a: AuditInput) {
     `INSERT INTO admin_audit(at,actor,method,path,status,ok,entity,entity_id,summary,before_json,after_json,ip)
      VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
   ).run(
-    Date.now(), 'admin', a.method, a.path.slice(0, 200), a.status, a.status < 400 ? 1 : 0,
+    Date.now(), a.actor || 'admin', a.method, a.path.slice(0, 200), a.status, a.status < 400 ? 1 : 0,
     a.entity ?? auto.entity, a.entityId ?? auto.entityId, a.summary?.slice(0, 300) ?? null,
     redactJson(a.before), redactJson(a.after), a.ip ?? null,
   )
@@ -115,6 +117,7 @@ export const auditMiddleware = createMiddleware<{ Variables: { audit?: Partial<A
       after: extra.after !== undefined ? extra.after : body,
       before: extra.before,
       summary: extra.summary,
+      actor: (c as unknown as { get: (k: string) => string | undefined }).get('adminRole') ?? null,
       entity: extra.entity,
       entityId: extra.entityId,
       ip: fwd,

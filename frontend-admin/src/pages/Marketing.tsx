@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
-import { api } from '../api/client'
+import { api, uploadFile } from '../api/client'
 import { useApi } from '../api/useApi'
 import type { VoucherTemplate } from '../api/types'
 import { fmtDate, fmtNum } from '../lib/format'
@@ -203,19 +203,8 @@ function Promos() {
                   if (!f) return
                   setUploading(true)
                   try {
-                    const fd = new FormData()
-                    fd.append('file', f)
-                    const token = (await import('../api/client')).tokenStore.get()
-                    const base = (import.meta as { env?: { VITE_API_URL?: string } }).env?.VITE_API_URL ?? ''
-                    const res = await fetch(`${base}/api/admin/upload`, {
-                      method: 'POST',
-                      headers: { 'X-Admin-Token': token },
-                      body: fd,
-                    })
-                    if (!res.ok) throw new Error((await res.text()) || res.statusText)
-                    const j = (await res.json()) as { url?: string }
-                    if (!j.url) throw new Error('Нет url в ответе')
-                    setEdit((prev) => (prev ? { ...prev, imageUrl: j.url!, mediaType: f.type.startsWith('video/') ? 'video' : 'image' } : prev))
+                    const j = await uploadFile(f)
+                    setEdit((prev) => (prev ? { ...prev, imageUrl: j.url, mediaType: f.type.startsWith('video/') ? 'video' : 'image' } : prev))
                     toast.push(f.type.startsWith('video/') ? 'Видео загружено' : 'Фото загружено')
                   } catch (err) {
                     toast.push(err instanceof Error ? err.message : 'Ошибка загрузки', 'bad')

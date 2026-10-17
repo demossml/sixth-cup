@@ -58,6 +58,11 @@ function clientIp(c: { req: { header: (n: string) => string | undefined } }): st
     || 'unknown'
 }
 
+/** Mutating paths the manager role may not call (anchored, so /evotor/stores/... stays allowed). */
+export const MANAGER_BLOCKED =
+  // Full path (/api/admin/...) and Hono-stripped path (/stores, /devices/...) both blocked.
+  /\/(reset|wipe)(\/|$)|\/organizations(\/|$)|(?:^|\/)api\/admin\/(stores|devices)(\/|$)|^\/(stores|devices)(\/|$)|\/ai\/settings(\/|$)|\/vouchers\/grant-all(\/|$)/
+
 const adminAuth = createMiddleware(async (c, next) => {
   const role = resolveAdminRole(c.req.header('X-Admin-Token'))
   if (!role) {
@@ -69,8 +74,8 @@ const adminAuth = createMiddleware(async (c, next) => {
   if (role === 'viewer' && !['GET', 'HEAD', 'OPTIONS'].includes(c.req.method)) {
     throw bad('Read-only admin token', 403)
   }
-  // manager: no reset / wipe-style routes
-  if (role === 'manager' && c.req.method !== 'GET' && /\/reset|\/wipe|\/organizations/.test(c.req.path)) {
+  // manager = content + analytics: no reset/wipe, no organizations/stores/tills (enrolment), no AI key, no mass vouchers
+  if (role === 'manager' && c.req.method !== 'GET' && MANAGER_BLOCKED.test(c.req.path)) {
     throw bad('Insufficient role', 403)
   }
   await next()
@@ -306,10 +311,13 @@ export const adminRoutes = new Hono()
   })
 
   .get('/devices', (c) => {
-    const rows = db.prepare(`
+    const role = ((c as { get: (k: string) => string }).get('adminRole') || 'owner') as string
+    const rows = (db.prepare(`
       SELECT d.id, d.name, d.store_id AS storeId, d.revoked, d.enroll_code AS enrollCode,
              d.public_key IS NOT NULL AS enrolled, d.created_at AS createdAt, s.name AS storeName
-      FROM devices d JOIN stores s ON s.id = d.store_id ORDER BY d.id DESC`).all()
+      FROM devices d JOIN stores s ON s.id = d.store_id ORDER BY d.id DESC`).all() as Record<string, unknown>[])
+      // An enrolment code lets whoever holds it register a till: only the owner sees it.
+      .map((d) => (role === 'owner' ? d : { ...d, enrollCode: null }))
     return c.json({ devices: rows })
   })
 
@@ -324,12 +332,14 @@ export const adminRoutes = new Hono()
   })
 
   .post('/devices/:id/revoke', (c) => {
-    db.prepare('UPDATE devices SET revoked=1 WHERE id=?').run(Number(c.req.param('id')))
+    const res = db.prepare('UPDATE devices SET revoked=1 WHERE id=?').run(Number(c.req.param('id')))
+    if (!res.changes) throw bad('Device not found', 404)
     return c.json({ ok: true })
   })
 
   .delete('/devices/:id', (c) => {
-    db.prepare('DELETE FROM devices WHERE id=?').run(Number(c.req.param('id')))
+    const res = db.prepare('DELETE FROM devices WHERE id=?').run(Number(c.req.param('id')))
+    if (!res.changes) throw bad('Device not found', 404)
     return c.json({ ok: true })
   })
 
@@ -455,6 +465,8 @@ export const adminRoutes = new Hono()
     seasonStartAt: z.number().int().nullable().optional(),
     seasonEndAt: z.number().int().nullable().optional(),
     evotorExtraJson: z.string().max(20000).nullable().optional(),
+    /** Optional optimistic lock (same meaning as in PATCH /products/:id); omitted by old clients. */
+    expectedUpdatedAt: z.number().int().nullable().optional(),
   }).refine((v) => (v.sizeValue == null) === (v.sizeUnit == null), { message: 'Укажите и число, и единицу (г/мл) для веса/объёма', path: ['sizeUnit'] })), (c) => {
     const p = c.req.valid('json')
     if (p.categoryId != null) {
@@ -463,8 +475,11 @@ export const adminRoutes = new Hono()
     }
     const t = Date.now()
     if (p.id) {
-      const exists = db.prepare('SELECT id FROM products WHERE id=?').get(p.id)
+      const exists = db.prepare('SELECT id, updated_at AS updatedAt FROM products WHERE id=?').get(p.id) as { id: number; updatedAt: number | null } | undefined
       if (!exists) throw bad('Product not found', 404)
+      if (p.expectedUpdatedAt != null && (exists.updatedAt ?? 0) !== p.expectedUpdatedAt) {
+        throw bad('Товар уже изменён кем-то другим — закройте окно и откройте товар заново', 409)
+      }
       db.prepare(`
         UPDATE products SET name=?, price=?, icon=?, available=?, description=?,
           category_id=?, image_url=?, sort_order=?, updated_at=?,
@@ -593,24 +608,28 @@ export const adminRoutes = new Hono()
   })), (c) => {
     const p = c.req.valid('json')
     const t = Date.now()
-    let schemeId = p.id
-    if (schemeId) {
-      db.prepare('UPDATE modifier_schemes SET name=?, updated_at=? WHERE id=?').run(p.name, t, schemeId)
-      db.prepare('DELETE FROM modifier_scheme_items WHERE scheme_id=?').run(schemeId)
-    } else {
-      const r = db.prepare('INSERT INTO modifier_schemes(name,created_at,updated_at) VALUES(?,?,?)').run(p.name, t, t)
-      schemeId = Number(r.lastInsertRowid)
-    }
+    if (p.id && !db.prepare('SELECT id FROM modifier_schemes WHERE id=?').get(p.id)) throw bad('Scheme not found', 404)
     let ids = p.modifierIds
     if (p.copyFromSchemeId) {
       const copied = db.prepare('SELECT modifier_id AS id FROM modifier_scheme_items WHERE scheme_id=?')
         .all(p.copyFromSchemeId) as { id: number }[]
       ids = copied.map((x) => x.id)
     }
-    const ins = db.prepare(
-      'INSERT OR IGNORE INTO modifier_scheme_items(scheme_id,modifier_id,required,max_count) VALUES(?,?,0,2)'
-    )
-    for (const mid of ids) ins.run(schemeId, mid)
+    let schemeId = p.id
+    // One transaction: a failure must not leave a scheme without items.
+    db.transaction(() => {
+      if (schemeId) {
+        db.prepare('UPDATE modifier_schemes SET name=?, updated_at=? WHERE id=?').run(p.name, t, schemeId)
+        db.prepare('DELETE FROM modifier_scheme_items WHERE scheme_id=?').run(schemeId)
+      } else {
+        const r = db.prepare('INSERT INTO modifier_schemes(name,created_at,updated_at) VALUES(?,?,?)').run(p.name, t, t)
+        schemeId = Number(r.lastInsertRowid)
+      }
+      const ins = db.prepare(
+        'INSERT OR IGNORE INTO modifier_scheme_items(scheme_id,modifier_id,required,max_count) VALUES(?,?,0,2)'
+      )
+      for (const mid of ids) ins.run(schemeId, mid)
+    })()
     const affected = db.prepare('SELECT id FROM products WHERE modifier_scheme_id=?').all(schemeId) as { id: number }[]
     enqueueProductSync(affected.map((x) => x.id))
     return c.json({ ok: true, id: schemeId })
@@ -835,9 +854,13 @@ export const adminRoutes = new Hono()
     return c.json({ ok: true })
   })
 
-    .post('/vouchers/grant-all', zValidator('json', z.object({ code: z.string() })), (c) => {
+    .post('/vouchers/grant-all', zValidator('json', z.object({ code: z.string().min(1).max(64) })), (c) => {
+    const { code } = c.req.valid('json')
+    const t = db.prepare('SELECT title FROM voucher_templates WHERE code = ?').get(code) as { title: string } | undefined
+    if (!t) throw bad('Шаблон ваучера не найден', 404)
     const ids = db.prepare('SELECT id FROM users').all() as { id: number }[]
-    db.transaction(() => { for (const u of ids) grantVoucher(u.id, c.req.valid('json').code) })()
+    db.transaction(() => { for (const u of ids) grantVoucher(u.id, code) })()
+    ;(c as unknown as { set: (k: string, v: unknown) => void }).set('audit', { entity: 'vouchers', summary: `Ваучер «${t.title}» выдан всем клиентам: ${ids.length}`, after: { code, granted: ids.length } })
     return c.json({ granted: ids.length })
   })
 

@@ -1,5 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from 'react'
-import type { ReactNode, ButtonHTMLAttributes, InputHTMLAttributes, SelectHTMLAttributes } from 'react'
+import { Children, cloneElement, createContext, isValidElement, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from 'react'
+import type { ReactElement, ReactNode, ButtonHTMLAttributes, InputHTMLAttributes, SelectHTMLAttributes } from 'react'
 import { AlertTriangle, CheckCircle2, Info, Loader2, X, XCircle, CircleDashed } from 'lucide-react'
 
 export const cx = (...a: (string | false | null | undefined)[]) => a.filter(Boolean).join(' ')
@@ -88,6 +88,14 @@ export function Tabs<K extends string>({ items, value, onChange }: { items: TabI
           key={t.key}
           role="tab"
           aria-selected={t.key === value}
+          tabIndex={t.key === value ? 0 : -1}
+          onKeyDown={(e) => {
+            if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return
+            const i = items.findIndex((x) => x.key === value)
+            const n = items[(i + (e.key === 'ArrowRight' ? 1 : items.length - 1)) % items.length]
+            onChange(n.key)
+            ;(e.currentTarget.parentElement?.querySelectorAll('[role=tab]')[items.indexOf(n)] as HTMLElement | undefined)?.focus()
+          }}
           type="button"
           onClick={() => onChange(t.key)}
           className={cx(
@@ -106,10 +114,15 @@ export function Tabs<K extends string>({ items, value, onChange }: { items: TabI
 /* ───────── Form fields ───────── */
 export function Field({ label, hint, children, error }: { label: string; hint?: ReactNode; error?: string; children: ReactNode }) {
   const id = useId()
+  // Bind the label to the control itself when there is exactly one (input/select/textarea);
+  // for composite content (several controls) fall back to a labelled group.
+  const only = Children.count(children) === 1 && isValidElement(children) ? (children as ReactElement<{ id?: string }>) : null
+  const single = only && typeof only.type !== 'string' ? true : only && ['input', 'select', 'textarea'].includes(only.type as string)
+  const control = single && only ? cloneElement(only, { id: only.props.id ?? id }) : null
   return (
     <div className="mb-3">
-      <label htmlFor={id} className="mb-1 block text-sm font-medium text-ink">{label}</label>
-      <div id={id}>{children}</div>
+      <label id={`${id}-l`} htmlFor={control ? (only!.props.id ?? id) : undefined} className="mb-1 block text-sm font-medium text-ink">{label}</label>
+      {control ?? <div role="group" aria-labelledby={`${id}-l`}>{children}</div>}
       {hint && !error && <p className="mt-1 text-xs text-ink-secondary">{hint}</p>}
       {error && <p className="mt-1 text-xs text-bad">{error}</p>}
     </div>
@@ -197,10 +210,22 @@ export function KpiTile({ label, value, sub, tone }: { label: string; value: Rea
 /* ───────── Drawer (right panel on desktop, bottom sheet on phone) ───────── */
 export function Drawer({ open, onClose, title, children, footer, wide }: { open: boolean; onClose: () => void; title: string; children: ReactNode; footer?: ReactNode; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null)
+  // Keep the latest onClose without re-running the effect: a parent re-render must not steal focus from a field.
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
   useEffect(() => {
     if (!open) return
     const prev = document.activeElement as HTMLElement | null
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { closeRef.current(); return }
+      if (e.key !== 'Tab' || !ref.current) return
+      const items = [...ref.current.querySelectorAll<HTMLElement>('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),summary,[tabindex]:not([tabindex="-1"])')]
+      if (!items.length) { e.preventDefault(); return }
+      const first = items[0], last = items[items.length - 1]
+      const cur = document.activeElement
+      if (e.shiftKey && (cur === first || cur === ref.current)) { e.preventDefault(); last.focus() }
+      else if (!e.shiftKey && cur === last) { e.preventDefault(); first.focus() }
+    }
     document.addEventListener('keydown', onKey)
     ref.current?.focus()
     const overflow = document.body.style.overflow
@@ -210,7 +235,7 @@ export function Drawer({ open, onClose, title, children, footer, wide }: { open:
       document.body.style.overflow = overflow
       prev?.focus?.()
     }
-  }, [open, onClose])
+  }, [open])
   if (!open) return null
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-end bg-black/40 sm:items-stretch" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -347,7 +372,7 @@ export function DataTable<T>({
                 <th className="w-10 px-3 py-2.5"><input type="checkbox" aria-label="Выбрать все" className="h-4 w-4 accent-[#002FA7]" checked={allSel} onChange={toggleAll} /></th>
               )}
               {columns.map((c) => (
-                <th key={c.key} className={cx('px-3 py-2.5 font-semibold', c.align === 'right' && 'text-right', c.className)}>
+                <th key={c.key} scope="col" aria-sort={c.sortKey && sort?.key === c.sortKey ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined} className={cx('whitespace-nowrap px-3 py-2.5 font-semibold', c.align === 'right' && 'text-right', c.className)}>
                   {c.sortKey && onSort ? (
                     <button type="button" className="inline-flex items-center gap-1 uppercase hover:text-brand" onClick={() => onSort(c.sortKey!)}>
                       {c.header}{sort?.key === c.sortKey && (sort.dir === 'asc' ? ' ↑' : ' ↓')}
@@ -364,7 +389,9 @@ export function DataTable<T>({
                 <tr
                   key={k}
                   onClick={onRowClick ? () => onRowClick(r) : undefined}
-                  className={cx('border-t border-line', onRowClick && 'cursor-pointer hover:bg-brand-light', selection?.has(k) && 'bg-brand-soft')}
+                  tabIndex={onRowClick ? 0 : undefined}
+                  onKeyDown={onRowClick ? (e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onRowClick(r) } } : undefined}
+                  className={cx('border-t border-line', onRowClick && 'cursor-pointer hover:bg-brand-light focus-visible:bg-brand-light focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand-mid', selection?.has(k) && 'bg-brand-soft')}
                 >
                   {selectable && (
                     <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
@@ -388,6 +415,8 @@ export function DataTable<T>({
             <li
               key={k}
               onClick={onRowClick ? () => onRowClick(r) : undefined}
+              tabIndex={onRowClick ? 0 : undefined}
+              onKeyDown={onRowClick ? (e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onRowClick(r) } } : undefined}
               className={cx('rounded-2xl border border-line bg-card p-3.5 shadow-card', onRowClick && 'cursor-pointer active:bg-brand-light', selection?.has(k) && 'border-brand bg-brand-soft')}
             >
               <div className="flex items-start gap-2.5">
@@ -396,7 +425,7 @@ export function DataTable<T>({
                 )}
                 <div className="min-w-0 flex-1">
                   <div className="font-semibold">{primary.render(r)}</div>
-                  <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+                  <dl className="mt-1.5 grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1 text-sm">
                     {rest.map((c) => (
                       <div key={c.key} className="contents">
                         <dt className="text-ink-secondary">{c.header}</dt>

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Archive, Download, Plus, Pencil } from 'lucide-react'
-import { api, download } from '../api/client'
+import { api, download, uploadFile } from '../api/client'
 import { useApi } from '../api/useApi'
 import type { BulkPlan, Category, EvotorStore, Product, Scheme } from '../api/types'
 import { useSyncStores } from '../api/useStores'
@@ -61,7 +61,7 @@ if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} /
       const r = await api<{ id: number }>('/products', {
         method: 'POST',
         body: {
-          id: d.id, name: d.name.trim(), price: d.price, icon: d.icon || 'Coffee', available: !!d.available,
+          id: d.id, expectedUpdatedAt: d.id ? (d.updatedAt ?? null) : undefined, name: d.name.trim(), price: d.price, icon: d.icon || 'Coffee', available: !!d.available,
           description: d.description || null, categoryId: d.categoryId ?? null, imageUrl: d.imageUrl ?? null,
           sortOrder: d.sortOrder ?? 0, modifierSchemeId: d.modifierSchemeId ?? null,
           recipeText: d.recipeText ?? null, recipeCostRub: d.recipeCostRub ?? null, recipeSeconds: d.recipeSeconds ?? null,
@@ -198,18 +198,7 @@ if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} /
             setBusy(true)
             setErr('')
             try {
-              const fd = new FormData()
-              fd.append('file', f)
-              const token = (await import('../api/client')).tokenStore.get()
-              const base = (import.meta as any).env?.VITE_API_URL ?? ''
-              const res = await fetch(`${base}/api/admin/upload`, {
-                method: 'POST',
-                headers: { 'X-Admin-Token': token },
-                body: fd,
-              })
-              if (!res.ok) throw new Error((await res.text()) || res.statusText)
-              const j = await res.json() as { url?: string }
-              if (!j.url) throw new Error('Нет url в ответе')
+              const j = await uploadFile(f)
               set('imageUrl', j.url)
               toast.push('Фото загружено')
             } catch (err) {
