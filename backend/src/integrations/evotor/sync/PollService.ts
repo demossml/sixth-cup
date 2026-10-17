@@ -8,6 +8,7 @@ import { evotorConfig } from '../../../config'
 import { handlePayback, handleSell } from '../processing/SellHandler'
 import { hasLoyaltySc } from '../loyaltyExtras'
 import { log, shortId } from '../../../lib/logBuffer'
+import { anyTokenConfigured, clientForStore, listActivePlainTokens } from '../tokenStore'
 
 
 /** Only stores the owner marked for sync in admin (sync_enabled=1). */
@@ -80,21 +81,29 @@ export class PollService {
   ) {}
 
   async ensureStores(): Promise<string[]> {
-    const raw = await this.client.getStores()
-    const items = asArray(raw)
+    const tokens = listActivePlainTokens(this.db)
+    if (tokens.length === 0) return []
     const now = Date.now()
     const ids: string[] = []
     const upsert = this.db.prepare(
       `INSERT INTO evotor_stores(store_uuid, name, updated_at) VALUES(?,?,?)
        ON CONFLICT(store_uuid) DO UPDATE SET name=excluded.name, updated_at=excluded.updated_at`,
     )
-    for (const it of items) {
-      const o = it as Record<string, unknown>
-      const id = storeIdOf(o)
-      if (!id) continue
-      ids.push(id)
-      upsert.run(id, typeof o.name === 'string' ? o.name : null, now)
-      this.db.prepare(`INSERT OR IGNORE INTO evotor_sync_state(store_uuid,last_seen_close_ms) VALUES(?,0)`).run(id)
+    for (const tok of tokens) {
+      try {
+        const raw = await new EvotorClient(tok).getStores()
+        const items = asArray(raw)
+        for (const it of items) {
+          const o = it as Record<string, unknown>
+          const id = storeIdOf(o)
+          if (!id) continue
+          if (!ids.includes(id)) ids.push(id)
+          upsert.run(id, typeof o.name === 'string' ? o.name : null, now)
+          this.db.prepare(`INSERT OR IGNORE INTO evotor_sync_state(store_uuid,last_seen_close_ms) VALUES(?,0)`).run(id)
+        }
+      } catch (e) {
+        log.error('evotor ensureStores token failed', { error: String(e).slice(0, 160) })
+      }
     }
     return ids
   }
@@ -132,7 +141,7 @@ export class PollService {
     const items: Record<string, unknown>[] = []
     let cursor: string | undefined
     for (let page = 0; page < 100; page++) {
-      const raw = await this.client.getDocuments(storeUuid, since, until, undefined, cursor)
+      const raw = await clientForStore(this.db, storeUuid).getDocuments(storeUuid, since, until, undefined, cursor)
       items.push(...(asArray(raw) as Record<string, unknown>[]))
       const paging = raw && typeof raw === 'object' ? (raw as { paging?: { next_cursor?: unknown } }).paging : undefined
       cursor = typeof paging?.next_cursor === 'string' && paging.next_cursor ? paging.next_cursor : undefined
@@ -181,7 +190,7 @@ export class PollService {
 
   async runFast(): Promise<{ stores: number; inserted: number; seen: number; sellSeen: number; errors: { storeUuid: string; error: string }[] }> {
     this.stats = { seen: 0, sellSeen: 0 }
-    if (!this.client.isConfigured) return { stores: 0, inserted: 0, seen: 0, sellSeen: 0, errors: [] }
+    if (!anyTokenConfigured(this.db)) return { stores: 0, inserted: 0, seen: 0, sellSeen: 0, errors: [] }
     // Refresh store list from Cloud (names), but poll ONLY sync_enabled=1
     try {
       await this.ensureStores()
@@ -212,7 +221,7 @@ export class PollService {
   }
 
   async runHourly(): Promise<{ stores: number; inserted: number }> {
-    if (!this.client.isConfigured) return { stores: 0, inserted: 0 }
+    if (!anyTokenConfigured(this.db)) return { stores: 0, inserted: 0 }
     try { await this.ensureStores() } catch { /* list refresh best-effort */ }
     const stores = enabledStoreUuids(this.db)
     if (stores.length === 0) return { stores: 0, inserted: 0 }
@@ -224,7 +233,7 @@ export class PollService {
   }
 
   async runDaily(): Promise<{ stores: number; inserted: number }> {
-    if (!this.client.isConfigured) return { stores: 0, inserted: 0 }
+    if (!anyTokenConfigured(this.db)) return { stores: 0, inserted: 0 }
     try { await this.ensureStores() } catch { /* list refresh best-effort */ }
     const stores = enabledStoreUuids(this.db)
     if (stores.length === 0) return { stores: 0, inserted: 0 }

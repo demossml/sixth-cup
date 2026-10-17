@@ -15,6 +15,7 @@ import { bad } from '../../lib/errors'
 import { grantVoucher } from '../vouchers/service'
 import { resetLoyaltyData, resetCatalogData } from '../../db/seed'
 import { adminEvotorCatalog } from './evotorCatalog'
+import { adminEvotorTokens } from './evotorTokens'
 import { queryLogs, log, LOG_SOURCES, LOG_LEVELS, type LogLevel, type LogSource } from '../../lib/logBuffer'
 import { ProductPushService } from '../../integrations/evotor/sync/ProductPushService'
 import { adminAnalytics } from './analytics'
@@ -876,6 +877,7 @@ export const adminRoutes = new Hono()
 
   // Evotor catalog admin (stores from cloud + product push, no local device enroll)
   .route('/', adminEvotorCatalog)
+  .route('/', adminEvotorTokens)
 
 adminRoutes.route('/', adminAssignments)
 adminRoutes.route('/', adminAnalytics)

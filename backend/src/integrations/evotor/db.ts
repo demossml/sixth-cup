@@ -3,6 +3,7 @@
  * Call from db bootstrap after main schema.
  */
 import type Database from 'better-sqlite3'
+import { ensureTokenSchema } from './tokenStore'
 
 export function migrateEvotorSchema(db: Database.Database): void {
   db.exec(`
@@ -124,6 +125,9 @@ CREATE TABLE IF NOT EXISTS card_denylist (
   released_at INTEGER
 );
 `)
-
-
+  try {
+    ensureTokenSchema(db)
+  } catch {
+    /* tokens optional if crypto fails in exotic env */
+  }
 }
