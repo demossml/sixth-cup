@@ -63,3 +63,40 @@ to `GET /api/devices/images/:file`. This endpoint validates the generated upload
 requires the same proxy authorization as the catalog, and streams only supported image files.
 The admin UI continues to use `/uploads/*` for browser previews; stored `image_url` values do not
 need to be migrated. Ensure the Evotor cabinet URL mask remains `https://app\.67coffee\.ru/api/.*`.
+
+### Размеры (объёмы) — `groups[]`
+
+Один и тот же товар в нескольких объёмах хранится как **отдельные SKU** (`products`), у каждого свой
+`evotorUuid` и своя цена — на кассе это разные позиции номенклатуры. Витринная карточка живёт в
+`product_groups`, поэтому каталог дополнительно отдаёт `groups`.
+
+```json
+{
+  "products": [
+    { "id": 12, "name": "Капучино 200 мл", "price": 200, "groupId": 5, "variantLabel": "200 мл", "variantSort": 0, "evotorUuid": "…" },
+    { "id": 13, "name": "Капучино 300 мл", "price": 300, "groupId": 5, "variantLabel": "300 мл", "variantSort": 1, "evotorUuid": "…" }
+  ],
+  "groups": [
+    {
+      "id": 5,
+      "name": "Капучино",
+      "imageUrl": "https://app.67coffee.ru/api/devices/images/…",
+      "categoryId": 1,
+      "description": "…",
+      "sortOrder": 0,
+      "variants": [
+        { "productId": 12, "evotorUuid": "…", "label": "200 мл", "price": 200, "priceRub": 200, "sizeValue": 200, "sizeUnit": "ml", "countsAsCup": true, "freeEligible": true },
+        { "productId": 13, "evotorUuid": "…", "label": "300 мл", "price": 300, "priceRub": 300, "sizeValue": 300, "sizeUnit": "ml", "countsAsCup": true, "freeEligible": true }
+      ]
+    }
+  ]
+}
+```
+
+Правила для кассы:
+
+- `groups` содержит **только** карточки с 2+ доступными вариантами. Одиночный товар (`groupId: null` или
+  группа из одного размера) приходит как обычно в `products`.
+- `products[]` остаётся плоским и полным — старые версии APK продолжают работать без изменений.
+- Одна плитка на группу: имя/фото/категория берутся из группы, цена — у выбранного варианта.
+- При добавлении позиции в чек использовать `evotorUuid` **выбранного варианта** (не группы).

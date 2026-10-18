@@ -117,3 +117,19 @@ Recommended events: `scan QR`, `resolve ok` / `resolve fail` (+ `error`), `disco
 `meta.code` (short numeric code only): the server stores just `••NN` (last two digits). Meta keys containing
 `token`, `secret`, `password`, `authorization`, `cookie`, `jwt`, `qr`, `payload`, `proof` are always dropped, and
 long token-like strings are redacted server-side as a safety net.
+
+## Размеры (объёмы) товара
+
+Каждый объём — **отдельный продукт** в Evotor Cloud с собственным UUID и ценой, поэтому на кассе это
+разные позиции номенклатуры. Витринная карточка (`product_groups`) в облако не выгружается.
+
+- Создаётся в админке 6.7: одна карточка («Капучино») + список размеров («200 мл» — 200 ₽,
+  «300 мл» — 300 ₽). Сохранение создаёт N продуктов: `name = "Капучино 200 мл"`,
+  `article_number = sc-<localProductId>`, отдельные `POST /stores/{store}/products`.
+- `GET /api/devices/catalog` отдаёт наряду с плоским `products[]` массив `groups[]`
+  (`{ id, name, imageUrl, categoryId, variants: [{ productId, evotorUuid, label, price }] }`).
+- APK рисует одну плитку на группу и при выборе размера подставляет `evotorUuid` варианта в
+  `ru.evotor.framework.receipt.Position`.
+- Если `groups` нет в ответе (старый сервер) или карточка содержит один размер — поведение прежнее.
+- Лояльность считается по выбранному варианту: `countsAsCup` / `freeEligible` наследуются от карточки,
+  но остаются собственными полями продукта (можно переопределить).

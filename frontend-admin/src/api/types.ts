@@ -105,6 +105,34 @@ export type Product = {
   evotorExtraJson: string | null
   catalogSource: string | null
   evotorLinks: EvotorLink[]
+  /** Размеры: id витринной карточки и метка варианта («200 мл»). null — обычный одиночный товар. */
+  groupId: number | null
+  variantLabel: string | null
+  variantSort: number
+}
+/** Витринная карточка с размерами: одна в админке → несколько SKU в кассе. */
+export type ProductGroup = {
+  id: number
+  name: string
+  imageUrl: string | null
+  categoryId: number | null
+  description: string | null
+  modifierSchemeId: number | null
+  countsAsCup: number | null
+  freeEligible: number | null
+  sortOrder: number
+  variants: {
+    id: number
+    label: string | null
+    variantSort: number
+    name: string
+    price: number
+    available: number
+    sizeValue: number | null
+    sizeUnit: 'g' | 'ml' | null
+    calories: number | null
+    evotorUuid: string | null
+  }[]
 }
 export type Category = { id: number; name: string; sortOrder: number; available: number }
 export type Modifier = { id: number; name: string; price: number; groupKey: string; available: number; sortOrder: number }

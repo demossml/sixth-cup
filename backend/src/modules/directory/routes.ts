@@ -42,6 +42,7 @@ export function publicDirectory(storeUuid?: string | null) {
            modifier_scheme_id AS modifierSchemeId,
            counts_as_cup AS countsAsCup, free_eligible AS freeEligible,
            size_value AS sizeValue, size_unit AS sizeUnit, calories,
+           group_id AS groupId, variant_label AS variantLabel, variant_sort AS variantSort,
            available AS globalAvailable
     FROM products
     WHERE (season_start_at IS NULL OR season_start_at<=?)
@@ -101,6 +102,34 @@ export function publicDirectory(storeUuid?: string | null) {
   // legacy promos alias for older clients
   const promos = content
 
+  // Размеры: витрина группы + id её SKU. Клиент показывает одну плитку с выбором объёма.
+  let productGroups: Record<string, unknown>[] = []
+  try {
+    const rows = db.prepare(`
+      SELECT id, name, image_url AS imageUrl, category_id AS categoryId, description,
+             sort_order AS sortOrder
+      FROM product_groups ORDER BY sort_order, id
+    `).all() as Record<string, unknown>[]
+    productGroups = rows
+      .map((g) => {
+        const ids = products
+          .filter((p) => Number((p as { groupId?: number }).groupId) === Number(g.id))
+          .map((p) => Number(p.id))
+        return {
+          id: Number(g.id),
+          name: g.name,
+          imageUrl: absUrl(g.imageUrl as string | null),
+          categoryId: g.categoryId ?? null,
+          description: g.description ?? null,
+          sortOrder: g.sortOrder ?? 0,
+          variants: ids,
+        }
+      })
+      .filter((g) => g.variants.length > 0)
+  } catch {
+    productGroups = []
+  }
+
   return {
     serverPub,
     serverKeys,
@@ -145,7 +174,11 @@ export function publicDirectory(storeUuid?: string | null) {
       sizeValue: p.sizeValue ?? null,
       sizeUnit: p.sizeUnit ?? null,
       calories: p.calories ?? null,
+      groupId: p.groupId ?? null,
+      variantLabel: p.variantLabel ?? null,
+      variantSort: p.variantSort ?? 0,
     })),
+    productGroups,
     promos,
     content,
   }

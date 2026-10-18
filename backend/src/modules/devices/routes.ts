@@ -196,7 +196,9 @@ export const deviceRoutes = new Hono<DeviceEnv>()
                p.modifier_scheme_id AS schemeId,
                p.counts_as_cup AS countsAsCup, p.free_eligible AS freeEligible,
                p.recipe_text AS recipeText, p.available AS globalAvailable,
-               p.category_id AS categoryId
+               p.category_id AS categoryId,
+               p.group_id AS groupId, p.variant_label AS variantLabel, p.variant_sort AS variantSort,
+               p.size_value AS sizeValue, p.size_unit AS sizeUnit
         FROM products p
         WHERE (p.season_start_at IS NULL OR p.season_start_at<=?)
           AND (p.season_end_at IS NULL OR p.season_end_at>=?)
@@ -316,6 +318,11 @@ export const deviceRoutes = new Hono<DeviceEnv>()
           recipeText: p.recipeText ?? null,
           recipe: p.recipeText ?? null,
           evotorUuid: uuidByProduct.get(id) || null,
+          groupId: p.groupId != null ? Number(p.groupId) : null,
+          variantLabel: (p.variantLabel as string | null) ?? null,
+          variantSort: Number(p.variantSort ?? 0),
+          sizeValue: p.sizeValue != null ? Number(p.sizeValue) : null,
+          sizeUnit: (p.sizeUnit as string | null) ?? null,
           toppings,
           upsell,
         }
@@ -325,12 +332,52 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         .filter((r) => out.some((p) => p.categoryId === r.id))
         .map((r) => ({ id: r.id, name: r.name, sortOrder: r.sortOrder }))
 
+      // Размеры одного товара: APK рисует одну плитку и подставляет UUID выбранного варианта.
+      // groups содержит только карточки с 2+ доступными вариантами; одиночные идут как обычные products.
+      let groups: Record<string, unknown>[] = []
+      try {
+        const groupRows = db.prepare(`
+          SELECT id, name, image_url AS imageUrl, category_id AS categoryId, description, sort_order AS sortOrder
+          FROM product_groups ORDER BY sort_order, id
+        `).all() as Record<string, unknown>[]
+        groups = groupRows
+          .map((g) => {
+            const variants = out
+              .filter((p) => p.groupId === Number(g.id))
+              .sort((a, b) => a.variantSort - b.variantSort || a.id - b.id)
+              .map((p) => ({
+                productId: p.id,
+                evotorUuid: p.evotorUuid,
+                label: p.variantLabel,
+                price: p.price,
+                priceRub: p.priceRub,
+                sizeValue: p.sizeValue,
+                sizeUnit: p.sizeUnit,
+                countsAsCup: p.countsAsCup,
+                freeEligible: p.freeEligible,
+              }))
+            return {
+              id: Number(g.id),
+              name: g.name,
+              imageUrl: deviceImageUrl(g.imageUrl as string | null),
+              categoryId: g.categoryId != null ? Number(g.categoryId) : null,
+              description: g.description ?? null,
+              sortOrder: Number(g.sortOrder ?? 0),
+              variants,
+            }
+          })
+          .filter((g) => g.variants.length > 1)
+      } catch {
+        groups = []
+      }
+
       return c.json({
         ok: true,
         generatedAt: Math.floor(Date.now() / 1000),
         storeUuid: storeUuid || null,
         categories,
         products: out,
+        groups,
       })
     })
 

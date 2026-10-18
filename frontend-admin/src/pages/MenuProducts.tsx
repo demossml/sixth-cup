@@ -21,18 +21,49 @@ const SYNC: Record<string, { tone: 'ok' | 'warn' | 'bad' | 'neutral'; label: str
 
 type Draft = Partial<Product> & { name: string; price: number; storeUuids: string[] }
 
+/** Строка размера в карточке: цена и объём собственные, остальное наследуется от карточки. */
+type VariantDraft = { id?: number; label: string; price: number; sizeValue: number | null; sizeUnit: 'g' | 'ml'; available: boolean }
+
 /* ───────── single product drawer ───────── */
-function ProductDrawer({ draft, onClose, onSaved, categories, schemes, stores }: {
-  draft: Draft | null; onClose: () => void; onSaved: () => void; categories: Category[]; schemes: Scheme[]; stores: EvotorStore[]
+function ProductDrawer({ draft, onClose, onSaved, categories, schemes, stores, products }: {
+  draft: Draft | null; onClose: () => void; onSaved: () => void; categories: Category[]; schemes: Scheme[]; stores: EvotorStore[]; products: Product[]
 }) {
   const [d, setD] = useState<Draft | null>(draft)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const [groupId, setGroupId] = useState<number | null>(draft?.groupId ?? null)
+  const [variants, setVariants] = useState<VariantDraft[] | null>(null)
   const toast = useToast()
   // re-seed when a different product is opened
   const key = draft ? `${draft.id ?? 'new'}` : ''
   const [seen, setSeen] = useState(key)
-  if (key !== seen) { setSeen(key); setD(draft); setErr('') }
+  if (key !== seen) {
+    setSeen(key)
+    // У варианта в name склеено «Карточка + объём» — в заголовке карточки показываем имя группы.
+    const label = draft?.variantLabel ?? ''
+    const groupName = draft && label && draft.name.endsWith(` ${label}`)
+      ? draft.name.slice(0, -(label.length + 1))
+      : draft?.name
+    setD(draft && groupName && groupName !== draft.name ? { ...draft, name: groupName } : draft)
+    setErr('')
+    setGroupId(draft?.groupId ?? null)
+    // Размеры берём из уже загруженного списка: они обычные товары этой же группы.
+    setVariants(
+      draft?.groupId
+        ? products
+            .filter((p) => p.groupId === draft.groupId)
+            .sort((a, b) => (a.variantSort ?? 0) - (b.variantSort ?? 0) || a.id - b.id)
+            .map((p) => ({
+              id: p.id,
+              label: p.variantLabel ?? '',
+              price: p.price,
+              sizeValue: p.sizeValue ?? null,
+              sizeUnit: p.sizeUnit ?? 'ml',
+              available: !!p.available,
+            }))
+        : null,
+    )
+  }
   
   const [storeAvail, setStoreAvail] = useState<Record<string, boolean>>({})
   useEffect(() => {
@@ -53,6 +84,38 @@ if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} /
 
   const save = async () => {
     if (!d.name.trim()) { setErr('Введите название'); return }
+    // Режим размеров: одна карточка → несколько SKU (по позиции на кассе).
+    if (variants && variants.length > 0) {
+      const rows = variants.map((v) => ({ ...v, label: v.label.trim() }))
+      if (rows.some((v) => !v.label)) { setErr('У каждого размера должен быть объём (например «200 мл»)'); return }
+      if (new Set(rows.map((v) => v.label.toLowerCase())).size !== rows.length) { setErr('Размеры не должны повторяться'); return }
+      if (rows.some((v) => !Number.isInteger(v.price) || v.price < 0)) { setErr('Цена каждого размера — целое число рублей'); return }
+      setBusy(true)
+      setErr('')
+      try {
+        const r = await api<{ id: number }>('/product-groups', {
+          method: 'POST',
+          body: {
+            id: groupId ?? undefined,
+            name: d.name.trim(), icon: d.icon || 'Coffee', description: d.description || null,
+            categoryId: d.categoryId ?? null, imageUrl: d.imageUrl ?? null, sortOrder: d.sortOrder ?? 0,
+            modifierSchemeId: d.modifierSchemeId ?? null,
+            countsAsCup: !!d.countsAsCup, freeEligible: !!d.freeEligible,
+            tax: d.tax || undefined, measure: d.measure || undefined,
+            variants: rows.map((v) => ({
+              id: v.id, label: v.label, price: v.price,
+              sizeValue: v.sizeValue ?? null, sizeUnit: v.sizeValue ? v.sizeUnit : null,
+              available: v.available,
+            })),
+          },
+        })
+        setGroupId(r.id)
+        toast.push(groupId ? 'Размеры сохранены' : 'Товар создан с размерами')
+        onSaved()
+        onClose()
+      } catch (e) { setErr(e instanceof Error ? e.message : 'Не удалось сохранить') } finally { setBusy(false) }
+      return
+    }
     if (!Number.isInteger(d.price) || d.price < 0) { setErr('Цена — целое число рублей, не меньше 0'); return }
     setBusy(true)
     setErr('')
@@ -88,7 +151,93 @@ if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} /
       {err && <ErrorBox message={err} />}
       <div className="mt-3" />
       <Field label="Название"><Input value={d.name} onChange={(e) => set('name', e.target.value)} maxLength={60} /></Field>
-      <Field label="Цена, ₽"><Input type="number" inputMode="numeric" min={0} value={Number.isFinite(d.price) ? d.price : ''} onChange={(e) => set('price', e.target.value === '' ? NaN : Number(e.target.value))} /></Field>
+      {variants ? (
+        <div className="mb-3 rounded-xl border border-line p-3">
+          <div className="text-[15px] font-semibold">Размеры и объёмы</div>
+          <p className="text-xs text-ink-secondary mt-0.5 mb-2">
+            На кассе каждый размер — отдельная позиция со своей ценой. Гость в приложении и бариста видят одну карточку.
+          </p>
+          <div className="grid grid-cols-[1fr_84px_58px_24px] gap-2 text-[11px] text-ink-tertiary mb-1">
+            <span>Объём</span><span>Цена, ₽</span><span>Ед.</span><span />
+          </div>
+          <div className="space-y-2">
+            {variants.map((v, i) => (
+              <div key={v.id ?? `new-${i}`} className="grid grid-cols-[1fr_84px_58px_24px] items-center gap-2">
+                <Input
+                  value={v.label}
+                  placeholder="200 мл"
+                  maxLength={24}
+                  onChange={(e) => setVariants(variants.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))}
+                />
+                <Input
+                  type="number" inputMode="numeric" min={0}
+                  value={Number.isFinite(v.price) ? v.price : ''}
+                  onChange={(e) => setVariants(variants.map((x, j) => (j === i ? { ...x, price: e.target.value === '' ? NaN : Number(e.target.value) } : x)))}
+                />
+                <Select
+                  value={v.sizeUnit}
+                  onChange={(e) => setVariants(variants.map((x, j) => (j === i ? { ...x, sizeUnit: e.target.value as 'g' | 'ml' } : x)))}
+                >
+                  <option value="ml">мл</option>
+                  <option value="g">г</option>
+                </Select>
+                <button
+                  type="button"
+                  aria-label={`Удалить размер ${v.label || i + 1}`}
+                  className="text-ink-tertiary hover:text-bad"
+                  onClick={() => setVariants(variants.filter((_, j) => j !== i))}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button
+              type="button" variant="secondary"
+              onClick={() => setVariants([...variants, { label: '', price: d.price, sizeValue: null, sizeUnit: 'ml', available: true }])}
+            >
+              <Plus size={16} /> Добавить размер
+            </Button>
+            <Button
+              type="button" variant="ghost"
+              onClick={async () => {
+                if (!groupId) { setVariants(null); return }
+                setBusy(true)
+                try {
+                  await api(`/product-groups/${groupId}`, { method: 'DELETE' })
+                  toast.push('Размеры разъединены в отдельные товары')
+                  onSaved()
+                  onClose()
+                } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') } finally { setBusy(false) }
+              }}
+            >
+              Разъединить
+            </Button>
+          </div>
+          <p className="text-xs text-ink-secondary mt-2">
+            На кассе: {variants.slice(0, 3).map((v) => `«${d.name.trim()} ${v.label.trim() || '…'}»`).join(', ')}
+            {variants.length > 3 ? ' и т.д.' : ''}
+          </p>
+        </div>
+      ) : (
+        <Button
+          type="button" variant="secondary" className="mb-3"
+          onClick={() => setVariants([{
+            id: d.id,
+            label: d.sizeValue ? `${d.sizeValue} ${d.sizeUnit === 'g' ? 'г' : 'мл'}` : '200 мл',
+            price: d.price,
+            sizeValue: d.sizeValue ?? null,
+            sizeUnit: d.sizeUnit ?? 'ml',
+            available: !!d.available,
+          }])}
+        >
+          <Plus size={16} /> Добавить размеры
+        </Button>
+      )}
+      {!variants && (
+        <Field label="Цена, ₽"><Input type="number" inputMode="numeric" min={0} value={Number.isFinite(d.price) ? d.price : ''} onChange={(e) => set('price', e.target.value === '' ? NaN : Number(e.target.value))} /></Field>
+      )}
       <Field label="Группа">
         <Select value={d.categoryId ?? ''} onChange={(e) => set('categoryId', e.target.value ? Number(e.target.value) : null)}>
           <option value="">Без группы</option>
@@ -368,7 +517,7 @@ export default function MenuProducts() {
         ? <img src={row.imageUrl} alt="" className="h-10 w-10 rounded-lg object-cover bg-[#EDE7DC]" />
         : <div className="h-10 w-10 rounded-lg bg-[#EDE7DC] text-[10px] text-brand/40 flex items-center justify-center font-semibold">6.7</div>,
     },
-    { key: 'name', header: 'Название', primary: true, sortKey: 'name', render: (p) => <span className={p.available ? '' : 'text-ink-tertiary'}>{p.name}</span> },
+    { key: 'name', header: 'Название', primary: true, sortKey: 'name', render: (p) => <span className={p.available ? '' : 'text-ink-tertiary'}>{p.name}{p.variantLabel ? <span className="text-ink-tertiary"> · {p.variantLabel}</span> : null}</span> },
     { key: 'group', header: 'Группа', sortKey: 'category', render: (p) => p.categoryName ?? <span className="text-ink-tertiary">—</span> },
     {
       key: 'price', header: 'Цена, ₽', align: 'right', sortKey: 'price',
@@ -438,7 +587,7 @@ export default function MenuProducts() {
       )}
       <p className="mt-3 text-xs text-ink-secondary">Показано {fmtNum(rows.length)} из {fmtNum(all.length)}. «Убрать из продажи» скрывает товар, а не удаляет: история чеков остаётся целой.</p>
 
-      <ProductDrawer draft={edit} onClose={() => setEdit(null)} onSaved={products.reload} categories={categories} schemes={schemes.data?.schemes ?? []} stores={syncStores} />
+      <ProductDrawer draft={edit} onClose={() => setEdit(null)} onSaved={products.reload} categories={categories} schemes={schemes.data?.schemes ?? []} stores={syncStores} products={all} />
       {bulk && <BulkDrawer ids={selIds} onClose={() => setBulk(false)} onDone={() => { setSel(new Set()); products.reload() }} categories={categories} stores={syncStores} />}
       <ConfirmDialog open={!!archive} title="Убрать из продажи?" confirmLabel="Убрать" danger onConfirm={doArchive} onCancel={() => setArchive(null)}>
         «{archive?.name}» исчезнет из приложения и с кассы на включённых точках. Вернуть можно переключателем «В продаже».

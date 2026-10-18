@@ -422,7 +422,8 @@ export const adminRoutes = new Hono()
              p.tax AS tax, p.measure AS measure, p.cost_price_kopecks AS costPriceKopecks,
              p.season_start_at AS seasonStartAt, p.season_end_at AS seasonEndAt,
              p.evotor_extra_json AS evotorExtraJson,
-             p.catalog_source AS catalogSource, p.evotor_uuid AS evotorUuid
+             p.catalog_source AS catalogSource, p.evotor_uuid AS evotorUuid,
+             p.group_id AS groupId, p.variant_label AS variantLabel, p.variant_sort AS variantSort
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
       ORDER BY p.sort_order, p.id
@@ -527,6 +528,166 @@ export const adminRoutes = new Hono()
     db.prepare("UPDATE products SET available=0, updated_at=?, catalog_source='SIXTH_CUP' WHERE id=?").run(Date.now(), id)
     enqueueProductSync([id])
     return c.json({ ok: true, disabled: true })
+  })
+
+  // —— Размеры/объёмы: одна карточка (product_groups) → N торгуемых SKU ——
+  .get('/product-groups', (c) => {
+    const groups = db.prepare(`
+      SELECT id, name, image_url AS imageUrl, category_id AS categoryId, description,
+             modifier_scheme_id AS modifierSchemeId, counts_as_cup AS countsAsCup,
+             free_eligible AS freeEligible, sort_order AS sortOrder
+      FROM product_groups ORDER BY sort_order, id
+    `).all() as Record<string, unknown>[]
+    const rows = db.prepare(`
+      SELECT id, group_id AS groupId, variant_label AS variantLabel, variant_label AS label,
+             variant_sort AS variantSort,
+             name, price, available, size_value AS sizeValue, size_unit AS sizeUnit,
+             calories, evotor_uuid AS evotorUuid
+      FROM products WHERE group_id IS NOT NULL ORDER BY variant_sort, id
+    `).all() as Record<string, unknown>[]
+    const byGroup = new Map<number, Record<string, unknown>[]>()
+    for (const row of rows) {
+      const gid = Number(row.groupId)
+      const list = byGroup.get(gid) ?? []
+      list.push(row)
+      byGroup.set(gid, list)
+    }
+    return c.json({ groups: groups.map((g) => ({ ...g, variants: byGroup.get(Number(g.id)) ?? [] })) })
+  })
+
+  .post('/product-groups', zValidator('json', z.object({
+    id: z.number().int().positive().optional(),
+    name: z.string().min(1).max(60),
+    categoryId: z.number().int().positive().nullable().optional(),
+    imageUrl: z.string().max(500).nullable().optional(),
+    description: z.string().max(500).nullable().optional(),
+    sortOrder: z.number().int().default(0),
+    icon: z.string().max(24).default('Coffee'),
+    modifierSchemeId: z.number().int().positive().nullable().optional(),
+    countsAsCup: z.boolean().optional(),
+    freeEligible: z.boolean().optional(),
+    tax: z.string().max(32).optional(),
+    measure: z.string().max(16).optional(),
+    variants: z.array(z.object({
+      id: z.number().int().positive().optional(),
+      label: z.string().min(1).max(24),
+      price: z.number().int().min(0),
+      sizeValue: z.number().int().min(1).max(100000).nullable().optional(),
+      sizeUnit: z.enum(['g', 'ml']).nullable().optional(),
+      calories: z.number().int().min(0).max(10000).nullable().optional(),
+      available: z.boolean().optional(),
+    }).refine((v) => (v.sizeValue == null) === (v.sizeUnit == null), {
+      message: 'Укажите и число, и единицу (г/мл)', path: ['sizeUnit'],
+    })).min(1).max(12),
+  }).refine((v) => new Set(v.variants.map((x) => x.label.trim().toLowerCase())).size === v.variants.length, {
+    message: 'Названия размеров не должны повторяться', path: ['variants'],
+  })), (c) => {
+    const p = c.req.valid('json')
+    if (p.categoryId != null && !db.prepare('SELECT id FROM categories WHERE id=?').get(p.categoryId)) {
+      throw bad('Category not found', 404)
+    }
+    const t = Date.now()
+    let groupId = p.id ?? null
+    if (groupId != null) {
+      const exists = db.prepare('SELECT id FROM product_groups WHERE id=?').get(groupId)
+      if (!exists) throw bad('Group not found', 404)
+      db.prepare(`
+        UPDATE product_groups SET name=?, image_url=?, category_id=?, description=?,
+          modifier_scheme_id=?, counts_as_cup=?, free_eligible=?, sort_order=?, updated_at=?
+        WHERE id=?
+      `).run(
+        p.name, p.imageUrl ?? null, p.categoryId ?? null, p.description ?? null,
+        p.modifierSchemeId ?? null,
+        p.countsAsCup === undefined ? null : (p.countsAsCup ? 1 : 0),
+        p.freeEligible === undefined ? null : (p.freeEligible ? 1 : 0),
+        p.sortOrder, t, groupId,
+      )
+    } else {
+      db.prepare(`
+        INSERT INTO product_groups(name, image_url, category_id, description, modifier_scheme_id,
+          counts_as_cup, free_eligible, sort_order, created_at, updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?)
+      `).run(
+        p.name, p.imageUrl ?? null, p.categoryId ?? null, p.description ?? null,
+        p.modifierSchemeId ?? null,
+        p.countsAsCup === undefined ? null : (p.countsAsCup ? 1 : 0),
+        p.freeEligible === undefined ? null : (p.freeEligible ? 1 : 0),
+        p.sortOrder, t, t,
+      )
+      groupId = (db.prepare('SELECT last_insert_rowid() AS id').get() as { id: number }).id
+    }
+
+    const kept: number[] = []
+    const saved: { id: number; label: string; price: number; evotorUuid: string | null }[] = []
+    p.variants.forEach((v, i) => {
+      const label = v.label.trim()
+      // Имя SKU на кассе должно быть однозначным: «Капучино 200 мл».
+      const name = `${p.name} ${label}`.slice(0, 60)
+      const available = v.available === false ? 0 : 1
+      const sizeValue = v.sizeValue ?? null
+      const sizeUnit = v.sizeUnit ?? null
+      const calories = v.calories ?? null
+      const cup = p.countsAsCup === undefined ? null : (p.countsAsCup ? 1 : 0)
+      const free = p.freeEligible === undefined ? null : (p.freeEligible ? 1 : 0)
+      if (v.id) {
+        const exists = db.prepare('SELECT id FROM products WHERE id=?').get(v.id)
+        if (!exists) throw bad('Product not found', 404)
+        db.prepare(`
+          UPDATE products SET name=?, price=?, icon=?, available=?, description=?, category_id=?,
+            image_url=?, sort_order=?, updated_at=?, modifier_scheme_id=?,
+            counts_as_cup=COALESCE(?, counts_as_cup), free_eligible=COALESCE(?, free_eligible),
+            tax=COALESCE(?, tax), measure=COALESCE(?, measure),
+            size_value=?, size_unit=?, calories=?, group_id=?, variant_label=?, variant_sort=?,
+            catalog_source='SIXTH_CUP'
+          WHERE id=?
+        `).run(
+          name, v.price, p.icon, available, p.description ?? null, p.categoryId ?? null,
+          p.imageUrl ?? null, p.sortOrder, t, p.modifierSchemeId ?? null,
+          cup, free, p.tax ?? null, p.measure ?? null,
+          sizeValue, sizeUnit, calories, groupId, label, i, v.id,
+        )
+        kept.push(v.id)
+      } else {
+        db.prepare(`
+          INSERT INTO products(name,price,icon,available,description,category_id,image_url,sort_order,
+            created_at,updated_at,modifier_scheme_id,counts_as_cup,free_eligible,tax,measure,
+            size_value,size_unit,calories,group_id,variant_label,variant_sort,catalog_source)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'SIXTH_CUP')
+        `).run(
+          name, v.price, p.icon, available, p.description ?? null, p.categoryId ?? null,
+          p.imageUrl ?? null, p.sortOrder, t, t, p.modifierSchemeId ?? null,
+          cup ?? (looksLikeDrink(name, p.icon) ? 1 : 0), free ?? 0, p.tax ?? 'NO_VAT', p.measure ?? 'шт',
+          sizeValue, sizeUnit, calories, groupId, label, i,
+        )
+        kept.push((db.prepare('SELECT last_insert_rowid() AS id').get() as { id: number }).id)
+      }
+    })
+
+    // Размеры, которых больше нет в карточке: снимаем с продажи (историю чеков не рвём).
+    const removed = db.prepare('SELECT id FROM products WHERE group_id=?')
+      .all(groupId) as { id: number }[]
+    const dropped = removed.map((r) => r.id).filter((id) => !kept.includes(id))
+    for (const id of dropped) {
+      db.prepare("UPDATE products SET available=0, updated_at=?, catalog_source='SIXTH_CUP' WHERE id=?").run(t, id)
+    }
+
+    enqueueProductSync([...kept, ...dropped])
+    const rows = db.prepare(`
+      SELECT id, variant_label AS label, price, evotor_uuid AS evotorUuid
+      FROM products WHERE group_id=? AND id IN (${kept.map(() => '?').join(',') || 'NULL'})
+      ORDER BY variant_sort, id
+    `).all(groupId, ...kept) as { id: number; label: string; price: number; evotorUuid: string | null }[]
+    saved.push(...rows)
+    return c.json({ ok: true, id: groupId, variants: saved, disabledVariantIds: dropped })
+  })
+
+  /** Разъединить размеры обратно в отдельные товары (группа удаляется, SKU остаются). */
+  .delete('/product-groups/:id', (c) => {
+    const id = Number(c.req.param('id'))
+    const ids = (db.prepare('SELECT id FROM products WHERE group_id=?').all(id) as { id: number }[]).map((r) => r.id)
+    db.prepare('UPDATE products SET group_id=NULL, variant_label=NULL, variant_sort=0, updated_at=? WHERE group_id=?').run(Date.now(), id)
+    db.prepare('DELETE FROM product_groups WHERE id=?').run(id)
+    return c.json({ ok: true, detached: ids.length })
   })
 
   .get('/modifiers', (c) => {

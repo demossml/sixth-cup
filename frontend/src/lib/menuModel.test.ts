@@ -90,3 +90,45 @@ describe('formatSize / formatKcal', () => {
   })
   it('ккал', () => expect(formatKcal({ calories: 120 })).toBe('120\u00A0ккал'))
 })
+
+describe('размеры: одна плитка на группу', () => {
+  const d = dir({
+    products: [
+      { id: 1, name: 'Капучино 200 мл', price: 200, icon: 'Coffee', sortOrder: 1, groupId: 9, variantLabel: '200 мл', variantSort: 0, sizeValue: 200, sizeUnit: 'ml' },
+      { id: 2, name: 'Капучино 300 мл', price: 300, icon: 'Coffee', sortOrder: 1, groupId: 9, variantLabel: '300 мл', variantSort: 1, sizeValue: 300, sizeUnit: 'ml' },
+      { id: 3, name: 'Круассан', price: 120, icon: 'Croissant', sortOrder: 2 },
+    ],
+    productGroups: [
+      { id: 9, name: 'Капучино', imageUrl: '/uploads/cap.jpg', categoryId: 1, description: 'с молоком', variants: [1, 2] },
+    ],
+  })
+  const items = buildMenuItems(d)
+
+  it('две SKU склеиваются в одну плитку с именем и фото группы', () => {
+    expect(items.map((i) => i.product.id)).toEqual([1, 3])
+    const cap = items[0]
+    expect(cap.product.name).toBe('Капучино')
+    expect(cap.product.imageUrl).toBe('/uploads/cap.jpg')
+    expect(cap.product.description).toBe('с молоком')
+  })
+
+  it('цена плитки — минимальная, варианты отсортированы', () => {
+    const cap = items[0]
+    expect(cap.product.price).toBe(200)
+    expect(cap.variants?.map((v) => [v.label, v.price])).toEqual([['200 мл', 200], ['300 мл', 300]])
+  })
+
+  it('одиночная позиция без группы остаётся без вариантов', () => {
+    expect(items[1].product.name).toBe('Круассан')
+    expect(items[1].variants).toBeFalsy()
+  })
+
+  it('группа из одного доступного размера не склеивается', () => {
+    const one = buildMenuItems(dir({
+      products: [{ id: 1, name: 'Капучино 200 мл', price: 200, icon: 'Coffee', groupId: 9 }],
+      productGroups: [{ id: 9, name: 'Капучино', imageUrl: null, categoryId: null, description: null, variants: [1] }],
+    }))
+    expect(one).toHaveLength(1)
+    expect(one[0].variants).toBeFalsy()
+  })
+})

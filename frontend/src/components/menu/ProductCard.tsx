@@ -23,6 +23,7 @@ type Props = {
 function ProductCard({ item, onSelect, eager = false, defer = false, className = '', badge: badgeProp }: Props) {
   const { product: p } = item
   const badge = badgeProp === undefined ? item.badge : badgeProp
+  const sizes = item.variants ?? []
   const size = formatSize(p)
   const kcal = formatKcal(p)
   const [open, setOpen] = useState(false)
@@ -44,8 +45,12 @@ function ProductCard({ item, onSelect, eager = false, defer = false, className =
         </div>
         <div className="px-2.5 py-2.5">
           <div className="text-[13px] leading-[17px] font-medium text-ink line-clamp-2 min-h-[34px]">{p.name}</div>
-          <div className="text-[12px] leading-4 text-ink-secondary num mt-0.5 min-h-4">{size}</div>
-          <div className="font-display text-[15px] leading-5 font-semibold num text-ink mt-0.5">{formatPrice(p.price)}</div>
+          <div className="text-[12px] leading-4 text-ink-secondary num mt-0.5 min-h-4">
+            {sizes.length > 1 ? sizes.map((v) => v.label).join(' · ') : size}
+          </div>
+          <div className="font-display text-[15px] leading-5 font-semibold num text-ink mt-0.5">
+            {sizes.length > 1 ? `от ${formatPrice(p.price)}` : formatPrice(p.price)}
+          </div>
         </div>
       </button>
 

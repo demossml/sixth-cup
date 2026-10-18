@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { X } from '../../lib/icons'
 import { formatKcal, formatPrice, formatSize, type MenuItem, type ModifierGroup } from '../../lib/menuModel'
 import Badge from './Badge'
@@ -19,6 +19,9 @@ const FOCUSABLE = 'a[href],button:not([disabled]),input,select,textarea,[tabinde
  */
 export default function ProductSheet({ item, groups, onClose, onShowCard }: Props) {
   const { product: p } = item
+  const sizes = item.variants ?? []
+  const [sizeIdx, setSizeIdx] = useState(0)
+  const size = sizes[sizeIdx] ?? null
   const panel = useRef<HTMLElement>(null)
   const closeBtn = useRef<HTMLButtonElement>(null)
 
@@ -51,7 +54,12 @@ export default function ProductSheet({ item, groups, onClose, onShowCard }: Prop
   }, [onClose])
 
   const promo = item.cmsBadge
-  const facts = [formatSize(p), formatKcal(p)].filter(Boolean).join(' · ')
+  // При выборе размера цена и объём берутся у варианта, остальное — у карточки.
+  const price = size ? size.price : p.price
+  const facts = [
+    size ? (size.label || formatSize({ sizeValue: size.sizeValue, sizeUnit: size.sizeUnit })) : formatSize(p),
+    formatKcal(p),
+  ].filter(Boolean).join(' · ')
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/45" role="presentation" onClick={onClose}>
@@ -81,10 +89,34 @@ export default function ProductSheet({ item, groups, onClose, onShowCard }: Prop
             <h2 id="product-sheet-title" className="font-display text-[22px] leading-7 font-semibold text-ink min-w-0 break-words">
               {p.name}
             </h2>
-            <span className="font-display text-[22px] leading-7 font-semibold num text-ink whitespace-nowrap">{formatPrice(p.price)}</span>
+            <span className="font-display text-[22px] leading-7 font-semibold num text-ink whitespace-nowrap">{formatPrice(price)}</span>
           </div>
 
           {facts ? <p className="mt-1 text-[14px] leading-5 text-ink-secondary num">{facts}</p> : null}
+
+          {sizes.length > 1 ? (
+            <section className="mt-3" aria-label="Объём">
+              <h3 className="text-[13px] leading-[18px] font-semibold text-ink mb-1.5">Объём</h3>
+              <div className="flex flex-wrap gap-1.5">
+                {sizes.map((v, i) => (
+                  <button
+                    key={v.productId}
+                    type="button"
+                    aria-pressed={i === sizeIdx}
+                    onClick={() => setSizeIdx(i)}
+                    className={`rounded-full px-3 py-1.5 text-[13px] leading-[18px] num border transition-colors ${
+                      i === sizeIdx
+                        ? 'bg-brand text-white border-brand'
+                        : 'bg-white text-ink border-line active:bg-brand-tint'
+                    }`}
+                  >
+                    {v.label || 'размер'}
+                    <span className={i === sizeIdx ? 'text-white/80' : 'text-ink-secondary'}>{` · ${formatPrice(v.price)}`}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : null}
 
           {promo ? <div className="mt-2"><Badge kind={promo} /></div> : null}
 

@@ -12,6 +12,30 @@ export type MenuProduct = Directory['products'][number] & {
   sizeUnit?: 'g' | 'ml' | null
   /** Ккал на порцию, необязательно. */
   calories?: number | null
+  /** Размеры: id витринной карточки и метка варианта («200 мл»). null — обычная одиночная позиция. */
+  groupId?: number | null
+  variantLabel?: string | null
+  variantSort?: number | null
+}
+
+/** Размер внутри карточки: своя цена, свой productId (на кассе — отдельная позиция). */
+export type MenuVariant = {
+  productId: number
+  label: string
+  price: number
+  sizeValue?: number | null
+  sizeUnit?: 'g' | 'ml' | null
+}
+
+/** Витринная группа из GET /api/directory: одна карточка, внутри id SKU-вариантов. */
+export type MenuGroup = {
+  id: number
+  name: string
+  imageUrl: string | null
+  categoryId: number | null
+  description: string | null
+  sortOrder?: number
+  variants: number[]
 }
 
 export type MenuModifier = { id: number; name: string; price: number; groupKey: string; sortOrder?: number }
@@ -22,6 +46,7 @@ export type MenuDirectory = Omit<Directory, 'products'> & {
   products: MenuProduct[]
   modifiers?: MenuModifier[]
   modifierSchemes?: MenuScheme[]
+  productGroups?: MenuGroup[]
 }
 
 export type BadgeKind = 'new' | 'hit' | 'seasonal'
@@ -46,6 +71,8 @@ export type MenuItem = {
   /** Нормализованный текст для поиска: имя + описание. */
   haystack: string
   nameNorm: string
+  /** Размеры карточки (2+). null/undefined — обычная позиция без выбора объёма. */
+  variants?: MenuVariant[] | null
 }
 
 export function normalize(s: string): string {
@@ -86,19 +113,65 @@ export function cmsBadgesByProduct(dir: MenuDirectory): Map<number, BadgeKind> {
 /** Отсортированный по sortOrder (стабильно, затем id) список позиций с готовыми бейджами и поисковой строкой. */
 export function buildMenuItems(dir: MenuDirectory): MenuItem[] {
   const cms = cmsBadgesByProduct(dir)
-  return [...dir.products]
-    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id)
-    .map((product) => {
-      const cmsBadge = cms.get(product.id) ?? null
-      const nameNorm = normalize(product.name)
-      return {
+  const byId = new Map(dir.products.map((p) => [p.id, p]))
+  const consumed = new Set<number>()
+  const entries: { item: MenuItem; order: number; id: number }[] = []
+
+  const mkItem = (product: MenuProduct, variants: MenuVariant[] | null, ids: number[]): void => {
+    const cmsBadge = ids.map((id) => cms.get(id)).find((b): b is BadgeKind => !!b) ?? null
+    const nameNorm = normalize(product.name)
+    entries.push({
+      item: {
         product,
+        variants,
         cmsBadge,
         badge: cmsBadge,
         nameNorm,
         haystack: product.description ? `${nameNorm} ${normalize(product.description)}` : nameNorm,
-      }
+      },
+      order: product.sortOrder ?? 0,
+      id: product.id,
     })
+  }
+
+  // Карточка с размерами: одна плитка на группу, варианты — внутри (2+ размера, иначе обычная позиция).
+  for (const g of dir.productGroups ?? []) {
+    const members = (g.variants ?? [])
+      .map((id) => byId.get(id))
+      .filter((p): p is MenuProduct => !!p)
+      .sort((a, b) => (a.variantSort ?? 0) - (b.variantSort ?? 0) || a.id - b.id)
+    if (members.length < 2) continue
+    const rep = members[0]
+    for (const m of members) consumed.add(m.id)
+    const variants: MenuVariant[] = members.map((p) => ({
+      productId: p.id,
+      label: p.variantLabel || formatSize(p) || '',
+      price: p.price,
+      sizeValue: p.sizeValue ?? null,
+      sizeUnit: p.sizeUnit ?? null,
+    }))
+    mkItem(
+      {
+        ...rep,
+        name: g.name || rep.name,
+        imageUrl: g.imageUrl ?? rep.imageUrl,
+        description: g.description ?? rep.description,
+        categoryId: g.categoryId ?? rep.categoryId,
+        price: Math.min(...members.map((m) => m.price)),
+      },
+      variants,
+      members.map((m) => m.id),
+    )
+  }
+
+  for (const product of dir.products) {
+    if (consumed.has(product.id)) continue
+    mkItem(product, null, [product.id])
+  }
+
+  return entries
+    .sort((a, b) => a.order - b.order || a.id - b.id)
+    .map((e) => e.item)
 }
 
 /** Ряд «Стоит попробовать»: только позиции с бейджем «Новинка»/«Хит» из CMS. Нет данных — пустой массив (блок не рисуется). */
