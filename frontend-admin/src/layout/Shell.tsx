@@ -16,6 +16,7 @@ const MAIN: NavItem[] = [
 ]
 const MORE: NavItem[] = [
   { to: '/cash', label: 'Касса', icon: <Store size={20} /> },
+  { to: '/staff', label: 'Сотрудники', icon: <Users size={20} /> },
   { to: '/marketing', label: 'Контент', icon: <Gift size={20} /> },
   { to: '/referrals', label: 'Рефералка', icon: <Share2 size={20} /> },
   { to: '/compare', label: 'Сравнение', icon: <BarChart3 size={20} /> },

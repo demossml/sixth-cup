@@ -19,6 +19,7 @@ const Compare = lazy(() => import('./pages/Compare'))
 const BusinessEvents = lazy(() => import('./pages/BusinessEvents'))
 const Assistant = lazy(() => import('./pages/Assistant'))
 const System = lazy(() => import('./pages/System'))
+const Staff = lazy(() => import('./pages/Staff'))
 
 
 function Login({ onOk }: { onOk: (m: Meta) => void }) {
@@ -88,6 +89,7 @@ export default function App() {
             <Route path="events" element={<BusinessEvents />} />
             <Route path="assistant" element={<Assistant />} />
             <Route path="system" element={<System />} />
+            <Route path="staff" element={<Staff />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

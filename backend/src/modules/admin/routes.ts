@@ -1,5 +1,6 @@
 import { adminAssignments } from './assignments'
 import { adminConsole } from './console'
+import { staffAdminRoutes } from '../staff/adminRoutes'
 import { auditMiddleware } from './audit'
 import { enqueueProductSync } from './enqueue'
 import { timingSafeEqual } from 'node:crypto'
@@ -883,3 +884,4 @@ adminRoutes.route('/', adminAssignments)
 adminRoutes.route('/', adminAnalytics)
 adminRoutes.route('/', adminAi)
 adminRoutes.route('/', adminConsole)
+adminRoutes.route('/', staffAdminRoutes)

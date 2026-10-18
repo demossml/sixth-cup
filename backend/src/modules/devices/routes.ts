@@ -15,6 +15,7 @@ import { config } from '../../config'
 import { resolveAndReserve } from '../loyalty/reservations'
 import { log, maskCode, shortId } from '../../lib/logBuffer'
 import { allowLogIngest, entryZ, ingest } from '../logs/routes'
+import { staffDeviceRoutes } from '../staff/deviceRoutes'
 
 export const deviceRoutes = new Hono<DeviceEnv>()
   .get('/ping', (c) => {
@@ -357,3 +358,5 @@ export const deviceRoutes = new Hono<DeviceEnv>()
     const result = applyOnlineSale(deviceId, c.req.valid('json'))
     return c.json(result)
   })
+
+  .route('/', staffDeviceRoutes)
