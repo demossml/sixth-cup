@@ -3,6 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
+import { evotorProxy, evotorProxyStrict } from '../../middleware/evotorProxy'
 import {
   dayKey, deviceUuidFrom, hourlySales, listStaff, monthPrefix,
   salesSummary, staffForDevice, storeIdForUuid, storeUuidFrom, topProducts,
@@ -13,6 +14,9 @@ function parseJsonArr(s: string | null | undefined): unknown[] {
 }
 
 export const staffDeviceRoutes = new Hono()
+  // Same auth model as other /api/devices/* cashier endpoints:
+  // soft proxy when EVOTOR_PROXY_ENFORCE is off; strict on writes.
+  .use('*', evotorProxy)
   .get('/shift/summary', (c) => {
     const storeUuid = storeUuidFrom(c)
     const storeId = storeIdForUuid(storeUuid)
@@ -197,6 +201,7 @@ export const staffDeviceRoutes = new Hono()
   })
 
   .put('/timesheet/wishes',
+    evotorProxyStrict,
     zValidator('json', z.object({
       month: z.string().regex(/^\d{4}-\d{2}$/),
       days: z.array(z.number().int().min(1).max(31)).max(31),
@@ -285,7 +290,7 @@ export const staffDeviceRoutes = new Hono()
     }
   })
 
-  .post('/shift/breaks/start', (c) => {
+  .post('/shift/breaks/start', evotorProxyStrict, (c) => {
     const storeUuid = storeUuidFrom(c)
     const storeId = storeIdForUuid(storeUuid)
     const staff = staffForDevice(deviceUuidFrom(c), storeUuid, storeId)
@@ -307,7 +312,7 @@ export const staffDeviceRoutes = new Hono()
     })
   })
 
-  .post('/shift/breaks/end', (c) => {
+  .post('/shift/breaks/end', evotorProxyStrict, (c) => {
     const storeUuid = storeUuidFrom(c)
     const storeId = storeIdForUuid(storeUuid)
     const staff = staffForDevice(deviceUuidFrom(c), storeUuid, storeId)
