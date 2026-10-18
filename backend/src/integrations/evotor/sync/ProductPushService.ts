@@ -517,6 +517,16 @@ export class ProductPushService {
       .run(storeUuid)
     const linksCleared = Number(clear.changes ?? 0)
 
+    // After wiping Cloud + links, local evotor_products still says SYNCED + old UUID.
+    // enqueue() then skips all products (needsSync=false) → pushed:0, false-green.
+    // Reset tracking so the following push recreates products in Cloud.
+    this.db.prepare(
+      `DELETE FROM evotor_products WHERE store_uuid=? AND (variant='' OR variant IS NULL)`,
+    ).run(storeUuid)
+    this.db.prepare(
+      `DELETE FROM evotor_outbox WHERE store_uuid=? AND entity='PRODUCT' AND status IN ('PENDING','DONE')`,
+    ).run(storeUuid)
+
     const push = await this.pushToStore(storeUuid)
     return {
       listed,
