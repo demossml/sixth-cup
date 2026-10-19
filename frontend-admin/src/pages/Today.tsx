@@ -1,55 +1,22 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { RefreshCw } from 'lucide-react'
 import { api } from '../api/client'
 import { useApi } from '../api/useApi'
-// quality strip from /catalog/quality
 import type { Dashboard, StoreHealth } from '../api/types'
 import { useSyncStores } from '../api/useStores'
 import { ago, fmtDateTime, fmtKop, fmtNum } from '../lib/format'
 import { qs } from '../lib/query'
-import { Badge, Button, Card, EmptyState, ErrorBox, KpiTile, PageHeader, Select, Skeleton, Tabs, useToast } from '../ui/kit'
-import type { Tone } from '../ui/kit'
+import { ErrorBox, Skeleton, useToast } from '../ui/kit'
 import { CardRef, DocStatusBadge, opResult, typeLabel } from './shared'
 import { SimpleBarChart } from '../components/SimpleChart'
+import { HelpLink } from '../components/HelpLink'
 
-const LEVEL: Record<string, { tone: Tone; label: string }> = {
-  ok: { tone: 'ok', label: 'Работает' },
-  warn: { tone: 'warn', label: 'Давно не опрашивалась' },
-  bad: { tone: 'bad', label: 'Проблема' },
-  off: { tone: 'neutral', label: 'Синхронизация выключена' },
-}
-
-function TillCard({ s, now, onPoll, polling }: { s: StoreHealth; now: number; onPoll: () => void; polling: boolean }) {
-  const l = LEVEL[s.level] ?? LEVEL.off
-  return (
-    <Card>
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="truncate font-semibold">{s.name ?? s.uuid.slice(0, 8)}</div>
-          <div className="text-xs text-ink-secondary">последний успешный опрос: {s.lastFastAt ? `${ago(s.lastFastAt, now)} (${fmtDateTime(s.lastFastAt)})` : 'ещё не было'}</div>
-        </div>
-        <Badge tone={l.tone}>{l.label}</Badge>
-      </div>
-      <p className="mt-2 text-sm text-ink-secondary">{s.reason}</p>
-      {s.lastError && <p className="mt-1 break-words text-xs text-bad">{s.lastError}</p>}
-      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-secondary">
-        <span>Чеки с ошибкой: <b className={s.failedDocs ? 'text-bad' : ''}>{s.failedDocs}</b></span>
-        <span>Очередь товаров: <b>{s.outboxPending}</b></span>
-        {s.outboxWithError > 0 && <span className="text-bad">С ошибкой: <b>{s.outboxWithError}</b></span>}
-      </div>
-      {s.enabled && (
-        <Button size="sm" variant="secondary" className="mt-3" icon={<RefreshCw size={14} />} onClick={onPoll} loading={polling}>
-          Опросить сейчас
-        </Button>
-      )}
-    </Card>
-  )
+function weekdayRu(d: Date) {
+  return d.toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' })
 }
 
 export default function Today() {
   const quality = useApi<{ total: number; noPhoto: number; noCategory: number; noLink: number; noScheme: number }>('/catalog/quality')
-
   const [period, setPeriod] = useState<'24h' | 'yesterday' | '7d' | '30d'>('24h')
   const [store, setStore] = useState('')
   const [polling, setPolling] = useState(false)
@@ -59,7 +26,6 @@ export default function Today() {
   const series = useApi<{
     points: { t: string; sellDocs: number; cups: number; revenueRub: number }[]
     totals: { sellDocs: number; cups: number }
-    coverage?: { note?: string }
   }>(`/analytics/series${qs({ period, store })}`)
   const { stores: syncStores } = useSyncStores()
 
@@ -67,10 +33,10 @@ export default function Today() {
     setPolling(true)
     try {
       await api('/evotor/poll', { method: 'POST' })
-      toast.push('Опрос кассы выполнен')
+      toast.push('Опрос кассы запущен')
       reload()
     } catch (e) {
-      toast.push(e instanceof Error ? e.message : 'Не удалось опросить кассу', 'bad')
+      toast.push(e instanceof Error ? e.message : 'Ошибка опроса', 'bad')
     } finally {
       setPolling(false)
     }
@@ -78,153 +44,325 @@ export default function Today() {
 
   const enabledStores = (data?.health.stores ?? []).filter((s) => s.enabled)
   const problems = (data?.health.stores ?? []).filter((s) => s.level === 'bad' || s.level === 'warn')
+  const failN = data ? data.docs.sellFailed + data.docs.paybackFailed : 0
+  const subDate = weekdayRu(new Date())
 
   return (
-    <>
-      <PageHeader
-        title="Сегодня"
-        subtitle="Что происходит на кассе и с начислением чашек"
-        actions={
-          <Select value={store} onChange={(e) => setStore(e.target.value)} aria-label="Точка" className="!w-auto">
+    <section className="view is-active" data-view="today">
+      <div className="page-head">
+        <div>
+          <h1>Сегодня</h1>
+          <p className="page-sub">
+            {subDate} · что происходит на кассе и с начислением чашек
+          </p>
+        </div>
+        <div className="head-actions">
+          <HelpLink article="principles" />
+          <select
+            className="btn btn-ghost"
+            style={{ height: 35 }}
+            value={store}
+            onChange={(e) => setStore(e.target.value)}
+            aria-label="Точка"
+          >
             <option value="">Все точки</option>
             {syncStores.map((s) => (
               <option key={s.uuid} value={s.uuid}>{s.name ?? s.uuid.slice(0, 8)}</option>
             ))}
-          </Select>
-        }
-      />
-      
-      {data?.coverage?.note && (
-        <p className="mb-2 text-xs text-ink-secondary">{data.coverage.note}</p>
-      )}
-      {Array.isArray(data?.exceptions) && data!.exceptions.length > 0 && (
-        <Card className="mb-3">
-          <div className="text-sm font-semibold mb-2">Исключения</div>
-          <ul className="space-y-1 text-sm">
-            {data!.exceptions.map((ex: { id: string; title: string; count: number; href: string; level: string }) => (
-              <li key={ex.id}>
-                <button type="button" className="text-left text-brand font-medium" onClick={() => nav(ex.href)}>
-                  {ex.title}: {ex.count} →
-                </button>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      )}
-{quality.data && (quality.data.noPhoto > 0 || quality.data.noCategory > 0 || quality.data.noLink > 0) && (
-        <Card className="mb-3">
-          <div className="text-sm font-semibold mb-1">Качество каталога</div>
-          <div className="flex flex-wrap gap-3 text-xs text-ink-secondary">
-            <span>Без фото: <b className="text-bad">{quality.data.noPhoto}</b></span>
-            <span>Без категории: <b>{quality.data.noCategory}</b></span>
-            <span>Без связи с кассой: <b>{quality.data.noLink < 0 ? '—' : quality.data.noLink}</b></span>
-            <span>Напитки без схемы: <b>{quality.data.noScheme}</b></span>
-            <a className="text-brand font-semibold" href="#/menu">Исправить →</a>
-            <a className="text-brand font-semibold" href="#/assistant">Помощник →</a>
-          </div>
-        </Card>
-      )}
+          </select>
+          <button type="button" className="btn btn-ghost" onClick={() => reload()}>Обновить</button>
+          <button type="button" className="btn btn-primary" disabled={polling} onClick={poll}>
+            Опросить кассу
+          </button>
+        </div>
+      </div>
 
-      <Tabs
-        items={[{ key: 'yesterday', label: 'Вчера' },
-        { key: '24h', label: '24 часа' }, { key: '7d', label: '7 дней' }, { key: '30d', label: '30 дней' }]}
-        value={period}
-        onChange={setPeriod}
-      />
       {error && <ErrorBox message={error} onRetry={reload} />}
       {loading && !data && (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24" />)}</div>
+        <div className="kpi-grid">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24" />)}</div>
       )}
+
       {data && (
         <>
-          <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-            <KpiTile label="Продаж обработано" value={fmtNum(data.ops.sells)} sub={`чеков с кассы: ${fmtNum(data.docs.sell)}`} />
-            <KpiTile label="Начислено чашек" value={fmtNum(data.ops.cups)} sub={data.ops.cupsReturned ? `возвращено: ${data.ops.cupsReturned}` : undefined} />
-            <KpiTile label="Бесплатных выдано" value={fmtNum(data.ops.free)} />
-            <KpiTile label="Кэшбэк списан, ₽" value={fmtKop(data.ops.cashbackKopecks)} sub={`сумма чеков: ${fmtNum(data.ops.resultRub)} ₽`} />
-            <KpiTile
-              label="Чеки с ошибкой"
-              value={fmtNum(data.docs.sellFailed + data.docs.paybackFailed)}
-              tone={data.docs.sellFailed + data.docs.paybackFailed ? 'bad' : undefined}
-              sub="продажи и возвраты"
-            />
-            <KpiTile
-              label="Продажи без карты"
-              value={fmtNum(data.sellWithoutCard)}
-              tone={data.sellWithoutCard ? 'warn' : undefined}
-              sub="чашки не начислены"
-            />
-            <KpiTile label="Клиентов" value={fmtNum(data.customers)} sub={`новых за период: ${data.newCustomers}`} />
-            <KpiTile label="Последняя операция" value={<span className="text-lg">{data.ops.lastOpAt ? ago(data.ops.lastOpAt, data.now) : '—'}</span>} sub={data.ops.lastOpAt ? fmtDateTime(data.ops.lastOpAt) : 'за период не было'} />
-          </div>
-
-
-          {series.data && series.data.points?.length > 0 && (
-            <Card className="mb-4">
-              <div className="mb-2 text-sm font-semibold">Динамика чеков и чашек</div>
-              <p className="mb-2 text-xs text-ink-secondary">Источник: 6.7 ops / документы. Не полный отчёт Эвотор.</p>
-              <SimpleBarChart
-                label="Чеки SELL"
-                points={series.data.points.map((p) => ({ t: p.t, value: p.sellDocs }))}
-              />
-              <div className="mt-3">
-                <SimpleBarChart
-                  label="Чашки"
-                  color="#0d9488"
-                  points={series.data.points.map((p) => ({ t: p.t, value: p.cups }))}
-                />
+          <div className="kpi-grid">
+            <div className="card kpi">
+              <div className="kpi-top"><span className="kpi-label">Продаж обработано</span></div>
+              <div className="kpi-value">{fmtNum(data.ops.sells)}</div>
+              <div className="kpi-foot">
+                <div>
+                  <div className="kpi-note">чеков SELL: {fmtNum(data.docs.sell)}</div>
+                </div>
               </div>
-            </Card>
-          )}
-
-          {(data.docs.sellFailed + data.docs.paybackFailed > 0 || data.sellWithoutCard > 0) && (
-            <div className="mb-4 flex flex-wrap gap-2">
-              {data.docs.sellFailed + data.docs.paybackFailed > 0 && (
-                <Button size="sm" variant="secondary" onClick={() => nav('/operations?view=errors')}>Показать чеки с ошибкой</Button>
-              )}
-              {data.sellWithoutCard > 0 && (
-                <Button size="sm" variant="secondary" onClick={() => nav('/operations?view=nocard')}>Показать продажи без карты</Button>
-              )}
             </div>
-          )}
-
-          <h2 className="mb-2 text-base font-bold">Кассы</h2>
-          {!data.health.stores.length ? (
-            <Card><EmptyState title="Нет точек" text="Точки подтягиваются из Эвотор. Откройте «Касса» и включите синхронизацию нужной точки." action={<Button size="sm" onClick={() => nav('/cash')}>Открыть «Касса»</Button>} /></Card>
-          ) : (
-            <div className="mb-4 grid gap-3 md:grid-cols-2">
-              {(store ? data.health.stores.filter((s) => s.uuid === store) : enabledStores.length ? enabledStores : data.health.stores).map((s) => (
-                <TillCard key={s.uuid} s={s} now={data.now} onPoll={poll} polling={polling} />
-              ))}
+            <div className="card kpi">
+              <div className="kpi-top"><span className="kpi-label">Начислено чашек</span></div>
+              <div className="kpi-value">{fmtNum(data.ops.cups)}</div>
+              <div className="kpi-foot">
+                <div>
+                  <div className="kpi-note">
+                    {data.ops.cupsReturned ? `возвращено: ${data.ops.cupsReturned}` : 'за период'}
+                  </div>
+                </div>
+              </div>
             </div>
-          )}
-          {problems.length > 0 && null}
-
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-base font-bold">Последние операции</h2>
-            <Button size="sm" variant="ghost" onClick={() => nav('/operations')}>Все операции</Button>
+            <div className="card kpi">
+              <div className="kpi-top"><span className="kpi-label">Бесплатных выдано</span></div>
+              <div className="kpi-value">{fmtNum(data.ops.free)}</div>
+              <div className="kpi-foot">
+                <div><div className="kpi-note">по лояльности</div></div>
+              </div>
+            </div>
+            <div className="card kpi">
+              <div className="kpi-top"><span className="kpi-label">Кэшбэк списан, ₽</span></div>
+              <div className="kpi-value">{fmtKop(data.ops.cashbackKopecks)}</div>
+              <div className="kpi-foot">
+                <div>
+                  <div className="kpi-note">сумма чеков: {fmtNum(data.ops.resultRub)} ₽</div>
+                </div>
+              </div>
+            </div>
           </div>
-          {!data.recent.length ? (
-            <Card><EmptyState title="Операций пока нет" /></Card>
-          ) : (
-            <Card pad={false}>
-              <ul className="divide-y divide-line">
-                {data.recent.map((o) => (
-                  <li key={`${o.storeUuid}/${o.docId}`}>
-                    <button type="button" className="flex min-h-[56px] w-full flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-2.5 text-left hover:bg-brand-light" onClick={() => nav(`/operations?open=${o.storeUuid}/${o.docId}`)}>
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold">{typeLabel(o.type)} {o.number ? `№${o.number}` : ''} <span className="font-normal text-ink-secondary">· {fmtDateTime(o.closedAt)}</span></div>
-                        <div className="truncate text-xs text-ink-secondary">{opResult(o)}</div>
-                      </div>
-                      <div className="flex items-center gap-2 text-sm"><CardRef row={o} /><DocStatusBadge status={o.status} /></div>
-                    </button>
-                  </li>
+
+          <div className="card strip">
+            <div className="strip-item">
+              <div className="strip-label"><span className="dot green" />Клиентов</div>
+              <div className="strip-value">{fmtNum(data.customers)}</div>
+              <div className="strip-note">новых: {data.newCustomers}</div>
+            </div>
+            <div className={`strip-item${data.sellWithoutCard ? ' warn' : ''}`}>
+              <div className="strip-label"><span className="dot amber" />Без карты</div>
+              <div className="strip-value">{fmtNum(data.sellWithoutCard)}</div>
+              <div className="strip-note">чашки не начислены</div>
+            </div>
+            <div className={`strip-item${failN ? ' bad' : ''}`}>
+              <div className="strip-label"><span className="dot red" />Ошибки чеков</div>
+              <div className="strip-value">{fmtNum(failN)}</div>
+              <div className="strip-note">продажи и возвраты</div>
+            </div>
+            <div className="strip-item">
+              <div className="strip-label"><span className="dot" />Последняя</div>
+              <div className="strip-value" style={{ fontSize: 16 }}>
+                {data.ops.lastOpAt ? ago(data.ops.lastOpAt, data.now) : '—'}
+              </div>
+              <div className="strip-note">{data.ops.lastOpAt ? fmtDateTime(data.ops.lastOpAt) : 'не было'}</div>
+            </div>
+          </div>
+
+          <div className="cols">
+            <div className="card">
+              <div className="card-head">
+                <div>
+                  <div className="card-title">Динамика</div>
+                  <div className="card-sub">Чеки и чашки · данные 6.7</div>
+                </div>
+                <div className="right">
+                  <div className="seg">
+                    {(['yesterday', '24h', '7d', '30d'] as const).map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        className={period === p ? 'is-on' : ''}
+                        onClick={() => setPeriod(p)}
+                      >
+                        {p === 'yesterday' ? 'Вчера' : p === '24h' ? '24ч' : p === '7d' ? '7д' : '30д'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              {series.data?.points?.length ? (
+                <div className="chart-wrap">
+                  <SimpleBarChart
+                    label="Чеки SELL"
+                    color="#0f172a"
+                    points={series.data.points.map((p) => ({ t: p.t, value: p.sellDocs }))}
+                  />
+                  <SimpleBarChart
+                    label="Чашки"
+                    color="#1f7a5a"
+                    points={series.data.points.map((p) => ({ t: p.t, value: p.cups }))}
+                  />
+                </div>
+              ) : (
+                <p className="card-sub" style={{ padding: '8px 0' }}>Нет ряда за период</p>
+              )}
+            </div>
+
+            <div className="card attention">
+              <div className="card-head">
+                <div>
+                  <div className="card-title">Требует внимания</div>
+                  <div className="card-sub">Очередь из dashboard</div>
+                </div>
+                <div className="right">
+                  <span className="att-count">{(data.exceptions?.length ?? 0) + (failN ? 1 : 0) + (data.sellWithoutCard ? 1 : 0)}</span>
+                </div>
+              </div>
+              <div className="att-list">
+                {failN > 0 && (
+                  <button type="button" className="att-item" onClick={() => nav('/operations?view=errors')}>
+                    <span className="att-ic red" />
+                    <span className="att-body">
+                      <span className="att-t">Чеки с ошибкой</span>
+                      <span className="att-d">Нужна разборка в Операциях</span>
+                    </span>
+                    <span className="att-n red">{failN}</span>
+                  </button>
+                )}
+                {data.sellWithoutCard > 0 && (
+                  <button type="button" className="att-item" onClick={() => nav('/operations?view=nocard')}>
+                    <span className="att-ic" />
+                    <span className="att-body">
+                      <span className="att-t">Продажи без карты</span>
+                      <span className="att-d">Чашки не начислены</span>
+                    </span>
+                    <span className="att-n">{data.sellWithoutCard}</span>
+                  </button>
+                )}
+                {(data.exceptions ?? []).map((ex) => (
+                  <button key={ex.id} type="button" className="att-item" onClick={() => nav(ex.href)}>
+                    <span className={`att-ic${ex.level === 'bad' ? ' red' : ''}`} />
+                    <span className="att-body">
+                      <span className="att-t">{ex.title}</span>
+                      <span className="att-d">из dashboard</span>
+                    </span>
+                    <span className="att-n">{ex.count}</span>
+                  </button>
                 ))}
-              </ul>
-            </Card>
-          )}
+                {problems.map((s) => (
+                  <button key={s.uuid} type="button" className="att-item" onClick={() => nav('/cash')}>
+                    <span className={`att-ic${s.level === 'bad' ? ' red' : ''}`} />
+                    <span className="att-body">
+                      <span className="att-t">{s.name ?? s.uuid.slice(0, 8)}</span>
+                      <span className="att-d">{s.reason}</span>
+                    </span>
+                    <span className="att-n">→</span>
+                  </button>
+                ))}
+                {!failN && !data.sellWithoutCard && !(data.exceptions?.length) && !problems.length && (
+                  <p className="card-sub" style={{ padding: 12 }}>Пока спокойно</p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="cols" style={{ marginTop: 12 }}>
+            <div className="card table-card">
+              <div className="table-toolbar">
+                <div>
+                  <div className="card-title">Кассы</div>
+                  <div className="card-sub">Статус sync и опроса</div>
+                </div>
+              </div>
+              <div className="table-scroll">
+                <table className="points-table">
+                  <thead>
+                    <tr>
+                      <th>Точка</th>
+                      <th>Статус</th>
+                      <th>Опрос</th>
+                      <th className="num-r">Очередь</th>
+                      <th className="num-r">Ошибки</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(store ? data.health.stores.filter((s) => s.uuid === store) : enabledStores.length ? enabledStores : data.health.stores).map((s: StoreHealth) => (
+                      <tr key={s.uuid}>
+                        <td>
+                          <div className="point-name">
+                            <b>{s.name ?? s.uuid.slice(0, 8)}</b>
+                            <span>{s.enabled ? 'sync on' : 'sync off'}</span>
+                          </div>
+                        </td>
+                        <td>{s.level}</td>
+                        <td>{s.lastFastAt ? ago(s.lastFastAt, data.now) : '—'}</td>
+                        <td className="num-r">{s.outboxPending}</td>
+                        <td className="num-r">{s.failedDocs}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-head">
+                <div>
+                  <div className="card-title">Качество каталога</div>
+                  <div className="card-sub">Пробелы в меню</div>
+                </div>
+                <div className="right">
+                  <button type="button" className="card-link" onClick={() => nav('/menu')}>Меню →</button>
+                </div>
+              </div>
+              <div className="quality-list">
+                {quality.data && (
+                  <>
+                    <button type="button" className="q-item" onClick={() => nav('/menu')}>
+                      <span className="q-ic red" />
+                      <span><span className="q-t">Без фото</span><span className="q-d">карточки товаров</span></span>
+                      <span className="q-n red">{quality.data.noPhoto}</span>
+                    </button>
+                    <button type="button" className="q-item" onClick={() => nav('/menu')}>
+                      <span className="q-ic amber" />
+                      <span><span className="q-t">Без категории</span><span className="q-d">группировка меню</span></span>
+                      <span className="q-n">{quality.data.noCategory}</span>
+                    </button>
+                    <button type="button" className="q-item" onClick={() => nav('/menu')}>
+                      <span className="q-ic amber" />
+                      <span><span className="q-t">Без связи с кассой</span><span className="q-d">Evotor link</span></span>
+                      <span className="q-n">{quality.data.noLink < 0 ? '—' : quality.data.noLink}</span>
+                    </button>
+                    <button type="button" className="q-item" onClick={() => nav('/menu')}>
+                      <span className="q-ic" />
+                      <span><span className="q-t">Без схемы добавок</span><span className="q-d">напитки</span></span>
+                      <span className="q-n">{quality.data.noScheme}</span>
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="card table-card" style={{ marginTop: 12 }}>
+            <div className="table-toolbar">
+              <div>
+                <div className="card-title">Последние операции</div>
+                <div className="card-sub">Из dashboard.recent</div>
+              </div>
+              <div className="right">
+                <button type="button" className="card-link" onClick={() => nav('/operations')}>Все →</button>
+              </div>
+            </div>
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Время</th>
+                    <th>Тип</th>
+                    <th>Точка</th>
+                    <th>Карта</th>
+                    <th>Результат</th>
+                    <th>Статус</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(data.recent ?? []).slice(0, 12).map((o) => (
+                    <tr key={`${o.storeUuid}/${o.docId}`}>
+                      <td>{fmtDateTime(o.closedAt)}</td>
+                      <td>{typeLabel(o.type)}{o.number != null ? ` №${o.number}` : ''}</td>
+                      <td>{o.storeName ?? o.storeUuid.slice(0, 8)}</td>
+                      <td><CardRef row={o} /></td>
+                      <td>{opResult(o)}</td>
+                      <td><DocStatusBadge status={o.status} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </>
       )}
-    </>
+    </section>
   )
 }

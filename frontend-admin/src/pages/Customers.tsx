@@ -5,6 +5,7 @@ import type { CustomerRow } from '../api/types'
 import { fmtDate, fmtKopFixed, fmtNum } from '../lib/format'
 import { qs, setParams } from '../lib/query'
 import { Button, DataTable, ErrorBox, Input, PageHeader, Select, Spinner } from '../ui/kit'
+import { HelpLink } from '../components/HelpLink'
 import type { Column } from '../ui/kit'
 
 const LIMIT = 50
@@ -32,7 +33,7 @@ export default function Customers() {
   const total = data?.total ?? 0
   return (
     <>
-      <PageHeader title="Клиенты" subtitle="Гостевая модель: клиент определяется картой, телефон не хранится" />
+      <PageHeader title="Клиенты" subtitle="Гостевая модель: клиент определяется картой, телефон не хранится" actions={<HelpLink article="map" />} />
       <div className="mb-3 grid gap-2 sm:grid-cols-[1fr_auto]">
         <form onSubmit={(e) => { e.preventDefault(); patch({ q: qInput.trim(), page: null }) }}>
           <Input value={qInput} onChange={(e) => setQInput(e.target.value)} placeholder="Номер карты, id, ник или код приглашения" aria-label="Поиск клиента" />

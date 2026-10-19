@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { api } from '../api/client'
 import { useApi } from '../api/useApi'
 import { Banner, Button, Card, EmptyState, ErrorBox, Input, PageHeader, Select, Spinner, useToast } from '../ui/kit'
+import { HelpLink } from '../components/HelpLink'
 
 type StaffRow = {
   id: number
@@ -143,7 +144,7 @@ export default function Staff() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Сотрудники и табель" subtitle="График и пожелания для экрана «Смена» на кассе Эвотор" />
+      <PageHeader title="Сотрудники и табель" subtitle="График и пожелания для экрана «Смена» на кассе Эвотор" actions={<HelpLink article="map" />} />
 
       <Banner tone="neutral">
         Касса читает табель и пожелания через /api/devices/*. Фискальные операции (внесение, Z-отчёт) по-прежнему делает только Эвотор.

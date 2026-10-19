@@ -3,7 +3,8 @@ import { api } from '../api/client'
 import { useApi } from '../api/useApi'
 import type { EvotorStore, Health } from '../api/types'
 import { ago, fmtDateTime } from '../lib/format'
-import { Badge, Banner, Button, Card, ConfirmDialog, EmptyState, ErrorBox, Field, Input, PageHeader, Spinner, Toggle, useToast } from '../ui/kit'
+import { Badge, Banner, Button, Card, ConfirmDialog, EmptyState, ErrorBox, Field, Input, PageHeader, Spinner, StatusDot, Toggle, useToast } from '../ui/kit'
+import { HelpLink } from '../components/HelpLink'
 import type { Tone } from '../ui/kit'
 
 const LEVEL: Record<string, { tone: Tone; label: string }> = {
@@ -27,21 +28,34 @@ function StoreCard({ s, health, now, onChanged }: { s: EvotorStore; health?: Hea
     <Card>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="truncate text-base font-bold">{s.name ?? s.uuid.slice(0, 8)}</div>
-          {s.address && <div className="truncate text-xs text-ink-secondary">{s.address}</div>}
-          <div className="mt-1 font-mono text-[10px] text-ink-secondary">{s.uuid}</div>
+          <div className="flex items-center gap-2">
+            <StatusDot level={(health?.level as 'ok' | 'warn' | 'bad' | 'off') ?? 'off'} label={l.label} />
+            <div className="truncate text-base font-bold text-ink">{s.name ?? s.uuid.slice(0, 8)}</div>
+          </div>
+          {s.address && <div className="truncate text-[12px] text-ink-secondary">{s.address}</div>}
+          <div className="mt-1 font-mono text-[10px] text-ink-tertiary">{s.uuid}</div>
         </div>
-        <div className="flex items-center gap-2 text-sm"><span>Синхронизация</span>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <span className="text-[11px] font-medium text-ink-tertiary">Синхронизация</span>
           <Toggle checked={!!s.syncEnabled} label={`Синхронизация: ${s.name ?? ''}`} onChange={(v) => run('toggle', async () => { await api(`/evotor/stores/${s.uuid}`, { method: 'PATCH', body: { syncEnabled: v } }); return v ? 'Точка включена' : 'Точка выключена' })} />
         </div>
       </div>
       {s.syncEnabled && health && (
-        <div className="mt-3 space-y-1 text-sm">
-          <div className="flex flex-wrap items-center gap-2"><Badge tone={l.tone}>{l.label}</Badge><span className="text-ink-secondary">последний опрос: {health.lastFastAt ? `${ago(health.lastFastAt, now)} (${fmtDateTime(health.lastFastAt)})` : 'не было'}</span></div>
-          {health.lastError && <div className="text-sm text-danger">{health.lastError}</div>}
+        <div className="mt-3 space-y-1.5 rounded-xl border border-line bg-surface-2/60 px-3 py-2 text-[13px]">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone={l.tone}>{l.label}</Badge>
+            <span className="font-mono text-[12px] text-ink-secondary">
+              опрос: {health.lastFastAt ? `${ago(health.lastFastAt, now)}` : 'не было'}
+            </span>
+          </div>
+          {health.lastError && <div className="break-words text-[12px] text-bad">{health.lastError}</div>}
+          <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-ink-tertiary">
+            <span>ошибки чеков: <b className={health.failedDocs ? 'text-bad' : ''}>{health.failedDocs ?? 0}</b></span>
+            <span>очередь: <b>{health.outboxPending ?? 0}</b></span>
+          </div>
         </div>
       )}
-      {!s.syncEnabled && <p className="mt-3 text-sm text-ink-secondary">Чеки с этой точки не принимаются, товары не выгружаются. Выключите мёртвые точки (404 в логах) — оставьте только актуальный магазин.</p>}
+      {!s.syncEnabled && <p className="mt-3 text-[13px] text-ink-secondary">Чеки не принимаются, каталог не выгружается. Выключите мёртвые точки (404) — оставьте актуальные.</p>}
       {s.syncEnabled && (
         <div className="mt-3 flex flex-wrap gap-2">
           <Button size="sm" variant="secondary" loading={busy === 'sync'} onClick={() => run('sync', async () => { const r = await api<{ ok: boolean; pulled: unknown; failed: number }>(`/evotor/stores/${s.uuid}/sync`, { method: 'POST' }); return r.ok ? 'Каталог синхронизирован' : `Синхронизация с ошибками: ${r.failed}` })}>Синхронизировать каталог</Button>
@@ -166,9 +180,17 @@ export default function Cash() {
   }
   const list = stores.data?.stores ?? []
   return (
-    <>
-      <PageHeader title="Касса" subtitle="Включайте sync только у актуальных точек. Мёртвые uuid (404) — выключите."
-        actions={<Button variant="secondary" loading={syncing} onClick={syncAll}>Синхронизировать все включённые</Button>} />
+    <section className="view is-active" data-view="cash">
+      <div className="page-head">
+        <div>
+          <h1>Касса</h1>
+          <p className="page-sub">Включайте sync только у актуальных точек. Мёртвые uuid (404) — выключите.</p>
+        </div>
+        <div className="head-actions">
+          <HelpLink article="map" label="Разделы" />
+          <button type="button" className="btn btn-primary" disabled={syncing} onClick={syncAll}>Синхронизировать все</button>
+        </div>
+      </div>
       {stores.error && <ErrorBox message={stores.error} onRetry={stores.reload} />}
       {stores.loading && !stores.data && <Spinner />}
       {stores.data && !list.length && <Card><EmptyState title="Точек нет" text="Эвотор не вернул ни одной точки. Добавьте токен ниже или проверьте EVOTOR_API_TOKEN." /></Card>}
@@ -184,6 +206,6 @@ export default function Cash() {
       {emp.data && (!emp.data.employees.length ? <Card><EmptyState title="Сотрудников нет" /></Card> : (
         <Card pad={false}><ul className="divide-y divide-line text-sm">{emp.data.employees.map((e) => <li key={String(e.uuid)} className="flex justify-between gap-2 px-4 py-2.5"><span>{e.name ?? '—'}</span><span className="text-ink-secondary">{e.role ?? ''}</span></li>)}</ul></Card>
       ))}
-    </>
+    </section>
   )
 }

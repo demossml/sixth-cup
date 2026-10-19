@@ -4,6 +4,7 @@ import { normalizeCardCode } from '../../../modules/loyalty/proof'
 import { cashbackOf, freeEarned } from '../../../modules/loyalty/rules'
 import { consumeReservation } from '../../../modules/loyalty/reservations'
 import { extractScRaw } from '../loyaltyExtras'
+import { writeOffSellByNorms } from '../../../modules/admin/stockWriteOff'
 
 type Tx = Record<string, unknown>
 
@@ -236,6 +237,17 @@ export function handleSell(db: Database.Database, storeUuid: string, doc: Record
         .run('loyalty_claim_clamped', user.id, docId, JSON.stringify({ claimedFree, appliedFree, claimedCb, appliedCb, sequenceMatches, claimedSeq: sc.q, currentSeq: state.seq }), now)
     }
   })()
+
+  // Soft stock write-off by norms (audit). Does not affect loyalty; no-op without norms/tables.
+  try {
+    const txs = transactions(doc)
+    const positions = txs
+      .map((tx) => ({ productUuid: productUuid(tx), qty: qty(tx) }))
+      .filter((p) => p.productUuid && p.qty > 0)
+    writeOffSellByNorms(db, storeUuid, docId, positions)
+  } catch {
+    /* ignore */
+  }
 
   return { processed: true }
 }

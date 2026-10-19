@@ -8,6 +8,7 @@ import type { AuditEntry } from '../api/types'
 import { fmtDateTime } from '../lib/format'
 import { qs, setParams } from '../lib/query'
 import { Badge, Banner, Button, Card, Check, ConfirmDialog, DataTable, Drawer, EmptyState, ErrorBox, Input, PageHeader, Select, Spinner, Tabs, useToast } from '../ui/kit'
+import { HelpLink } from '../components/HelpLink'
 import type { Column } from '../ui/kit'
 
 type Tab = 'logs' | 'audit' | 'ai' | 'danger'
@@ -255,7 +256,7 @@ export default function System() {
   const meta = useMeta()
   return (
     <>
-      <PageHeader title="Система" subtitle={meta.production ? 'Рабочий сервер' : 'Режим разработки'} />
+      <PageHeader title="Система" subtitle={meta.production ? 'Рабочий сервер' : 'Режим разработки'} actions={<HelpLink article="roles" label="Роли" />} />
       <Tabs items={[{ key: 'logs', label: 'Логи' }, { key: 'audit', label: 'Журнал' }, { key: 'ai', label: 'ИИ' }, { key: 'danger', label: 'Опасная зона' }]} value={tab} onChange={(k) => setSp(setParams(sp, { tab: k }), { replace: true })} />
       {tab === 'logs' ? <Logs /> : tab === 'audit' ? <Audit /> : tab === 'ai' ? <AiSettings /> : <Danger />}
     </>

@@ -8,6 +8,7 @@ import { useSyncStores } from '../api/useStores'
 import { fmtDateTime, fmtKop, shortId } from '../lib/format'
 import { qs, setParams } from '../lib/query'
 import { Banner, Button, Card, DataTable, Drawer, EmptyState, ErrorBox, Input, PageHeader, Select, Spinner, Tabs, useToast } from '../ui/kit'
+import { HelpLink } from '../components/HelpLink'
 import type { Column } from '../ui/kit'
 import { CardRef, DocStatusBadge, opResult, typeLabel } from './shared'
 
@@ -122,14 +123,25 @@ export default function Operations() {
   ]
 
   return (
-    <>
-      <PageHeader
-        title="Операции"
-        subtitle="Каждый чек с кассы и что с ним сделала система"
-        actions={view !== 'disputes' && (
-          <Button size="sm" variant="secondary" icon={<Download size={14} />} onClick={() => download(`/operations.csv${base.replace(/limit=\d+&?/, '')}`, 'operations.csv').catch((e) => toast.push(String(e.message ?? e), 'bad'))}>CSV</Button>
-        )}
-      />
+    <section className="view is-active" data-view="operations">
+      <div className="page-head">
+        <div>
+          <h1>Операции</h1>
+          <p className="page-sub">Каждый чек с кассы и что с ним сделала система</p>
+        </div>
+        <div className="head-actions">
+          <HelpLink article="principles" />
+          {view !== 'disputes' && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => download(`/operations.csv${base.replace(/limit=\d+&?/, '')}`, 'operations.csv').catch((e) => toast.push(String(e.message ?? e), 'bad'))}
+            >
+              CSV
+            </button>
+          )}
+        </div>
+      </div>
       <Tabs
         items={[{ key: '', label: 'Все' }, { key: 'credited', label: 'Начислено' }, { key: 'nocard', label: 'Без карты' }, { key: 'errors', label: 'Ошибки' }, { key: 'disputes', label: 'Споры' }]}
         value={view}
@@ -167,6 +179,6 @@ export default function Operations() {
         </>
       ) : <Disputes />}
       <OpDrawer id={open} onClose={() => patch({ open: null })} />
-    </>
+    </section>
   )
 }

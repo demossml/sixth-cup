@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { api } from '../api/client'
 import { Button, Card, PageHeader, Input, useToast } from '../ui/kit'
+import { HelpLink } from '../components/HelpLink'
 
 type Mode = 'catalog' | 'content' | 'anomaly' | 'shift'
 
@@ -50,7 +51,7 @@ export default function Assistant() {
       <PageHeader
         title="Помощник"
         subtitle="Черновики и подсказки. Ничего не публикуется само. Ключ и модель — в Система → ИИ (DeepSeek)."
-      />
+       actions={<HelpLink article="principles" />} />
       <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
         <Button loading={busy} onClick={() => run('catalog')}>Разобрать каталог</Button>
         <Button loading={busy} variant="secondary" onClick={() => run('anomaly')}>Почему мало чашек</Button>

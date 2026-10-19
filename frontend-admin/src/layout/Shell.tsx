@@ -1,142 +1,205 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { Activity, BarChart3, Bot, CalendarClock, Coffee, Gift, History, LayoutDashboard, LogOut, MoreHorizontal, Search, Settings, Share2, Store, Users, X } from 'lucide-react'
+import {
+  Activity, BarChart3, Bot, Box, LineChart, CalendarClock, Coffee, Gift, HelpCircle, History,
+  LayoutDashboard, LogOut, ClipboardList, Package, Search, Settings, Menu,
+  Share2, Store, Users, X,
+} from 'lucide-react'
 import { useApi } from '../api/useApi'
 import type { Health } from '../api/types'
 import { ago } from '../lib/format'
-import { Drawer, StatusDot, cx } from '../ui/kit'
 
-type NavItem = { to: string; label: string; short?: string; icon: ReactNode; end?: boolean }
-const MAIN: NavItem[] = [
-  { to: '/', label: 'Сегодня', short: 'Сегодня', icon: <LayoutDashboard size={20} />, end: true },
-  { to: '/operations', label: 'Операции', short: 'Операции', icon: <Activity size={20} /> },
-  { to: '/customers', label: 'Клиенты', short: 'Клиенты', icon: <Users size={20} /> },
-  { to: '/menu', label: 'Меню', short: 'Меню', icon: <Coffee size={20} /> },
-]
-const MORE: NavItem[] = [
-  { to: '/cash', label: 'Касса', icon: <Store size={20} /> },
-  { to: '/staff', label: 'Сотрудники', icon: <Users size={20} /> },
-  { to: '/marketing', label: 'Контент', icon: <Gift size={20} /> },
-  { to: '/referrals', label: 'Рефералка', icon: <Share2 size={20} /> },
-  { to: '/compare', label: 'Сравнение', icon: <BarChart3 size={20} /> },
-  { to: '/events', label: 'События', icon: <CalendarClock size={20} /> },
-  { to: '/assistant', label: 'Помощник', icon: <Bot size={20} /> },
-  { to: '/system', label: 'Система', icon: <Settings size={20} /> },
-  { to: '/legacy', label: 'Старая версия', icon: <History size={20} /> },
+type NavItem = { to: string; label: string; icon: ReactNode; end?: boolean; badge?: 'ai' }
+
+const SHIFT: NavItem[] = [
+  { to: '/', label: 'Сегодня', icon: <LayoutDashboard size={17} />, end: true },
+  { to: '/operations', label: 'Операции', icon: <Activity size={17} /> },
+  { to: '/customers', label: 'Клиенты', icon: <Users size={17} /> },
+  { to: '/menu', label: 'Меню', icon: <Coffee size={17} /> },
 ]
 
-function TillStatus() {
+const MANAGE: NavItem[] = [
+  { to: '/cash', label: 'Касса', icon: <Store size={17} /> },
+  { to: '/stock', label: 'Склад', icon: <Box size={17} /> },
+  { to: '/purchases', label: 'Закупки', icon: <Package size={17} /> },
+  { to: '/inventory', label: 'Инвентаризация', icon: <ClipboardList size={17} /> },
+  { to: '/staff', label: 'Сотрудники', icon: <Users size={17} /> },
+  { to: '/marketing', label: 'Контент', icon: <Gift size={17} /> },
+  { to: '/referrals', label: 'Рефералка', icon: <Share2 size={17} /> },
+]
+
+const ANALYTICS: NavItem[] = [
+  { to: '/analytics', label: 'Аналитика', icon: <LineChart size={17} /> },
+  { to: '/compare', label: 'Сравнение', icon: <BarChart3 size={17} /> },
+  { to: '/events', label: 'События', icon: <CalendarClock size={17} /> },
+  { to: '/assistant', label: 'Помощник', icon: <Bot size={17} />, badge: 'ai' },
+]
+
+const SYSTEM: NavItem[] = [
+  { to: '/help', label: 'Справка', icon: <HelpCircle size={17} /> },
+  { to: '/system', label: 'Система', icon: <Settings size={17} /> },
+  { to: '/legacy', label: 'Старая версия', icon: <History size={17} /> },
+]
+
+const TITLES: Record<string, string> = {
+  '/': 'Сегодня',
+  '/operations': 'Операции',
+  '/customers': 'Клиенты',
+  '/menu': 'Меню',
+  '/cash': 'Касса',
+  '/stock': 'Склад',
+  '/purchases': 'Закупки',
+  '/inventory': 'Инвентаризация',
+  '/staff': 'Сотрудники',
+  '/marketing': 'Контент',
+  '/referrals': 'Рефералка',
+  '/analytics': 'Аналитика',
+  '/compare': 'Сравнение',
+  '/events': 'События',
+  '/assistant': 'Помощник',
+  '/help': 'Справка',
+  '/system': 'Система',
+  '/legacy': 'Старая версия',
+}
+
+function NavGroup({ title, items, onNavigate }: { title: string; items: NavItem[]; onNavigate?: () => void }) {
+  return (
+    <>
+      <div className="nav-cap">{title}</div>
+      {items.map((item) => (
+        <NavLink
+          key={item.to}
+          to={item.to}
+          end={item.end}
+          className={({ isActive }) => `nav-item${isActive ? ' is-active' : ''}`}
+          onClick={onNavigate}
+        >
+          {item.icon}
+          <span className="label">{item.label}</span>
+          {item.badge === 'ai' && <span className="ai">ai</span>}
+        </NavLink>
+      ))}
+    </>
+  )
+}
+
+function TillFoot() {
   const { data } = useApi<Health & { now: number }>('/evotor/health', { refreshMs: 60_000 })
   const nav = useNavigate()
-  if (!data) return <span className="text-xs text-ink-tertiary">касса…</span>
-  const enabled = data.stores.filter((s) => s.enabled)
+  const enabled = data?.stores.filter((s) => s.enabled) ?? []
   const last = enabled.reduce<number | null>((m, s) => (s.lastFastAt && (!m || s.lastFastAt > m) ? s.lastFastAt : m), null)
-  const text = !enabled.length ? 'точки не выбраны' : `последний опрос ${ago(last, data.now)}`
+  const label = !data ? '…' : !enabled.length ? 'точки выкл.' : `опрос ${ago(last, data.now)}`
   return (
-    <button type="button" onClick={() => nav('/')} className="flex min-h-[36px] items-center gap-2 rounded-full px-2 text-xs text-ink-secondary hover:bg-gray-100" title="Статус кассы">
-      <StatusDot level={data.level} label={`Статус кассы: ${data.level}`} />
-      <span className="hidden sm:inline">Касса: {text}</span>
-      <span className="sm:hidden">{enabled.length ? ago(last, data.now) : 'нет точек'}</span>
+    <button type="button" className="side-status" onClick={() => nav('/cash')} title="Касса">
+      <i />
+      <span>{label}</span>
+      <b>6.7</b>
     </button>
   )
 }
 
-function GlobalSearch() {
-  const [q, setQ] = useState('')
-  const [open, setOpen] = useState(false)
+export default function Shell({ onLogout }: { onLogout?: () => void }) {
+  const loc = useLocation()
   const nav = useNavigate()
-  const go = (path: string) => {
-    nav(`${path}${path.includes('?') ? '&' : '?'}q=${encodeURIComponent(q.trim())}`)
-    setOpen(false)
+  const [sideOpen, setSideOpen] = useState(false)
+  const [q, setQ] = useState('')
+
+  const title = useMemo(() => {
+    const path = loc.pathname.replace(/\/$/, '') || '/'
+    if (TITLES[path]) return TITLES[path]
+    const key = Object.keys(TITLES).find((k) => k !== '/' && path.startsWith(k))
+    return key ? TITLES[key] : 'Админка'
+  }, [loc.pathname])
+
+  const closeSide = () => setSideOpen(false)
+
+  const goSearch = (e: React.FormEvent) => {
+    e.preventDefault()
+    const s = q.trim()
+    if (!s) return
+    nav(`/operations?q=${encodeURIComponent(s)}`)
     setQ('')
   }
-  const has = q.trim().length > 0
+
   return (
-    <div className="relative min-w-0 flex-1 sm:max-w-md">
-      <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-tertiary" aria-hidden />
-      <input
-        value={q}
-        onChange={(e) => { setQ(e.target.value); setOpen(true) }}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setTimeout(() => setOpen(false), 150)}
-        onKeyDown={(e) => { if (e.key === 'Enter' && has) go(/^\d+$/.test(q.trim()) ? '/customers' : '/menu') }}
-        placeholder="Номер карты, ник, товар…"
-        aria-label="Поиск"
-        className="min-h-[40px] w-full rounded-full border border-line bg-gray-50 pl-9 pr-3 text-sm focus:border-brand-mid focus:bg-white focus:outline-none"
-      />
-      {open && has && (
-        <div className="absolute left-0 right-0 top-full z-40 mt-1 overflow-hidden rounded-xl border border-line bg-white shadow-soft">
-          {[
-            ['Клиенты', '/customers'],
-            ['Товары', '/menu'],
-            ['Операции (чек/карта)', '/operations'],
-          ].map(([label, path]) => (
-            <button key={path} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => go(path)} className="flex min-h-[44px] w-full items-center justify-between px-3 text-left text-sm hover:bg-brand-light">
-              <span>{label}</span>
-              <span className="max-w-[50%] truncate text-ink-secondary">«{q.trim()}»</span>
-            </button>
-          ))}
+    <div className="app">
+      {sideOpen && <div className="side-backdrop" onClick={closeSide} aria-hidden />}
+      <aside className={`side${sideOpen ? ' is-open' : ''}`}>
+        <div className="brand">
+          <img src="/67coffee-mark.png" alt="6.7 Coffee" />
+          <div className="brand-text">
+            <div className="brand-name">6.7 Coffee</div>
+            <div className="brand-sub">админка</div>
+          </div>
         </div>
-      )}
-    </div>
-  )
-}
 
-export default function Shell({ onLogout }: { onLogout: () => void }) {
-  const [more, setMore] = useState(false)
-  const loc = useLocation()
-  const moreActive = MORE.some((m) => loc.pathname.startsWith(m.to))
-  const link = ({ isActive }: { isActive: boolean }) =>
-    cx('flex min-h-[44px] items-center gap-3 rounded-xl px-3 text-[15px] font-medium', isActive ? 'bg-brand-soft text-brand' : 'text-ink-secondary hover:bg-gray-100')
-  return (
-    <div className="min-h-screen min-w-0 overflow-x-hidden bg-page md:flex">
-      <aside className="hidden w-60 shrink-0 flex-col border-r border-line bg-white p-3 md:flex">
-        <div className="mb-4 px-3 pt-2 text-lg font-extrabold text-brand">6.7 Coffee <span className="block text-xs font-medium text-ink-secondary">Админка</span></div>
-        <nav className="flex flex-1 flex-col gap-1" aria-label="Разделы">
-          {[...MAIN, ...MORE].map((n) => (
-            <NavLink key={n.to} to={n.to} end={n.end} className={link}>{n.icon}{n.label}</NavLink>
-          ))}
+        <nav className="nav" aria-label="Разделы">
+          <NavGroup title="Смена" items={SHIFT} onNavigate={closeSide} />
+          <NavGroup title="Управление" items={MANAGE} onNavigate={closeSide} />
+          <NavGroup title="Аналитика" items={ANALYTICS} onNavigate={closeSide} />
         </nav>
-        <button type="button" onClick={onLogout} className="flex min-h-[44px] items-center gap-3 rounded-xl px-3 text-[15px] text-ink-secondary hover:bg-gray-100">
-          <LogOut size={20} /> Выйти
-        </button>
-      </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex min-w-0 items-center gap-2 border-b border-line bg-white/95 px-3 py-2 backdrop-blur sm:px-4">
-          <span className="text-base font-extrabold text-brand md:hidden">6.7</span>
-          <GlobalSearch />
-          <TillStatus />
-        </header>
-        <main className="mx-auto w-full min-w-0 max-w-6xl flex-1 overflow-x-hidden px-3 pb-[calc(4.5rem+env(safe-area-inset-bottom))] pt-3 sm:px-4 md:pb-8 md:pt-4">
-          <Outlet />
-        </main>
-      </div>
-
-      <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-line bg-white/95 pb-[max(8px,env(safe-area-inset-bottom))] backdrop-blur md:hidden" aria-label="Разделы">
-        {MAIN.map((n) => (
-          <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => cx('flex min-h-[52px] max-w-full flex-col items-center justify-center gap-0.5 px-0.5 text-[10px] font-semibold leading-tight', isActive ? 'text-brand' : 'text-ink-secondary')}>
-            <span className="shrink-0">{n.icon}</span>
-            <span className="max-w-full truncate">{n.short ?? n.label}</span>
-          </NavLink>
-        ))}
-        <button type="button" onClick={() => setMore(true)} className={cx('flex min-h-[52px] flex-col items-center justify-center gap-0.5 px-0.5 text-[10px] font-semibold leading-tight', moreActive ? 'text-brand' : 'text-ink-secondary')}>
-          <MoreHorizontal size={20} />
-          <span>Ещё</span>
-        </button>
-      </nav>
-
-      <Drawer open={more} onClose={() => setMore(false)} title="Ещё">
-        <div className="flex flex-col gap-1">
-          {MORE.map((n) => (
-            <NavLink key={n.to} to={n.to} onClick={() => setMore(false)} className={link}>{n.icon}{n.label}</NavLink>
-          ))}
-          <button type="button" onClick={() => { setMore(false); onLogout() }} className="flex min-h-[44px] items-center gap-3 rounded-xl px-3 text-[15px] text-ink-secondary hover:bg-gray-100">
-            <X size={20} /> Выйти
+        <div className="side-foot">
+          <TillFoot />
+          <NavGroup title="" items={SYSTEM} onNavigate={closeSide} />
+          <div className="side-sep" />
+          <button
+            type="button"
+            className="user"
+            onClick={() => {
+              if (onLogout) onLogout()
+              else {
+                sessionStorage.removeItem('adminToken')
+                localStorage.removeItem('adminToken')
+                window.location.reload()
+              }
+            }}
+          >
+            <span className="avatar">67</span>
+            <span className="user-text">
+              <span className="user-name" style={{ display: 'block' }}>Админ</span>
+              <span className="user-role" style={{ display: 'block' }}>Администратор</span>
+            </span>
+            <span className="out" aria-hidden>
+              <LogOut size={15} />
+            </span>
           </button>
         </div>
-      </Drawer>
+      </aside>
+
+      <div className="main">
+        <header className="topbar">
+          <button
+            type="button"
+            className="mobile-bar btn btn-ghost"
+            style={{ marginRight: 4 }}
+            onClick={() => setSideOpen(true)}
+            aria-label="Меню"
+          >
+            <Menu size={16} />
+          </button>
+          <div className="crumbs">
+            <span>6.7</span>
+            <span className="sep">/</span>
+            <b>{title}</b>
+          </div>
+          <form className="top-search" onSubmit={goSearch} style={{ marginLeft: 'auto' }}>
+            <Search size={14} />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Поиск: чек, карта, клиент…"
+              aria-label="Поиск"
+            />
+          </form>
+        </header>
+        <div className="main-scroll">
+          <div className="view-body">
+            <Outlet />
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

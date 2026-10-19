@@ -21,6 +21,7 @@ import { queryLogs, log, LOG_SOURCES, LOG_LEVELS, type LogLevel, type LogSource 
 import { ProductPushService } from '../../integrations/evotor/sync/ProductPushService'
 import { adminAnalytics } from './analytics'
 import { adminAi } from './ai'
+import { adminStock } from './stock'
 import { getAiSettingsPublic } from '../../lib/aiSettings'
 
 /** Constant-time token comparison. */
@@ -1045,4 +1046,5 @@ adminRoutes.route('/', adminAssignments)
 adminRoutes.route('/', adminAnalytics)
 adminRoutes.route('/', adminAi)
 adminRoutes.route('/', adminConsole)
+adminRoutes.route('/', adminStock)
 adminRoutes.route('/', staffAdminRoutes)

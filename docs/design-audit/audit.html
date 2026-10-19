@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Аудит и редизайн админки 6.7 Coffee: смена, кассы, операции и каталог. Интерактивный прототип на демо-данных.">
+<title>6.7 Coffee — аудит и редизайн админки</title>
+<link rel="icon" href="assets/67coffee-mark.png" type="image/png">
+<link rel="preload" href="assets/fonts/manrope-ui.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/jbmono-ui.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="assets/fonts.css">
+<link rel="stylesheet" href="assets/proposal.css">
+</head>
+<body id="top">
+<a class="skip" href="#demo">Перейти к прототипу</a>
+
+<header class="site-head">
+  <div class="wrap head-in">
+    <a class="logo" href="#top">
+      <img class="head-logo" src="assets/67coffee-mark.png" alt="">
+      6.7 Coffee <span style="color:var(--faint); font-weight:500">/</span> Studio
+    </a>
+    <span class="head-tag">аудит + редизайн</span>
+    <div class="head-right">
+      <a class="head-link" href="index.html">Дизайн-проект</a>
+      <a class="head-link" href="#audit">Аудит</a>
+      <a class="head-link" href="#demo">Прототип</a>
+      <a class="head-cta" href="coffee.html" target="_blank" rel="noopener">
+        Открыть демо
+        <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M3 9 9 3M4 3h5v5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+    </div>
+  </div>
+</header>
+
+<main>
+  <!-- ================= HERO ================= -->
+  <section class="hero">
+    <div class="wrap">
+      <div class="hero-grid">
+        <div>
+          <div class="eyebrow"><i></i> admin.67coffee.ru · аудит интерфейса</div>
+          <h1>Смена важнее <em>тринадцати разделов.</em></h1>
+          <p class="lede">
+            Разобрал админку 6.7 Coffee: <b>13 разделов в одном списке, 8 равных KPI</b>
+            на «Сегодня», статус кассы в шапке и две отдельные диаграммы.
+            Предлагаю собрать экран вокруг смены: деньги, качество данных и очередь
+            действий — без конкуренции за внимание.
+          </p>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="coffee.html" target="_blank" rel="noopener">
+              Открыть прототип
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2.5 6h7M6.5 3l3 3-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+            <a class="btn btn-ghost" href="#audit">Смотреть разбор</a>
+          </div>
+          <ul class="hero-meta">
+            <li><b>13</b>разделов в одном списке</li>
+            <li><b>8</b>KPI с равным весом</li>
+            <li><b>2</b>отдельных графика</li>
+            <li><b>1</b>статус кассы — в шапке</li>
+          </ul>
+        </div>
+
+        <div class="hero-art" aria-hidden="true">
+          <div class="now-card">
+            <div class="now-bar">
+              <i></i><i></i><i></i>
+              <span class="u">admin.67coffee.ru / Сегодня</span>
+              <span class="st"><i></i>Касса: 4 мин</span>
+            </div>
+            <div class="now-body">
+              <div class="now-kpis">
+                <div class="now-kpi"><div class="l">Продаж</div><div class="v">412</div></div>
+                <div class="now-kpi"><div class="l">Чашек</div><div class="v">386</div></div>
+                <div class="now-kpi"><div class="l">Бесплатных</div><div class="v">24</div></div>
+                <div class="now-kpi"><div class="l">Кэшбэк, ₽</div><div class="v">1 240</div></div>
+                <div class="now-kpi"><div class="l">Ошибки</div><div class="v bad">2</div></div>
+                <div class="now-kpi"><div class="l">Без карты</div><div class="v warn">27</div></div>
+                <div class="now-kpi"><div class="l">Клиентов</div><div class="v">6 214</div></div>
+                <div class="now-kpi"><div class="l">Последняя</div><div class="v">12:41</div></div>
+              </div>
+              <div class="now-chart">
+                <div class="ch"><b>Динамика чеков и чашек</b><span>1 284</span></div>
+                <svg viewBox="0 0 320 34" preserveAspectRatio="none" fill="none"><path d="M0 27 C25 26 35 22 55 21 S90 24 112 17 150 9 175 13 215 7 240 10 290 4 320 6" stroke="#002fa7" stroke-width="1.6"/></svg>
+              </div>
+              <div class="now-chart">
+                <div class="ch"><b>Чашки</b><span>386</span></div>
+                <svg viewBox="0 0 320 34" preserveAspectRatio="none" fill="none"><path d="M0 29 C25 27 40 24 60 25 S95 19 118 20 155 14 180 16 220 10 245 13 290 7 320 8" stroke="#0d9488" stroke-width="1.6"/></svg>
+              </div>
+              <div class="now-store"><b>Кассы</b>&nbsp;· 3 точки<span class="tag">Опросить сейчас</span></div>
+            </div>
+          </div>
+          <p class="now-caption">Схема текущего «Сегодня» — не скриншот. Восемь метрик одного веса, два отдельных графика и статус кассы в шапке.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="notice wrap" style="max-width:1112px">
+      <span class="notice-ic">
+        <svg width="14" height="14" viewBox="0 0 18 18" fill="none"><path d="M9 2.8 16 15H2L9 2.8Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M9 7.2v3.3M9 12.8v.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </span>
+      <p>
+        <b>Что я смотрел.</b> Публичную оболочку, разделы, тексты и набор метрик в коде SPA.
+        Внутрь под токеном не заходил — поэтому числа в прототипе демонстрационные,
+        а структура, названия и сценарии взяты из вашего интерфейса.
+        Пришлите доступ или 2–3 скриншота <span class="tag">сверю детали</span> — и доберу остальные разделы.
+      </p>
+    </div>
+  </section>
+
+  <!-- ================= GOOD ================= -->
+  <section class="section" id="audit">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="sec-num">01</span>
+        <span class="sec-kicker">что уже работает</span>
+        <h2>Это не «всё плохо». База сильная</h2>
+      </div>
+
+      <div class="good-grid reveal">
+        <div class="good">
+          <span class="good-ic"><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M2.5 8.5 6 12l7.5-8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <div>
+            <h3>Честные подписи</h3>
+            <p>«Не полный отчёт Эвотор», «Источник: 6.7 ops / документы». Интерфейс не обещает больше, чем знает. Это редкость и это надо сохранить.</p>
+          </div>
+        </div>
+        <div class="good">
+          <span class="good-ic"><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M2.5 8.5 6 12l7.5-8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <div>
+            <h3>Поиск по трём сущностям</h3>
+            <p>Номер карты, ник и товар ведут в клиентов, меню и операции. На телефоне есть нижняя навигация и сценарий «Ещё».</p>
+          </div>
+        </div>
+        <div class="good">
+          <span class="good-ic"><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M2.5 8.5 6 12l7.5-8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <div>
+            <h3>Здоровье касс</h3>
+            <p>Опрос, очередь товаров, ошибки и токены Эвотор. Мёртвые uuid предлагается выключать, а не игнорировать.</p>
+          </div>
+        </div>
+        <div class="good">
+          <span class="good-ic"><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M2.5 8.5 6 12l7.5-8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <div>
+            <h3>Осторожные действия</h3>
+            <p>«Убрать из продажи» вместо удаления, подтверждения на сброс, ИИ готовит черновик и ничего не публикует сам.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= FINDINGS ================= -->
+  <section class="section">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="sec-num">02</span>
+        <span class="sec-kicker">что мешает смене</span>
+        <h2>Семь мест, где интерфейс спорит сам с собой</h2>
+      </div>
+
+      <div class="diag reveal">
+        <div class="diag-row">
+          <div class="diag-n">01</div>
+          <h3>Восемь метрик спорят за внимание<span>«Продаж обработано», «Начислено чашек», «Бесплатных выдано», «Кэшбэк списан», «Чеки с ошибкой», «Без карты», «Клиентов», «Последняя операция» — одинаковые плитки.</span></h3>
+          <div class="diag-fix"><span><b>Четыре главные + полоса «за смену».</b> Деньги и лояльность — крупно. Ошибки, бесплатные и последняя операция — компактно, одним взглядом.</span></div>
+        </div>
+        <div class="diag-row">
+          <div class="diag-n">02</div>
+          <h3>Статус кассы размазан<span>«Касса: последний опрос» живёт в шапке, а «Опросить сейчас» — в каждой карточке точки. Непонятно, где главное действие.</span></h3>
+          <div class="diag-fix"><span><b>Один статус, одна таблица, одно действие.</b> Шапка показывает состояние, «Кассы» — строки точек, кнопка опроса одна на смену.</span></div>
+        </div>
+        <div class="diag-row">
+          <div class="diag-n">03</div>
+          <h3>Две диаграммы не сравниваются<span>Чеки и чашки — два отдельных блока друг под другом. Свои масштабы, разный hover, общий смысл теряется.</span></h3>
+          <div class="diag-fix"><span><b>Один график — два ряда.</b> «Чеки / чашки» на общей шкале времени, одна подсказка, один период. Сравнение в одно движение.</span></div>
+        </div>
+        <div class="diag-row">
+          <div class="diag-n">04</div>
+          <h3>Тринадцать разделов одним списком<span>«Старая версия» стоит рядом с «Сегодня», «Помощник» — на уровне «Системы». Плоский список не помогает выбрать, куда идти.</span></h3>
+          <div class="diag-fix"><span><b>Три группы:</b> смена → управление → аналитика. «Старую версию» — в «Систему», техническое — туда же. Не ежедневное не должно занимать первый экран.</span></div>
+        </div>
+        <div class="diag-row">
+          <div class="diag-n">05</div>
+          <h3>Бренд потерялся<span>Логотип — жёлтая лама на тёмно-синем <span class="ev">#0F172A</span>, а интерфейс — синий <span class="ev">#002FA7</span> на <span class="ev">system-ui</span>. Цвет и шрифт не связаны с кофейней.</span></h3>
+          <div class="diag-fix"><span><b>Палитра из логотипа:</b> navy, llama yellow, cream. Manrope для текста, JetBrains Mono для цифр. Жёлтый — только на главном действии и активном пункте.</span></div>
+        </div>
+        <div class="diag-row">
+          <div class="diag-n">06</div>
+          <h3>Технический язык на экране смены<span>«ops», «sync», «poll», «uuid», «PWA», «X-Authorization». Часть неизбежна, но не в заголовках и не в ежедневных действиях.</span></h3>
+          <div class="diag-fix"><span><b>Развести язык по аудитории.</b> На смене — «касса», «выгрузка», «очередь». В «Системе» — токены, uuid и sync: там это уместно.</span></div>
+        </div>
+        <div class="diag-row">
+          <div class="diag-n">07</div>
+          <h3>Мобильное «Ещё» — свалка<span>Пять пунктов внизу, остальные девять — в одной шторке без групп. На телефоне это самый частый способ добраться до кассы и меню.</span></h3>
+          <div class="diag-fix"><span><b>Группировать и там.</b> Смена, каталог, клиенты — внизу. Касса, контент и аналитика — в «Ещё», но по смыслу, а не одним столбцом.</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= PROTOTYPE ================= -->
+  <section class="section" id="demo">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="sec-num">03</span>
+        <span class="sec-kicker">рабочий прототип</span>
+        <h2>Смена, операции, клиенты, меню и касса</h2>
+      </div>
+      <p class="sec-note reveal">
+        Все разделы на демо-данных: смена, операции, клиенты, меню, касса, склад, закупки, сроки, заказы, инвентаризация, аналитика, справка,
+        сотрудники, контент, рефералка, сравнение, события, помощник и система. Работают ⌘K, фильтры,
+        drawer чека, редактор товара, группы и схемы, график смен и настройки ИИ.
+      </p>
+
+      <div class="browser reveal">
+        <div class="browser-bar">
+          <i></i><i></i><i></i>
+          <span class="url">6.7 Coffee / Сегодня · редизайн</span>
+          <span class="live"><i></i>live demo</span>
+        </div>
+        <iframe src="coffee.html" title="Интерактивный прототип админки 6.7 Coffee"></iframe>
+      </div>
+
+      <div class="demo-hints reveal">
+        <span class="hint"><kbd>⌘K</kbd> поиск по всему</span>
+        <span class="hint">Чипы <kbd>Начислено / Без карты</kbd></span>
+        <span class="hint">Строка чека → drawer</span>
+        <span class="hint">Каталог → «Без фото»</span>
+        <span class="hint">Меню → «Группы» и «Схемы»</span>
+        <span class="hint">Склад → сроки, остатки и инвентаризация</span>
+        <span class="hint">Закупки → заказы и возвраты</span>
+        <span class="hint">Аналитика → heatmap и выводы</span>
+        <span class="hint">Справка → сценарии со схемами</span>
+        <span class="hint">Закупки → долг и оплаты</span>
+        <span class="hint">ИИ → карточки и ассистент</span>
+        <a class="open-link" href="coffee.html" target="_blank" rel="noopener">
+          Открыть прототип
+          <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M3 9 9 3M4 3h5v5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= DECISIONS ================= -->
+  <section class="section">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="sec-num">04</span>
+        <span class="sec-kicker">до / после</span>
+        <h2>Три решения крупным планом</h2>
+      </div>
+
+      <!-- charts -->
+      <div class="cmp-pair reveal">
+        <div class="cmp-label">
+          <div class="k">01 / данные</div>
+          <h3>Один график вместо двух</h3>
+          <p>Общая шкала времени, один hover. Видно, где чашки отстают от чеков — это и есть сигнал.</p>
+        </div>
+        <div class="pair">
+          <div class="shot shot-before">
+            <div class="shot-top"><span class="dot"></span><b class="bad">до · два блока, две шкалы</b></div>
+            <div class="shot-body" style="padding:10px">
+              <div class="mini-chart before-old">
+                <div class="mc-head"><b>Динамика чеков и чашек</b><span>Источник: 6.7 ops</span></div>
+                <svg viewBox="0 0 300 43" preserveAspectRatio="none" fill="none"><path d="M0 34 C25 32 40 26 60 27 S95 22 120 20 155 25 180 16 220 9 245 12 280 5 300 7" stroke="#002fa7" stroke-width="1.6"/></svg>
+              </div>
+              <div class="mini-chart before-old">
+                <div class="mc-head"><b>Чашки</b><span>свой масштаб</span></div>
+                <svg viewBox="0 0 300 43" preserveAspectRatio="none" fill="none"><path d="M0 36 C25 34 40 30 60 29 S95 25 120 27 155 20 180 22 220 14 245 17 280 10 300 11" stroke="#0d9488" stroke-width="1.6"/></svg>
+              </div>
+              <div class="mc-note">два периода · два графика · два hover</div>
+            </div>
+          </div>
+          <div class="shot">
+            <div class="shot-top"><span class="dot"></span><b class="good">после · один график, два ряда</b></div>
+            <div class="shot-body" style="padding:10px">
+              <div class="mini-chart after-new">
+                <div class="mc-head"><b>Чеки и чашки</b><span>24 часа</span></div>
+                <svg viewBox="0 0 300 96" preserveAspectRatio="none" fill="none">
+                  <defs><linearGradient id="miniFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fbbf24" stop-opacity=".24"/><stop offset="1" stop-color="#fbbf24" stop-opacity="0"/></linearGradient></defs>
+                  <line x1="0" y1="28" x2="300" y2="28" stroke="#ece5d8" stroke-dasharray="2 4"/>
+                  <line x1="0" y1="55" x2="300" y2="55" stroke="#ece5d8" stroke-dasharray="2 4"/>
+                  <path d="M0 78 C25 74 40 62 60 60 S95 50 120 54 155 38 180 42 220 24 245 28 280 15 300 18 L300 96 0 96 Z" fill="url(#miniFill)"/>
+                  <path d="M0 78 C25 74 40 62 60 60 S95 50 120 54 155 38 180 42 220 24 245 28 280 15 300 18" stroke="#b45309" stroke-width="1.6"/>
+                  <path d="M0 84 C25 82 40 70 60 68 S95 60 120 62 155 48 180 51 220 34 245 37 280 25 300 27" stroke="#0f172a" stroke-width="1.7"/>
+                </svg>
+                <div class="mc-legend"><span><i class="navy"></i>Чеки SELL</span><span><i class="amber"></i>Чашки</span><span style="margin-left:auto">428 / 386</span></div>
+              </div>
+              <div class="mc-note">одна шкала · один hover · сравнение сразу</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- cash -->
+      <div class="cmp-pair reveal">
+        <div class="cmp-label">
+          <div class="k">02 / касса</div>
+          <h3>Одна таблица вместо карточек</h3>
+          <p>Три точки, три статуса. Опросить можно одну или все — но действие больше не повторяется в каждой карточке.</p>
+        </div>
+        <div class="pair">
+          <div class="shot shot-before">
+            <div class="shot-top"><span class="dot"></span><b class="bad">до · карточка на точку</b></div>
+            <div class="shot-body" style="padding:10px">
+              <div class="store-mini">
+                <div class="sm-h"><b>Арбат</b><span class="bad">Давно не опрашивалась</span></div>
+                <div class="sm-d">последний успешный опрос: 3 ч 12 мин назад. Касса работает, но очередь растёт.</div>
+                <div class="sm-s"><span>Чеки с ошибкой: <b>0</b></span><span>Очередь: <b>14</b></span></div>
+                <span class="sm-btn">Опросить сейчас</span>
+              </div>
+              <div class="store-mini">
+                <div class="sm-h"><b>Депо</b><span class="bad">Проблема</span></div>
+                <div class="sm-d">последний успешный опрос: 26 мин назад. Товар не выгружается, ошибка синхронизации.</div>
+                <div class="sm-s"><span>Чеки с ошибкой: <b>2</b></span><span>Очередь: <b>6</b></span></div>
+                <span class="sm-btn">Опросить сейчас</span>
+              </div>
+            </div>
+          </div>
+          <div class="shot">
+            <div class="shot-top"><span class="dot"></span><b class="good">после · строки и одно действие</b></div>
+            <div class="shot-body" style="padding:10px 12px">
+              <div class="mini-table">
+                <div class="mtr mtr-head" style="grid-template-columns:1.25fr .95fr .85fr .55fr"><span>Точка</span><span>Статус</span><span>Опрос</span><span>Очередь</span></div>
+                <div class="mtr"><div><div class="nm">Покровка</div><div class="ad">ул. Покровка, 17</div></div><span class="pill green" style="justify-self:start">Работает</span><span class="muted">4 мин</span><span class="num">0</span></div>
+                <div class="mtr"><div><div class="nm">Арбат</div><div class="ad">Новый Арбат, 21</div></div><span class="pill amber" style="justify-self:start">Давно</span><span class="muted">3 ч 12 м</span><span class="num">14</span></div>
+                <div class="mtr"><div><div class="nm">Депо</div><div class="ad">ул. Лесная, 5</div></div><span class="pill red" style="justify-self:start">Проблема</span><span class="muted">26 мин</span><span class="num">6</span></div>
+              </div>
+              <div class="mc-note" style="margin-top:6px">Опросить все · одна кнопка на смену</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- nav/brand -->
+      <div class="cmp-pair reveal">
+        <div class="cmp-label">
+          <div class="k">03 / оболочка</div>
+          <h3>Навигация и бренд</h3>
+          <p>Слева 13 пунктов и синий из Tailwind. Справа — группировка, тёмный navy и жёлтая лама, которая уже есть в логотипе.</p>
+        </div>
+        <div class="pair">
+          <div class="shot shot-before">
+            <div class="shot-top"><span class="dot"></span><b class="bad">до · 13 пунктов · #002FA7</b></div>
+            <div class="shot-body" style="padding:10px">
+              <div class="mini-side">
+                <div class="ms-brand"><b>6.7 Coffee</b><span>Админка</span></div>
+                <div class="ms-flat">
+                  <span class="on">Сегодня</span><span>Операции</span><span>Клиенты</span><span>Меню</span><span>Касса</span><span>Сотрудники</span><span>Контент</span><span>Рефералка</span><span>Сравнение</span><span>События</span><span>Помощник</span><span>Система</span><span class="old">Старая версия</span>
+                </div>
+              </div>
+              <div class="mc-note">system-ui · один список · «Старая версия» в главном меню</div>
+            </div>
+          </div>
+          <div class="shot">
+            <div class="shot-top"><span class="dot"></span><b class="good">после · 3 группы · navy + yellow</b></div>
+            <div class="shot-body" style="padding:10px">
+              <div class="mini-side dark">
+                <div class="ms-brand"><img src="assets/67coffee-mark.png" alt=""><b>6.7 Coffee</b><span>админка</span></div>
+                <div class="ms-cap">Смена</div>
+                <div class="ms-item on">Сегодня</div>
+                <div class="ms-item">Операции</div>
+                <div class="ms-item">Клиенты</div>
+                <div class="ms-item">Меню</div>
+                <div class="ms-cap">Управление</div>
+                <div class="ms-item">Касса</div>
+                <div class="ms-item">Склад</div>
+                <div class="ms-item">Закупки</div>
+                <div class="ms-item">Сотрудники</div>
+                <div class="ms-item">Контент</div>
+                <div class="ms-cap">Аналитика</div>
+                <div class="ms-item">Сравнение</div>
+                <div class="ms-item">Помощник</div>
+              </div>
+              <div class="mc-note">Manrope · группы · старая версия — в «Системе»</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= SYSTEM ================= -->
+  <section class="section">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="sec-num">05</span>
+        <span class="sec-kicker">дизайн-система</span>
+        <h2>Цвет и шрифт — из вашего логотипа</h2>
+      </div>
+
+      <div class="system-grid reveal">
+        <div>
+          <div class="sys-title">Палитра · 6 токенов</div>
+          <div class="swatches">
+            <div class="sw"><i style="background:#0f172a"></i><div><b>Navy</b><span>#0F172A</span></div></div>
+            <div class="sw"><i style="background:#fbbf24"></i><div><b>Llama yellow</b><span>#FBBF24</span></div></div>
+            <div class="sw"><i style="background:#f5f0e6"></i><div><b>Cream</b><span>#F5F0E6</span></div></div>
+            <div class="sw"><i style="background:#fffdf8"></i><div><b>Surface</b><span>#FFFDF8</span></div></div>
+            <div class="sw"><i style="background:#151a24"></i><div><b>Ink</b><span>#151A24</span></div></div>
+            <div class="sw"><i style="background:#e4ddcf"></i><div><b>Line</b><span>#E4DDCF</span></div></div>
+          </div>
+          <p class="sw-src"><b>Navy и yellow взяты пипеткой из logo-mark.png.</b> Cream — фон, чтобы интерфейс не был ещё одним серым дашбордом.</p>
+          <div class="rules">
+            <div class="rule-item"><span><b>Жёлтый — только для главного:</b> CTA, активный раздел, логотип. Не для фонов карточек и не для текста.</span></div>
+            <div class="rule-item"><span><b>Navy держит структуру:</b> сайдбар, заголовки, цифры, primary-график.</span></div>
+            <div class="rule-item"><span><b>Семантика отдельно:</b> зелёный / янтарный / красный — только статусы. Не брендовые цвета.</span></div>
+            <div class="rule-item"><span><b>Тени — у всплывающего.</b> В контенте — линии и воздух, без elevation.</span></div>
+          </div>
+          <div class="contrast-note">
+            <svg width="14" height="14" viewBox="0 0 18 18" fill="none" style="flex:none;margin-top:1px"><path d="M9 2.8 16 15H2L9 2.8Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M9 7.2v3.3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            <span><b>Контраст:</b> жёлтая кнопка с navy-текстом — 10,7:1, ink на cream — 15,3:1, muted — 4,8:1. Все тексты проходят 4,5:1.</span>
+          </div>
+        </div>
+
+        <div>
+          <div class="sys-title">Типографика · Manrope + JetBrains Mono</div>
+          <div class="type-spec">
+            <div class="type-row">
+              <div class="meta"><b>H1</b>Manrope 800<br>27 / 1.15</div>
+              <div class="sample"><div class="sample-display">Сегодня</div></div>
+            </div>
+            <div class="type-row">
+              <div class="meta"><b>H2</b>Manrope 750<br>17 / 1.3</div>
+              <div class="sample"><div class="sample-h">Требует внимания</div></div>
+            </div>
+            <div class="type-row">
+              <div class="meta"><b>Body</b>Manrope 500<br>13 / 1.5</div>
+              <div class="sample"><div class="sample-body">Гостевая модель: клиент определяется картой, телефон не хранится.</div></div>
+            </div>
+            <div class="type-row">
+              <div class="meta"><b>Label</b>Manrope 700<br>11 / +0.04em</div>
+              <div class="sample"><div class="sample-label">Продаж обработано</div></div>
+            </div>
+            <div class="type-row">
+              <div class="meta"><b>Figures</b>JetBrains Mono<br>26 / tabular</div>
+              <div class="sample"><div class="sample-num">1 284 600 ₽</div></div>
+            </div>
+          </div>
+          <p class="type-note">
+            <b>Было:</b> system-ui, который на Windows, macOS и Android выглядит по-разному.
+            <b>Стало:</b> Manrope с полноценной кириллицей и табличными цифрами в моноширинном —
+            суммы в колонках не «прыгают». Оба шрифта лежат локально, без CDN.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= PLAN ================= -->
+  <section class="section">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="sec-num">06</span>
+        <span class="sec-kicker">как внедрять</span>
+        <h2>Не переписывать всё сразу</h2>
+      </div>
+
+      <div class="plan reveal">
+        <div class="step">
+          <div class="sn">01</div>
+          <h3>Оболочка и «Сегодня»</h3>
+          <p>Сайдбар, шапка, KPI, один график, очередь внимания. Здесь 80% ежедневного времени.</p>
+          <span class="dur">2–3 дня</span>
+        </div>
+        <div class="step">
+          <div class="sn">02</div>
+          <h3>Операции и качество меню</h3>
+          <p>Таблица с фильтрами, drawer чека, фильтр проблем каталога и выгрузка в Эвотор.</p>
+          <span class="dur">3–4 дня</span>
+        </div>
+        <div class="step">
+          <div class="sn">03</div>
+          <h3>Касса, клиенты, мобильный сценарий</h3>
+          <p>Один экран синхронизации, карточка клиента по карте, мобильная навигация смены.</p>
+          <span class="dur">3–4 дня</span>
+        </div>
+        <div class="step">
+          <div class="sn">04</div>
+          <h3>Остальные разделы</h3>
+          <p>Сотрудники, контент, рефералка, сравнение, события — на тех же компонентах. «Старая версия» — в «Систему».</p>
+          <span class="dur">2–3 дня</span>
+        </div>
+      </div>
+      <div class="plan-cta reveal">
+        <b>Приоритет — смена и операционный разбор.</b> Остальные разделы не ломаем, а переносим на общий язык.
+        <a href="coffee.html" target="_blank" rel="noopener">Посмотреть прототип →</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= FOOTER CTA ================= -->
+  <section class="wrap">
+    <div class="footer-cta reveal">
+      <div class="eyebrow"><i></i> следующий шаг</div>
+      <h2>Все разделы собраны. Дальше — ваши данные.</h2>
+      <p>
+        В прототипе уже есть смена, операции, клиенты, меню с редактором, касса,
+        сотрудники, контент, рефералка, сравнение, события, помощник и система.
+        Следующий шаг — перенести компоненты на ваш API и сверить реальные цифры.
+      </p>
+      <div class="send-list">
+        <span>доступ или <b>2–3 скриншота</b></span>
+        <span><b>2–3</b> частых сценария</span>
+        <span>что бесит <b>больше всего</b></span>
+        <span>приоритет: <b>касса / меню</b></span>
+      </div>
+      <div class="footer-actions">
+        <a class="btn btn-primary" href="coffee.html" target="_blank" rel="noopener">Открыть прототип</a>
+        <a class="btn btn-ghost" href="#top">Вернуться к началу</a>
+      </div>
+    </div>
+  </section>
+
+  <div class="wrap site-foot">
+    <span class="mono">6.7 Coffee · аудит + редизайн</span>
+    <span>Демо-данные, не реальные показатели</span>
+    <span class="sp">Manrope + JetBrains Mono · без внешних CDN</span>
+  </div>
+</main>
+
+<script>
+  (function () {
+    if (!('IntersectionObserver' in window)) {
+      document.querySelectorAll('.reveal').forEach(function (el) { el.classList.add('in'); });
+      return;
+    }
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('in');
+          io.unobserve(entry.target);
+        }
+      });
+    }, { rootMargin: '0px 0px -8% 0px', threshold: 0.06 });
+    document.querySelectorAll('.reveal').forEach(function (el) { io.observe(el); });
+  })();
+</script>
+</body>
+</html>

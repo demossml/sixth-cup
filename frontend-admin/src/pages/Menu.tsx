@@ -1,5 +1,6 @@
 import { useSearchParams } from 'react-router-dom'
 import { PageHeader, Tabs } from '../ui/kit'
+import { HelpLink } from '../components/HelpLink'
 import { setParams } from '../lib/query'
 import MenuProducts from './MenuProducts'
 import MenuGroups from './MenuGroups'
@@ -11,7 +12,7 @@ export default function Menu() {
   const section = (sp.get('section') ?? 'products') as Section
   return (
     <>
-      <PageHeader title="Меню" subtitle="Товары, группы и добавки. Изменения сами уходят в Эвотор на включённые точки" />
+      <PageHeader title="Меню" subtitle="Товары, группы, добавки; нормы списания — в карточке товара. Синк в Эвотор на включённые точки" actions={<HelpLink article="logic-coffee" label="Нормы" />} />
       <Tabs
         items={[{ key: 'products', label: 'Товары' }, { key: 'groups', label: 'Группы' }, { key: 'modifiers', label: 'Добавки' }, { key: 'schemes', label: 'Схемы добавок' }]}
         value={section}

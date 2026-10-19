@@ -79,6 +79,61 @@ function ProductDrawer({ draft, onClose, onSaved, categories, schemes, stores, p
       .catch(() => {})
     return () => { cancelled = true }
   }, [draft?.id])
+
+  type StockNormRow = { id: number; stockItemId: number; qty: number; itemName?: string; unit?: string }
+  type StockItemOpt = { id: number; name: string; unit: string }
+  const [stockNorms, setStockNorms] = useState<StockNormRow[]>([])
+  const [stockItems, setStockItems] = useState<StockItemOpt[]>([])
+  const [normItemId, setNormItemId] = useState('')
+  const [normQty, setNormQty] = useState('18')
+  const [normBusy, setNormBusy] = useState(false)
+
+  useEffect(() => {
+    if (!draft?.id) { setStockNorms([]); return }
+    let cancelled = false
+    api<{ norms: StockNormRow[] }>(`/stock/norms?productId=${draft.id}`)
+      .then((r) => { if (!cancelled) setStockNorms(r.norms ?? []) })
+      .catch(() => { if (!cancelled) setStockNorms([]) })
+    return () => { cancelled = true }
+  }, [draft?.id])
+
+  useEffect(() => {
+    let cancelled = false
+    api<{ items: StockItemOpt[] }>('/stock/items?active=1')
+      .then((r) => { if (!cancelled) setStockItems((r.items ?? []).map((i) => ({ id: i.id, name: i.name, unit: i.unit }))) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
+
+  const addNorm = async () => {
+    if (!d?.id || !normItemId) return
+    setNormBusy(true)
+    try {
+      await api('/stock/norms', {
+        method: 'POST',
+        body: { productId: d.id, stockItemId: Number(normItemId), qty: Number(normQty) || 0 },
+      })
+      toast.push('Норма склада сохранена')
+      const r = await api<{ norms: StockNormRow[] }>(`/stock/norms?productId=${d.id}`)
+      setStockNorms(r.norms ?? [])
+      setNormItemId('')
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка нормы', 'bad')
+    } finally { setNormBusy(false) }
+  }
+
+  const removeNorm = async (id: number) => {
+    if (!d?.id) return
+    setNormBusy(true)
+    try {
+      await api(`/stock/norms/${id}`, { method: 'DELETE' })
+      setStockNorms((rows) => rows.filter((x) => x.id !== id))
+      toast.push('Норма удалена')
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+    } finally { setNormBusy(false) }
+  }
+
 if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} />
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD({ ...d, [k]: v })
 
@@ -372,6 +427,54 @@ if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} /
       </details>
       {d.id && d.evotorLinks && d.evotorLinks.some((l) => l.lastError) && (
         <Banner tone="bad">Последняя выгрузка в Эвотор: {d.evotorLinks.find((l) => l.lastError)?.lastError}</Banner>
+      )}
+
+      {d.id ? (
+        <details className="rounded-xl border border-line open:shadow-sm">
+          <summary className="cursor-pointer px-3 py-2.5 text-[14px] font-semibold">Списание со склада (нормы)</summary>
+          <div className="space-y-3 border-t border-line px-3 py-3">
+            <p className="text-[12px] text-ink-secondary">
+              Сколько сырья списывать с одной продажи. Без нормы SELL не уменьшает остаток.
+            </p>
+            {stockNorms.length > 0 && (
+              <ul className="divide-y divide-line rounded-xl border border-line">
+                {stockNorms.map((n) => (
+                  <li key={n.id} className="flex items-center justify-between gap-2 px-3 py-2 text-[13px]">
+                    <span>
+                      <span className="font-medium">{n.itemName ?? n.stockItemId}</span>
+                      <span className="ml-2 font-mono text-ink-secondary">{n.qty} {n.unit ?? ''}</span>
+                    </span>
+                    <Button size="sm" variant="ghost" loading={normBusy} onClick={() => removeNorm(n.id)}>Удалить</Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {!stockNorms.length && (
+              <p className="text-[12px] text-warn">Норм нет — позиция в риске на складе.</p>
+            )}
+            <div className="grid gap-2 sm:grid-cols-3">
+              <Field label="Позиция склада">
+                <Select value={normItemId} onChange={(e) => setNormItemId(e.target.value)}>
+                  <option value="">—</option>
+                  {stockItems.map((it) => (
+                    <option key={it.id} value={it.id}>{it.name} ({it.unit})</option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Кол-во на 1 шт.">
+                <Input type="number" min={0} step="any" value={normQty} onChange={(e) => setNormQty(e.target.value)} />
+              </Field>
+              <div className="flex items-end">
+                <Button size="sm" loading={normBusy} disabled={!normItemId || !stockItems.length} onClick={addNorm}>Добавить</Button>
+              </div>
+            </div>
+            {!stockItems.length && (
+              <p className="text-[12px] text-ink-secondary">Сначала заведите номенклатуру в разделе «Склад».</p>
+            )}
+          </div>
+        </details>
+      ) : (
+        <p className="text-[12px] text-ink-secondary">Сохраните товар, чтобы задать нормы списания.</p>
       )}
     </Drawer>
   )

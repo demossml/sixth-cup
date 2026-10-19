@@ -13,18 +13,19 @@ type BtnProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 }
 export function Button({ variant = 'primary', size = 'md', loading, icon, className, children, disabled, ...rest }: BtnProps) {
   const v = {
-    primary: 'bg-brand text-white hover:bg-brand-dark',
-    secondary: 'bg-white text-brand border border-line hover:bg-brand-light',
-    ghost: 'bg-transparent text-brand hover:bg-brand-soft',
-    danger: 'bg-bad text-white hover:opacity-90',
+    primary: 'btn btn-primary',
+    secondary: 'btn btn-ghost',
+    ghost: 'btn btn-quiet',
+    danger: 'btn btn-ghost',
   }[variant]
-  const s = size === 'sm' ? 'min-h-[36px] px-3 text-sm' : 'min-h-[44px] px-4 text-[15px]'
+  const s = size === 'sm' ? 'btn-sm' : ''
   return (
     <button
       type="button"
       {...rest}
       disabled={disabled || loading}
-      className={cx('inline-flex items-center justify-center gap-2 rounded-xl font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-mid', v, s, className)}
+      className={cx(v, s, variant === 'danger' && 'is-danger', className)}
+      style={variant === 'danger' ? { color: 'var(--red)', borderColor: 'var(--red-line)' } : undefined}
     >
       {loading ? <Loader2 size={16} className="animate-spin" aria-hidden /> : icon}
       {children}
@@ -35,10 +36,10 @@ export function Button({ variant = 'primary', size = 'md', loading, icon, classN
 /* ───────── Badge / status (color + icon + word, never color alone) ───────── */
 export type Tone = 'ok' | 'warn' | 'bad' | 'neutral' | 'brand'
 const TONE: Record<Tone, string> = {
-  ok: 'bg-green-50 text-ok',
-  warn: 'bg-amber-50 text-warn',
-  bad: 'bg-red-50 text-bad',
-  neutral: 'bg-gray-100 text-ink-secondary',
+  ok: 'bg-ok-soft text-ok',
+  warn: 'bg-warn-soft text-warn',
+  bad: 'bg-bad-soft text-bad',
+  neutral: 'bg-surface-2 text-ink-secondary',
   brand: 'bg-brand-soft text-brand',
 }
 const TONE_ICON: Record<Tone, ReactNode> = {
@@ -49,9 +50,38 @@ const TONE_ICON: Record<Tone, ReactNode> = {
   brand: <Info size={13} aria-hidden />,
 }
 export function Badge({ tone = 'neutral', children, icon = true }: { tone?: Tone; children: ReactNode; icon?: boolean }) {
+  const bg: Record<Tone, string> = {
+    ok: 'var(--green-soft)',
+    warn: 'var(--amber-soft)',
+    bad: 'var(--red-soft)',
+    neutral: 'var(--surface-2)',
+    brand: 'var(--yellow-soft)',
+  }
+  const fg: Record<Tone, string> = {
+    ok: 'var(--green)',
+    warn: 'var(--amber)',
+    bad: 'var(--red)',
+    neutral: 'var(--ink-2)',
+    brand: 'var(--yellow-ink)',
+  }
   return (
-    <span className={cx('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold whitespace-nowrap', TONE[tone])}>
-      {icon && TONE_ICON[tone]}
+    <span
+      className="badge"
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 5,
+        height: 22,
+        padding: '0 8px',
+        borderRadius: 6,
+        fontSize: 11,
+        fontWeight: 650,
+        background: bg[tone],
+        color: fg[tone],
+        border: '1px solid transparent',
+      }}
+    >
+      {icon ? TONE_ICON[tone] : null}
       {children}
     </span>
   )
@@ -64,17 +94,17 @@ export function StatusDot({ level, label }: { level: 'ok' | 'warn' | 'bad' | 'of
 
 /* ───────── Card / header / tabs ───────── */
 export function Card({ children, className, pad = true }: { children: ReactNode; className?: string; pad?: boolean }) {
-  return <section className={cx('rounded-2xl border border-line bg-card shadow-card', pad && 'p-4', className)}>{children}</section>
+  return <div className={cx('card', pad && 'card-pad', className)} style={pad ? { padding: '14px 16px' } : undefined}>{children}</div>
 }
 
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: ReactNode; actions?: ReactNode }) {
   return (
-    <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+    <div className="page-h" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 16, flexWrap: 'wrap' }}>
       <div className="min-w-0">
-        <h1 className="text-xl font-bold leading-tight sm:text-2xl">{title}</h1>
-        {subtitle && <p className="mt-0.5 text-sm text-ink-secondary">{subtitle}</p>}
+        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, letterSpacing: '-0.03em', color: 'var(--ink)', lineHeight: 1.15 }}>{title}</h1>
+        {subtitle && <p style={{ margin: '6px 0 0', fontSize: 12.5, color: 'var(--muted)', maxWidth: 560 }}>{subtitle}</p>}
       </div>
-      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+      {actions && <div className="page-h-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>{actions}</div>}
     </div>
   )
 }
@@ -82,31 +112,36 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
 export type TabItem<K extends string> = { key: K; label: string; count?: number | null }
 export function Tabs<K extends string>({ items, value, onChange }: { items: TabItem<K>[]; value: K; onChange: (k: K) => void }) {
   return (
-    <div role="tablist" className="-mx-4 mb-3 flex gap-1 overflow-x-auto px-4 sm:mx-0 sm:px-0">
-      {items.map((t) => (
-        <button
-          key={t.key}
-          role="tab"
-          aria-selected={t.key === value}
-          tabIndex={t.key === value ? 0 : -1}
-          onKeyDown={(e) => {
-            if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return
-            const i = items.findIndex((x) => x.key === value)
-            const n = items[(i + (e.key === 'ArrowRight' ? 1 : items.length - 1)) % items.length]
-            onChange(n.key)
-            ;(e.currentTarget.parentElement?.querySelectorAll('[role=tab]')[items.indexOf(n)] as HTMLElement | undefined)?.focus()
-          }}
-          type="button"
-          onClick={() => onChange(t.key)}
-          className={cx(
-            'min-h-[40px] shrink-0 rounded-full px-3.5 text-sm font-semibold transition',
-            t.key === value ? 'bg-brand text-white' : 'bg-white text-ink-secondary border border-line hover:bg-brand-light',
-          )}
-        >
-          {t.label}
-          {t.count != null && <span className={cx('ml-1.5 text-xs', t.key === value ? 'text-white/80' : 'text-ink-tertiary')}>{t.count}</span>}
-        </button>
-      ))}
+    <div className="seg" role="tablist" style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 2, padding: 3, background: 'var(--surface-2)', borderRadius: 10, marginBottom: 14, border: '1px solid var(--line)' }}>
+      {items.map((it) => {
+        const on = it.key === value
+        return (
+          <button
+            key={String(it.key)}
+            type="button"
+            role="tab"
+            aria-selected={on}
+            className={cx('seg-item', on && 'is-on')}
+            onClick={() => onChange(it.key)}
+            style={{
+              height: 30,
+              padding: '0 12px',
+              borderRadius: 8,
+              fontSize: 12,
+              fontWeight: on ? 700 : 550,
+              background: on ? 'var(--surface)' : 'transparent',
+              color: on ? 'var(--ink)' : 'var(--muted)',
+              boxShadow: on ? 'var(--shadow)' : undefined,
+              border: on ? '1px solid var(--line)' : '1px solid transparent',
+            }}
+          >
+            {it.label}
+            {it.count != null && it.count > 0 && (
+              <span style={{ marginLeft: 6, fontFamily: 'var(--mono)', fontSize: 10, opacity: 0.8 }}>{it.count}</span>
+            )}
+          </button>
+        )
+      })}
     </div>
   )
 }
@@ -128,7 +163,7 @@ export function Field({ label, hint, children, error }: { label: string; hint?: 
     </div>
   )
 }
-const FIELD_CLS = 'min-h-[44px] w-full rounded-xl border border-line bg-white px-3 text-[15px] text-ink placeholder:text-ink-tertiary focus:border-brand-mid focus:outline-none focus:ring-2 focus:ring-brand-soft'
+const FIELD_CLS = 'h-[35px] w-full rounded-[8px] border border-[var(--line)] bg-[var(--surface)] px-3 text-[12.5px] text-[var(--ink)] placeholder:text-[var(--muted)] focus:border-[var(--line-2)] focus:outline-none'
 export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} className={cx(FIELD_CLS, props.className)} />
 }
@@ -144,9 +179,9 @@ export function Toggle({ checked, onChange, label, disabled }: { checked: boolea
       aria-label={label}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={cx('relative h-6 w-11 shrink-0 rounded-full transition disabled:opacity-50', checked ? 'bg-ok' : 'bg-gray-300')}
+      className={cx('relative h-[17px] w-[30px] shrink-0 rounded-full transition disabled:opacity-50', checked ? 'bg-[var(--navy)]' : 'bg-[var(--line-2)]')}
     >
-      <span className={cx('absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all', checked ? 'left-[22px]' : 'left-0.5')} />
+      <span className={cx('absolute top-[2px] h-[13px] w-[13px] rounded-full bg-white shadow transition-all', checked ? 'left-[15px]' : 'left-[2px]')} />
     </button>
   )
 }
@@ -199,10 +234,23 @@ export function Banner({ tone = 'warn', children }: { tone?: Tone; children: Rea
 
 export function KpiTile({ label, value, sub, tone }: { label: string; value: ReactNode; sub?: ReactNode; tone?: Tone }) {
   return (
-    <div className="min-w-0 rounded-2xl border border-line bg-card p-3 shadow-card sm:p-3.5">
-      <div className="truncate text-[11px] font-medium text-ink-secondary sm:text-xs">{label}</div>
-      <div className={cx('mt-1 break-words text-xl font-bold tabular-nums sm:text-2xl', tone === 'bad' && 'text-bad', tone === 'warn' && 'text-warn')}>{value}</div>
-      {sub && <div className="mt-0.5 line-clamp-2 text-[11px] text-ink-secondary sm:text-xs">{sub}</div>}
+    <div className="card kpi" style={{ padding: '14px 16px', minWidth: 0 }}>
+      <div className="l" style={{ fontSize: 10.5, fontWeight: 650, color: 'var(--muted)', letterSpacing: '0.02em' }}>{label}</div>
+      <div
+        className="v"
+        style={{
+          fontFamily: 'var(--mono)',
+          fontSize: 22,
+          fontWeight: 600,
+          letterSpacing: '-0.04em',
+          marginTop: 6,
+          lineHeight: 1,
+          color: tone === 'bad' ? 'var(--red)' : tone === 'warn' ? 'var(--amber)' : 'var(--ink)',
+        }}
+      >
+        {value}
+      </div>
+      {sub && <div className="n" style={{ fontSize: 10, color: 'var(--faint)', marginTop: 4 }}>{sub}</div>}
     </div>
   )
 }
