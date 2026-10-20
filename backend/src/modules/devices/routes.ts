@@ -193,13 +193,14 @@ export const deviceRoutes = new Hono<DeviceEnv>()
       let products = db.prepare(`
         SELECT p.id, p.name, p.price, p.icon, p.description,
                p.image_url AS imageUrl, p.sort_order AS sortOrder,
-               p.modifier_scheme_id AS schemeId,
+               COALESCE(p.modifier_scheme_id, g.modifier_scheme_id) AS schemeId,
                p.counts_as_cup AS countsAsCup, p.free_eligible AS freeEligible,
                p.recipe_text AS recipeText, p.available AS globalAvailable,
                p.category_id AS categoryId,
                p.group_id AS groupId, p.variant_label AS variantLabel, p.variant_sort AS variantSort,
                p.size_value AS sizeValue, p.size_unit AS sizeUnit
         FROM products p
+        LEFT JOIN product_groups g ON g.id = p.group_id
         WHERE (p.season_start_at IS NULL OR p.season_start_at<=?)
           AND (p.season_end_at IS NULL OR p.season_end_at>=?)
         ORDER BY p.sort_order, p.id
@@ -235,10 +236,11 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         else if (!uuidByProduct.has(l.productId)) uuidByProduct.set(l.productId, l.evotorUuid)
       }
 
+      // Include unavailable modifiers so scheme UI still lists them (APK marks non-sellable).
       const modifiers = db.prepare(`
         SELECT id, name, price, group_key AS groupKey, sort_order AS sortOrder, available
-        FROM modifiers WHERE available=1 ORDER BY sort_order, id
-      `).all() as { id: number; name: string; price: number; groupKey: string; sortOrder: number }[]
+        FROM modifiers ORDER BY sort_order, id
+      `).all() as { id: number; name: string; price: number; groupKey: string; sortOrder: number; available: number }[]
       // Modifiers are configured independently from products, so historically their API
       // payload had no Evotor UUID. The APK correctly refused to fiscalize paid modifiers
       // without a UUID. Resolve a modifier to the real catalog product by normalized name;
@@ -306,7 +308,7 @@ export const deviceRoutes = new Hono<DeviceEnv>()
                   name: m.name,
                   price: m.price,
                   priceRub: m.price,
-                  groupKey: m.groupKey,
+                  groupKey: (m.groupKey && String(m.groupKey).trim()) || 'extra',
                   evotorUuid: m.evotorUuid,
                   required: !!it.required,
                   maxCount: it.maxCount,
