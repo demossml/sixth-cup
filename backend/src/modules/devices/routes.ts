@@ -295,6 +295,13 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         return false
       }
 
+      // Products that exist only as modifier fiscal lines → hide on cashier menu tiles.
+      const modifierProductIds = new Set<number>()
+      for (const m of modifiers) {
+        const pid = productIdByName.get(normalizeModifierName(m.name))
+        if (pid != null) modifierProductIds.add(pid)
+      }
+
       const out = products.map((p) => {
         const id = Number(p.id)
         const schemeId = p.schemeId != null ? Number(p.schemeId) : null
@@ -344,6 +351,8 @@ export const deviceRoutes = new Hono<DeviceEnv>()
           sizeUnit: (p.sizeUnit as string | null) ?? null,
           toppings,
           upsell,
+          isModifier: modifierProductIds.has(id),
+          hideFromMenu: modifierProductIds.has(id),
         }
       })
 
