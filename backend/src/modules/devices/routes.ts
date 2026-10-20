@@ -239,7 +239,23 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         SELECT id, name, price, group_key AS groupKey, sort_order AS sortOrder, available
         FROM modifiers WHERE available=1 ORDER BY sort_order, id
       `).all() as { id: number; name: string; price: number; groupKey: string; sortOrder: number }[]
-      const modById = new Map(modifiers.map((m) => [m.id, m]))
+      // Modifiers are configured independently from products, so historically their API
+      // payload had no Evotor UUID. The APK correctly refused to fiscalize paid modifiers
+      // without a UUID. Resolve a modifier to the real catalog product by normalized name;
+      // this keeps price/stock fiscalization tied to the actual Evotor inventory item.
+      const normalizeModifierName = (value: unknown) => String(value ?? '')
+        .normalize('NFKC').toLocaleLowerCase('ru-RU').replace(/ё/g, 'е')
+        .replace(/\s+/g, ' ').trim()
+      const productIdByName = new Map<string, number>()
+      const allProductNames = db.prepare('SELECT id, name FROM products ORDER BY id').all() as { id: number; name: string }[]
+      for (const p of allProductNames) {
+        const key = normalizeModifierName(p.name)
+        if (key && !productIdByName.has(key)) productIdByName.set(key, Number(p.id))
+      }
+      const modById = new Map(modifiers.map((m) => {
+        const productId = productIdByName.get(normalizeModifierName(m.name))
+        return [m.id, { ...m, evotorUuid: productId == null ? null : (uuidByProduct.get(productId) || null) }]
+      }))
 
       const schemeItems = db.prepare(`
         SELECT scheme_id AS schemeId, modifier_id AS modifierId, required, max_count AS maxCount
@@ -291,6 +307,7 @@ export const deviceRoutes = new Hono<DeviceEnv>()
                   price: m.price,
                   priceRub: m.price,
                   groupKey: m.groupKey,
+                  evotorUuid: m.evotorUuid,
                   required: !!it.required,
                   maxCount: it.maxCount,
                 }
