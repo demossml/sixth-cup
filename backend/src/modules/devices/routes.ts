@@ -232,8 +232,13 @@ export const deviceRoutes = new Hono<DeviceEnv>()
       `).all() as { productId: number; storeUuid: string; evotorUuid: string }[]
       const uuidByProduct = new Map<number, string>()
       for (const l of linkRows) {
-        if (storeUuid && l.storeUuid === storeUuid) uuidByProduct.set(l.productId, l.evotorUuid)
-        else if (!uuidByProduct.has(l.productId)) uuidByProduct.set(l.productId, l.evotorUuid)
+        if (storeUuid) {
+          // Точка известна: чужой магазин не подставляем никогда (иначе касса получит UUID другой точки).
+          if (l.storeUuid === storeUuid) uuidByProduct.set(l.productId, l.evotorUuid)
+        } else if (!uuidByProduct.has(l.productId)) {
+          // Старые APK без storeUuid: сохраняем прежний fallback на любой link.
+          uuidByProduct.set(l.productId, l.evotorUuid)
+        }
       }
 
       // Include unavailable modifiers so scheme UI still lists them (APK marks non-sellable).
@@ -270,9 +275,17 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         itemsByScheme.set(it.schemeId, arr)
       }
 
-      // upsell candidates: available products not counting as cup (food/extra), max pool
+      // Products that exist only as modifier fiscal lines → hide on cashier menu tiles.
+      const modifierProductIds = new Set<number>()
+      for (const m of modifiers) {
+        const pid = productIdByName.get(normalizeModifierName(m.name))
+        if (pid != null) modifierProductIds.add(Number(pid))
+      }
+
+      // Upsell = real add-ons (food etc.), NEVER scheme modifiers (syrup/milk products).
       const upsellPool = products
         .filter((p) => !p.countsAsCup)
+        .filter((p) => !modifierProductIds.has(Number(p.id)))
         .slice(0, 20)
         .map((p) => ({
           id: Number(p.id),
@@ -295,13 +308,6 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         return false
       }
 
-      // Products that exist only as modifier fiscal lines → hide on cashier menu tiles.
-      const modifierProductIds = new Set<number>()
-      for (const m of modifiers) {
-        const pid = productIdByName.get(normalizeModifierName(m.name))
-        if (pid != null) modifierProductIds.add(pid)
-      }
-
       const out = products.map((p) => {
         const id = Number(p.id)
         const schemeId = p.schemeId != null ? Number(p.schemeId) : null
@@ -319,6 +325,7 @@ export const deviceRoutes = new Hono<DeviceEnv>()
                   evotorUuid: m.evotorUuid,
                   required: !!it.required,
                   maxCount: it.maxCount,
+                  available: Number(m.available) !== 0,
                 }
               })
               .filter(Boolean)

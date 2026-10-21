@@ -66,6 +66,23 @@ export const MANAGER_BLOCKED =
   // Full path (/api/admin/...) and Hono-stripped path (/stores, /devices/...) both blocked.
   /\/(reset|wipe)(\/|$)|\/organizations(\/|$)|(?:^|\/)api\/admin\/(stores|devices)(\/|$)|^\/(stores|devices)(\/|$)|\/ai\/settings(\/|$)|\/vouchers\/grant-all(\/|$)/
 
+/**
+ * Товары, наследующие схему добавок от витринной карточки (product_groups.modifier_scheme_id).
+ * Каталог кассы берёт её через COALESCE, поэтому при правке схемы их тоже надо перепушить.
+ */
+function productIdsByGroupScheme(schemeId: number): number[] {
+  try {
+    const rows = db.prepare(`
+      SELECT p.id FROM products p
+      JOIN product_groups g ON g.id = p.group_id
+      WHERE g.modifier_scheme_id = ?
+    `).all(schemeId) as { id: number }[]
+    return rows.map((r) => Number(r.id))
+  } catch {
+    return []
+  }
+}
+
 const adminAuth = createMiddleware(async (c, next) => {
   const role = resolveAdminRole(c.req.header('X-Admin-Token'))
   if (!role) {
@@ -795,17 +812,18 @@ export const adminRoutes = new Hono()
       for (const mid of ids) ins.run(schemeId, mid)
     })()
     const affected = db.prepare('SELECT id FROM products WHERE modifier_scheme_id=?').all(schemeId) as { id: number }[]
-    enqueueProductSync(affected.map((x) => x.id))
+    enqueueProductSync([...affected.map((x) => x.id), ...productIdsByGroupScheme(Number(schemeId))])
     return c.json({ ok: true, id: schemeId })
   })
 
   .delete('/modifier-schemes/:id', (c) => {
     const id = Number(c.req.param('id'))
     const affected = db.prepare('SELECT id FROM products WHERE modifier_scheme_id=?').all(id) as { id: number }[]
+    const groupAffected = productIdsByGroupScheme(id)
     db.prepare('UPDATE products SET modifier_scheme_id=NULL, updated_at=? WHERE modifier_scheme_id=?').run(Date.now(), id)
     db.prepare('DELETE FROM modifier_scheme_items WHERE scheme_id=?').run(id)
     db.prepare('DELETE FROM modifier_schemes WHERE id=?').run(id)
-    enqueueProductSync(affected.map((x) => x.id))
+    enqueueProductSync([...affected.map((x) => x.id), ...groupAffected])
     return c.json({ ok: true })
   })
 
