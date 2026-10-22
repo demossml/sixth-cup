@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import { EvotorClient } from '../client/EvotorClient'
+import { clientForStore } from '../tokenStore'
 import { evotorConfig } from '../../../config'
 import { log, shortId } from '../../../lib/logBuffer'
 
@@ -131,6 +132,13 @@ export class ProductPushService {
     private readonly client = new EvotorClient(),
   ) {}
 
+  /** Prefer token bound to store (admin panel); fall back to constructor/env client. */
+  private api(storeUuid: string): EvotorClient {
+    const bound = clientForStore(this.db, storeUuid)
+    if (bound.isConfigured) return bound
+    return this.client
+  }
+
   ensureSchema() {
     const cols = this.db.prepare(`PRAGMA table_info(products)`).all() as { name: string }[]
     const names = new Set(cols.map((c) => c.name))
@@ -224,7 +232,7 @@ export class ProductPushService {
     if (!evotorConfig.pushExtras || !evotorConfig.appId) return
     const data = this.buildExtra(product, productUuid)
     if (!data) return
-    await this.client.postProductExtras(storeUuid, [{
+    await this.api(storeUuid).postProductExtras(storeUuid, [{
       uuid: uuidv5(`${storeUuid}:product-extra:${productUuid}`),
       appId: evotorConfig.appId,
       key: { uuid: productUuid },
@@ -234,7 +242,7 @@ export class ProductPushService {
   }
 
   private async remoteProducts(storeUuid: string): Promise<Record<string, unknown>[]> {
-    return asArray(await this.client.getProducts(storeUuid))
+    return asArray(await this.api(storeUuid).getProducts(storeUuid))
   }
 
   private link(storeUuid: string, product: LocalProduct, evotorUuid: string, now = Date.now()) {
@@ -277,7 +285,7 @@ export class ProductPushService {
       return foundId
     }
 
-    const response = await this.client.createCloudProduct(storeUuid, toEvotorProduct(product, storeUuid))
+    const response = await this.api(storeUuid).createCloudProduct(storeUuid, toEvotorProduct(product, storeUuid))
     const id = parseCreatedProductId(response)
     if (!id) throw new Error('Evotor Cloud CREATE returned no product id')
     this.link(storeUuid, product, id)
@@ -304,7 +312,7 @@ export class ProductPushService {
 
   private async pushToStoreInternal(storeUuid: string): Promise<{ pushed: number; errors: string[]; linked: number; extrasFailed: number }> {
     this.ensureSchema()
-    if (!this.client.isConfigured) return { pushed: 0, linked: 0, errors: ['[list] GET products status=0 EVOTOR_API_TOKEN not set'], extrasFailed: 0 }
+    if (!this.api(storeUuid).isConfigured) return { pushed: 0, linked: 0, errors: ['[list] GET products status=0 EVOTOR_API_TOKEN not set'], extrasFailed: 0 }
 
     // Only products created/managed in 6.7 are outbound masters. Pure Evotor imports stay read-only.
     const products = this.listLocal(false)
@@ -331,7 +339,7 @@ export class ProductPushService {
         const productUuid = await this.ensureRemoteId(storeUuid, p, remote)
         const payload = toEvotorProduct(p, storeUuid)
         const existingRemote = remote.find((r) => remoteId(r) === productUuid)
-        if (existingRemote || knownBefore) await this.client.replaceCloudProduct(storeUuid, productUuid, payload)
+        if (existingRemote || knownBefore) await this.api(storeUuid).replaceCloudProduct(storeUuid, productUuid, payload)
         try {
           await this.pushExtras(storeUuid, p, productUuid)
         } catch (extraError) {
@@ -386,7 +394,7 @@ export class ProductPushService {
    */
   async pullFromStore(storeUuid: string): Promise<{ imported: number; updated: number; links: number }> {
     this.ensureSchema()
-    if (!this.client.isConfigured) return { imported: 0, updated: 0, links: 0 }
+    if (!this.api(storeUuid).isConfigured) return { imported: 0, updated: 0, links: 0 }
     const remote = await this.remoteProducts(storeUuid)
     const now = Date.now()
     let imported = 0
@@ -493,14 +501,14 @@ export class ProductPushService {
       // Prefer DELETE; on failure collect and continue
       try {
         if (ids.length) {
-          await this.client.deleteCloudProducts(storeUuid, ids)
+          await this.api(storeUuid).deleteCloudProducts(storeUuid, ids)
           deleted = ids.length
         }
       } catch (e) {
         // Fallback: try one-by-one so one bad id does not block all
         for (const id of ids) {
           try {
-            await this.client.deleteCloudProducts(storeUuid, [id])
+            await this.api(storeUuid).deleteCloudProducts(storeUuid, [id])
             deleted++
           } catch (e2) {
             deleteErrors.push(`${id.slice(0, 8)}: ${String(e2).slice(0, 160)}`)

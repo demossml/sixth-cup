@@ -5,8 +5,8 @@ import { seedIfEmpty } from './db/seed'
 import { PollService } from './integrations/evotor/sync/PollService'
 import { db } from './db'
 import { evotorConfig } from './config'
-import { EvotorClient } from './integrations/evotor/client/EvotorClient'
 import { ProductPushService } from './integrations/evotor/sync/ProductPushService'
+import { anyTokenConfigured } from './integrations/evotor/tokenStore'
 import { installProcessErrorHooks, log, shortId } from './lib/logBuffer'
 
 installProcessErrorHooks()
@@ -15,10 +15,10 @@ seedIfEmpty()
 
 serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(`6.7 Coffee API: http://localhost:${info.port}`)
-  log.info('server started', { port: info.port, env: config.isDev ? 'dev' : 'production', evotor: evotorConfig.enabled ? 'on' : 'off' })
+  log.info('server started', { port: info.port, env: config.isDev ? 'dev' : 'production', evotor: (evotorConfig.enabled || anyTokenConfigured(db)) ? 'on' : 'off' })
 })
 
-if (evotorConfig.enabled) {
+if (evotorConfig.enabled || anyTokenConfigured(db)) {
   // Ensure sync_enabled column exists (admin checkboxes)
   try {
     const cols = db.prepare(`PRAGMA table_info(evotor_stores)`).all() as { name: string }[]
@@ -30,22 +30,10 @@ if (evotorConfig.enabled) {
   const poll = new PollService(db)
   let running = false
   let catalogBootstrapped = false
-  const evotorClient = new EvotorClient()
-  const catalog = new ProductPushService(db, evotorClient)
+  const catalog = new ProductPushService(db)
+  /** Refresh store list from all active tokens (admin DB + env fallback). */
   const refreshStores = async () => {
-    const raw = await evotorClient.getStores()
-    const items = Array.isArray(raw) ? raw : (raw && typeof raw === 'object' && Array.isArray((raw as Record<string, unknown>).items) ? (raw as { items: unknown[] }).items : [])
-    const now = Date.now()
-    const upsert = db.prepare(`INSERT INTO evotor_stores(store_uuid,name,address,code,raw_json,updated_at)
-      VALUES(?,?,?,?,?,?) ON CONFLICT(store_uuid) DO UPDATE SET name=excluded.name,address=excluded.address,code=excluded.code,raw_json=excluded.raw_json,updated_at=excluded.updated_at`)
-    for (const value of items) {
-      if (!value || typeof value !== 'object') continue
-      const o = value as Record<string, unknown>
-      const uuid = String(o.uuid ?? o.id ?? '').trim()
-      if (!uuid) continue
-      upsert.run(uuid, o.name ?? null, o.address ?? null, o.code ?? null, JSON.stringify(o), now)
-      db.prepare(`INSERT OR IGNORE INTO evotor_sync_state(store_uuid,last_seen_close_ms) VALUES(?,0)`).run(uuid)
-    }
+    await poll.ensureStores()
   }
   let lastIdleLogAt = 0
   const tick = async () => {

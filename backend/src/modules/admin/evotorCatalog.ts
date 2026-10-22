@@ -8,6 +8,11 @@ import { ProductPushService } from '../../integrations/evotor/sync/ProductPushSe
 import { evotorConfig } from '../../config'
 import { PollService } from '../../integrations/evotor/sync/PollService'
 import { bad } from '../../lib/errors'
+import {
+  anyTokenConfigured,
+  clientForStore,
+  listActivePlainTokens,
+} from '../../integrations/evotor/tokenStore'
 
 
 function persistEmployees(items: Record<string, unknown>[]) {
@@ -32,10 +37,38 @@ function asArray(data: unknown): Record<string, unknown>[] {
   return []
 }
 
-const client = () => {
-  const value = new EvotorClient()
+/** Prefer admin-managed tokens; env EVOTOR_API_TOKEN remains fallback via tokenStore. */
+function requireAnyToken(): void {
+  if (!anyTokenConfigured(db)) throw bad('EVOTOR_API_TOKEN not set', 503)
+}
+
+function clientFor(storeUuid: string): EvotorClient {
+  const value = clientForStore(db, storeUuid)
   if (!value.isConfigured) throw bad('EVOTOR_API_TOKEN not set', 503)
   return value
+}
+
+/** Aggregate getStores across all active tokens (multi-cabinet). */
+async function fetchAllStoresFromCloud(): Promise<Record<string, unknown>[]> {
+  requireAnyToken()
+  const tokens = listActivePlainTokens(db)
+  const byUuid = new Map<string, Record<string, unknown>>()
+  const errors: string[] = []
+  for (const tok of tokens) {
+    try {
+      const items = asArray(await new EvotorClient(tok).getStores())
+      for (const o of items) {
+        const uuid = String(o.uuid ?? o.id ?? '').trim()
+        if (uuid) byUuid.set(uuid, o)
+      }
+    } catch (e) {
+      errors.push(String(e).slice(0, 160))
+    }
+  }
+  if (byUuid.size === 0 && errors.length) {
+    throw bad(errors[0] || 'Failed to fetch stores', 502)
+  }
+  return [...byUuid.values()]
 }
 
 function ensureStoresSchema() {
@@ -57,7 +90,7 @@ export const adminEvotorCatalog = new Hono()
   .get('/evotor/stores', async (c) => {
     try {
       ensureStoresSchema()
-      const items = asArray(await client().getStores())
+      const items = await fetchAllStoresFromCloud()
       const now = Date.now()
       // Do NOT overwrite sync_enabled on refresh from Cloud
       const upsert = db.prepare(`INSERT INTO evotor_stores(store_uuid,name,address,code,raw_json,updated_at,sync_enabled)
@@ -104,7 +137,20 @@ export const adminEvotorCatalog = new Hono()
 
   .get('/evotor/employees', async (c) => {
     try {
-      const items = asArray(await client().getEmployees())
+      requireAnyToken()
+      const tokens = listActivePlainTokens(db)
+      const items: Record<string, unknown>[] = []
+      const seen = new Set<string>()
+      for (const tok of tokens) {
+        try {
+          for (const o of asArray(await new EvotorClient(tok).getEmployees())) {
+            const uuid = String(o.uuid ?? o.id ?? o.employeeUuid ?? '').trim()
+            if (!uuid || seen.has(uuid)) continue
+            seen.add(uuid)
+            items.push(o)
+          }
+        } catch { /* try next token */ }
+      }
       persistEmployees(items)
       return c.json({ employees: items.map((o) => ({
         uuid: o.uuid ?? o.id ?? o.employeeUuid,
@@ -121,8 +167,8 @@ export const adminEvotorCatalog = new Hono()
   .post('/evotor/sync', zValidator('json', z.object({ storeUuid: z.string().optional() }).default({})), async (c) => {
     try {
       const p = c.req.valid('json')
-      const evotor = client()
-      const svc = new ProductPushService(db, evotor)
+      requireAnyToken()
+      const svc = new ProductPushService(db)
       ensureStoresSchema()
       // Only stores with sync_enabled=1 (unless explicit storeUuid in body)
       const stores = p.storeUuid
@@ -140,7 +186,19 @@ export const adminEvotorCatalog = new Hono()
       const extrasFailed = catalog.reduce((n, s) => n + s.extrasFailed, 0)
       const result: Record<string, unknown> = { ok: failed === 0, stores: stores.length, catalog, failed, extrasFailed, extrasEnabled: evotorConfig.pushExtras }
       try {
-        const employeeRaw = asArray(await evotor.getEmployees())
+        // Admin-managed tokens: employees are read per active token (env stays a fallback in tokenStore).
+        const employeeRaw: Record<string, unknown>[] = []
+        const seenEmployees = new Set<string>()
+        for (const tok of listActivePlainTokens(db)) {
+          try {
+            for (const o of asArray(await new EvotorClient(tok).getEmployees())) {
+              const uuid = String(o.uuid ?? o.id ?? o.employeeUuid ?? '').trim()
+              if (!uuid || seenEmployees.has(uuid)) continue
+              seenEmployees.add(uuid)
+              employeeRaw.push(o)
+            }
+          } catch { /* try next token */ }
+        }
         persistEmployees(employeeRaw)
         result.employees = employeeRaw.length
       } catch (employeeError) {
@@ -159,7 +217,7 @@ export const adminEvotorCatalog = new Hono()
       ensureStoresSchema()
       const en = db.prepare(`SELECT COALESCE(sync_enabled,0) AS e FROM evotor_stores WHERE store_uuid=?`).get(storeUuid) as { e: number } | undefined
       if (!en || en.e !== 1) throw bad('Магазин не включён для sync (поставьте галочку в Точки)', 403)
-      const svc = new ProductPushService(db, client())
+      const svc = new ProductPushService(db, clientFor(storeUuid))
       const r = await svc.syncStore(storeUuid)
       const failed = r.pushed.errors.length
       return c.json({ ok: failed === 0, storeUuid, pulled: r.pulled, pushed: r.pushed.pushed, linked: r.pushed.linked, failed, extrasFailed: r.pushed.extrasFailed, errors: r.pushed.errors.slice(0, 5) })
@@ -172,7 +230,7 @@ export const adminEvotorCatalog = new Hono()
   .post('/evotor/stores/:storeUuid/push-products', async (c) => {
     const storeUuid = c.req.param('storeUuid')
     try {
-      const r = await new ProductPushService(db, client()).pushToStore(storeUuid)
+      const r = await new ProductPushService(db, clientFor(storeUuid)).pushToStore(storeUuid)
       return c.json({ ok: r.errors.length === 0, ...r, failed: r.errors.length, errors: r.errors.slice(0, 5) })
     } catch (e) {
       throw bad(String(e), 502)
@@ -182,7 +240,7 @@ export const adminEvotorCatalog = new Hono()
   .get('/evotor/stores/:storeUuid/products', async (c) => {
     const storeUuid = c.req.param('storeUuid')
     try {
-      const raw = asArray(await client().getProducts(storeUuid))
+      const raw = asArray(await clientFor(storeUuid).getProducts(storeUuid))
       const mapped = db.prepare(`SELECT l.product_id AS productId,l.evotor_uuid AS evotorUuid,p.name AS localName,p.catalog_source AS catalogSource
         FROM product_store_links l JOIN products p ON p.id=l.product_id WHERE l.store_uuid=?`).all(storeUuid)
       const byUuid = new Map((mapped as Record<string, unknown>[]).map((r) => [String(r.evotorUuid), r]))
@@ -202,7 +260,7 @@ export const adminEvotorCatalog = new Hono()
   .get('/evotor/stores/:storeUuid/products/drift', async (c) => {
     const storeUuid = c.req.param('storeUuid')
     try {
-      return c.json(await new ProductPushService(db, client()).verifyStore(storeUuid))
+      return c.json(await new ProductPushService(db, clientFor(storeUuid)).verifyStore(storeUuid))
     } catch (e) {
       throw bad(String(e), 502)
     }
@@ -222,6 +280,6 @@ export const adminEvotorCatalog = new Hono()
   })
 
   .post('/evotor/poll', async (c) => {
-    try { return c.json(await new PollService(db, client()).runFast()) }
+    try { return c.json(await new PollService(db).runFast()) }
     catch (e) { throw bad(String(e), 502) }
   })

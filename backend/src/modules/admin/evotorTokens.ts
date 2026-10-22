@@ -24,7 +24,7 @@ export const adminEvotorTokens = new Hono()
     zValidator(
       'json',
       z.object({
-        label: z.string().min(1).max(120),
+        label: z.string().max(120).optional().default('Токен'),
         token: z.string().min(8).max(2000),
         storeUuids: z.array(z.string().min(1).max(80)).default([]),
       }),
