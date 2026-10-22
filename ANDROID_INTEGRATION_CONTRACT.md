@@ -134,12 +134,10 @@ long token-like strings are redacted server-side as a safety net.
 - Лояльность считается по выбранному варианту: `countsAsCup` / `freeEligible` наследуются от карточки,
   но остаются собственными полями продукта (можно переопределить).
 
-## Флаги каталога для витрины кассы
+### Каталог: поля добавок (дополнение)
+`GET /api/devices/catalog` → `products[].toppings[].evotorUuid` (nullable, ключ есть всегда), `toppings[].available`, `toppings[].groupKey`; `products[].isModifier`, `products[].hideFromMenu`. Товары-добавки не попадают в `upsell`. Подробнее: `docs/DEVICE-CATALOG-API.md`.
 
-`GET /api/devices/catalog` (публичный, без `Authorization`) отдаёт по каждому товару:
 
-- `isModifier` / `hideFromMenu` — `true`, если имя товара совпадает с именем модификатора (нормализация NFKC, нижний регистр, `ё→е`, сжатие пробелов). Такие плитки APK **не должен показывать** в основной сетке: это фискальные строки добавок, они доступны только через `toppings[]` напитка.
-- `toppings[].available` — `false` для выключенных модификаторов; опция должна быть недоступна.
-- `toppings[].evotorUuid` — UUID одноимённого товара для выбранной точки; `null` → платную добавку добавлять в чек нельзя.
-- `upsell[]` не содержит товаров-добавок.
-- `storeUuid` (query) или `X-Evotor-Store-Uuid` (header) ограничивает UUID выбранной точкой; без него поведение прежнее (любой link).
+## Multi-store UUID
+
+Cashier must send the Evotor **store** UUID of the current terminal on every catalog request (`storeUuid` query + `X-Evotor-Store-Uuid`). Product and topping `evotorUuid` values are scoped to that store only. Optional: `GET /api/devices/whoami` to resolve store when local resolver returns null.

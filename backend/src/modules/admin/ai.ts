@@ -143,6 +143,25 @@ export const adminAi = new Hono()
     },
   )
   .post(
+    '/ai/ask',
+    zValidator('json', z.object({ question: z.string().min(1).max(600), period: z.string().max(20).optional() })),
+    async (c) => {
+      requireWriteAi(c)
+      const { question, period: per } = c.req.valid('json')
+      const { since, period } = periodSince(per || '24h', Date.now())
+      const n = (sql: string, ...a: unknown[]) => (db.prepare(sql).get(...a) as { n: number }).n
+      const snapshot = {
+        period,
+        sellDocs: n(`SELECT COUNT(*) AS n FROM evotor_docs WHERE type='SELL' AND received_at>=?`, since),
+        products: n(`SELECT COUNT(*) AS n FROM products WHERE available=1`),
+        noPhoto: n(`SELECT COUNT(*) AS n FROM products WHERE available=1 AND (image_url IS NULL OR image_url='')`),
+        noCategory: n(`SELECT COUNT(*) AS n FROM products WHERE available=1 AND (category_id IS NULL OR category_id=0)`),
+      }
+      const text = await callProvider(SYSTEM, `Данные JSON: ${JSON.stringify(snapshot)}. Вопрос владельца: ${question}`)
+      return c.json({ ok: true, provider: resolveAiConfig().hasKey ? 'deepseek' : 'mock', text, snapshot })
+    },
+  )
+  .post(
     '/ai/anomaly-explain',
     zValidator('json', z.object({ period: z.string().max(20).optional() }).optional()),
     async (c) => {

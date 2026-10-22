@@ -153,6 +153,97 @@ export const deviceRoutes = new Hono<DeviceEnv>()
    * GET /api/devices/catalog — enriched menu for Evotor APK (toppings, upsell, images).
    * Auth: same proxy token as resolve. Optional ?storeUuid= for per-store availability.
    */
+
+  /**
+   * GET /api/devices/whoami — help cashier resolve storeUuid for this terminal.
+   * Optional headers: X-Evotor-Store-Uuid, X-Evotor-Device-UUID.
+   * Returns storeUuid from header/query if present, else tries staff/device link or single enabled store.
+   */
+  .get('/whoami', (c) => {
+    const storeUuid =
+      (c.req.query('storeUuid') || c.req.header('X-Evotor-Store-Uuid') || '').slice(0, 80) || null
+    const deviceUuid =
+      (c.req.header('X-Evotor-Device-UUID') ||
+        c.req.header('X-Evotor-Device-Uuid') ||
+        c.req.header('X-Device-Uuid') ||
+        '').slice(0, 80) || null
+
+    let resolved = storeUuid
+    let source: 'header' | 'device_link' | 'single_store' | 'none' = storeUuid ? 'header' : 'none'
+    let storeName: string | null = null
+
+    if (!resolved && deviceUuid) {
+      try {
+        const link = db.prepare(
+          `SELECT store_uuid AS storeUuid FROM staff_device_link WHERE device_uuid=? LIMIT 1`,
+        ).get(deviceUuid) as { storeUuid: string } | undefined
+        if (link?.storeUuid) {
+          resolved = link.storeUuid
+          source = 'device_link'
+        }
+      } catch { /* table optional */ }
+      try {
+        if (!resolved) {
+          const d = db.prepare(
+            `SELECT store_uuid AS storeUuid FROM devices WHERE device_uuid=? AND (revoked=0 OR revoked IS NULL) LIMIT 1`,
+          ).get(deviceUuid) as { storeUuid: string } | undefined
+          if (d?.storeUuid) {
+            resolved = d.storeUuid
+            source = 'device_link'
+          }
+        }
+      } catch { /* */ }
+    }
+
+    if (!resolved) {
+      try {
+        const rows = db.prepare(
+          `SELECT store_uuid AS storeUuid, name FROM evotor_stores WHERE sync_enabled=1 ORDER BY name LIMIT 2`,
+        ).all() as { storeUuid: string; name: string }[]
+        if (rows.length === 1) {
+          resolved = rows[0].storeUuid
+          storeName = rows[0].name
+          source = 'single_store'
+        }
+      } catch {
+        try {
+          const rows = db.prepare(
+            `SELECT evotor_uuid AS storeUuid, name FROM stores LIMIT 2`,
+          ).all() as { storeUuid: string; name: string }[]
+          if (rows.length === 1) {
+            resolved = rows[0].storeUuid
+            storeName = rows[0].name
+            source = 'single_store'
+          }
+        } catch { /* */ }
+      }
+    }
+
+    if (resolved && !storeName) {
+      try {
+        const s = db.prepare(
+          `SELECT name FROM evotor_stores WHERE store_uuid=? LIMIT 1`,
+        ).get(resolved) as { name: string } | undefined
+        storeName = s?.name ?? null
+      } catch {
+        try {
+          const s = db.prepare(
+            `SELECT name FROM stores WHERE evotor_uuid=? OR uuid=? LIMIT 1`,
+          ).get(resolved, resolved) as { name: string } | undefined
+          storeName = s?.name ?? null
+        } catch { /* */ }
+      }
+    }
+
+    return c.json({
+      ok: true,
+      storeUuid: resolved,
+      storeName,
+      deviceUuid,
+      source,
+    })
+  })
+
   .get('/catalog',
     (c) => {
       // Public read-only menu for cashier APK (no token in APK by design).
@@ -230,39 +321,46 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         FROM product_store_links
         WHERE evotor_uuid IS NOT NULL AND TRIM(evotor_uuid) != ''
       `).all() as { productId: number; storeUuid: string; evotorUuid: string }[]
+      // Multi-store: when storeUuid is set, NEVER fall back to another store's uuid.
+      // Missing link for this store ⇒ product/topping evotorUuid stays null (cashier merge skips).
       const uuidByProduct = new Map<number, string>()
-      for (const l of linkRows) {
-        if (storeUuid) {
-          // Точка известна: чужой магазин не подставляем никогда (иначе касса получит UUID другой точки).
+      if (storeUuid) {
+        for (const l of linkRows) {
           if (l.storeUuid === storeUuid) uuidByProduct.set(l.productId, l.evotorUuid)
-        } else if (!uuidByProduct.has(l.productId)) {
-          // Старые APK без storeUuid: сохраняем прежний fallback на любой link.
-          uuidByProduct.set(l.productId, l.evotorUuid)
+        }
+      } else {
+        // Legacy APK without storeUuid — first non-empty link (discouraged for multi-store).
+        for (const l of linkRows) {
+          if (!uuidByProduct.has(l.productId)) uuidByProduct.set(l.productId, l.evotorUuid)
         }
       }
 
-      // Include unavailable modifiers so scheme UI still lists them (APK marks non-sellable).
       const modifiers = db.prepare(`
         SELECT id, name, price, group_key AS groupKey, sort_order AS sortOrder, available
-        FROM modifiers ORDER BY sort_order, id
-      `).all() as { id: number; name: string; price: number; groupKey: string; sortOrder: number; available: number }[]
-      // Modifiers are configured independently from products, so historically their API
-      // payload had no Evotor UUID. The APK correctly refused to fiscalize paid modifiers
-      // without a UUID. Resolve a modifier to the real catalog product by normalized name;
-      // this keeps price/stock fiscalization tied to the actual Evotor inventory item.
-      const normalizeModifierName = (value: unknown) => String(value ?? '')
-        .normalize('NFKC').toLocaleLowerCase('ru-RU').replace(/ё/g, 'е')
-        .replace(/\s+/g, ' ').trim()
+        FROM modifiers WHERE available=1 ORDER BY sort_order, id
+      `).all() as { id: number; name: string; price: number; groupKey: string; sortOrder: number }[]
+      const modById = new Map(modifiers.map((m) => [m.id, m]))
+
+      // Topping products (e.g. «Орех») live in the nomenclature under the same name as the modifier.
+      const normalizeModifierName = (value: unknown) =>
+        String(value ?? '')
+          .normalize('NFKC')
+          .toLocaleLowerCase('ru-RU')
+          .replace(/ё/g, 'е')
+          .replace(/\s+/g, ' ')
+          .trim()
       const productIdByName = new Map<string, number>()
-      const allProductNames = db.prepare('SELECT id, name FROM products ORDER BY id').all() as { id: number; name: string }[]
-      for (const p of allProductNames) {
-        const key = normalizeModifierName(p.name)
-        if (key && !productIdByName.has(key)) productIdByName.set(key, Number(p.id))
+      for (const r of db.prepare(`SELECT id, name FROM products WHERE available=1 ORDER BY id`).all() as { id: number; name: string }[]) {
+        const key = normalizeModifierName(r.name)
+        if (!productIdByName.has(key)) productIdByName.set(key, Number(r.id))
       }
-      const modById = new Map(modifiers.map((m) => {
-        const productId = productIdByName.get(normalizeModifierName(m.name))
-        return [m.id, { ...m, evotorUuid: productId == null ? null : (uuidByProduct.get(productId) || null) }]
-      }))
+      const modifierProductIds = new Set<number>()
+      const uuidByModifier = new Map<number, string | null>()
+      for (const m of modifiers) {
+        const pid = productIdByName.get(normalizeModifierName(m.name))
+        if (pid != null) modifierProductIds.add(pid)
+        uuidByModifier.set(m.id, (pid != null ? uuidByProduct.get(pid) : null) || null)
+      }
 
       const schemeItems = db.prepare(`
         SELECT scheme_id AS schemeId, modifier_id AS modifierId, required, max_count AS maxCount
@@ -275,14 +373,7 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         itemsByScheme.set(it.schemeId, arr)
       }
 
-      // Products that exist only as modifier fiscal lines → hide on cashier menu tiles.
-      const modifierProductIds = new Set<number>()
-      for (const m of modifiers) {
-        const pid = productIdByName.get(normalizeModifierName(m.name))
-        if (pid != null) modifierProductIds.add(Number(pid))
-      }
-
-      // Upsell = real add-ons (food etc.), NEVER scheme modifiers (syrup/milk products).
+      // upsell candidates: available products not counting as cup (food/extra), max pool
       const upsellPool = products
         .filter((p) => !p.countsAsCup)
         .filter((p) => !modifierProductIds.has(Number(p.id)))
@@ -322,10 +413,10 @@ export const deviceRoutes = new Hono<DeviceEnv>()
                   price: m.price,
                   priceRub: m.price,
                   groupKey: (m.groupKey && String(m.groupKey).trim()) || 'extra',
-                  evotorUuid: m.evotorUuid,
+                  evotorUuid: uuidByModifier.get(m.id) ?? null,
                   required: !!it.required,
                   maxCount: it.maxCount,
-                  available: Number(m.available) !== 0,
+                  available: Number((m as { available?: number }).available) !== 0,
                 }
               })
               .filter(Boolean)

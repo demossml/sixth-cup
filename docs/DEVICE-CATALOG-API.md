@@ -101,13 +101,18 @@ need to be migrated. Ensure the Evotor cabinet URL mask remains `https://app\.67
 - Одна плитка на группу: имя/фото/категория берутся из группы, цена — у выбранного варианта.
 - При добавлении позиции в чек использовать `evotorUuid` **выбранного варианта** (не группы).
 
-## Flags for cashier menu
+## Дополнения к `GET /api/devices/catalog` (исправление для кассы)
+- `products[].toppings[]` теперь всегда содержит ключ `evotorUuid` (uuid товара-добавки на точке `storeUuid`; `null`, если добавка не найдена в номенклатуре; сопоставление по имени без учёта регистра/ё/пробелов), а также `available` и `groupKey` (по умолчанию `extra`).
+- Схема добавок берётся как `COALESCE(products.modifier_scheme_id, product_groups.modifier_scheme_id)` — схема, назначенная на группу размеров, действует на все варианты.
+- `products[].isModifier` / `hideFromMenu` = `true` для товаров, одноимённых с добавкой («Орех», «Миндальное»). Товар остаётся в `products[]` (нужен uuid), касса скрывает плитку по флагам.
+- `upsell[]` («Добавить к заказу») не содержит товаров-добавок. `countsAsCup` / `freeEligible` не менялись.
 
-- `isModifier: true` — имя товара совпадает с `modifiers.name` (нормализация: NFKC, нижний регистр, `ё→е`, сжатие пробелов).
-- `hideFromMenu: true` — то же условие; **Android должен скрывать такие плитки из основной сетки** (эти товары существуют только как фискальные строки добавок).
-- `toppings[].available: boolean` — `false`, если модификатор выключен в админке; недоступную добавку нельзя выбирать и нельзя добавлять в чек.
-- `toppings[].groupKey` — `syrup | topping | milk | other | extra` (пустой ключ в БД приходит как `extra`).
-- `toppings[].evotorUuid` — UUID товара из каталога с тем же нормализованным именем и link выбранной точки. `null` → платную добавку выбирать нельзя (нельзя придумывать цену вне чека).
-- `upsell[]` не содержит товаров-добавок (`isModifier`).
-- Query-параметр `storeUuid` (или заголовок `X-Evotor-Store-Uuid`) выбирает `product_store_links` **только этой точки**: при переданном store чужие UUID не подставляются. Без `storeUuid` (старые APK) сохраняется fallback на любой link.
-- Эндпоинт каталога — **публичный read-only**, `Authorization` не требуется (касса ходит без токена by design).
+
+## Multi-store (несколько касс / точек)
+
+- Касса **обязана** передавать `storeUuid` магазина Эвотора **этой** точки:
+  - query: `?storeUuid=…`
+  - и/или header: `X-Evotor-Store-Uuid: …`
+- Если `storeUuid` задан, `products[].evotorUuid` и `toppings[].evotorUuid` берутся **только** из `product_store_links` для этой точки. Чужой магазин не подставляется. Нет link → `null`.
+- Без `storeUuid` (legacy APK): берётся первый link (не рекомендуется при 2+ точках).
+- Подсказка точки: `GET /api/devices/whoami` (headers device/store) → `{ storeUuid, storeName, source }`.

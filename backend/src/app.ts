@@ -12,6 +12,7 @@ import { adminRoutes } from './modules/admin/routes'
 import { authRoutes } from './modules/auth/routes'
 import { devRoutes } from './modules/dev/routes'
 import { deviceRoutes } from './modules/devices/routes'
+import { staffDeviceRoutes } from './modules/staff/deviceRoutes'
 import { cardLookupRoutes } from './modules/loyalty/cardLookup'
 import { directoryRoutes } from './modules/directory/routes'
 import { syncRoutes } from './modules/sync/routes'
@@ -119,6 +120,7 @@ const routes = app
   .route('/api/directory', directoryRoutes)
   .route('/api/sync', syncRoutes)
   .route('/api/devices', deviceRoutes)
+  .route('/api/devices', staffDeviceRoutes)
   .route('/api/dev', devRoutes)
   .route('/api/client-logs', clientLogRoutes)
   .route('/api/admin', adminRoutes)

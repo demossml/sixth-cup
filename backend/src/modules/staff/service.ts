@@ -9,7 +9,14 @@ export function storeUuidFrom(c: { req: { header: (n: string) => string | undefi
 }
 
 export function deviceUuidFrom(c: { req: { header: (n: string) => string | undefined } }) {
-  return (c.req.header('X-Evotor-Device-UUID') || '').slice(0, 80) || null
+  // Cashier / Evotor Cloud may use different header casing.
+  const raw =
+    c.req.header('X-Evotor-Device-UUID') ||
+    c.req.header('X-Evotor-Device-Uuid') ||
+    c.req.header('X-Device-Uuid') ||
+    c.req.header('X-Evotor-Device-Id') ||
+    ''
+  return raw.slice(0, 80) || null
 }
 
 /** Resolve internal store id from Evotor store uuid if present. */

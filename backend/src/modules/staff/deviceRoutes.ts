@@ -26,6 +26,13 @@ export const staffDeviceRoutes = new Hono()
     const since = start.getTime()
     const sales = salesSummary(storeUuid, since)
     const avg = sales.receiptsCount > 0 ? Math.round(sales.revenueKopecks / sales.receiptsCount) : 0
+    const hourly = hourlySales(storeUuid, since).map((h) => ({
+      hour: h.hour,
+      revenueKopecks: h.revenueKopecks,
+      // Android 4.9.8 ShiftApi expects revenueRub
+      revenueRub: Math.round((h.revenueKopecks || 0) / 100),
+    }))
+    const top = topProducts(storeUuid, since, 3)
     return c.json({
       ok: true,
       status: 'open',
@@ -40,8 +47,12 @@ export const staffDeviceRoutes = new Hono()
       cardKopecks: null,
       drinksSharePct: null,
       foodSharePct: null,
-      hourly: hourlySales(storeUuid, since),
-      top: topProducts(storeUuid, since, 3),
+      hourly,
+      top,
+      // --- aliases for cashier APK 4.9.8 (BACKEND-API.md) ---
+      receipts: sales.receiptsCount,
+      revenueRub: Math.round((sales.revenueKopecks || 0) / 100),
+      avgReceiptRub: Math.round((avg || 0) / 100),
     })
   })
 
@@ -56,15 +67,29 @@ export const staffDeviceRoutes = new Hono()
       receiptsCount: null as number | null,
       revenueKopecks: null as number | null,
     }))
+    // Android 4.9.8: people[] + receipts + revenueRub
+    const people = members.map((m) => ({
+      id: m.id,
+      name: m.name,
+      role: m.role,
+      status: m.status,
+      receipts: m.receiptsCount,
+      revenueRub: m.revenueKopecks != null ? Math.round(m.revenueKopecks / 100) : null,
+    }))
     return c.json({
       ok: true,
       shiftLabel: null,
       members,
+      people,
     })
   })
 
   .get('/timesheet', (c) => {
-    const month = monthPrefix(c.req.query('month') || dayKey().slice(0, 7))
+    // APK 4.9.8 sends from/to (yyyy-MM-dd); admin/docs use month=YYYY-MM
+    const fromQ = (c.req.query('from') || '').trim()
+    const toQ = (c.req.query('to') || '').trim()
+    const monthRaw = c.req.query('month') || (fromQ.length >= 7 ? fromQ.slice(0, 7) : dayKey().slice(0, 7))
+    const month = monthPrefix(monthRaw)
     const storeUuid = storeUuidFrom(c)
     const storeId = storeIdForUuid(storeUuid)
     const staff = staffForDevice(deviceUuidFrom(c), storeUuid, storeId)
@@ -98,12 +123,31 @@ export const staffDeviceRoutes = new Hono()
         : undefined
       if (s?.name) storeName = s.name
     } catch { /* */ }
+    // Dual shape: backend day:int + APK date/from/to/note
+    const daysOut = days.map((d) => {
+      const date = `${month}-${String(d.day).padStart(2, '0')}`
+      return {
+        day: d.day,
+        status: d.status,
+        start: d.start,
+        end: d.end,
+        label: d.label,
+        date,
+        from: d.start,
+        to: d.end,
+        note: d.label,
+      }
+    }).filter((d) => {
+      if (fromQ && d.date < fromQ) return false
+      if (toQ && d.date > toQ) return false
+      return true
+    })
     return c.json({
       ok: true,
       month,
       storeName,
       scheduleStatus,
-      days,
+      days: daysOut,
     })
   })
 
@@ -139,27 +183,30 @@ export const staffDeviceRoutes = new Hono()
           month,
           status: 'no_rules',
           canEdit: false,
+          editable: false,
           limit: null,
           periodLabel: null,
           closesLabel: null,
+          deadline: null,
           selected: [],
+          days: [] as string[],
           accepted: [],
           declined: [],
         })
       }
     } catch {
       return c.json({
-        ok: true, month, status: 'no_rules', canEdit: false,
-        limit: null, periodLabel: null, closesLabel: null,
-        selected: [], accepted: [], declined: [],
+        ok: true, month, status: 'no_rules', canEdit: false, editable: false,
+        limit: null, periodLabel: null, closesLabel: null, deadline: null,
+        selected: [], days: [] as string[], accepted: [], declined: [],
       })
     }
 
     if (!staff) {
       return c.json({
-        ok: true, month, status: 'open', canEdit: rules.canEdit,
+        ok: true, month, status: 'open', canEdit: rules.canEdit, editable: rules.canEdit,
         limit: rules.limit, periodLabel: rules.periodLabel, closesLabel: rules.closesLabel,
-        selected: [], accepted: [], declined: [],
+        deadline: rules.closesLabel, selected: [], days: [] as string[], accepted: [], declined: [],
       })
     }
 
@@ -186,15 +233,21 @@ export const staffDeviceRoutes = new Hono()
       }
     } catch { /* */ }
 
+    const canEditNow = rules.canEdit && (status === 'open' || status === 'draft')
+    // Android 4.9.8: days as strings, editable, deadline
+    const daysStr = selected.map((n) => String(n))
     return c.json({
       ok: true,
       month,
       status,
-      canEdit: rules.canEdit && (status === 'open' || status === 'draft'),
+      canEdit: canEditNow,
+      editable: canEditNow,
       limit: rules.limit,
       periodLabel: rules.periodLabel,
       closesLabel: rules.closesLabel,
+      deadline: rules.closesLabel,
       selected,
+      days: daysStr,
       accepted,
       declined,
     })
@@ -204,7 +257,8 @@ export const staffDeviceRoutes = new Hono()
     evotorProxyStrict,
     zValidator('json', z.object({
       month: z.string().regex(/^\d{4}-\d{2}$/),
-      days: z.array(z.number().int().min(1).max(31)).max(31),
+      // APK may send string day numbers or yyyy-MM-dd; admin sends int 1–31
+      days: z.array(z.union([z.number(), z.string()])).max(31),
     })),
     (c) => {
       const body = c.req.valid('json')
@@ -230,7 +284,13 @@ export const staffDeviceRoutes = new Hono()
         throw bad('Wish rules not configured', 400)
       }
       if (!canEdit) throw bad('Period closed', 400)
-      const days = [...new Set(body.days)].filter((d) => d >= 1 && d <= 31).sort((a, b) => a - b)
+      const toDayNum = (x: number | string): number => {
+        if (typeof x === 'number') return x
+        const s = String(x).trim()
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return Number(s.slice(8, 10))
+        return Number(s)
+      }
+      const days = [...new Set(body.days.map(toDayNum))].filter((d) => d >= 1 && d <= 31).sort((a, b) => a - b)
       if (days.length > limit) throw bad(`Limit is ${limit} days`, 400)
 
       const now = Date.now()
@@ -249,12 +309,70 @@ export const staffDeviceRoutes = new Hono()
         month,
         status,
         canEdit: false,
+        editable: false,
         limit,
         periodLabel: null,
         closesLabel: null,
+        deadline: null,
         selected: days,
+        days: days.map(String),
         accepted: [],
         declined: [],
+      })
+    })
+
+
+  // Android 4.9.8 uses POST; same body as PUT
+  .post('/timesheet/wishes',
+    evotorProxyStrict,
+    zValidator('json', z.object({
+      month: z.string().regex(/^\d{4}-\d{2}$/),
+      days: z.array(z.union([z.number(), z.string()])).max(31),
+    })),
+    async (c) => {
+      // Delegate to same logic as PUT by rewriting — inline duplicate is safer for Hono
+      const body = c.req.valid('json')
+      const month = monthPrefix(body.month)
+      const storeUuid = storeUuidFrom(c)
+      const storeId = storeIdForUuid(storeUuid)
+      const staff = staffForDevice(deviceUuidFrom(c), storeUuid, storeId)
+      if (!staff) throw bad('Staff not linked to this device', 400)
+      let limit = 3
+      let canEdit = true
+      try {
+        const r = db.prepare(`
+          SELECT limit_days AS limitDays, can_edit AS canEdit
+          FROM staff_wish_rules WHERE target_month=?
+          ORDER BY id DESC LIMIT 1
+        `).get(month) as { limitDays: number; canEdit: number } | undefined
+        if (!r) throw bad('Wish rules not configured', 400)
+        limit = r.limitDays
+        canEdit = r.canEdit === 1
+      } catch (e) {
+        if (e && typeof e === 'object' && 'status' in e) throw e
+        throw bad('Wish rules not configured', 400)
+      }
+      if (!canEdit) throw bad('Period closed', 400)
+      const toDayNum = (x: number | string): number => {
+        if (typeof x === 'number') return x
+        const s = String(x).trim()
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return Number(s.slice(8, 10))
+        return Number(s)
+      }
+      const days = [...new Set(body.days.map(toDayNum))].filter((d) => d >= 1 && d <= 31).sort((a, b) => a - b)
+      if (days.length > limit) throw bad(`Max ${limit} days`, 400)
+      const ts = Date.now()
+      db.prepare(`
+        INSERT INTO staff_wishes(staff_id, target_month, status, selected_json, accepted_json, declined_json, updated_at)
+        VALUES(?, ?, 'open', ?, '[]', '[]', ?)
+        ON CONFLICT(staff_id, target_month) DO UPDATE SET
+          selected_json=excluded.selected_json, status='open', updated_at=excluded.updated_at
+      `).run(staff.id, month, JSON.stringify(days), ts)
+      return c.json({
+        ok: true, month, status: 'open',
+        canEdit: true, editable: true,
+        selected: days, days: days.map(String),
+        accepted: [], declined: [],
       })
     })
 
@@ -275,18 +393,63 @@ export const staffDeviceRoutes = new Hono()
         actual_start: string | null; actual_end: string | null; actual_minutes: number | null
       } | undefined
       if (!row) return c.json({ ok: true, status: 'none', recommendation: null, actual: null })
+      const recommendation = row.rec_start
+        ? {
+            start: row.rec_start,
+            end: row.rec_end,
+            hint: row.rec_hint,
+            // Android 4.9.8 aliases
+            from: row.rec_start,
+            to: row.rec_end,
+            reason: row.rec_hint,
+          }
+        : null
       return c.json({
         ok: true,
         status: row.status,
-        recommendation: row.rec_start
-          ? { start: row.rec_start, end: row.rec_end, hint: row.rec_hint }
-          : null,
+        recommendation,
         actual: row.actual_start
           ? { start: row.actual_start, end: row.actual_end, minutes: row.actual_minutes }
           : null,
       })
     } catch {
       return c.json({ ok: true, status: 'none', recommendation: null, actual: null })
+    }
+  })
+
+
+  /** Android 4.9.8 path; same data as GET /shift/breaks.recommendation */
+  .get('/breaks/recommendation', (c) => {
+    const storeUuid = storeUuidFrom(c)
+    const storeId = storeIdForUuid(storeUuid)
+    const staff = staffForDevice(deviceUuidFrom(c), storeUuid, storeId)
+    const day = dayKey()
+    if (!staff) {
+      return c.json({ ok: true, from: null, to: null, reason: null, status: 'none' })
+    }
+    try {
+      const row = db.prepare(`
+        SELECT status, rec_start, rec_end, rec_hint
+        FROM staff_breaks WHERE staff_id=? AND day=?
+      `).get(staff.id, day) as {
+        status: string; rec_start: string | null; rec_end: string | null; rec_hint: string | null
+      } | undefined
+      if (!row?.rec_start) {
+        return c.json({ ok: true, from: null, to: null, reason: null, status: row?.status ?? 'none' })
+      }
+      return c.json({
+        ok: true,
+        from: row.rec_start,
+        to: row.rec_end,
+        reason: row.rec_hint,
+        status: row.status,
+        recommendation: {
+          start: row.rec_start, end: row.rec_end, hint: row.rec_hint,
+          from: row.rec_start, to: row.rec_end, reason: row.rec_hint,
+        },
+      })
+    } catch {
+      return c.json({ ok: true, from: null, to: null, reason: null, status: 'none' })
     }
   })
 
