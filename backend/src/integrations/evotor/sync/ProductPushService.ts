@@ -4,6 +4,7 @@ import { EvotorClient } from '../client/EvotorClient'
 import { clientForStore } from '../tokenStore'
 import { evotorConfig } from '../../../config'
 import { log, shortId } from '../../../lib/logBuffer'
+import { buildCatalogToppings, ensureAddonSchemeSchema } from '../../../modules/catalog/addonScheme'
 
 const UUID_NS = '151071e8-88a4-44f6-b71a-b17c559f9b7d'
 
@@ -199,14 +200,8 @@ export class ProductPushService {
   }
 
   private buildExtra(product: LocalProduct, productUuid: string): Record<string, unknown> | null {
-    const modifiers = product.modifier_scheme_id == null ? [] : this.db.prepare(`
-      SELECT m.id, m.name, m.price, m.group_key AS groupKey
-      FROM modifier_scheme_items i
-      JOIN modifiers m ON m.id=i.modifier_id
-      WHERE i.scheme_id=? AND m.available=1
-      ORDER BY m.sort_order, m.id
-    `).all(product.modifier_scheme_id) as { id: number; name: string; price: number; groupKey: string }[]
-
+    ensureAddonSchemeSchema(this.db)
+    const toppings = buildCatalogToppings(this.db, product.modifier_scheme_id ?? null, new Map())
     const custom = parseCustomJson(product.evotor_extra_json)
     const data: Record<string, unknown> = {
       schema: '6.7.product.v1',
@@ -216,7 +211,15 @@ export class ProductPushService {
       recipe: product.recipe_text,
       recipeCostRub: product.recipe_cost_rub,
       recipeSeconds: product.recipe_seconds,
-      toppings: modifiers.map((m) => ({ id: m.id, name: m.name, priceRub: m.price, groupKey: m.groupKey })),
+      toppings: toppings.map((m) => ({
+        id: m.id,
+        productId: m.productId,
+        name: m.name,
+        priceRub: m.price,
+        groupKey: m.groupKey,
+        isDefault: m.isDefault,
+        zeroOption: m.zeroOption,
+      })),
     }
     if (custom !== null) data.custom = custom
     return data

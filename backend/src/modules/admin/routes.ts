@@ -11,6 +11,7 @@ import { createMiddleware } from 'hono/factory'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { config, TAX_REGIMES } from '../../config'
+import { ensureAddonSchemeSchema } from '../catalog/addonScheme'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import { grantVoucher } from '../vouchers/service'
@@ -527,6 +528,24 @@ export const adminRoutes = new Hono()
 
   .delete('/products/:id', (c) => {
     const id = Number(c.req.param('id'))
+    try {
+      ensureAddonSchemeSchema(db)
+      const ref = db.prepare(
+        `SELECT COUNT(*) AS n FROM modifier_scheme_items WHERE product_id=?`,
+      ).get(id) as { n: number }
+      if (ref && Number(ref.n) > 0) {
+        throw bad('Товар используется в схеме добавок — сначала уберите его из схем', 409)
+      }
+      const refMod = db.prepare(
+        `SELECT COUNT(*) AS n FROM modifiers WHERE linked_product_id=?`,
+      ).get(id) as { n: number } | undefined
+      if (refMod && Number(refMod.n) > 0) {
+        throw bad('Товар привязан к legacy-добавке (linked_product_id) — сначала отвяжите', 409)
+      }
+    } catch (e) {
+      if (e && typeof e === 'object' && 'status' in e) throw e
+      /* schema not ready */
+    }
     db.prepare("UPDATE products SET available=0, updated_at=?, catalog_source='SIXTH_CUP' WHERE id=?").run(Date.now(), id)
     enqueueProductSync([id])
     return c.json({ ok: true, disabled: true })
@@ -692,9 +711,26 @@ export const adminRoutes = new Hono()
     return c.json({ ok: true, detached: ids.length })
   })
 
+  .get('/addon-products', (c) => {
+    ensureAddonSchemeSchema(db)
+    const catId = resolveAddonsCategoryId(db)
+    const rows =
+      catId == null
+        ? []
+        : (db
+            .prepare(
+              `SELECT id, name, price, available, category_id AS categoryId, sort_order AS sortOrder
+               FROM products WHERE category_id=? ORDER BY sort_order, id`,
+            )
+            .all(catId) as { id: number; name: string; price: number; available: number; categoryId: number; sortOrder: number }[])
+    return c.json({ categoryId: catId, products: rows })
+  })
+
   .get('/modifiers', (c) => {
+    ensureAddonSchemeSchema(db)
     const modifiers = db.prepare(`
-      SELECT id, name, price, group_key AS groupKey, available, sort_order AS sortOrder
+      SELECT id, name, price, group_key AS groupKey, available, sort_order AS sortOrder,
+             linked_product_id AS linkedProductId
       FROM modifiers ORDER BY sort_order, id
     `).all()
     return c.json({ modifiers })
@@ -704,19 +740,26 @@ export const adminRoutes = new Hono()
     id: z.number().int().optional(),
     name: z.string().min(1).max(60),
     price: z.number().int().min(0),
-    groupKey: z.enum(['syrup', 'topping', 'milk', 'other']).default('other'),
+    groupKey: z.enum(['syrup', 'topping', 'milk', 'other', 'extra']).default('other'),
     available: z.boolean().default(true),
     sortOrder: z.number().int().default(0),
+    linkedProductId: z.number().int().positive().nullable().optional(),
   })), (c) => {
-    const p = c.req.valid('json')
-    const t = Date.now()
-    let modifierId = p.id
-    if (p.id) {
-      db.prepare(`UPDATE modifiers SET name=?, price=?, group_key=?, available=?, sort_order=?, updated_at=? WHERE id=?`)
-        .run(p.name, p.price, p.groupKey, p.available ? 1 : 0, p.sortOrder, t, p.id)
+    ensureAddonSchemeSchema(db)
+    const body = c.req.valid('json')
+    const now = Date.now()
+    let modifierId = body.id
+    if (body.id) {
+      if (body.linkedProductId !== undefined) {
+        db.prepare(`UPDATE modifiers SET name=?, price=?, group_key=?, available=?, sort_order=?, updated_at=?, linked_product_id=? WHERE id=?`)
+          .run(body.name, body.price, body.groupKey, body.available ? 1 : 0, body.sortOrder, now, body.linkedProductId, body.id)
+      } else {
+        db.prepare(`UPDATE modifiers SET name=?, price=?, group_key=?, available=?, sort_order=?, updated_at=? WHERE id=?`)
+          .run(body.name, body.price, body.groupKey, body.available ? 1 : 0, body.sortOrder, now, body.id)
+      }
     } else {
-      const created = db.prepare(`INSERT INTO modifiers(name,price,group_key,available,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`)
-        .run(p.name, p.price, p.groupKey, p.available ? 1 : 0, p.sortOrder, t, t)
+      const created = db.prepare(`INSERT INTO modifiers(name,price,group_key,available,sort_order,created_at,updated_at,linked_product_id) VALUES(?,?,?,?,?,?,?,?)`)
+        .run(body.name, body.price, body.groupKey, body.available ? 1 : 0, body.sortOrder, now, now, body.linkedProductId ?? null)
       modifierId = Number(created.lastInsertRowid)
     }
     const affected = db.prepare(`SELECT id FROM products WHERE modifier_scheme_id IN (SELECT scheme_id FROM modifier_scheme_items WHERE modifier_id=?)`).all(modifierId) as { id: number }[]
@@ -732,18 +775,12 @@ export const adminRoutes = new Hono()
     return c.json({ ok: true })
   })
 
-
   .get('/modifier-schemes/:id/preview', (c) => {
+    ensureAddonSchemeSchema(db)
     const id = Number(c.req.param('id'))
     const scheme = db.prepare('SELECT id, name FROM modifier_schemes WHERE id=?').get(id) as { id: number; name: string } | undefined
     if (!scheme) throw bad('Scheme not found', 404)
-    const items = db.prepare(`
-      SELECT m.id, m.name, m.price, i.required, i.max_count AS maxCount
-      FROM modifier_scheme_items i
-      JOIN modifiers m ON m.id = i.modifier_id
-      WHERE i.scheme_id=?
-      ORDER BY m.sort_order, m.id
-    `).all(id)
+    const items = loadSchemeItems(db, id)
     const products = db.prepare(
       'SELECT id, name FROM products WHERE modifier_scheme_id=? ORDER BY sort_order, id',
     ).all(id)
@@ -751,51 +788,80 @@ export const adminRoutes = new Hono()
   })
 
   .get('/modifier-schemes', (c) => {
+    ensureAddonSchemeSchema(db)
     const schemes = db.prepare('SELECT id, name FROM modifier_schemes ORDER BY id').all() as { id: number; name: string }[]
-    const items = db.prepare(`
-      SELECT scheme_id AS schemeId, modifier_id AS modifierId, required, max_count AS maxCount
-      FROM modifier_scheme_items
-    `).all()
     return c.json({
       schemes: schemes.map((s) => ({
-        id: s.id,
-        name: s.name,
-        items: items.filter((i: any) => i.schemeId === s.id),
+        ...s,
+        items: loadSchemeItems(db, s.id).map((i) => ({
+          id: i.id,
+          schemeId: i.schemeId,
+          modifierId: i.modifierId,
+          productId: i.productId,
+          groupKey: i.groupKey,
+          required: !!i.required,
+          maxCount: i.maxCount,
+          isDefault: i.isDefault === 1,
+          zeroOption: i.zeroOption === 1,
+          priceOverride: i.priceOverride,
+          nameOverride: i.nameOverride,
+          sortOrder: i.sortOrder,
+        })),
       })),
     })
   })
 
   .post('/modifier-schemes', zValidator('json', z.object({
     id: z.number().int().optional(),
-    name: z.string().min(1).max(80),
+    name: z.string().min(1),
     modifierIds: z.array(z.number().int()).default([]),
     copyFromSchemeId: z.number().int().optional(),
+    items: z.array(z.object({
+      modifierId: z.number().int().nullable().optional(),
+      productId: z.number().int().nullable().optional(),
+      groupKey: z.string().nullable().optional(),
+      required: z.boolean().optional(),
+      maxCount: z.number().int().optional(),
+      isDefault: z.boolean().optional(),
+      zeroOption: z.boolean().optional(),
+      priceOverride: z.number().int().nullable().optional(),
+      nameOverride: z.string().nullable().optional(),
+      sortOrder: z.number().int().optional(),
+    })).optional(),
   })), (c) => {
-    const p = c.req.valid('json')
-    const t = Date.now()
-    if (p.id && !db.prepare('SELECT id FROM modifier_schemes WHERE id=?').get(p.id)) throw bad('Scheme not found', 404)
-    let ids = p.modifierIds
-    if (p.copyFromSchemeId) {
-      const copied = db.prepare('SELECT modifier_id AS id FROM modifier_scheme_items WHERE scheme_id=?')
-        .all(p.copyFromSchemeId) as { id: number }[]
-      ids = copied.map((x) => x.id)
-    }
-    let schemeId = p.id
-    // One transaction: a failure must not leave a scheme without items.
+    ensureAddonSchemeSchema(db)
+    const body = c.req.valid('json')
+    const now = Date.now()
+    if (body.id && !db.prepare('SELECT id FROM modifier_schemes WHERE id=?').get(body.id)) throw bad('Scheme not found', 404)
+    let schemeId = body.id
     db.transaction(() => {
       if (schemeId) {
-        db.prepare('UPDATE modifier_schemes SET name=?, updated_at=? WHERE id=?').run(p.name, t, schemeId)
-        db.prepare('DELETE FROM modifier_scheme_items WHERE scheme_id=?').run(schemeId)
+        db.prepare('UPDATE modifier_schemes SET name=?, updated_at=? WHERE id=?').run(body.name, now, schemeId)
       } else {
-        const r = db.prepare('INSERT INTO modifier_schemes(name,created_at,updated_at) VALUES(?,?,?)').run(p.name, t, t)
+        const r = db.prepare('INSERT INTO modifier_schemes(name,created_at,updated_at) VALUES(?,?,?)').run(body.name, now, now)
         schemeId = Number(r.lastInsertRowid)
       }
-      const ins = db.prepare(
-        'INSERT OR IGNORE INTO modifier_scheme_items(scheme_id,modifier_id,required,max_count) VALUES(?,?,0,2)'
-      )
-      for (const mid of ids) ins.run(schemeId, mid)
+      if (body.items && body.items.length) {
+        replaceSchemeItems(db, schemeId!, body.items)
+      } else {
+        let ids = body.modifierIds
+        if (body.copyFromSchemeId) {
+          const copied = db.prepare(
+            'SELECT modifier_id AS id FROM modifier_scheme_items WHERE scheme_id=? AND modifier_id IS NOT NULL',
+          ).all(body.copyFromSchemeId) as { id: number }[]
+          ids = copied.map((x) => x.id)
+        }
+        replaceSchemeItems(db, schemeId!, ids.map((mid) => ({ modifierId: mid, maxCount: 2 })))
+      }
     })()
     const affected = db.prepare('SELECT id FROM products WHERE modifier_scheme_id=?').all(schemeId) as { id: number }[]
+    try {
+      const groups = db.prepare('SELECT id FROM product_groups WHERE modifier_scheme_id=?').all(schemeId) as { id: number }[]
+      const byGroup = db.prepare('SELECT id FROM products WHERE group_id=?')
+      for (const g of groups) {
+        for (const row of byGroup.all(g.id) as { id: number }[]) affected.push(row)
+      }
+    } catch { /* optional */ }
     enqueueProductSync(affected.map((x) => x.id))
     return c.json({ ok: true, id: schemeId })
   })

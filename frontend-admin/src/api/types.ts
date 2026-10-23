@@ -135,8 +135,22 @@ export type ProductGroup = {
   }[]
 }
 export type Category = { id: number; name: string; sortOrder: number; available: number }
-export type Modifier = { id: number; name: string; price: number; groupKey: string; available: number; sortOrder: number }
-export type Scheme = { id: number; name: string; copyFromId?: number; items: { schemeId: number; modifierId: number; required?: number; maxCount?: number }[] }
+export type Modifier = { id: number; name: string; price: number; groupKey: string; available: number; sortOrder: number; linkedProductId?: number | null }
+export type SchemeItem = {
+  id?: number
+  schemeId?: number
+  modifierId?: number | null
+  productId?: number | null
+  groupKey?: string | null
+  required?: boolean | number
+  maxCount?: number
+  isDefault?: boolean
+  zeroOption?: boolean
+  priceOverride?: number | null
+  nameOverride?: string | null
+  sortOrder?: number
+}
+export type Scheme = { id: number; name: string; copyFromId?: number; items: SchemeItem[] }
 export type EvotorStore = {
   uuid: string
   id?: string | number

@@ -7,6 +7,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
+import { buildCatalogToppings, listAddonProductIds, ensureAddonSchemeSchema } from '../catalog/addonScheme'
 import { hashToken, requireDevice, type DeviceEnv } from '../../middleware/device'
 import { applyReceipts } from '../loyalty/receipts'
 import { applyOnlineSale } from './sales'
@@ -335,13 +336,15 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         }
       }
 
-      const modifiers = db.prepare(`
-        SELECT id, name, price, group_key AS groupKey, sort_order AS sortOrder, available
-        FROM modifiers WHERE available=1 ORDER BY sort_order, id
-      `).all() as { id: number; name: string; price: number; groupKey: string; sortOrder: number }[]
-      const modById = new Map(modifiers.map((m) => [m.id, m]))
+      ensureAddonSchemeSchema(db)
+      const addonProductIds = listAddonProductIds(db)
 
-      // Topping products (e.g. «Орех») live in the nomenclature under the same name as the modifier.
+      const modifiers = db.prepare(`
+        SELECT id, name, price, group_key AS groupKey, sort_order AS sortOrder, available,
+               linked_product_id AS linkedProductId
+        FROM modifiers WHERE available=1 ORDER BY sort_order, id
+      `).all() as { id: number; name: string; price: number; groupKey: string; sortOrder: number; linkedProductId?: number | null }[]
+
       const normalizeModifierName = (value: unknown) =>
         String(value ?? '')
           .normalize('NFKC')
@@ -354,12 +357,11 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         const key = normalizeModifierName(r.name)
         if (!productIdByName.has(key)) productIdByName.set(key, Number(r.id))
       }
-      const modifierProductIds = new Set<number>()
-      const uuidByModifier = new Map<number, string | null>()
+      const modifierProductIds = new Set<number>(addonProductIds)
       for (const m of modifiers) {
+        if (m.linkedProductId != null) modifierProductIds.add(Number(m.linkedProductId))
         const pid = productIdByName.get(normalizeModifierName(m.name))
         if (pid != null) modifierProductIds.add(pid)
-        uuidByModifier.set(m.id, (pid != null ? uuidByProduct.get(pid) : null) || null)
       }
 
       const schemeItems = db.prepare(`
@@ -402,25 +404,7 @@ export const deviceRoutes = new Hono<DeviceEnv>()
       const out = products.map((p) => {
         const id = Number(p.id)
         const schemeId = p.schemeId != null ? Number(p.schemeId) : null
-        const toppings = schemeId
-          ? (itemsByScheme.get(schemeId) || [])
-              .map((it) => {
-                const m = modById.get(it.modifierId)
-                if (!m) return null
-                return {
-                  id: m.id,
-                  name: m.name,
-                  price: m.price,
-                  priceRub: m.price,
-                  groupKey: (m.groupKey && String(m.groupKey).trim()) || 'extra',
-                  evotorUuid: uuidByModifier.get(m.id) ?? null,
-                  required: !!it.required,
-                  maxCount: it.maxCount,
-                  available: Number((m as { available?: number }).available) !== 0,
-                }
-              })
-              .filter(Boolean)
-          : []
+        const toppings = buildCatalogToppings(db, schemeId, uuidByProduct)
         const upsell = upsellPool.filter((u) => u.id !== id).slice(0, 6)
         const description = (p.description as string | null) ?? null
         const categoryId = p.categoryId != null ? Number(p.categoryId) : null
