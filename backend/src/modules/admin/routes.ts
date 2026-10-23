@@ -11,7 +11,14 @@ import { createMiddleware } from 'hono/factory'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { config, TAX_REGIMES } from '../../config'
-import { ensureAddonSchemeSchema } from '../catalog/addonScheme'
+import {
+  ensureAddonSchemeSchema,
+  resolveAddonsCategoryId,
+  loadSchemeItems,
+  replaceSchemeItems,
+  replaceSchemeOptions,
+  loadSchemeOptions,
+} from '../catalog/addonScheme'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import { grantVoucher } from '../vouchers/service'
@@ -807,6 +814,7 @@ export const adminRoutes = new Hono()
           nameOverride: i.nameOverride,
           sortOrder: i.sortOrder,
         })),
+        options: loadSchemeOptions(db, s.id),
       })),
     })
   })
@@ -816,6 +824,17 @@ export const adminRoutes = new Hono()
     name: z.string().min(1),
     modifierIds: z.array(z.number().int()).default([]),
     copyFromSchemeId: z.number().int().optional(),
+    options: z.array(z.object({
+      kind: z.enum(['product','zero','modifier']),
+      productId: z.number().int().positive().nullable().optional(),
+      modifierId: z.number().int().positive().nullable().optional(),
+      name: z.string().nullable().optional(),
+      groupKey: z.string().optional(),
+      isDefault: z.boolean().optional(),
+      required: z.boolean().optional(),
+      maxCount: z.number().int().optional(),
+      sortOrder: z.number().int().optional(),
+    })).optional(),
     items: z.array(z.object({
       modifierId: z.number().int().nullable().optional(),
       productId: z.number().int().nullable().optional(),
@@ -841,17 +860,39 @@ export const adminRoutes = new Hono()
         const r = db.prepare('INSERT INTO modifier_schemes(name,created_at,updated_at) VALUES(?,?,?)').run(body.name, now, now)
         schemeId = Number(r.lastInsertRowid)
       }
-      if (body.items && body.items.length) {
+      if (body.options && body.options.length) {
+        replaceSchemeOptions(db, schemeId!, body.options)
+      } else if (body.items && body.items.length) {
         replaceSchemeItems(db, schemeId!, body.items)
       } else {
         let ids = body.modifierIds
         if (body.copyFromSchemeId) {
-          const copied = db.prepare(
-            'SELECT modifier_id AS id FROM modifier_scheme_items WHERE scheme_id=? AND modifier_id IS NOT NULL',
-          ).all(body.copyFromSchemeId) as { id: number }[]
-          ids = copied.map((x) => x.id)
+          try {
+            const copiedOpt = db.prepare(
+              'SELECT kind, product_id AS productId, modifier_id AS modifierId, name, group_key AS groupKey, is_default AS isDefault, required, max_count AS maxCount, sort_order AS sortOrder FROM modifier_scheme_options WHERE scheme_id=? ORDER BY sort_order, id',
+            ).all(body.copyFromSchemeId) as any[]
+            if (copiedOpt.length) {
+              replaceSchemeOptions(db, schemeId!, copiedOpt.map((o) => ({
+                kind: o.kind, productId: o.productId, modifierId: o.modifierId, name: o.name, groupKey: o.groupKey,
+                isDefault: !!o.isDefault, required: !!o.required, maxCount: o.maxCount ?? 1, sortOrder: o.sortOrder ?? 0,
+              })))
+            } else {
+              const copied = db.prepare(
+                'SELECT modifier_id AS id FROM modifier_scheme_items WHERE scheme_id=? AND modifier_id IS NOT NULL',
+              ).all(body.copyFromSchemeId) as { id: number }[]
+              ids = copied.map((x) => x.id)
+              replaceSchemeItems(db, schemeId!, (ids || []).map((mid) => ({ modifierId: mid, maxCount: 2 })))
+            }
+          } catch {
+            const copied = db.prepare(
+              'SELECT modifier_id AS id FROM modifier_scheme_items WHERE scheme_id=? AND modifier_id IS NOT NULL',
+            ).all(body.copyFromSchemeId) as { id: number }[]
+            ids = copied.map((x) => x.id)
+            replaceSchemeItems(db, schemeId!, (ids || []).map((mid) => ({ modifierId: mid, maxCount: 2 })))
+          }
+        } else {
+          replaceSchemeItems(db, schemeId!, (ids || []).map((mid) => ({ modifierId: mid, maxCount: 2 })))
         }
-        replaceSchemeItems(db, schemeId!, ids.map((mid) => ({ modifierId: mid, maxCount: 2 })))
       }
     })()
     const affected = db.prepare('SELECT id FROM products WHERE modifier_scheme_id=?').all(schemeId) as { id: number }[]
@@ -870,6 +911,7 @@ export const adminRoutes = new Hono()
     const id = Number(c.req.param('id'))
     const affected = db.prepare('SELECT id FROM products WHERE modifier_scheme_id=?').all(id) as { id: number }[]
     db.prepare('UPDATE products SET modifier_scheme_id=NULL, updated_at=? WHERE modifier_scheme_id=?').run(Date.now(), id)
+    try { db.prepare('DELETE FROM modifier_scheme_options WHERE scheme_id=?').run(id) } catch {}
     db.prepare('DELETE FROM modifier_scheme_items WHERE scheme_id=?').run(id)
     db.prepare('DELETE FROM modifier_schemes WHERE id=?').run(id)
     enqueueProductSync(affected.map((x) => x.id))

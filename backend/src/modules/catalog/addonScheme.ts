@@ -146,7 +146,31 @@ export function buildCatalogToppings(
 ): CatalogTopping[] {
   if (schemeId == null) return []
   ensureAddonSchemeSchema(db)
-  const items = loadSchemeItems(db, schemeId)
+
+  // TZ Claude: если есть modifier_scheme_options — они главный источник (product/zero/modifier).
+  let optionRows: Array<{
+    id: number
+    kind: string
+    productId: number | null
+    modifierId: number | null
+    name: string | null
+    groupKey: string
+    isDefault: number
+    required: number
+    maxCount: number
+  }> = []
+  try {
+    optionRows = db
+      .prepare(
+        `SELECT id, kind, product_id AS productId, modifier_id AS modifierId, name,
+                group_key AS groupKey, is_default AS isDefault, required, max_count AS maxCount
+         FROM modifier_scheme_options WHERE scheme_id=? ORDER BY sort_order, id`,
+      )
+      .all(schemeId) as typeof optionRows
+  } catch {
+    optionRows = []
+  }
+
   const modRows = db
     .prepare(
       `SELECT id, name, price, group_key AS groupKey, available, linked_product_id AS linkedProductId
@@ -166,7 +190,77 @@ export function buildCatalogToppings(
     .all() as { id: number; name: string; price: number; available: number }[]
   const prodById = new Map(prodRows.map((p) => [p.id, p]))
 
+  const normKey = (v: unknown) => {
+    const k = String(v ?? '')
+      .normalize('NFKC')
+      .toLocaleLowerCase('ru-RU')
+      .replace(/ё/g, 'е')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (k === 'milk' || k === 'молоко') return 'milk'
+    if (k === 'syrup' || k === 'сироп') return 'syrup'
+    if (k === 'sugar' || k === 'сахар') return 'sugar'
+    return 'extra'
+  }
+
   const out: CatalogTopping[] = []
+
+  if (optionRows.length) {
+    for (const it of optionRows) {
+      const kind = it.kind
+      let name = (it.name || '').trim()
+      let price = 0
+      let productId: number | null = it.productId
+      let groupKey = normKey(it.groupKey)
+      let modAvailable = true
+      let zero = kind === 'zero'
+
+      if (kind === 'product' && productId != null) {
+        const p = prodById.get(productId)
+        if (!p) continue
+        if (!name) name = p.name
+        price = p.price
+        if (p.available === 0) modAvailable = false
+      } else if (kind === 'modifier' && it.modifierId != null) {
+        const m = modById.get(it.modifierId)
+        if (!m) continue
+        if (!name) name = m.name
+        price = m.price
+        groupKey = normKey(m.groupKey || groupKey)
+        modAvailable = m.available !== 0
+        if (productId == null && m.linkedProductId != null) productId = m.linkedProductId
+      } else if (kind === 'zero') {
+        if (!name) name = groupKey === 'milk' ? 'Обычное' : groupKey === 'syrup' ? 'Без сиропа' : 'Без добавки'
+        price = 0
+        productId = null
+      } else {
+        continue
+      }
+
+      if (!name) continue
+      const uuid = productId != null ? uuidByProduct.get(productId) ?? null : null
+      const paid = !zero && price > 0
+      const available = zero ? true : modAvailable && (paid ? uuid != null : true)
+      out.push({
+        id: it.id,
+        productId: zero ? null : productId,
+        name,
+        price,
+        priceRub: price,
+        groupKey,
+        evotorUuid: zero ? null : uuid,
+        required: !!it.required,
+        maxCount: it.maxCount || 1,
+        isDefault: it.isDefault === 1,
+        zeroOption: zero,
+        available,
+      })
+    }
+    return out
+  }
+
+  // Legacy: modifier_scheme_items (+ product_id / zero_option из 025)
+  const items = loadSchemeItems(db, schemeId)
   for (const it of items) {
     const zero = it.zeroOption === 1
     let productId: number | null = it.productId
@@ -182,45 +276,42 @@ export function buildCatalogToppings(
       if (price == null) price = m.price
       if (!groupKey) groupKey = m.groupKey || 'extra'
       modAvailable = m.available !== 0
-      // TZ §11: uuid only via explicit productId on item or modifiers.linked_product_id — no name-match
+      // TZ: uuid only productId or linked_product_id — no name-match
       if (productId == null && m.linkedProductId != null) productId = m.linkedProductId
     }
 
     if (productId != null) {
-      const p = prodById.get(productId)
-      if (!p) {
+      const pr = prodById.get(productId)
+      if (!pr) {
         if (!zero) continue
       } else {
-        if (!name) name = p.name
-        if (price == null) price = p.price
-        if (p.available === 0) modAvailable = false
+        if (!name) name = pr.name
+        if (price == null) price = pr.price
+        if (pr.available === 0) modAvailable = false
       }
     }
 
     if (zero) {
-      if (!name) name = groupKey === 'milk' ? 'Обычное' : groupKey === 'syrup' ? 'Без сиропа' : 'Без добавки'
+      if (!name) name = groupKey === 'milk' || groupKey === 'молоко' ? 'Обычное' : groupKey === 'syrup' || groupKey === 'сироп' ? 'Без сиропа' : 'Без добавки'
       price = 0
       productId = null
     }
 
     if (!name) continue
     if (price == null) price = 0
-    if (!groupKey) groupKey = 'extra'
-    if (groupKey === 'other' || groupKey === 'topping') groupKey = 'extra'
-
+    groupKey = normKey(groupKey || 'extra')
     const uuid = productId != null ? uuidByProduct.get(productId) ?? null : null
     const paid = !zero && price > 0
     const available = zero ? true : modAvailable && (paid ? uuid != null : true)
-
     out.push({
       id: it.id,
-      productId,
+      productId: zero ? null : productId,
       name,
       price,
       priceRub: price,
       groupKey,
       evotorUuid: zero ? null : uuid,
-      required: it.required === 1,
+      required: !!it.required,
       maxCount: it.maxCount || 1,
       isDefault: it.isDefault === 1,
       zeroOption: zero,
@@ -229,6 +320,7 @@ export function buildCatalogToppings(
   }
   return out
 }
+
 
 export function replaceSchemeItems(
   db: Database.Database,
@@ -282,4 +374,70 @@ export function replaceSchemeItems(
       raw.sortOrder ?? sort++,
     )
   }
+}
+
+
+export function loadSchemeOptions(db: Database.Database, schemeId: number) {
+  try {
+    return db
+      .prepare(
+        `SELECT id, scheme_id AS schemeId, kind, product_id AS productId, modifier_id AS modifierId,
+                name, group_key AS groupKey, is_default AS isDefault, required, max_count AS maxCount, sort_order AS sortOrder
+         FROM modifier_scheme_options WHERE scheme_id=? ORDER BY sort_order, id`,
+      )
+      .all(schemeId)
+      .map((o: any) => ({
+        id: o.id,
+        schemeId: o.schemeId,
+        kind: o.kind,
+        productId: o.productId,
+        modifierId: o.modifierId,
+        name: o.name,
+        groupKey: o.groupKey,
+        isDefault: !!o.isDefault,
+        required: !!o.required,
+        maxCount: o.maxCount,
+        sortOrder: o.sortOrder,
+      }))
+  } catch {
+    return []
+  }
+}
+
+export function replaceSchemeOptions(
+  db: Database.Database,
+  schemeId: number,
+  options: Array<{
+    kind: string
+    productId?: number | null
+    modifierId?: number | null
+    name?: string | null
+    groupKey?: string
+    isDefault?: boolean
+    required?: boolean
+    maxCount?: number
+    sortOrder?: number
+  }>,
+) {
+  db.prepare('DELETE FROM modifier_scheme_options WHERE scheme_id=?').run(schemeId)
+  const ins = db.prepare(
+    `INSERT INTO modifier_scheme_options(scheme_id, kind, product_id, modifier_id, name, group_key, is_default, required, max_count, sort_order)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`,
+  )
+  options.forEach((o, idx) => {
+    const kind = o.kind
+    const groupKey = (o.groupKey || 'extra').trim() || 'extra'
+    ins.run(
+      schemeId,
+      kind,
+      kind === 'product' ? o.productId ?? null : null,
+      kind === 'modifier' ? o.modifierId ?? null : null,
+      o.name ?? null,
+      groupKey,
+      o.isDefault ? 1 : 0,
+      o.required ? 1 : 0,
+      o.maxCount ?? 1,
+      o.sortOrder ?? idx,
+    )
+  })
 }

@@ -11,6 +11,8 @@ export const config = {
   keysPath: process.env.KEYS_PATH ?? './data/keys.json',
   uploadsDir: process.env.UPLOADS_DIR ?? resolve('./data/uploads'),
   publicBaseUrl: process.env.PUBLIC_BASE_URL ?? '',
+  /** Явный id категории «Добавки» (иначе ищется по имени). */
+  addonsCategoryId: Number.isInteger(Number(process.env.ADDONS_CATEGORY_ID)) && Number(process.env.ADDONS_CATEGORY_ID) > 0 ? Number(process.env.ADDONS_CATEGORY_ID) : null as number | null,
   adminHost: process.env.ADMIN_HOST ?? '',
   /** POST /api/admin/reset. Defaults to allowed outside production; production must opt in with ADMIN_ALLOW_RESET=1. */
   /** Optional second token: read-only admin (GET only). */
