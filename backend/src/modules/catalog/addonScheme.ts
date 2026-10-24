@@ -93,12 +93,53 @@ CREATE INDEX IF NOT EXISTS idx_msi_product ON modifier_scheme_items(product_id);
 const normName = (v: unknown) =>
   String(v ?? '').normalize('NFKC').toLocaleLowerCase('ru-RU').replace(/ё/g, 'е').replace(/\s+/g, ' ').trim()
 
-export function resolveAddonsCategoryId(db: Database.Database): number | null {
-  const env = Number(process.env.ADDONS_CATEGORY_ID || 0)
-  if (env > 0 && db.prepare('SELECT 1 FROM categories WHERE id=?').get(env)) return env
+/**
+ * Все категории-добавки. В БД может оказаться больше одной: guard в миграции 027
+ * использует SQLite lower(), который не складывает кириллицу, поэтому дубль создаётся
+ * на базе, где категория уже была заведена приложением.
+ */
+export function resolveAddonsCategoryIds(db: Database.Database): number[] {
   const rows = db.prepare('SELECT id, name FROM categories ORDER BY id').all() as { id: number; name: string }[]
-  const hit = rows.find((r) => normName(r.name).includes('добавк'))
-  return hit ? hit.id : null
+  const ids = rows.filter((r) => normName(r.name).includes('добавк')).map((r) => r.id)
+  const env = Number(process.env.ADDONS_CATEGORY_ID || 0)
+  if (env > 0 && rows.some((r) => r.id === env) && !ids.includes(env)) ids.unshift(env)
+  return ids
+}
+
+export function resolveAddonsCategoryId(db: Database.Database): number | null {
+  const ids = resolveAddonsCategoryIds(db)
+  return ids.length ? ids[0] : null
+}
+
+/**
+ * Схлопывает категории с одинаковым нормализованным названием (точные дубли).
+ * Товары и группы переносятся в оставшуюся категорию, лишние строки удаляются.
+ * Возвращает число удалённых категорий.
+ */
+export function dedupeCategoriesByName(db: Database.Database): number {
+  const rows = db.prepare('SELECT id, name FROM categories ORDER BY id').all() as { id: number; name: string }[]
+  const keep = new Map<string, number>()
+  const dups: { id: number; keepId: number }[] = []
+  for (const r of rows) {
+    const key = normName(r.name)
+    const kept = keep.get(key)
+    if (kept === undefined) keep.set(key, r.id)
+    else dups.push({ id: r.id, keepId: kept })
+  }
+  if (!dups.length) return 0
+
+  const hasProductGroups = !!db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='product_groups'")
+    .get()
+
+  db.transaction(() => {
+    for (const d of dups) {
+      db.prepare('UPDATE products SET category_id=? WHERE category_id=?').run(d.keepId, d.id)
+      if (hasProductGroups) db.prepare('UPDATE product_groups SET category_id=? WHERE category_id=?').run(d.keepId, d.id)
+      db.prepare('DELETE FROM categories WHERE id=?').run(d.id)
+    }
+  })()
+  return dups.length
 }
 
 /** Категория «Добавки»; если нет — создаём. */

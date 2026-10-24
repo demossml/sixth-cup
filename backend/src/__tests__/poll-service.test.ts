@@ -13,6 +13,7 @@ process.env.NODE_ENV = 'development'
 const { app } = await import('../app')
 const { db } = await import('../db')
 const { PollService } = await import('../integrations/evotor/sync/PollService')
+const { createToken } = await import('../integrations/evotor/tokenStore')
 
 const APP = '151071e8-88a4-44f6-b71a-b17c559f9b7d'
 const COMMODITY = 'e4e11fb2-68d6-4a20-be08-279dec51e8f6'
@@ -32,6 +33,8 @@ const sell = (uuid: string, extras: unknown) => ({
 })
 
 async function setup() {
+  // runFast polls only when a token is configured; the store row itself comes from the (fake) Cloud list
+  createToken(db, { label: 'test', token: 'test-token', storeUuids: [STORE] })
   const r = await app.request('/api/auth/guest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
   const { token } = await r.json() as { token: string }
   await app.request('/api/loyalty/card', { headers: { Authorization: `Bearer ${token}` } })

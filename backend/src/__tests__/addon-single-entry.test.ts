@@ -1,7 +1,19 @@
 import { describe, it, expect } from 'vitest'
-import { app } from '../app'
-import { config } from '../config'
-import { db } from '../db'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+const dir = mkdtempSync(join(tmpdir(), 'sc-addons-'))
+process.env.DB_PATH = join(dir, 'test.db')
+process.env.KEYS_PATH = join(dir, 'keys.json')
+process.env.UPLOADS_DIR = join(dir, 'uploads')
+process.env.ADMIN_TOKEN = 'test-admin'
+process.env.NODE_ENV = 'development'
+
+// Dynamic import AFTER env (static import hoists above DB_PATH → would open the real DB)
+const { app } = await import('../app')
+const { config } = await import('../config')
+const { db } = await import('../db')
 
 const H = { 'X-Admin-Token': config.adminToken, 'content-type': 'application/json' }
 const adm = async (m: string, p: string, b?: unknown) => {
