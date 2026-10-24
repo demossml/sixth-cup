@@ -305,9 +305,15 @@ export function buildCatalogToppings(
   db: Database.Database,
   schemeId: number | null,
   uuidByProduct: Map<number, string>,
+  /** Per-request cache: the catalog asks for the same scheme once per product. */
+  cache?: Map<number, CatalogTopping[]>,
 ): CatalogTopping[] {
   if (schemeId == null) return []
-  return withZeroDefaults(schemeId, buildCatalogToppingsRaw(db, schemeId, uuidByProduct))
+  const cached = cache?.get(schemeId)
+  if (cached) return [...cached]
+  const built = withZeroDefaults(schemeId, buildCatalogToppingsRaw(db, schemeId, uuidByProduct))
+  cache?.set(schemeId, built)
+  return [...built]
 }
 
 function buildCatalogToppingsRaw(

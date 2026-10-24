@@ -7,7 +7,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
-import { buildCatalogToppings, listAddonProductIds, ensureAddonSchemeSchema } from '../catalog/addonScheme'
+import { buildCatalogToppings, listAddonProductIds, ensureAddonSchemeSchema, type CatalogTopping } from '../catalog/addonScheme'
 import { hashToken, requireDevice, type DeviceEnv } from '../../middleware/device'
 import { applyReceipts } from '../loyalty/receipts'
 import { applyOnlineSale } from './sales'
@@ -404,10 +404,12 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         return false
       }
 
+      // One DB read per scheme instead of one per product (was N+1: full products/modifiers scans).
+      const toppingsCache = new Map<number, CatalogTopping[]>()
       const out = products.map((p) => {
         const id = Number(p.id)
         const schemeId = p.schemeId != null ? Number(p.schemeId) : null
-        const toppings = buildCatalogToppings(db, schemeId, uuidByProduct)
+        const toppings = buildCatalogToppings(db, schemeId, uuidByProduct, toppingsCache)
         const upsell = upsellPool.filter((u) => u.id !== id).slice(0, 6)
         const description = (p.description as string | null) ?? null
         const categoryId = p.categoryId != null ? Number(p.categoryId) : null
