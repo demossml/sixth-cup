@@ -13,6 +13,8 @@
 
 Не исправлено: 2 технических пункта (A3–A4) — причины указаны в разделе K.
 
+D6 найден уже после выкладки (по отчёту деплоя) и исправлен отдельным коммитом `40a75ce`.
+
 ---
 
 ## B. Архитектура
@@ -42,6 +44,7 @@
 | P1 | P2 | `catalog/addonScheme.ts` | `buildCatalogToppings` вызывался на каждый товар и каждый раз читал все `products` и `modifiers` | кэш на схему в пределах запроса | A/B: выдача идентична |
 | A1 | P1 | `catalog/addonScheme.ts` | добавка забирала одноимённый розничный товар в «Добавки» | перенос только товаров, уже лежащих в «Добавках» и не занятых другой добавкой | 3 новых теста |
 | A2 | P2 | `db/migrations/028` | `linked_product_id` не был уникальным | схлопывание дублей + частичный UNIQUE-индекс | тест на отказ второго UPDATE |
+| D6 | P1 | `modules/directory/routes.ts` | папки-группы добавок (`is_group=1`, `category_id=NULL`) попадали в меню покупателя как позиции по 0 ₽ | исключены все `is_group=1` (с PRAGMA-guard для старых БД) | `directory-menu.test.ts` падает на старом коде |
 
 ---
 
@@ -71,6 +74,7 @@
 | `__tests__/poll-service.test.ts` | предусловие: токен для опроса |
 | `__tests__/addons-category-dedupe.test.ts` | новый файл, 3 теста |
 | `__tests__/addons-catalog-regressions.test.ts` | новый файл, 4 теста |
+| `__tests__/directory-menu.test.ts` | новый файл, 3 теста (D6) |
 | `db/migrations/028_unique_modifier_link.sql` | новый: дедуп привязок + частичный UNIQUE |
 | `vitest.config.ts`, `__tests__/setup-isolated-db.ts` | глобальная изоляция БД для всех тестов |
 | `AUDIT-BASELINE.md`, `ADDONS-ARCHITECTURE-AUDIT.md`, `ADDONS-DATA-FLOW.md`, `ADDONS-REGRESSION-TEST-PLAN.md` | новые документы |
@@ -81,7 +85,7 @@
 
 | Набор | Кол-во | Результат | Команда |
 |---|---|---|---|
-| backend, весь набор | 29 файлов / **157 тестов** | 0 падений | `cd backend && npm test` |
+| backend, весь набор | 30 файлов / **160 тестов** | 0 падений | `cd backend && npm test` |
 | добавочные регрессии | 7 тестов в 2 файлах | 0 падений | `npx vitest run src/__tests__/addons-*.test.ts` |
 | typecheck backend | — | OK | `cd backend && npm run typecheck` |
 | typecheck frontend / admin | — | OK | `npm run typecheck` в каждом |
@@ -133,6 +137,13 @@
 Разрушительных проверок на production не выполнялось.
 
 ---
+
+### Деплой и пост-деплой проверка
+
+Выложено на production (Mac mini) в два шага: `5c36548 → 749ba8b` (основной набор) и
+`749ba8b → 40a75ce` (D6). На проде: `schema_migrations` = 28, новых миграций при втором
+шаге не появилось; `/api/directory` 59 → 56 позиций (−3 папки); каталог кассы отвечает 200
+и по-прежнему отдаёт папки с `isGroup=true`, `hideFromMenu=true`.
 
 ## J. Миграции
 
