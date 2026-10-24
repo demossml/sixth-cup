@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
@@ -113,6 +113,15 @@ export default function Shell({ onLogout }: { onLogout?: () => void }) {
   }, [loc.pathname])
 
   const closeSide = () => setSideOpen(false)
+
+  // Close drawer on navigate
+  useEffect(() => { setSideOpen(false) }, [loc.pathname])
+  useEffect(() => {
+    if (!sideOpen) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = prev }
+  }, [sideOpen])
 
   const goSearch = (e: React.FormEvent) => {
     e.preventDefault()
