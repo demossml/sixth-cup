@@ -1,6 +1,18 @@
 import { describe, expect, it, beforeAll } from 'vitest'
-import { db } from '../db'
-import { runMigrations } from '../db/migrate'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+const dir = mkdtempSync(join(tmpdir(), 'sc-test-'))
+process.env.DB_PATH = join(dir, 'test.db')
+process.env.KEYS_PATH = join(dir, 'keys.json')
+process.env.UPLOADS_DIR = join(dir, 'uploads')
+process.env.ADMIN_TOKEN = 'test-admin'
+process.env.NODE_ENV = 'development'
+
+// Dynamic import AFTER env (static import hoists above DB_PATH → would open prod DB)
+const { db } = await import('../db')
+const { runMigrations } = await import('../db/migrate')
 
 describe('device catalog data shape', () => {
   beforeAll(() => {
