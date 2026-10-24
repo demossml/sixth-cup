@@ -290,7 +290,9 @@ export const deviceRoutes = new Hono<DeviceEnv>()
                p.recipe_text AS recipeText, p.available AS globalAvailable,
                p.category_id AS categoryId,
                p.group_id AS groupId, p.variant_label AS variantLabel, p.variant_sort AS variantSort,
-               p.size_value AS sizeValue, p.size_unit AS sizeUnit
+               p.size_value AS sizeValue, p.size_unit AS sizeUnit,
+               COALESCE(p.is_group, 0) AS isGroup,
+               p.parent_product_id AS parentProductId
         FROM products p
         LEFT JOIN product_groups g ON g.id = p.group_id
         WHERE (p.season_start_at IS NULL OR p.season_start_at<=?)
@@ -378,6 +380,7 @@ export const deviceRoutes = new Hono<DeviceEnv>()
       // upsell candidates: available products not counting as cup (food/extra), max pool
       const upsellPool = products
         .filter((p) => !p.countsAsCup)
+        .filter((p) => Number(p.isGroup) !== 1)
         .filter((p) => !modifierProductIds.has(Number(p.id)))
         .slice(0, 20)
         .map((p) => ({
@@ -434,7 +437,9 @@ export const deviceRoutes = new Hono<DeviceEnv>()
           toppings,
           upsell,
           isModifier: modifierProductIds.has(id),
-          hideFromMenu: modifierProductIds.has(id),
+          isGroup: Number(p.isGroup) === 1,
+          parentProductId: (p.parentProductId as number | null) ?? null,
+          hideFromMenu: modifierProductIds.has(id) || Number(p.isGroup) === 1,
         }
       })
 
