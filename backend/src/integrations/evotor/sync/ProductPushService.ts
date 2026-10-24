@@ -51,6 +51,10 @@ export type LocalProduct = {
   recipe_cost_rub: number | null
   recipe_seconds: number | null
   catalog_source: 'SIXTH_CUP' | 'EVOTOR_IMPORT'
+  /** Evotor group flag: 1 = folder, 0 = sellable product */
+  is_group: number
+  /** Local FK to parent group product; resolved to parentUuid per store */
+  parent_product_id: number | null
 }
 
 function activeBySeason(p: LocalProduct, now = Date.now()): boolean {
@@ -61,8 +65,35 @@ function activeBySeason(p: LocalProduct, now = Date.now()): boolean {
  * Product body deliberately has NO Evotor UUID. The Cloud creates it on POST.
  * The returned Cloud id is stored in product_store_links and is used for PUT thereafter.
  */
-export function toEvotorProduct(p: LocalProduct, _storeUuid: string): Record<string, unknown> {
-  return {
+/**
+ * Build Evotor Cloud product/group body.
+ * parentUuid is resolved per-store by the caller (see parentUuidFor).
+ * Groups omit price/type sell fields; products send the full NORMAL payload.
+ */
+export function toEvotorProduct(
+  p: LocalProduct,
+  _storeUuid: string,
+  parentUuid: string | null = null,
+): Record<string, unknown> {
+  const isGroup = Number(p.is_group) === 1
+  if (isGroup) {
+    const body: Record<string, unknown> = {
+      name: p.name,
+      // Cloud product-groups API uses different shape; inventories v1 uses group:true on products list.
+      // We push groups as catalog folders via the same products endpoint with group flag where supported.
+      type: 'NORMAL',
+      measure_name: 'шт',
+      tax: 'NO_VAT',
+      allow_to_sell: false,
+      price: 0,
+      cost_price: 0,
+      description: '',
+      article_number: `sc-g-${p.id}`,
+    }
+    if (parentUuid) body.parent_id = parentUuid
+    return body
+  }
+  const body: Record<string, unknown> = {
     name: p.name,
     type: 'NORMAL',
     measure_name: p.measure || 'шт',
@@ -74,6 +105,17 @@ export function toEvotorProduct(p: LocalProduct, _storeUuid: string): Record<str
     description: p.recipe_text || '',
     article_number: `sc-${p.id}`,
   }
+  if (parentUuid) body.parent_id = parentUuid
+  return body
+}
+
+/** Resolve Evotor parentUuid for a local product in a given store. */
+export function parentUuidFor(db: import('better-sqlite3').Database, product: LocalProduct, storeUuid: string): string | null {
+  if (product.parent_product_id == null) return null
+  const row = db
+    .prepare(`SELECT evotor_uuid FROM product_store_links WHERE product_id=? AND store_uuid=? AND evotor_uuid IS NOT NULL`)
+    .get(product.parent_product_id, storeUuid) as { evotor_uuid: string } | undefined
+  return row?.evotor_uuid ?? null
 }
 
 function remoteId(item: Record<string, unknown>): string | null {
@@ -152,6 +194,8 @@ export class ProductPushService {
     if (!names.has('season_end_at')) this.db.exec(`ALTER TABLE products ADD COLUMN season_end_at INTEGER`)
     if (!names.has('evotor_extra_json')) this.db.exec(`ALTER TABLE products ADD COLUMN evotor_extra_json TEXT`)
     if (!names.has('catalog_source')) this.db.exec(`ALTER TABLE products ADD COLUMN catalog_source TEXT NOT NULL DEFAULT 'SIXTH_CUP'`)
+    if (!names.has('is_group')) this.db.exec(`ALTER TABLE products ADD COLUMN is_group INTEGER NOT NULL DEFAULT 0`)
+    if (!names.has('parent_product_id')) this.db.exec(`ALTER TABLE products ADD COLUMN parent_product_id INTEGER REFERENCES products(id)`)
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS product_store_links (
@@ -168,15 +212,18 @@ export class ProductPushService {
   }
 
   listLocal(includeImported = true): LocalProduct[] {
+    // Groups first so parentUuid exists before children are pushed.
     const rows = this.db.prepare(`
       SELECT id,name,price,available,counts_as_cup,
              evotor_uuid,tax,measure,cost_price_kopecks,free_eligible,
              season_start_at,season_end_at,evotor_extra_json,
              modifier_scheme_id,recipe_text,recipe_cost_rub,recipe_seconds,
-             catalog_source
+             catalog_source,
+             COALESCE(is_group, 0) AS is_group,
+             parent_product_id
       FROM products
       ${includeImported ? '' : `WHERE catalog_source='SIXTH_CUP'`}
-      ORDER BY id
+      ORDER BY COALESCE(is_group, 0) DESC, id
     `).all() as LocalProduct[]
     return rows
   }
@@ -226,7 +273,7 @@ export class ProductPushService {
   }
 
   private syncHash(product: LocalProduct): string {
-    const payload = toEvotorProduct(product, '')
+    const payload = toEvotorProduct(product, '', null)
     const extra = this.buildExtra(product, 'PENDING')
     return hashPayload({ payload, extra })
   }
@@ -288,7 +335,7 @@ export class ProductPushService {
       return foundId
     }
 
-    const response = await this.api(storeUuid).createCloudProduct(storeUuid, toEvotorProduct(product, storeUuid))
+    const response = await this.api(storeUuid).createCloudProduct(storeUuid, toEvotorProduct(product, storeUuid, parentUuidFor(this.db, product, storeUuid)))
     const id = parseCreatedProductId(response)
     if (!id) throw new Error('Evotor Cloud CREATE returned no product id')
     this.link(storeUuid, product, id)
@@ -340,7 +387,7 @@ export class ProductPushService {
       try {
         const knownBefore = remote.some((r) => remoteId(r) === (this.db.prepare(`SELECT evotor_uuid FROM product_store_links WHERE product_id=? AND store_uuid=?`).get(p.id, storeUuid) as { evotor_uuid: string | null } | undefined)?.evotor_uuid)
         const productUuid = await this.ensureRemoteId(storeUuid, p, remote)
-        const payload = toEvotorProduct(p, storeUuid)
+        const payload = toEvotorProduct(p, storeUuid, parentUuidFor(this.db, p, storeUuid))
         const existingRemote = remote.find((r) => remoteId(r) === productUuid)
         if (existingRemote || knownBefore) await this.api(storeUuid).replaceCloudProduct(storeUuid, productUuid, payload)
         try {

@@ -115,17 +115,70 @@ export function ensureAddonsCategory(db: Database.Database): number {
  * Одна добавка справочника ↔ товар категории «Добавки» (для UUID Эвотор).
  * Поиск одноимённого — только в категории «Добавки» (не привязываем напиток с тем же именем).
  */
+/** Canonical Evotor group name for a modifier group_key. */
+export function groupNameForKey(groupKey: unknown): string {
+  const k = normName(groupKey)
+  if (k === 'milk' || k === 'молоко') return 'Молоко'
+  if (k === 'syrup' || k === 'сироп') return 'Сиропы'
+  if (k === 'sugar' || k === 'сахар') return 'Сахар'
+  return 'Добавки'
+}
+
+/** Ensure a group product (is_group=1) exists for the given group_key; return its id. */
+export function ensureAddonGroupProduct(db: Database.Database, groupKey: unknown): number {
+  ensureAddonSchemeSchema(db)
+  const cat = ensureAddonsCategory(db)
+  const name = groupNameForKey(groupKey)
+  const t = Date.now()
+  // Defensive columns (027 may not have run yet in some test DBs)
+  const cols = (db.prepare(`PRAGMA table_info(products)`).all() as { name: string }[]).map((c) => c.name)
+  if (!cols.includes('is_group')) db.exec(`ALTER TABLE products ADD COLUMN is_group INTEGER NOT NULL DEFAULT 0`)
+  if (!cols.includes('parent_product_id')) db.exec(`ALTER TABLE products ADD COLUMN parent_product_id INTEGER REFERENCES products(id)`)
+
+  const existing = db
+    .prepare(`SELECT id FROM products WHERE is_group=1 AND name=? ORDER BY id LIMIT 1`)
+    .get(name) as { id: number } | undefined
+  if (existing) return existing.id
+
+  const sort =
+    name === 'Молоко' ? 10 : name === 'Сиропы' ? 20 : name === 'Сахар' ? 30 : 40
+  const r = db
+    .prepare(
+      `INSERT INTO products(name,price,icon,available,category_id,sort_order,created_at,updated_at,
+        counts_as_cup,free_eligible,tax,measure,cost_price_kopecks,catalog_source,is_group)
+       VALUES(?,0,'Folder',1,?,?,?,?,0,0,'NO_VAT','шт',0,'SIXTH_CUP',1)`,
+    )
+    .run(name, cat, sort, t, t)
+  return Number(r.lastInsertRowid)
+}
+
+/**
+ * Одна добавка справочника ↔ товар категории «Добавки» (для UUID Эвотор).
+ * Поиск одноимённого — только в категории «Добавки» (не привязываем напиток с тем же именем).
+ * После синка товар получает parent_product_id → группу (Молоко/Сиропы/…), как parentUuid в Эвоторе.
+ */
 export function syncModifierProduct(db: Database.Database, modifierId: number): number | null {
-  const m = db.prepare('SELECT id, name, price, available, linked_product_id AS pid FROM modifiers WHERE id=?')
-    .get(modifierId) as { id: number; name: string; price: number; available: number; pid: number | null } | undefined
+  const m = db
+    .prepare('SELECT id, name, price, available, group_key AS groupKey, linked_product_id AS pid FROM modifiers WHERE id=?')
+    .get(modifierId) as {
+    id: number
+    name: string
+    price: number
+    available: number
+    groupKey: string | null
+    pid: number | null
+  } | undefined
   if (!m) return null
   const cat = ensureAddonsCategory(db)
   const t = Date.now()
+  const groupId = ensureAddonGroupProduct(db, m.groupKey)
+
   let pid: number | null = m.pid != null && db.prepare('SELECT 1 FROM products WHERE id=?').get(m.pid) ? m.pid : null
   if (pid == null) {
-    const all = db.prepare('SELECT id, name, category_id AS cat, counts_as_cup AS cup FROM products ORDER BY id')
-      .all() as { id: number; name: string; cat: number | null; cup: number }[]
-    const same = all.filter((x) => normName(x.name) === normName(m.name))
+    const all = db
+      .prepare('SELECT id, name, category_id AS cat, counts_as_cup AS cup, COALESCE(is_group,0) AS isGroup FROM products ORDER BY id')
+      .all() as { id: number; name: string; cat: number | null; cup: number; isGroup: number }[]
+    const same = all.filter((x) => normName(x.name) === normName(m.name) && x.isGroup === 0)
     // 1) уже в «Добавки»  2) любой не-чашка с тем же именем (перенесём в «Добавки»)
     // Напиток (counts_as_cup=1) не трогаем — создадим отдельный товар-добавку.
     const found =
@@ -135,13 +188,18 @@ export function syncModifierProduct(db: Database.Database, modifierId: number): 
     pid = found ? found.id : null
   }
   if (pid != null) {
-    db.prepare(`UPDATE products SET price=?, available=?, category_id=?, counts_as_cup=0, free_eligible=0, updated_at=?,
-                catalog_source='SIXTH_CUP' WHERE id=?`).run(m.price, m.available ? 1 : 0, cat, t, pid)
+    db.prepare(
+      `UPDATE products SET price=?, available=?, category_id=?, counts_as_cup=0, free_eligible=0,
+                parent_product_id=?, is_group=0, updated_at=?, catalog_source='SIXTH_CUP' WHERE id=?`,
+    ).run(m.price, m.available ? 1 : 0, cat, groupId, t, pid)
   } else {
-    const r = db.prepare(`INSERT INTO products(name,price,icon,available,category_id,sort_order,created_at,updated_at,
-        counts_as_cup,free_eligible,tax,measure,cost_price_kopecks,catalog_source)
-        VALUES(?,?,?,?,?,?,?,?,0,0,'NO_VAT','шт',0,'SIXTH_CUP')`)
-      .run(m.name, m.price, 'Coffee', m.available ? 1 : 0, cat, 0, t, t)
+    const r = db
+      .prepare(
+        `INSERT INTO products(name,price,icon,available,category_id,sort_order,created_at,updated_at,
+        counts_as_cup,free_eligible,tax,measure,cost_price_kopecks,catalog_source,is_group,parent_product_id)
+        VALUES(?,?,?,?,?,?,?,?,0,0,'NO_VAT','шт',0,'SIXTH_CUP',0,?)`,
+      )
+      .run(m.name, m.price, 'Coffee', m.available ? 1 : 0, cat, 0, t, t, groupId)
     pid = Number(r.lastInsertRowid)
   }
   db.prepare('UPDATE modifiers SET linked_product_id=? WHERE id=?').run(pid, m.id)
