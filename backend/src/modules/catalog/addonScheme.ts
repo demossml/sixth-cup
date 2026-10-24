@@ -216,16 +216,24 @@ export function syncModifierProduct(db: Database.Database, modifierId: number): 
 
   let pid: number | null = m.pid != null && db.prepare('SELECT 1 FROM products WHERE id=?').get(m.pid) ? m.pid : null
   if (pid == null) {
-    const all = db
-      .prepare('SELECT id, name, category_id AS cat, counts_as_cup AS cup, COALESCE(is_group,0) AS isGroup FROM products ORDER BY id')
-      .all() as { id: number; name: string; cat: number | null; cup: number; isGroup: number }[]
-    const same = all.filter((x) => normName(x.name) === normName(m.name) && x.isGroup === 0)
-    // 1) уже в «Добавки»  2) любой не-чашка с тем же именем (перенесём в «Добавки»)
-    // Напиток (counts_as_cup=1) не трогаем — создадим отдельный товар-добавку.
-    const found =
-      same.find((x) => x.cat === cat) ??
-      same.find((x) => Number(x.cup) === 0) ??
-      null
+    // Owner decision (A1): adopt ONLY a product that already sits in «Добавки» and is not
+    // claimed by another modifier. Retail products are never pulled into «Добавки» just
+    // because the name matches — two different SKUs may share a name.
+    const taken = new Set(
+      (
+        db.prepare('SELECT linked_product_id AS pid FROM modifiers WHERE linked_product_id IS NOT NULL AND id<>?')
+          .all(m.id) as { pid: number }[]
+      ).map((r) => Number(r.pid)),
+    )
+    const candidates = db
+      .prepare(
+        `SELECT id, name FROM products
+         WHERE category_id=? AND COALESCE(is_group,0)=0
+         ORDER BY id`,
+      )
+      .all(cat) as { id: number; name: string }[]
+    const wanted = normName(m.name)
+    const found = candidates.find((x) => !taken.has(x.id) && normName(x.name) === wanted)
     pid = found ? found.id : null
   }
   if (pid != null) {
