@@ -18,6 +18,8 @@ import {
   replaceSchemeItems,
   replaceSchemeOptions,
   loadSchemeOptions,
+  syncModifierProduct,
+  ensureAddonsCategory,
 } from '../catalog/addonScheme'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
@@ -202,7 +204,7 @@ export const adminRoutes = new Hono()
     vatRate: z.number().int().min(0).max(22).default(0),
     active: z.boolean().default(true),
   })), (c) => {
-    const p = c.req.valid('json')
+    const p = { ...c.req.valid('json') }
     const t = Date.now()
     const r = db.prepare(`
       INSERT INTO organizations(name, legal_name, inn, kpp, tax_regime, vat_rate, active, created_at, updated_at)
@@ -485,6 +487,7 @@ export const adminRoutes = new Hono()
     if (p.categoryId != null) {
       const cat = db.prepare('SELECT id FROM categories WHERE id=?').get(p.categoryId)
       if (!cat) throw bad('Category not found', 404)
+      if (p.categoryId === resolveAddonsCategoryId(db)) { p.countsAsCup = false; p.freeEligible = false }
     }
     const t = Date.now()
     if (p.id) {
@@ -733,12 +736,32 @@ export const adminRoutes = new Hono()
     return c.json({ categoryId: catId, products: rows })
   })
 
+  /** Разовая привязка уже существующих добавок к товарам (идемпотентно). */
+  .post('/modifiers/backfill-products', (c) => {
+    ensureAddonSchemeSchema(db)
+    const mods = db.prepare('SELECT id, linked_product_id AS pid FROM modifiers').all() as { id: number; pid: number | null }[]
+    const ids: number[] = []
+    let created = 0
+    db.transaction(() => {
+      for (const m of mods) {
+        const before = m.pid
+        const pid = syncModifierProduct(db, m.id)
+        if (pid != null) ids.push(pid)
+        if (before == null && pid != null) created++
+      }
+    })()
+    enqueueProductSync(ids)
+    return c.json({ ok: true, modifiers: mods.length, linked: created, products: ids.length })
+  })
+
   .get('/modifiers', (c) => {
     ensureAddonSchemeSchema(db)
     const modifiers = db.prepare(`
-      SELECT id, name, price, group_key AS groupKey, available, sort_order AS sortOrder,
-             linked_product_id AS linkedProductId
-      FROM modifiers ORDER BY sort_order, id
+      SELECT m.id, m.name, m.price, m.group_key AS groupKey, m.available, m.sort_order AS sortOrder,
+             m.linked_product_id AS linkedProductId,
+             (SELECT COUNT(*) FROM product_store_links l WHERE l.product_id=m.linked_product_id
+                AND l.evotor_uuid IS NOT NULL AND TRIM(l.evotor_uuid)!='') AS linkedStores
+      FROM modifiers m ORDER BY m.sort_order, m.id
     `).all()
     return c.json({ modifiers })
   })
@@ -769,9 +792,15 @@ export const adminRoutes = new Hono()
         .run(body.name, body.price, body.groupKey, body.available ? 1 : 0, body.sortOrder, now, now, body.linkedProductId ?? null)
       modifierId = Number(created.lastInsertRowid)
     }
+    let productId: number | null = null
+    if (body.linkedProductId === undefined || body.linkedProductId === null) {
+      productId = syncModifierProduct(db, Number(modifierId))
+    } else {
+      productId = body.linkedProductId
+    }
     const affected = db.prepare(`SELECT id FROM products WHERE modifier_scheme_id IN (SELECT scheme_id FROM modifier_scheme_items WHERE modifier_id=?)`).all(modifierId) as { id: number }[]
-    enqueueProductSync(affected.map((x) => x.id))
-    return c.json({ ok: true })
+    enqueueProductSync([...affected.map((x) => x.id), ...(productId != null ? [productId] : [])])
+    return c.json({ ok: true, id: modifierId, productId })
   })
 
   .delete('/modifiers/:id', (c) => {
@@ -860,10 +889,33 @@ export const adminRoutes = new Hono()
         const r = db.prepare('INSERT INTO modifier_schemes(name,created_at,updated_at) VALUES(?,?,?)').run(body.name, now, now)
         schemeId = Number(r.lastInsertRowid)
       }
+      const hasOptionRows = (() => {
+        try {
+          return (db.prepare('SELECT COUNT(*) AS n FROM modifier_scheme_options WHERE scheme_id=?').get(schemeId) as { n: number }).n > 0
+        } catch { return false }
+      })()
       if (body.options && body.options.length) {
         replaceSchemeOptions(db, schemeId!, body.options)
       } else if (body.items && body.items.length) {
         replaceSchemeItems(db, schemeId!, body.items)
+      } else if (hasOptionRows && !body.copyFromSchemeId) {
+        // Studio: только modifierIds. Синхронизируем kind=modifier, zero/product не трогаем.
+        const ids = body.modifierIds ?? []
+        if (ids.length === 0) {
+          db.prepare(`DELETE FROM modifier_scheme_options WHERE scheme_id=? AND kind='modifier'`).run(schemeId)
+          replaceSchemeItems(db, schemeId!, [])
+        } else {
+          db.prepare(`DELETE FROM modifier_scheme_options WHERE scheme_id=? AND kind='modifier'
+                        AND modifier_id NOT IN (${ids.map(() => '?').join(',')})`).run(schemeId, ...ids)
+          for (const mid of ids) {
+            if (db.prepare(`SELECT 1 FROM modifier_scheme_options WHERE scheme_id=? AND kind='modifier' AND modifier_id=?`).get(schemeId, mid)) continue
+            const m = db.prepare('SELECT group_key AS g FROM modifiers WHERE id=?').get(mid) as { g: string } | undefined
+            const gk = m?.g === 'milk' ? 'milk' : m?.g === 'syrup' ? 'syrup' : 'extra'
+            db.prepare(`INSERT INTO modifier_scheme_options(scheme_id,kind,modifier_id,group_key,max_count,sort_order) VALUES(?,?,?,?,2,999)`)
+              .run(schemeId, 'modifier', mid, gk)
+          }
+          replaceSchemeItems(db, schemeId!, ids.map((mid) => ({ modifierId: mid, maxCount: 2 })))
+        }
       } else {
         let ids = body.modifierIds
         if (body.copyFromSchemeId) {

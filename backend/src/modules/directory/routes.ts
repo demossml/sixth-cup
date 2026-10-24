@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { config } from '../../config'
 import { db } from '../../db'
+import { resolveAddonsCategoryId } from '../catalog/addonScheme'
 import { serverKeys, serverPub } from '../../lib/crypto'
 import { requireDevice } from '../../middleware/device'
 
@@ -31,10 +32,11 @@ export function publicDirectory(storeUuid?: string | null) {
     id: number; name: string; legalName: string; taxRegime: string; vatRate: number; active: number
   }[]
 
-  const categories = db.prepare(`
+  const addonCat = resolveAddonsCategoryId(db)
+  const categories = (db.prepare(`
     SELECT id, name, sort_order AS sortOrder
     FROM categories WHERE available=1 ORDER BY sort_order, id
-  `).all() as { id: number; name: string; sortOrder: number }[]
+  `).all() as { id: number; name: string; sortOrder: number }[]).filter((c) => c.id !== addonCat)
 
   let products = db.prepare(`
     SELECT id, name, price, icon, description, category_id AS categoryId,
@@ -64,6 +66,9 @@ export function publicDirectory(storeUuid?: string | null) {
   } else {
     products = products.filter((p) => Number(p.globalAvailable) === 1)
   }
+
+  // P0: товары категории «Добавки» не показываем в PWA-меню (и при наличии storeUuid, и без).
+  products = products.filter((p) => !(addonCat != null && p.categoryId != null && Number(p.categoryId) === addonCat))
 
   const modifiers = db.prepare(`
     SELECT id, name, price, group_key AS groupKey, sort_order AS sortOrder

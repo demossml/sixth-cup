@@ -90,13 +90,62 @@ CREATE INDEX IF NOT EXISTS idx_msi_product ON modifier_scheme_items(product_id);
   ensured = true
 }
 
+const normName = (v: unknown) =>
+  String(v ?? '').normalize('NFKC').toLocaleLowerCase('ru-RU').replace(/ё/g, 'е').replace(/\s+/g, ' ').trim()
+
 export function resolveAddonsCategoryId(db: Database.Database): number | null {
-  const byName = db
-    .prepare(`SELECT id FROM categories WHERE lower(name) LIKE '%добавк%' ORDER BY id LIMIT 1`)
-    .get() as { id: number } | undefined
-  if (byName) return byName.id
   const env = Number(process.env.ADDONS_CATEGORY_ID || 0)
-  return env > 0 ? env : null
+  if (env > 0 && db.prepare('SELECT 1 FROM categories WHERE id=?').get(env)) return env
+  const rows = db.prepare('SELECT id, name FROM categories ORDER BY id').all() as { id: number; name: string }[]
+  const hit = rows.find((r) => normName(r.name).includes('добавк'))
+  return hit ? hit.id : null
+}
+
+/** Категория «Добавки»; если нет — создаём. */
+export function ensureAddonsCategory(db: Database.Database): number {
+  const have = resolveAddonsCategoryId(db)
+  if (have != null) return have
+  const t = Date.now()
+  const r = db.prepare('INSERT INTO categories(name, sort_order, available, created_at, updated_at) VALUES(?,?,1,?,?)')
+    .run('Добавки', 90, t, t)
+  return Number(r.lastInsertRowid)
+}
+
+/**
+ * Одна добавка справочника ↔ товар категории «Добавки» (для UUID Эвотор).
+ * Поиск одноимённого — только в категории «Добавки» (не привязываем напиток с тем же именем).
+ */
+export function syncModifierProduct(db: Database.Database, modifierId: number): number | null {
+  const m = db.prepare('SELECT id, name, price, available, linked_product_id AS pid FROM modifiers WHERE id=?')
+    .get(modifierId) as { id: number; name: string; price: number; available: number; pid: number | null } | undefined
+  if (!m) return null
+  const cat = ensureAddonsCategory(db)
+  const t = Date.now()
+  let pid: number | null = m.pid != null && db.prepare('SELECT 1 FROM products WHERE id=?').get(m.pid) ? m.pid : null
+  if (pid == null) {
+    const all = db.prepare('SELECT id, name, category_id AS cat, counts_as_cup AS cup FROM products ORDER BY id')
+      .all() as { id: number; name: string; cat: number | null; cup: number }[]
+    const same = all.filter((x) => normName(x.name) === normName(m.name))
+    // 1) уже в «Добавки»  2) любой не-чашка с тем же именем (перенесём в «Добавки»)
+    // Напиток (counts_as_cup=1) не трогаем — создадим отдельный товар-добавку.
+    const found =
+      same.find((x) => x.cat === cat) ??
+      same.find((x) => Number(x.cup) === 0) ??
+      null
+    pid = found ? found.id : null
+  }
+  if (pid != null) {
+    db.prepare(`UPDATE products SET price=?, available=?, category_id=?, counts_as_cup=0, free_eligible=0, updated_at=?,
+                catalog_source='SIXTH_CUP' WHERE id=?`).run(m.price, m.available ? 1 : 0, cat, t, pid)
+  } else {
+    const r = db.prepare(`INSERT INTO products(name,price,icon,available,category_id,sort_order,created_at,updated_at,
+        counts_as_cup,free_eligible,tax,measure,cost_price_kopecks,catalog_source)
+        VALUES(?,?,?,?,?,?,?,?,0,0,'NO_VAT','шт',0,'SIXTH_CUP')`)
+      .run(m.name, m.price, 'Coffee', m.available ? 1 : 0, cat, 0, t, t)
+    pid = Number(r.lastInsertRowid)
+  }
+  db.prepare('UPDATE modifiers SET linked_product_id=? WHERE id=?').run(pid, m.id)
+  return pid
 }
 
 export function listAddonProductIds(db: Database.Database): Set<number> {
@@ -139,12 +188,34 @@ export function loadSchemeItems(db: Database.Database, schemeId: number): Scheme
     .all(schemeId) as SchemeItemRow[]
 }
 
+function withZeroDefaults(schemeId: number, list: CatalogTopping[]): CatalogTopping[] {
+  const spec: [string, string, number][] = [['milk', 'Обычное', 1], ['syrup', 'Без сиропа', 2]]
+  for (const [key, label, n] of spec) {
+    const inGroup = list.filter((x) => x.groupKey === key)
+    if (!inGroup.length || inGroup.some((x) => x.zeroOption)) continue
+    const hasDefault = inGroup.some((x) => x.isDefault)
+    list.unshift({
+      id: -(schemeId * 10 + n), productId: null, name: label, price: 0, priceRub: 0, groupKey: key,
+      evotorUuid: null, required: false, maxCount: 1, isDefault: !hasDefault, zeroOption: true, available: true,
+    })
+  }
+  return list
+}
+
 export function buildCatalogToppings(
   db: Database.Database,
   schemeId: number | null,
   uuidByProduct: Map<number, string>,
 ): CatalogTopping[] {
   if (schemeId == null) return []
+  return withZeroDefaults(schemeId, buildCatalogToppingsRaw(db, schemeId, uuidByProduct))
+}
+
+function buildCatalogToppingsRaw(
+  db: Database.Database,
+  schemeId: number,
+  uuidByProduct: Map<number, string>,
+): CatalogTopping[] {
   ensureAddonSchemeSchema(db)
 
   // TZ Claude: если есть modifier_scheme_options — они главный источник (product/zero/modifier).

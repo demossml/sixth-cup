@@ -32,14 +32,18 @@ describe('GET /api/devices/catalog: toppings / modifier products / upsell', () =
     const nut = ins(prodSql, 'орех-ТЕСТ', 40, 'Coffee', t, t, 0, 0, null, null)
     const bun = ins(prodSql, 'Булочка-тест', 90, 'Coffee', t, t, 0, 0, null, null)
     db.prepare('INSERT INTO product_store_links(product_id,store_uuid,evotor_uuid) VALUES(?,?,?)').run(nut, STORE, 'uuid-nut')
+    // v2: topping uuid resolves via linked_product_id (no name-match); link the modifier to its product.
+    db.prepare('UPDATE modifiers SET linked_product_id=? WHERE id=?').run(nut, mod)
     const r = await app.request(`/api/devices/catalog?storeUuid=${STORE}`)
     expect(r.status).toBe(200)
     const j = (await r.json()) as { products: any[] }
     const byId = (id: number) => j.products.find((p) => p.id === id)
     expect(byId(cap).countsAsCup).toBe(true)
-    expect(byId(cap).toppings.length).toBe(1)
-    expect(byId(cap).toppings[0]).toHaveProperty('evotorUuid', 'uuid-nut')
-    expect(byId(cap).toppings[0].groupKey).toBe('syrup')
+    // v2: withZeroDefaults auto-adds a «Без сиропа» zero option to the syrup group.
+    expect(byId(cap).toppings.length).toBe(2)
+    const paidTopping = byId(cap).toppings.find((t: any) => !t.zeroOption)
+    expect(paidTopping).toHaveProperty('evotorUuid', 'uuid-nut')
+    expect(paidTopping.groupKey).toBe('syrup')
     expect(byId(nut).isModifier).toBe(true)
     expect(byId(nut).hideFromMenu).toBe(true)
     expect(byId(bun).isModifier).toBe(false)

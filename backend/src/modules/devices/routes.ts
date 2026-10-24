@@ -421,8 +421,8 @@ export const deviceRoutes = new Hono<DeviceEnv>()
           categoryId,
           categoryName,
           featured: isFeatured(String(p.name || ''), description),
-          countsAsCup: !!p.countsAsCup,
-          freeEligible: !!p.freeEligible,
+          countsAsCup: !!p.countsAsCup && !modifierProductIds.has(id),
+          freeEligible: !!p.freeEligible && !modifierProductIds.has(id),
           recipeText: p.recipeText ?? null,
           recipe: p.recipeText ?? null,
           evotorUuid: uuidByProduct.get(id) || null,
@@ -439,7 +439,7 @@ export const deviceRoutes = new Hono<DeviceEnv>()
       })
 
       const categories = catRows
-        .filter((r) => out.some((p) => p.categoryId === r.id))
+        .filter((r) => out.some((p) => p.categoryId === r.id && !p.hideFromMenu))
         .map((r) => ({ id: r.id, name: r.name, sortOrder: r.sortOrder }))
 
       // Размеры одного товара: APK рисует одну плитку и подставляет UUID выбранного варианта.
