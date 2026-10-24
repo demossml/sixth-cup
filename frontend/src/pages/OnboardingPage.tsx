@@ -56,7 +56,7 @@ export default function OnboardingPage() {
 
   return (
     <div className="max-w-[480px] mx-auto min-h-screen bg-[#0E0E0F] text-white flex flex-col relative overflow-hidden">
-      <div className="absolute inset-0 bg-[radial-gradient(110%_70%_at_80%_0%,#3a2c1b_0%,#16130f_55%,#0e0e0f_100%)]" />
+      <div className="absolute inset-0 bg-brand" />
       {photoOk[i] ? (
         <img
           key={i}

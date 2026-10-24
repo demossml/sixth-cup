@@ -48,7 +48,7 @@ export default function BrandLogo({
   className = '',
 }: Props) {
   const s = SIZES[size]
-  const color = tone === 'onDark' ? '#FFFFFF' : '#002FA7'
+  const color = tone === 'onDark' ? '#FFFFFF' : '#0B4A8D'
   return (
     <div className={`inline-flex items-center ${s.gap} min-w-0 ${className}`} role="img" aria-label="6.7 Coffee">
       <AlpacaMark size={s.mark} color={color} />

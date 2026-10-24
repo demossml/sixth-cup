@@ -2,6 +2,17 @@
 @tailwind components;
 @tailwind utilities;
 
+/* brand shell: no side vignette */
+html, body, #root {
+  background: #FFFFFF !important;
+  min-height: 100%;
+}
+/* Desktop: колонка приложения на белом поле без серых полей */
+#root {
+  isolation: isolate;
+}
+
+
 /* Brand fonts — Unbounded (display) + Golos Text (body), from brand.67coffee.ru */
 @font-face{
   font-family:'Unbounded';
@@ -102,7 +113,7 @@
     @apply bg-brand-tint text-brand border-0 rounded-xl px-4 py-3.5 text-[15px] font-semibold cursor-pointer w-full active:opacity-80;
   }
   .btn-orange {
-    @apply bg-crema text-ink border-0 rounded-xl px-4 py-3.5 text-[15px] font-semibold cursor-pointer w-full active:opacity-90;
+    @apply bg-brand-mid text-white border-0 rounded-xl px-4 py-3.5 text-[15px] font-semibold cursor-pointer w-full active:opacity-90;
   }
   .btn-danger {
     @apply bg-red-50 text-bad border-0 rounded-xl px-4 py-3 text-[15px] font-medium cursor-pointer w-full;
@@ -119,17 +130,18 @@
   }
   /* Градиент шапки: мягкий свет из угла внутри семейства бренда. Под QR не заходит. */
   .hero {
-    background: radial-gradient(120% 90% at 85% 0%, #1769FF 0%, #0B4A8D 48%, #073561 100%);
+    /* Ровный primary без бокового затемнения (не radial у правого края). */
+    background: #0B4A8D;
   }
   .hero-off {
-    background: radial-gradient(120% 90% at 85% 0%, #0B4A8D 0%, #073561 55%, #052845 100%);
+    background: #073561;
   }
   /* Тёмная шапка карты по макету: графит с тёплым отсветом. Офлайн — холоднее и темнее. */
   .hero-night {
-    background: radial-gradient(120% 100% at 100% 0%, #0B4A8D 0%, #073561 50%, #052845 100%);
+    background: #0B4A8D;
   }
   .hero-night-off {
-    background: radial-gradient(120% 100% at 100% 0%, #073561 0%, #052845 55%, #031828 100%);
+    background: #073561;
   }
   .num {
     font-variant-numeric: tabular-nums;

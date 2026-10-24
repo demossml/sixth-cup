@@ -42,7 +42,7 @@ export default function ScanModal({ title, onResult, onClose }: {
   }, [])
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-end justify-center z-30" onClick={onClose}>
+    <div className="fixed inset-0 bg-[#073561]/45 flex items-end justify-center z-30" onClick={onClose}>
       <div className="bg-white w-full max-w-[480px] rounded-t-3xl p-4 max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-3">
           <h1 className="text-lg font-semibold text-ink flex items-center gap-2">

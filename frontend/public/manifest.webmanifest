@@ -3,8 +3,8 @@
   "short_name": "6.7 Coffee",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#002FA7",
-  "theme_color": "#002FA7",
+  "background_color": "#0B4A8D",
+  "theme_color": "#0B4A8D",
   "icons": [
     {
       "src": "/icon-192.png",

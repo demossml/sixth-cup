@@ -74,7 +74,7 @@ export default function CardPage() {
         : status.kind === 'stale'
           ? { cls: 'bg-warn-bg text-warn', label: 'Устарело' }
           : hasGift
-            ? { cls: 'bg-crema text-ink', label: 'Подарок доступен' }
+            ? { cls: 'bg-brand-mid text-white', label: 'Подарок доступен' }
             : { cls: 'border border-white/35 text-white', label: status.kind === 'never' ? 'Не обновлялось' : 'Онлайн' }
   const dim = status.kind === 'offline'
   const content = (dir?.content ?? dir?.promos ?? []) as Array<{
@@ -95,9 +95,9 @@ export default function CardPage() {
     const badge = item.badge === 'new' ? 'Новинка' : item.badge === 'hit' ? 'Хит' : item.badge ? 'Сезон' : null
     return <button key={item.id} type="button" onClick={() => nav('/menu')} className={`relative w-full text-left rounded-3xl overflow-hidden shadow-card block bg-night ${variant === 'hero' ? 'min-h-[132px]' : 'min-h-[168px]'}`}>
       {renderMedia(item, 'absolute inset-0 w-full h-full object-cover')}
-      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/35 to-black/5" />
+      <div className="absolute inset-0 bg-gradient-to-t from-[#073561]/75 via-[#0B4A8D]/25 to-transparent" />
       <div className={`relative p-4 flex flex-col justify-end text-white ${variant === 'hero' ? 'min-h-[132px]' : 'min-h-[168px]'}`}>
-        {badge ? <span className="self-start text-[11px] font-semibold uppercase tracking-wide bg-crema text-ink rounded-full px-2.5 py-0.5 mb-2">{badge}</span> : null}
+        {badge ? <span className="self-start text-[11px] font-semibold uppercase tracking-wide bg-brand-mid text-white rounded-full px-2.5 py-0.5 mb-2">{badge}</span> : null}
         <div className="font-display font-semibold text-[18px] leading-6">{item.title}</div>
         <div className="text-[13px] leading-[18px] text-white/85 mt-0.5">{item.ctaLabel || item.body || 'Смотреть в меню'}</div>
       </div>
@@ -114,7 +114,7 @@ export default function CardPage() {
         {heroBackground?.imageUrl ? (
           <>
             {renderMedia(heroBackground, 'absolute inset-0 z-0 w-full h-full object-cover')}
-            <div className="absolute inset-0 z-0 bg-gradient-to-b from-black/55 via-black/35 to-black/65" aria-hidden="true" />
+            <div className="absolute inset-0 z-0 bg-gradient-to-b from-[#073561]/50 via-transparent to-[#0B4A8D]/40" aria-hidden="true" />
           </>
         ) : null}
         <div className="relative z-10">
@@ -154,7 +154,7 @@ export default function CardPage() {
             })}
             <div className="flex justify-center min-w-0">
               <div
-                className={`w-full max-w-[36px] aspect-square rounded-full flex items-center justify-center ${hasGift ? 'bg-crema text-ink gift-pulse' : 'border border-crema/60 text-crema'}`}
+                className={`w-full max-w-[36px] aspect-square rounded-full flex items-center justify-center ${hasGift ? 'bg-brand-mid text-white gift-pulse' : 'border border-white/50 text-white'}`}
               >
                 <Gift size={18} strokeWidth={1.75} />
               </div>
@@ -218,7 +218,7 @@ export default function CardPage() {
 
         {me && (
             <button type="button" onClick={() => nav('/history')} className="w-full text-left flex items-center gap-3 px-3.5 py-3 min-h-14 rounded-2xl bg-[#F6EEDF] border border-[#EADFC9] active:opacity-90">
-              <span className="w-9 h-9 rounded-full bg-crema/30 text-[#78572F] flex items-center justify-center shrink-0">
+              <span className="w-9 h-9 rounded-full bg-pale text-brand flex items-center justify-center shrink-0">
                 <Wallet size={18} strokeWidth={1.75} />
               </span>
               <div className="min-w-0 flex-1">

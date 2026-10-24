@@ -194,14 +194,14 @@ export class RunnerScene extends Phaser.Scene {
     for (let i = 0; i < 5; i++) {
       this.pops.push(
         this.add
-          .text(0, 0, '+1', { fontFamily: FONT, fontSize: '26px', fontStyle: '800', color: '#ffffff', stroke: '#002FA7', strokeThickness: 5 })
+          .text(0, 0, '+1', { fontFamily: FONT, fontSize: '26px', fontStyle: '800', color: '#ffffff', stroke: '#0B4A8D', strokeThickness: 5 })
           .setOrigin(0.5)
           .setDepth(15)
           .setVisible(false),
       )
     }
     this.banner = this.add
-      .text(W / 2, H * 0.36, '', { fontFamily: FONT, fontSize: '76px', fontStyle: '800', color: '#ffffff', stroke: '#002FA7', strokeThickness: 12, align: 'center' })
+      .text(W / 2, H * 0.36, '', { fontFamily: FONT, fontSize: '76px', fontStyle: '800', color: '#ffffff', stroke: '#0B4A8D', strokeThickness: 12, align: 'center' })
       .setOrigin(0.5)
       .setDepth(20)
       .setVisible(false)
