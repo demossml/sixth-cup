@@ -113,8 +113,6 @@ export default function Shell({ onLogout }: { onLogout?: () => void }) {
   }, [loc.pathname])
 
   const closeSide = () => setSideOpen(false)
-
-  // Close drawer on navigate
   useEffect(() => { setSideOpen(false) }, [loc.pathname])
   useEffect(() => {
     if (!sideOpen) return
