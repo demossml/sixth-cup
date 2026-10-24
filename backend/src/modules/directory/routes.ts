@@ -70,6 +70,20 @@ export function publicDirectory(storeUuid?: string | null) {
   // P0: товары категории «Добавки» не показываем в PWA-меню (и при наличии storeUuid, и без).
   products = products.filter((p) => !(p.categoryId != null && addonCats.has(Number(p.categoryId))))
 
+  // Папки-группы добавок (is_group=1) — контейнеры каталога, а не позиции меню.
+  // У них category_id = NULL, поэтому фильтр по категории их не ловит.
+  const hasIsGroup = (db.prepare('PRAGMA table_info(products)').all() as { name: string }[]).some(
+    (c) => c.name === 'is_group',
+  )
+  const groupFolderIds = new Set(
+    hasIsGroup
+      ? (db.prepare('SELECT id FROM products WHERE COALESCE(is_group,0)=1').all() as { id: number }[]).map((r) =>
+          Number(r.id),
+        )
+      : [],
+  )
+  products = products.filter((p) => !groupFolderIds.has(Number(p.id)))
+
   const modifiers = db.prepare(`
     SELECT id, name, price, group_key AS groupKey, sort_order AS sortOrder
     FROM modifiers WHERE available=1 ORDER BY sort_order, id
