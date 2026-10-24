@@ -109,12 +109,12 @@
     return new Promise((resolve) => {
       const o = document.createElement('div');
       o.id = 'scLogin';
-      o.style.cssText = 'position:fixed;inset:0;z-index:9999;background:var(--bg,#faf6ec);display:flex;align-items:center;justify-content:center;padding:16px';
-      o.innerHTML = '<form style="background:#fff;border:1px solid rgba(15,23,42,.12);border-radius:16px;padding:28px;width:100%;max-width:360px;box-shadow:0 12px 40px rgba(15,23,42,.12)">' +
-        '<img src="/67coffee-mark.png" alt="" style="width:40px;height:40px;border-radius:10px"><h1 style="font-size:20px;margin:14px 0 4px">6.7 Coffee · Админка</h1>' +
-        '<p style="margin:0 0 16px;color:#64748b;font-size:13px">Введите токен доступа</p>' +
-        '<input id="scTok" type="password" autocomplete="current-password" placeholder="X-Admin-Token" style="width:100%;box-sizing:border-box;height:42px;border:1px solid rgba(15,23,42,.18);border-radius:10px;padding:0 12px;font:inherit">' +
-        '<div id="scLoginErr" style="color:#b42318;font-size:12.5px;min-height:18px;margin:8px 0 4px">' + (msg || '') + '</div>' +
+      o.style.cssText = 'position:fixed;inset:0;z-index:9999;background:var(--page,#FFFFFF);display:flex;align-items:center;justify-content:center;padding:16px';
+      o.innerHTML = '<form style="background:#fff;border:1px solid #D9E6F5;border-radius:14px;padding:28px;width:100%;max-width:360px;box-shadow:0 12px 40px rgba(7,53,97,.10)">' +
+        '<img src="/67coffee-mark.png" alt="" style="width:40px;height:40px;border-radius:10px"><h1 style="font-family:var(--font-display,Unbounded,sans-serif);font-weight:600;font-size:20px;letter-spacing:-.02em;color:#101B2D;margin:14px 0 4px">6<span style="display:inline-block;width:.16em;height:.16em;background:currentColor;margin:0 .06em"></span>7 Coffee · Админка</h1>' +
+        '<p style="margin:0 0 16px;color:#586B82;font-size:13px">Введите токен доступа</p>' +
+        '<input id="scTok" type="password" autocomplete="current-password" placeholder="X-Admin-Token" style="width:100%;box-sizing:border-box;height:42px;border:1px solid #D9E6F5;border-radius:10px;padding:0 12px;font:inherit">' +
+        '<div id="scLoginErr" style="color:var(--red,#B4472C);font-size:12.5px;min-height:18px;margin:8px 0 4px">' + (msg || '') + '</div>' +
         '<button class="btn btn-primary" style="width:100%;justify-content:center;height:42px" type="submit">Войти</button></form>';
       document.body.appendChild(o);
       const input = o.querySelector('#scTok');
@@ -307,7 +307,7 @@
       await loadAll();
       if (SC.boot2) await SC.boot2(); // phase B loaders (stock/purchases/analytics), registered by sc-api2.js
     } catch (e) {
-      document.body.insertAdjacentHTML('beforeend', '<div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#faf6ec;z-index:9999;font:14px Manrope,sans-serif;padding:20px;text-align:center">Не удалось загрузить данные: ' + (e.message || e) + '<br><button class="btn" onclick="location.reload()" style="margin-top:12px">Повторить</button></div>');
+      document.body.insertAdjacentHTML('beforeend', '<div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:var(--page,#FFFFFF);z-index:9999;font:14px &quot;Golos Text&quot;,sans-serif;padding:20px;text-align:center">Не удалось загрузить данные: ' + (e.message || e) + '<br><button class="btn" onclick="location.reload()" style="margin-top:12px">Повторить</button></div>');
       return;
     }
     SC.fillPointSelects();

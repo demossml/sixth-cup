@@ -134,9 +134,9 @@ export default function Shell({ onLogout }: { onLogout?: () => void }) {
       {sideOpen && <div className="side-backdrop" onClick={closeSide} aria-hidden />}
       <aside className={`side${sideOpen ? ' is-open' : ''}`}>
         <div className="brand">
-          <img src="/67coffee-mark.png" alt="6.7 Coffee" />
+          <img src="/67coffee-mark.png" alt="67 Coffee" />
           <div className="brand-text">
-            <div className="brand-name">6.7 Coffee</div>
+            <div className="brand-name">6<span className="brand-dot" aria-hidden />7 Coffee</div>
             <div className="brand-sub">админка</div>
           </div>
         </div>
