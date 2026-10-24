@@ -581,10 +581,11 @@ tbody tr.clickable { cursor: pointer; }
   .side { padding: 16px 9px 10px; align-items: center; }
   .brand { padding: 0 0 16px; }
   .brand img { width: 36px; height: 36px; }
-  .brand-text, .nav-cap, .nav-item span.label, .nav-item .count, .nav-item .ai, .side-status, .user-text, .user .out { display: none; }
+  /* Icon rail applies to the sidebar only: the mobile «Ещё» sheet reuses .nav-item and must keep labels. */
+  .side .brand-text, .side .nav-cap, .side .nav-item span.label, .side .nav-item .count, .side .nav-item .ai, .side .user-text, .side .user .out { display: none; }
   .nav { width: 100%; }
-  .nav-item { justify-content: center; padding: 0; min-height: 38px; }
-  .nav-item svg { width: 19px; height: 19px; }
+  .side .nav-item { justify-content: center; padding: 0; min-height: 38px; }
+  .side .nav-item svg { width: 19px; height: 19px; }
   .side-foot { width: 100%; }
   .user { justify-content: center; padding: 6px 0; }
   .avatar { width: 30px; height: 30px; }
@@ -2065,19 +2066,29 @@ html, body, #root {
 }
 .side .brand-name { font-family: var(--font-display); color: #fff; }
 .side .brand-sub { color: rgba(240,246,255,.72); }
-.nav-cap { color: rgba(240,246,255,.55) !important; }
-.nav-item { color: rgba(240,246,255,.82) !important; }
-.nav-item svg { color: rgba(240,246,255,.65) !important; }
-.nav-item:hover { background: rgba(255,255,255,.08) !important; color: #fff !important; }
-.nav-item.is-active,
-.nav-item[aria-current="page"],
-.nav-item.active {
+/* Sidebar chrome only: the mobile «Ещё» sheet reuses .nav-item on a white surface,
+   so these light-on-blue colours must not leak into it. */
+.side .nav-cap { color: rgba(240,246,255,.55) !important; }
+.side .nav-item { color: rgba(240,246,255,.82) !important; }
+.side .nav-item svg { color: rgba(240,246,255,.65) !important; }
+.side .nav-item:hover { background: rgba(255,255,255,.08) !important; color: #fff !important; }
+.side .nav-item.is-active,
+.side .nav-item[aria-current="page"],
+.side .nav-item.active {
   background: rgba(255,255,255,.14) !important;
   color: #fff !important;
   font-weight: 650;
 }
-.nav-item.is-active svg,
-.nav-item[aria-current="page"] svg { color: #55D6C2 !important; }
+.side .nav-item.is-active svg,
+.side .nav-item[aria-current="page"] svg { color: #55D6C2 !important; }
+
+/* «Ещё» sheet on white: readable text, brand accents */
+.sheet .nav-item { color: var(--ink); }
+.sheet .nav-item svg { color: var(--muted); }
+.sheet .nav-item:hover { background: var(--surface-2); color: var(--navy); }
+.sheet .nav-item.is-active { background: var(--surface-2); color: var(--navy); font-weight: 650; }
+.sheet .nav-item.is-active svg { color: var(--color-primary); }
+.sheet .nav-cap { color: var(--muted); }
 
 .main, .main-scroll, .content, .view-body {
   background: #FFFFFF !important;
@@ -2219,3 +2230,33 @@ html, body, #root {
 .main-scroll::-webkit-scrollbar,
 .drawer::-webkit-scrollbar,
 .modal-body::-webkit-scrollbar { width: 0; height: 0; display: none; }
+
+/* ============================================================
+   MOBILE UX PASS — phone comfort (≤760px)
+   ============================================================ */
+@media (max-width: 760px) {
+  /* «Ещё» sheet: full labels, section caps, comfortable rows */
+  .sheet { overscroll-behavior: contain; }
+  .sheet h3 { font-size: 17px; }
+  .sheet .nav-item { min-height: 46px; padding: 0 12px; gap: 12px; font-size: 14px; border-radius: 10px; }
+  .sheet .nav-item svg { width: 20px; height: 20px; }
+  .sheet .nav-item .count { display: inline-block; }
+  .sheet .nav-cap { display: block; margin: 14px 0 4px; padding: 0 12px; font-size: 10px; }
+
+  /* 16px stops iOS Safari from zooming the layout when a field gets focus */
+  .pal-input input,
+  .field input, .field select, .field textarea,
+  .select, .mini-search input, .top-search input,
+  .ai-input input, .help-search input, .inv-fact, .ref-link input {
+    font-size: 16px;
+  }
+  .pal-input input { height: 36px; }
+
+  /* Touch targets */
+  .top-search { width: 40px; height: 40px; }
+  .icon-btn { width: 40px; height: 40px; }
+  .cash-pill { height: 36px; }
+  .btn { min-height: 40px; }
+  .chip { min-height: 34px; }
+  .mobile-nav button { font-size: 10px; }
+}
