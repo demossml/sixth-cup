@@ -26,6 +26,8 @@ describe('Evotor product sync', () => {
       recipe_cost_rub: 53,
       recipe_seconds: 90,
       catalog_source: 'SIXTH_CUP',
+      is_group: 0,
+      parent_product_id: null,
     }, 'store-1')
 
     expect(payload).not.toHaveProperty('uuid')
