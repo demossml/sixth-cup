@@ -1,35 +1,38 @@
 :root {
-  --page: #f5f0e6;
-  --surface: #fffdf8;
-  --surface-2: #f0eadf;
-  --surface-3: #e7dfd0;
-  --ink: #151a24;
-  --ink-2: #454d5c;
-  --muted: #626a79;
-  --faint: #656d7b;
-  --line: #e4ddcf;
-  --line-2: #d3c9b7;
-  --navy: #0f172a;
-  --navy-2: #172137;
-  --navy-3: #202c46;
-  --navy-ink: #f4f2ea;
-  --navy-muted: #9aa5b8;
-  --yellow: #fbbf24;
-  --yellow-strong: #f0ae0c;
-  --yellow-soft: #fdf3d4;
-  --yellow-ink: #6b4a05;
-  --green: #1f7a5a;
-  --green-soft: #e4f0e9;
-  --green-line: #bcdccc;
-  --red: #a83a2c;
-  --red-soft: #fae8e3;
-  --red-line: #efc8c0;
-  --amber: #92600a;
-  --amber-soft: #f8eed6;
-  --radius: 13px;
-  --radius-sm: 9px;
-  --shadow: 0 1px 2px rgba(21, 26, 36, 0.04), 0 16px 40px -28px rgba(21, 26, 36, 0.3);
-  --font: 'Manrope', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /* brand.67coffee.ru — Primary / Ice / White (no warm paper) */
+  --page: #FFFFFF;
+  --surface: #FFFFFF;
+  --surface-2: #F0F6FF;
+  --surface-3: #DCEBFF;
+  --ink: #101B2D;
+  --ink-2: #586B82;
+  --muted: #586B82;
+  --faint: #586B82;
+  --line: #D9E6F5;
+  --line-2: #D9E6F5;
+  --navy: #0B4A8D;
+  --navy-2: #073561;
+  --navy-3: #073561;
+  --navy-ink: #FFFFFF;
+  --navy-muted: #DCEBFF;
+  --yellow: #1769FF;
+  --yellow-strong: #1769FF;
+  --yellow-soft: #DCEBFF;
+  --yellow-ink: #0B4A8D;
+  --green: #1F7A4D;
+  --green-soft: #E4F0E9;
+  --green-line: #BCDCCC;
+  --red: #B4472C;
+  --red-soft: #FAE8E3;
+  --red-line: #EFC8C0;
+  --amber: #9A5B00;
+  --amber-soft: #FFF4DC;
+  --tiffany: #55D6C2;
+  --radius: 14px;
+  --radius-sm: 8px;
+  --shadow: 0 1px 2px rgba(16, 27, 45, 0.06), 0 16px 40px -28px rgba(7, 53, 97, 0.28);
+  --font: 'Golos Text', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'Unbounded', 'Golos Text', sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 }
 
@@ -48,7 +51,7 @@ button, input, select { font: inherit; color: inherit; }
 button { cursor: pointer; background: none; border: 0; padding: 0; }
 a { color: inherit; text-decoration: none; }
 svg { display: block; }
-::selection { background: var(--yellow-soft); }
+::selection { background: var(--navy); color: #fff; }
 
 .app { display: grid; grid-template-columns: 244px minmax(0, 1fr); height: 100vh; overflow: hidden; }
 
@@ -66,7 +69,7 @@ svg { display: block; }
 .side::-webkit-scrollbar { display: none; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 2px 8px 18px; }
 .brand img { width: 36px; height: 36px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.09); flex: none; }
-.brand-name { font-size: 16px; font-weight: 800; letter-spacing: -0.025em; line-height: 1.1; }
+.brand-name { font-family: var(--font-display); font-size: 16px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
 .brand-sub {
   font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.13em; text-transform: uppercase;
   color: #8f9bb0; margin-top: 4px; font-weight: 500;
