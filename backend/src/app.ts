@@ -6,6 +6,7 @@ import { logger } from 'hono/logger'
 import { HTTPException } from 'hono/http-exception'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { existsSync, readFileSync, statSync } from 'node:fs'
+import { execSync } from 'node:child_process'
 import { join, resolve } from 'node:path'
 import { config } from './config'
 import { adminRoutes } from './modules/admin/routes'
@@ -62,7 +63,33 @@ app.onError((err, c) => {
   return c.json({ error: 'Internal server error' }, 500)
 })
 
-app.get('/health', (c) => c.json({ ok: true }))
+/**
+ * Версия сборки: чтобы после выкладки было видно, какой именно код работает.
+ * Коммит берём из GIT_COMMIT (можно задать при деплое) или из .git рядом с проектом.
+ */
+function buildInfo() {
+  let commit = process.env.GIT_COMMIT?.trim() || ''
+  if (!commit) {
+    try {
+      commit = execSync('git rev-parse --short HEAD', { cwd: resolve(process.cwd(), '..'), stdio: ['ignore', 'pipe', 'ignore'] })
+        .toString()
+        .trim()
+    } catch {
+      commit = 'unknown'
+    }
+  }
+  let version = ''
+  try {
+    version = String(JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf8')).version ?? '')
+  } catch {
+    version = ''
+  }
+  return { version, commit, startedAt: BUILD_STARTED_AT }
+}
+
+const BUILD_STARTED_AT = new Date().toISOString()
+
+app.get('/health', (c) => c.json({ ok: true, ...buildInfo() }))
 
 app.get('/uploads/:file', async (c) => {
   const file = c.req.param('file')
@@ -209,6 +236,11 @@ if (!config.isDev) {
         },
       })
     }
+    // Файл с расширением, которого нет в сборке, — это 404, а не SPA-страница:
+    // иначе опечатка в имени ассета отдаёт HTML с кодом 200 и ломает JS.
+    const looksLikeFile = /\.[a-z0-9]{2,6}$/i.test(rel) && !rel.endsWith('.html')
+    if (looksLikeFile && !existsSync(candidate)) return c.text('Not found', 404)
+
     // SPA fallback
     const index = join(root, 'index.html')
     if (existsSync(index)) {
