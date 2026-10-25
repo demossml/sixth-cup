@@ -15,11 +15,18 @@ import {
   ensureAddonSchemeSchema,
   resolveAddonsCategoryId,
   loadSchemeItems,
-  replaceSchemeItems,
   replaceSchemeOptions,
   loadSchemeOptions,
   syncModifierProduct,
   ensureAddonsCategory,
+  ADDON_GROUPS,
+  resolveAddonGroupKey,
+  normalizeAddonGroupKey,
+  defaultAddonMaxCount,
+  schemeIdsUsingModifier,
+  schemeItemsFromOptions,
+  itemsPayloadToOptions,
+  convertLegacyItemsToOptions,
 } from '../catalog/addonScheme'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
@@ -52,6 +59,21 @@ function resolveAdminRole(given: string | undefined): AdminRole | null {
   if (config.adminViewerToken && safeEq(given, config.adminViewerToken)) return 'viewer'
   return null
 }
+
+/**
+ * Ключ группы добавки: синонимы и кириллица нормализуются к каноническому словарю
+ * ([ADDON_GROUP_KEYS]). Неизвестный ключ — 400, а не тихое схлопывание в extra.
+ */
+const addonGroupKeySchema = z
+  .string()
+  .nullish()
+  .superRefine((v, ctx) => {
+    if (v == null || !v.trim()) return
+    if (resolveAddonGroupKey(v) == null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Неизвестная группа добавки: ${v}` })
+    }
+  })
+  .transform((v) => (v == null || !v.trim() ? undefined : normalizeAddonGroupKey(v)))
 
 /** Same table as auth/routes — failed admin token attempts per IP. */
 function hitRate(key: string, max: number, windowMs: number) {
@@ -543,7 +565,13 @@ export const adminRoutes = new Hono()
       const ref = db.prepare(
         `SELECT COUNT(*) AS n FROM modifier_scheme_items WHERE product_id=?`,
       ).get(id) as { n: number }
-      if (ref && Number(ref.n) > 0) {
+      let refOptions = { n: 0 }
+      try {
+        refOptions = db.prepare(
+          `SELECT COUNT(*) AS n FROM modifier_scheme_options WHERE product_id=?`,
+        ).get(id) as { n: number }
+      } catch { /* options table may be missing */ }
+      if (ref && Number(ref.n) + Number(refOptions.n) > 0) {
         throw bad('Товар используется в схеме добавок — сначала уберите его из схем', 409)
       }
       const refMod = db.prepare(
@@ -798,14 +826,24 @@ export const adminRoutes = new Hono()
     } else {
       productId = body.linkedProductId
     }
-    const affected = db.prepare(`SELECT id FROM products WHERE modifier_scheme_id IN (SELECT scheme_id FROM modifier_scheme_items WHERE modifier_id=?)`).all(modifierId) as { id: number }[]
+    const affectedSchemes = schemeIdsUsingModifier(db, Number(modifierId))
+    const affected = affectedSchemes.length
+      ? db.prepare(
+          `SELECT id FROM products WHERE modifier_scheme_id IN (${affectedSchemes.map(() => '?').join(',')})`,
+        ).all(...affectedSchemes) as { id: number }[]
+      : []
     enqueueProductSync([...affected.map((x) => x.id), ...(productId != null ? [productId] : [])])
     return c.json({ ok: true, id: modifierId, productId })
   })
 
   .delete('/modifiers/:id', (c) => {
     const id = Number(c.req.param('id'))
-    const affected = db.prepare(`SELECT p.id FROM products p JOIN modifier_scheme_items i ON i.scheme_id=p.modifier_scheme_id WHERE i.modifier_id=?`).all(id) as { id: number }[]
+    const affectedSchemes = schemeIdsUsingModifier(db, id)
+    const affected = affectedSchemes.length
+      ? db.prepare(
+          `SELECT id FROM products WHERE modifier_scheme_id IN (${affectedSchemes.map(() => '?').join(',')})`,
+        ).all(...affectedSchemes) as { id: number }[]
+      : []
     db.prepare('DELETE FROM modifiers WHERE id=?').run(id)
     enqueueProductSync(affected.map((x) => x.id))
     return c.json({ ok: true })
@@ -816,35 +854,44 @@ export const adminRoutes = new Hono()
     const id = Number(c.req.param('id'))
     const scheme = db.prepare('SELECT id, name FROM modifier_schemes WHERE id=?').get(id) as { id: number; name: string } | undefined
     if (!scheme) throw bad('Scheme not found', 404)
-    const items = loadSchemeItems(db, id)
+    const options = loadSchemeOptions(db, id)
+    const items = options.length ? schemeItemsFromOptions(options) : loadSchemeItems(db, id)
     const products = db.prepare(
       'SELECT id, name FROM products WHERE modifier_scheme_id=? ORDER BY sort_order, id',
     ).all(id)
     return c.json({ scheme, items, products })
   })
 
+  /** Канонический словарь групп добавок: админка не держит свой список. */
+  .get('/addon-groups', (c) => c.json({ groups: ADDON_GROUPS }))
+
   .get('/modifier-schemes', (c) => {
     ensureAddonSchemeSchema(db)
     const schemes = db.prepare('SELECT id, name FROM modifier_schemes ORDER BY id').all() as { id: number; name: string }[]
     return c.json({
-      schemes: schemes.map((s) => ({
-        ...s,
-        items: loadSchemeItems(db, s.id).map((i) => ({
-          id: i.id,
-          schemeId: i.schemeId,
-          modifierId: i.modifierId,
-          productId: i.productId,
-          groupKey: i.groupKey,
-          required: !!i.required,
-          maxCount: i.maxCount,
-          isDefault: i.isDefault === 1,
-          zeroOption: i.zeroOption === 1,
-          priceOverride: i.priceOverride,
-          nameOverride: i.nameOverride,
-          sortOrder: i.sortOrder,
-        })),
-        options: loadSchemeOptions(db, s.id),
-      })),
+      schemes: schemes.map((s) => {
+        const options = loadSchemeOptions(db, s.id)
+        // items — совместимость старой админки; при наличии options это проекция канона, а не вторая запись.
+        const items = options.length ? schemeItemsFromOptions(options) : loadSchemeItems(db, s.id)
+        return {
+          ...s,
+          items: items.map((i) => ({
+            id: i.id,
+            schemeId: i.schemeId,
+            modifierId: i.modifierId,
+            productId: i.productId,
+            groupKey: i.groupKey,
+            required: !!i.required,
+            maxCount: i.maxCount,
+            isDefault: i.isDefault === 1,
+            zeroOption: i.zeroOption === 1,
+            priceOverride: i.priceOverride,
+            nameOverride: i.nameOverride,
+            sortOrder: i.sortOrder,
+          })),
+          options,
+        }
+      }),
     })
   })
 
@@ -858,16 +905,17 @@ export const adminRoutes = new Hono()
       productId: z.number().int().positive().nullable().optional(),
       modifierId: z.number().int().positive().nullable().optional(),
       name: z.string().nullable().optional(),
-      groupKey: z.string().optional(),
+      groupKey: addonGroupKeySchema,
       isDefault: z.boolean().optional(),
       required: z.boolean().optional(),
       maxCount: z.number().int().optional(),
+      priceOverride: z.number().int().nullable().optional(),
       sortOrder: z.number().int().optional(),
     })).optional(),
     items: z.array(z.object({
       modifierId: z.number().int().nullable().optional(),
       productId: z.number().int().nullable().optional(),
-      groupKey: z.string().nullable().optional(),
+      groupKey: addonGroupKeySchema,
       required: z.boolean().optional(),
       maxCount: z.number().int().optional(),
       isDefault: z.boolean().optional(),
@@ -889,61 +937,41 @@ export const adminRoutes = new Hono()
         const r = db.prepare('INSERT INTO modifier_schemes(name,created_at,updated_at) VALUES(?,?,?)').run(body.name, now, now)
         schemeId = Number(r.lastInsertRowid)
       }
-      const hasOptionRows = (() => {
-        try {
-          return (db.prepare('SELECT COUNT(*) AS n FROM modifier_scheme_options WHERE scheme_id=?').get(schemeId) as { n: number }).n > 0
-        } catch { return false }
-      })()
-      if (body.options && body.options.length) {
-        replaceSchemeOptions(db, schemeId!, body.options)
-      } else if (body.items && body.items.length) {
-        replaceSchemeItems(db, schemeId!, body.items)
-      } else if (hasOptionRows && !body.copyFromSchemeId) {
-        // Studio: только modifierIds. Синхронизируем kind=modifier, zero/product не трогаем.
+      const hasOptions = !!body.options?.length
+      const hasItems = !!body.items?.length
+      if (hasOptions) {
+        replaceSchemeOptions(db, schemeId!, body.options!)
+        // Канон один: легаси-копию не ведём (таблица остаётся для старых схем).
+        db.prepare('DELETE FROM modifier_scheme_items WHERE scheme_id=?').run(schemeId)
+      } else if (hasItems) {
+        // Старая админка присылает items — конвертируем в options, в items не пишем (R1).
+        replaceSchemeOptions(db, schemeId!, itemsPayloadToOptions(body.items!))
+        db.prepare('DELETE FROM modifier_scheme_items WHERE scheme_id=?').run(schemeId)
+      } else if (body.copyFromSchemeId) {
+        const sourceOptions = loadSchemeOptions(db, body.copyFromSchemeId)
+        const source = sourceOptions.length
+          ? sourceOptions
+          : itemsPayloadToOptions(loadSchemeItems(db, body.copyFromSchemeId))
+        replaceSchemeOptions(db, schemeId!, source)
+        db.prepare('DELETE FROM modifier_scheme_items WHERE scheme_id=?').run(schemeId)
+      } else {
+        // Studio: только modifierIds. Позиции (zero/product) сохраняем, items конвертируем в канон.
+        convertLegacyItemsToOptions(db, schemeId!)
         const ids = body.modifierIds ?? []
         if (ids.length === 0) {
           db.prepare(`DELETE FROM modifier_scheme_options WHERE scheme_id=? AND kind='modifier'`).run(schemeId)
-          replaceSchemeItems(db, schemeId!, [])
         } else {
           db.prepare(`DELETE FROM modifier_scheme_options WHERE scheme_id=? AND kind='modifier'
                         AND modifier_id NOT IN (${ids.map(() => '?').join(',')})`).run(schemeId, ...ids)
+          let sort = (db.prepare('SELECT COALESCE(MAX(sort_order),-1)+1 AS n FROM modifier_scheme_options WHERE scheme_id=?')
+            .get(schemeId) as { n: number }).n
           for (const mid of ids) {
             if (db.prepare(`SELECT 1 FROM modifier_scheme_options WHERE scheme_id=? AND kind='modifier' AND modifier_id=?`).get(schemeId, mid)) continue
             const m = db.prepare('SELECT group_key AS g FROM modifiers WHERE id=?').get(mid) as { g: string } | undefined
-            const gk = m?.g === 'milk' ? 'milk' : m?.g === 'syrup' ? 'syrup' : 'extra'
-            db.prepare(`INSERT INTO modifier_scheme_options(scheme_id,kind,modifier_id,group_key,max_count,sort_order) VALUES(?,?,?,?,2,999)`)
-              .run(schemeId, 'modifier', mid, gk)
+            const gk = normalizeAddonGroupKey(m?.g)
+            db.prepare(`INSERT INTO modifier_scheme_options(scheme_id,kind,modifier_id,group_key,max_count,sort_order) VALUES(?,?,?,?,?,?)`)
+              .run(schemeId, 'modifier', mid, gk, defaultAddonMaxCount(gk), sort++)
           }
-          replaceSchemeItems(db, schemeId!, ids.map((mid) => ({ modifierId: mid, maxCount: 2 })))
-        }
-      } else {
-        let ids = body.modifierIds
-        if (body.copyFromSchemeId) {
-          try {
-            const copiedOpt = db.prepare(
-              'SELECT kind, product_id AS productId, modifier_id AS modifierId, name, group_key AS groupKey, is_default AS isDefault, required, max_count AS maxCount, sort_order AS sortOrder FROM modifier_scheme_options WHERE scheme_id=? ORDER BY sort_order, id',
-            ).all(body.copyFromSchemeId) as any[]
-            if (copiedOpt.length) {
-              replaceSchemeOptions(db, schemeId!, copiedOpt.map((o) => ({
-                kind: o.kind, productId: o.productId, modifierId: o.modifierId, name: o.name, groupKey: o.groupKey,
-                isDefault: !!o.isDefault, required: !!o.required, maxCount: o.maxCount ?? 1, sortOrder: o.sortOrder ?? 0,
-              })))
-            } else {
-              const copied = db.prepare(
-                'SELECT modifier_id AS id FROM modifier_scheme_items WHERE scheme_id=? AND modifier_id IS NOT NULL',
-              ).all(body.copyFromSchemeId) as { id: number }[]
-              ids = copied.map((x) => x.id)
-              replaceSchemeItems(db, schemeId!, (ids || []).map((mid) => ({ modifierId: mid, maxCount: 2 })))
-            }
-          } catch {
-            const copied = db.prepare(
-              'SELECT modifier_id AS id FROM modifier_scheme_items WHERE scheme_id=? AND modifier_id IS NOT NULL',
-            ).all(body.copyFromSchemeId) as { id: number }[]
-            ids = copied.map((x) => x.id)
-            replaceSchemeItems(db, schemeId!, (ids || []).map((mid) => ({ modifierId: mid, maxCount: 2 })))
-          }
-        } else {
-          replaceSchemeItems(db, schemeId!, (ids || []).map((mid) => ({ modifierId: mid, maxCount: 2 })))
         }
       }
     })()

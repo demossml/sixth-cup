@@ -113,10 +113,14 @@ describe('data safety', () => {
   it('scheme update keeps its items in one transaction and does not create orphans', async () => {
     const m = db.prepare("INSERT INTO modifiers(name,price,group_key,available,sort_order,created_at,updated_at) VALUES('m',10,'other',1,0,1,1)").run()
     const s = await json(await call('own', 'POST', '/modifier-schemes', { name: 'S', modifierIds: [Number(m.lastInsertRowid)] }))
-    const n = () => (db.prepare('SELECT COUNT(*) n FROM modifier_scheme_items WHERE scheme_id=?').get(s.id) as any).n
+    // R1: канон — modifier_scheme_options; легаси items больше не пишется.
+    const n = () => (db.prepare("SELECT COUNT(*) n FROM modifier_scheme_options WHERE scheme_id=? AND kind='modifier'").get(s.id) as any).n
+    const legacy = () => (db.prepare('SELECT COUNT(*) n FROM modifier_scheme_items WHERE scheme_id=?').get(s.id) as any).n
     expect(n()).toBe(1)
+    expect(legacy()).toBe(0)
     await call('own', 'POST', '/modifier-schemes', { id: s.id, name: 'S2', modifierIds: [Number(m.lastInsertRowid)] })
     expect(n()).toBe(1)
+    expect(legacy()).toBe(0)
   })
 })
 
