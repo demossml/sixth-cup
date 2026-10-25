@@ -181,9 +181,14 @@ export function syncModifierProduct(db: Database.Database, modifierId: number): 
     const same = all.filter((x) => normName(x.name) === normName(m.name) && x.isGroup === 0)
     // 1) уже в «Добавки»  2) любой не-чашка с тем же именем (перенесём в «Добавки»)
     // Напиток (counts_as_cup=1) не трогаем — создадим отдельный товар-добавку.
+    const takenByOther = (id: number) =>
+      db.prepare('SELECT 1 FROM modifiers WHERE linked_product_id=? AND id<>?').get(id, m.id) != null
+    // Товар, уже привязанный к другой добавке, повторно не забираем: иначе два модификатора
+    // делят один product и падает UNIQUE(modifiers.linked_product_id).
+    const free = same.filter((x) => !takenByOther(x.id))
     const found =
-      same.find((x) => x.cat === cat) ??
-      same.find((x) => Number(x.cup) === 0) ??
+      free.find((x) => x.cat === cat) ??
+      free.find((x) => Number(x.cup) === 0) ??
       null
     pid = found ? found.id : null
   }

@@ -209,7 +209,9 @@ if (!config.isDev) {
         },
       })
     }
-    // SPA fallback
+    // SPA fallback: только для маршрутов без расширения — иначе запрос удалённого файла
+    // (например /classic.html от старой админки) вернул бы страницу приложения с кодом 200
+    if (/\.[a-z0-9]+$/i.test(rel)) return c.text('Not found', 404)
     const index = join(root, 'index.html')
     if (existsSync(index)) {
       return new Response(readFileSync(index, 'utf8'), {

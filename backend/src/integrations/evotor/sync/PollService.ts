@@ -77,7 +77,8 @@ export class PollService {
 
   constructor(
     private readonly db: Database.Database,
-    private readonly client = new EvotorClient(),
+    /** Injected for tests; production passes nothing and clients are resolved per store token. */
+    private readonly client?: EvotorClient,
   ) {}
 
   async ensureStores(): Promise<string[]> {
@@ -91,7 +92,7 @@ export class PollService {
     )
     for (const tok of tokens) {
       try {
-        const raw = await new EvotorClient(tok).getStores()
+        const raw = await (this.client ?? new EvotorClient(tok)).getStores()
         const items = asArray(raw)
         for (const it of items) {
           const o = it as Record<string, unknown>
@@ -141,7 +142,7 @@ export class PollService {
     const items: Record<string, unknown>[] = []
     let cursor: string | undefined
     for (let page = 0; page < 100; page++) {
-      const raw = await clientForStore(this.db, storeUuid).getDocuments(storeUuid, since, until, undefined, cursor)
+      const raw = await (this.client ?? clientForStore(this.db, storeUuid)).getDocuments(storeUuid, since, until, undefined, cursor)
       items.push(...(asArray(raw) as Record<string, unknown>[]))
       const paging = raw && typeof raw === 'object' ? (raw as { paging?: { next_cursor?: unknown } }).paging : undefined
       cursor = typeof paging?.next_cursor === 'string' && paging.next_cursor ? paging.next_cursor : undefined

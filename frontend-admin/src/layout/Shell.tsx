@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
-  Activity, BarChart3, Bot, Box, LineChart, CalendarClock, Coffee, Gift, HelpCircle, History,
+  Activity, BarChart3, Bot, Box, LineChart, CalendarClock, Coffee, Gift, HelpCircle, 
   LayoutDashboard, LogOut, ClipboardList, Package, Search, Settings, Menu,
   Share2, Store, Users, X,
 } from 'lucide-react'
@@ -39,7 +39,6 @@ const ANALYTICS: NavItem[] = [
 const SYSTEM: NavItem[] = [
   { to: '/help', label: 'Справка', icon: <HelpCircle size={17} /> },
   { to: '/system', label: 'Система', icon: <Settings size={17} /> },
-  { to: '/legacy', label: 'Старая версия', icon: <History size={17} /> },
 ]
 
 const TITLES: Record<string, string> = {
@@ -60,7 +59,6 @@ const TITLES: Record<string, string> = {
   '/assistant': 'Помощник',
   '/help': 'Справка',
   '/system': 'Система',
-  '/legacy': 'Старая версия',
 }
 
 function NavGroup({ title, items, onNavigate }: { title: string; items: NavItem[]; onNavigate?: () => void }) {

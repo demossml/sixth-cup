@@ -6,7 +6,6 @@ import { MetaCtx } from './meta'
 import type { Meta } from './meta'
 import Shell from './layout/Shell'
 import { Button, Input, ToastProvider, Spinner } from './ui/kit'
-const AdminPage = lazy(() => import('./pages/AdminPage'))
 const Today = lazy(() => import('./pages/Today'))
 const Operations = lazy(() => import('./pages/Operations'))
 const Customers = lazy(() => import('./pages/Customers'))
@@ -86,7 +85,6 @@ export default function App() {
       <ToastProvider>
         <Suspense fallback={<Spinner />}>
         <Routes>
-          <Route path="/legacy" element={<AdminPage />} />
           <Route element={<Shell onLogout={logout} />}>
             <Route index element={<Today />} />
             <Route path="operations" element={<Operations />} />
