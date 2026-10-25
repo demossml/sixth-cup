@@ -565,6 +565,9 @@ tbody tr.clickable { cursor: pointer; }
 .toast.is-on { opacity: 1; transform: none; }
 .toast svg { color: var(--yellow); flex: none; }
 
+/* «Ещё» sheet scrim: works at any width, unlike the drawer scrim which only exists ≤900px */
+.sheet-backdrop { position: fixed; inset: 0; z-index: 55; background: rgba(7, 53, 97, 0.42); }
+
 /* mobile nav */
 .mobile-nav { display: none; }
 
@@ -607,8 +610,8 @@ tbody tr.clickable { cursor: pointer; }
   .top-avatar { display: none; }
   .content { padding: 18px 14px 86px; }
   .page-head h1 { font-size: 23px; }
-  .page-head .head-actions { width: 100%; }
-  .page-head .head-actions .btn { flex: 1; }
+  .page-head .head-actions { width: auto; }
+  .page-head .head-actions .btn { flex: 0 1 auto; }
   .kpi-grid { grid-template-columns: 1fr 1fr; gap: 9px; }
   .kpi { padding: 12px 13px; }
   .kpi-value { font-size: 22px; }
@@ -624,18 +627,24 @@ tbody tr.clickable { cursor: pointer; }
   .pager { display: none; }
   .topbar .cash-pill .dot-copy { display: none; }
   .mobile-nav {
-    display: grid; grid-template-columns: repeat(5, 1fr);
+    display: grid; grid-template-columns: repeat(4, 1fr);
     position: fixed; z-index: 40; left: 0; right: 0; bottom: 0;
     background: rgba(255, 255, 255, 0.96); border-top: 1px solid var(--line);
     backdrop-filter: blur(8px); padding: 4px 2px calc(6px + env(safe-area-inset-bottom));
   }
-  .mobile-nav button {
-    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
-    min-height: 47px; font-size: 9px; font-weight: 650; color: var(--muted); letter-spacing: 0.01em;
+  .mobile-nav a, .mobile-nav button {
+    position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+    min-height: 48px; font-size: 10px; font-weight: 650; color: var(--muted); letter-spacing: 0.01em;
   }
-  .mobile-nav button.is-active { color: var(--navy); }
-  .mobile-nav button.is-active svg { color: var(--yellow-ink); }
-  .mobile-nav button svg { color: var(--muted); }
+  /* Active tab is marked by a bar and weight, not by colour alone. */
+  .mobile-nav .is-active { color: var(--navy); }
+  .mobile-nav .is-active::before {
+    content: ''; position: absolute; top: -4px; left: 50%; transform: translateX(-50%);
+    width: 26px; height: 3px; border-radius: 0 0 3px 3px; background: var(--color-primary);
+  }
+  .mobile-nav .is-active span { font-weight: 750; }
+  .mobile-nav .is-active svg { color: var(--color-primary); }
+  .mobile-nav svg { color: var(--muted); }
   .drawer { width: 100vw; }
   .toast { right: 12px; left: 12px; bottom: 74px; justify-content: center; }
   .token-card { flex-wrap: wrap; }
@@ -2252,4 +2261,69 @@ html, body, #root {
   .btn { min-height: 40px; }
   .chip { min-height: 34px; }
   .mobile-nav button { font-size: 10px; }
+}
+
+/* ============================================================
+   PHONE NAVIGATION — bottom bar + «Ещё» sheet (≤760px)
+   Desktop keeps the sidebar exactly as before.
+   ============================================================ */
+@media (max-width: 760px) {
+  /* The bar owns phone navigation; the sidebar drawer is a tablet affordance only. */
+  .mobile-bar { display: none !important; }
+
+  /* Content must clear the fixed bar and the iPhone home indicator. */
+  .main-scroll {
+    padding: 12px 14px calc(78px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Search stays typed-in on a phone: it shrinks but never hides the field. */
+  .topbar { padding: 0 12px; gap: 8px; }
+  .top-search {
+    flex: 1; width: auto; min-width: 0; max-width: none; height: 40px;
+    margin-left: 0; padding: 0 8px 0 10px;
+  }
+  .top-search input { min-width: 0; width: 100%; }
+
+  /* «Ещё» sheet: above the bar, scrolls inside, clears the safe area. */
+  .sheet { z-index: 60; max-height: 86vh; padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px)); }
+  .sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 4px 6px 8px; }
+  .sheet-head h3 { margin: 0; }
+  .sheet .nav-item { min-height: 44px; font-size: 13.5px; }
+  .sheet .nav-cap { margin: 10px 0 2px; }
+  .sheet-foot { margin-top: 10px; padding-top: 6px; border-top: 1px solid var(--line-2); }
+  .sheet-foot .nav-item { color: var(--red); }
+  .sheet-foot .nav-item svg { color: var(--red); }
+
+  /* Section tabs scroll sideways instead of stacking into rows. */
+  .seg {
+    flex-wrap: nowrap !important;
+    max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .seg::-webkit-scrollbar { display: none; }
+  .seg button { flex: none; min-height: 34px; }
+
+  /* Comfortable touch targets on primary actions only. */
+  .btn { min-height: 44px; }
+  .btn-sm { min-height: 36px; }
+  .icon-btn { width: 44px; height: 44px; }
+  .drawer-close { width: 40px; height: 40px; }
+  .check { width: 20px; height: 20px; }
+
+  /* Page header actions sit next to the title, wrap under it when they do not fit. */
+  .page-h { gap: 10px !important; }
+  .page-h-actions { width: auto; flex-wrap: wrap; }
+  .page-h-actions .btn { flex: 0 1 auto; }
+
+  /* Wide tables scroll inside their card, never the whole page. */
+  .card { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .card table { min-width: 0; }
+  .card th, .card td { padding: 9px 11px; }
+}
+
+@media (max-width: 400px) {
+  .page-head h1 { font-size: 21px; }
+  .kpi-grid { gap: 8px; }
+  .card th, .card td { padding: 8px 9px; font-size: 12px; }
+  .topbar { gap: 6px; }
 }

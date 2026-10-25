@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   Activity, BarChart3, Bot, Box, LineChart, CalendarClock, Coffee, Gift, HelpCircle, 
   LayoutDashboard, LogOut, ClipboardList, Package, Search, Settings, Menu,
-  Share2, Store, Users, X,
+  Share2, Store, Users, X, MoreHorizontal,
 } from 'lucide-react'
 import { useApi } from '../api/useApi'
 import type { Health } from '../api/types'
@@ -39,6 +39,25 @@ const ANALYTICS: NavItem[] = [
 const SYSTEM: NavItem[] = [
   { to: '/help', label: 'Справка', icon: <HelpCircle size={17} /> },
   { to: '/system', label: 'Система', icon: <Settings size={17} /> },
+]
+
+/**
+ * Нижняя навигация телефона: три раздела, которые нужны с кассы каждый день.
+ * «Заказы» — это вкладка существующих «Закупок» (?tab=orders), а не отдельный маршрут.
+ */
+const MOBILE_PRIMARY: NavItem[] = [
+  { to: '/', label: 'Сегодня', icon: <LayoutDashboard size={20} />, end: true },
+  { to: '/cash', label: 'Касса', icon: <Store size={20} /> },
+  { to: '/purchases?tab=orders', label: 'Заказы', icon: <ClipboardList size={20} /> },
+]
+
+const MOBILE_PRIMARY_PATHS = ['/', '/cash', '/purchases']
+
+const MOBILE_GROUPS: { title: string; items: NavItem[] }[] = [
+  { title: 'Смена', items: SHIFT.filter((i) => !MOBILE_PRIMARY_PATHS.includes(i.to)) },
+  { title: 'Управление', items: MANAGE.filter((i) => !MOBILE_PRIMARY_PATHS.includes(i.to)) },
+  { title: 'Аналитика', items: ANALYTICS },
+  { title: 'Система', items: SYSTEM },
 ]
 
 const TITLES: Record<string, string> = {
@@ -101,6 +120,8 @@ export default function Shell({ onLogout }: { onLogout?: () => void }) {
   const loc = useLocation()
   const nav = useNavigate()
   const [sideOpen, setSideOpen] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const moreRef = useRef<HTMLDivElement>(null)
   const [q, setQ] = useState('')
 
   const title = useMemo(() => {
@@ -111,13 +132,35 @@ export default function Shell({ onLogout }: { onLogout?: () => void }) {
   }, [loc.pathname])
 
   const closeSide = () => setSideOpen(false)
-  useEffect(() => { setSideOpen(false) }, [loc.pathname])
+  const closeMore = () => setMoreOpen(false)
+  useEffect(() => { setSideOpen(false); setMoreOpen(false) }, [loc.pathname])
   useEffect(() => {
-    if (!sideOpen) return
+    if (!sideOpen && !moreOpen) return
     const prev = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     return () => { document.body.style.overflow = prev }
-  }, [sideOpen])
+  }, [sideOpen, moreOpen])
+
+  const logout = () => {
+    if (onLogout) onLogout()
+    else {
+      sessionStorage.removeItem('adminToken')
+      localStorage.removeItem('adminToken')
+      window.location.reload()
+    }
+  }
+
+  useEffect(() => {
+    if (!moreOpen) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMoreOpen(false) }
+    document.addEventListener('keydown', onKey)
+    moreRef.current?.focus()
+    return () => document.removeEventListener('keydown', onKey)
+  }, [moreOpen])
+
+  // «Ещё» is highlighted whenever the current section is not one of the three primary tabs.
+  const path = loc.pathname.replace(/\/$/, '') || '/'
+  const inPrimary = MOBILE_PRIMARY_PATHS.some((p) => (p === '/' ? path === '/' : path.startsWith(p)))
 
   const goSearch = (e: React.FormEvent) => {
     e.preventDefault()
@@ -149,18 +192,7 @@ export default function Shell({ onLogout }: { onLogout?: () => void }) {
           <TillFoot />
           <NavGroup title="" items={SYSTEM} onNavigate={closeSide} />
           <div className="side-sep" />
-          <button
-            type="button"
-            className="user"
-            onClick={() => {
-              if (onLogout) onLogout()
-              else {
-                sessionStorage.removeItem('adminToken')
-                localStorage.removeItem('adminToken')
-                window.location.reload()
-              }
-            }}
-          >
+          <button type="button" className="user" onClick={logout}>
             <span className="avatar">67</span>
             <span className="user-text">
               <span className="user-name" style={{ display: 'block' }}>Админ</span>
@@ -203,6 +235,61 @@ export default function Shell({ onLogout }: { onLogout?: () => void }) {
           <div className="view-body">
             <Outlet />
           </div>
+        </div>
+      </div>
+
+      {/* Phones: fixed bottom bar + «Ещё» sheet; both reuse the desktop nav definitions above. */}
+      <nav className="mobile-nav" aria-label="Быстрый доступ">
+        {MOBILE_PRIMARY.map((item) => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            end={item.end}
+            className={({ isActive }) => (isActive ? 'is-active' : '')}
+          >
+            {item.icon}
+            <span>{item.label}</span>
+          </NavLink>
+        ))}
+        <button
+          type="button"
+          className={inPrimary ? undefined : 'is-active'}
+          aria-expanded={moreOpen}
+          aria-haspopup="dialog"
+          onClick={() => setMoreOpen(true)}
+        >
+          <MoreHorizontal size={20} />
+          <span>И ещё</span>
+        </button>
+      </nav>
+
+      {moreOpen && <div className="sheet-backdrop" onClick={closeMore} aria-hidden />}
+      <div
+        ref={moreRef}
+        tabIndex={-1}
+        className={`sheet${moreOpen ? ' is-on' : ''}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Все разделы"
+        hidden={!moreOpen}
+      >
+        <div className="sheet-grab" aria-hidden />
+        <div className="sheet-head">
+          <h3>Все разделы</h3>
+          <button type="button" className="icon-btn" onClick={closeMore} aria-label="Закрыть">
+            <X size={18} />
+          </button>
+        </div>
+        <nav className="nav" aria-label="Все разделы">
+          {MOBILE_GROUPS.map((g) => (
+            <NavGroup key={g.title} title={g.title} items={g.items} onNavigate={closeMore} />
+          ))}
+        </nav>
+        <div className="sheet-foot">
+          <button type="button" className="nav-item" onClick={logout}>
+            <LogOut size={20} />
+            <span className="label">Выйти</span>
+          </button>
         </div>
       </div>
     </div>

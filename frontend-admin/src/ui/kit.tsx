@@ -293,7 +293,7 @@ export function Drawer({ open, onClose, title, children, footer, wide }: { open:
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={cx('flex max-h-[92vh] w-full flex-col rounded-t-3xl bg-white shadow-soft outline-none sm:max-h-none sm:rounded-none sm:rounded-l-3xl', wide ? 'sm:max-w-2xl' : 'sm:max-w-md')}
+        className={cx('flex max-h-[92dvh] w-full flex-col rounded-t-3xl bg-white shadow-soft outline-none sm:max-h-none sm:rounded-none sm:rounded-l-3xl', wide ? 'sm:max-w-2xl' : 'sm:max-w-md')}
       >
         <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
           <h2 className="min-w-0 truncate text-lg font-bold">{title}</h2>
@@ -326,8 +326,8 @@ export function ConfirmDialog({
   if (!open) return null
   const ok = !typed || text.trim().toLowerCase() === typed.toLowerCase()
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
-      <div role="alertdialog" aria-modal="true" aria-label={title} className="w-full max-w-md rounded-2xl bg-white p-5 shadow-soft">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center overflow-y-auto bg-black/50 p-4" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
+      <div role="alertdialog" aria-modal="true" aria-label={title} className="my-auto max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-5 shadow-soft">
         <h2 className="text-lg font-bold">{title}</h2>
         {children && <div className="mt-2 text-sm text-ink-secondary">{children}</div>}
         {typed && (

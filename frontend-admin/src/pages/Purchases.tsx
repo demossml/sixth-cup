@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useApi } from '../api/useApi'
 import { api } from '../api/client'
 import {
@@ -11,6 +12,7 @@ import BankTab from './purchases/BankTab'
 import ReconTab from './purchases/ReconTab'
 import OrdersTab from './purchases/OrdersTab'
 import { csvName, downloadCsv } from '../lib/csv'
+import { setParams } from '../lib/query'
 import ReturnsTab from './purchases/ReturnsTab'
 
 type Supplier = { id: number; name: string; inn: string | null; contact: string | null; active: number }
@@ -31,9 +33,17 @@ function statusBadge(s: string) {
   return <Badge tone="neutral">{s}</Badge>
 }
 
+type PurchasesTab = 'invoices' | 'orders' | 'returns' | 'suppliers' | 'debt' | 'bank' | 'recon'
+const PURCHASES_TABS: PurchasesTab[] = ['invoices', 'orders', 'returns', 'suppliers', 'debt', 'bank', 'recon']
+
 export default function Purchases() {
   const toast = useToast()
-  const [tab, setTab] = useState<'invoices' | 'orders' | 'returns' | 'suppliers' | 'debt' | 'bank' | 'recon'>('invoices')
+  // Tab lives in the address (?tab=orders), like Меню и Операции — so «Заказы» можно открыть ссылкой.
+  const [sp, setSp] = useSearchParams()
+  const tabParam = sp.get('tab') as PurchasesTab | null
+  const tab: PurchasesTab = tabParam && PURCHASES_TABS.includes(tabParam) ? tabParam : 'invoices'
+  const setTab = (next: PurchasesTab) =>
+    setSp(setParams(sp, { tab: next === 'invoices' ? null : next }), { replace: true })
   const [showSupplier, setShowSupplier] = useState(false)
   const [showInvoice, setShowInvoice] = useState(false)
   const [sName, setSName] = useState('')
