@@ -29,6 +29,21 @@
 **Вывод для агента:** §3 D8 и задачи R1–R3 из прошлого цикла больше не актуальны, повторно не делать.
 Всё, что ниже, — сверено с `350db5c`.
 
+### Выполнение T1–T8 (все пункты закрыты)
+
+| Задача | Коммит | Что сделано | Проверка |
+|---|---|---|---|
+| T1 | `057b3f9` | `Marketing.tsx`: `/vouchers/templates` → `/voucher-templates` | build, 168 тестов |
+| T2 | `8dbadc2` | удалены `coffee.orig.js`, `devices/addons.ts`, `ProductThumb`, `LoginPage`, `SimpleLineChart` | tsc ×3, build ×3, 168 тестов |
+| T3 | `da083d1` | две админки оставлены; в «Закупках» подсказка, в Help описан расклад по адресам | build |
+| T4 | `6efb518` | вкладки «Банк» и «Сверки» в «Закупках» | 5 новых тестов парсера + живой smoke API |
+| T5 | `0a99b3e` | вкладка «Заказы» + `to-invoice` + подсказка количеств | живой smoke API (draft→400→confirm→invoice) |
+| T6 | `a7d0088` | вкладка «Рецептуры» в «Складе» (режим + компоненты) | живой smoke API (GET/PUT/400) |
+| T7 | `c41b1de` | удалён `/addon-products`; три роута оставлены осознанно | tsc, 168 тестов |
+| T8 | `572d2c1` | `replaceSchemeItems` использует `defaultAddonMaxCount` | новый тест падал на старом коде (2 ≠ 1) |
+
+Итоговое состояние: **сборка 3/3, typecheck 3/3, тесты backend 32 файла / 172, admin 2 / 9, PWA 4 / 52.**
+
 ---
 
 ## 1. Методика и достоверность
@@ -50,7 +65,7 @@
 
 ## 2. Нерабочий функционал
 
-### 2.1. `Marketing → Ваучеры` всегда в ошибке — **подтверждено, 404**
+### 2.1. `Marketing → Ваучеры` всегда в ошибке — **закрыто в `057b3f9`**
 
 * Клиент: [frontend-admin/src/pages/Marketing.tsx:312](frontend-admin/src/pages/Marketing.tsx#L312) — `useApi('/vouchers/templates')`
   → фактический запрос `GET /api/admin/vouchers/templates`
@@ -60,7 +75,7 @@
 Правка (одна строка в клиенте): `'/vouchers/templates'` → `'/voucher-templates'`.
 Проверка: вкладка «Ваучеры» в Маркетинге открывается без ошибки, список шаблонов виден.
 
-### 2.2. Сверка с банком — API есть, UI нет ни в одной админке
+### 2.2. Сверка с банком — **закрыто в `6efb518`** (вкладки «Банк» и «Сверки»)
 
 Роуты (все живые, с валидацией):
 
@@ -104,6 +119,10 @@
 
 Следствие: пользователь, открывший `/classic.html`, честно не находит половину закупок и склада.
 
+**Решение (T3, `da083d1`):** обе админки оставлены — статическая держит возвраты поставщику.
+Закупки, банк, сверки, заказы и рецептуры перенесены в React (T4–T6). В «Закупках» есть
+подсказка со ссылкой на прежний интерфейс, в Help описано, какой адрес что отдаёт.
+
 ---
 
 ## 3. Дубли и мёртвый код
@@ -112,15 +131,15 @@
 |---|---|---|---|---|
 | D1 | Две полноценные админки | см. §2.4 | ~600 КБ UI | открыть `/` и `/classic.html` |
 | D2 | Легаси-админка в навигации | [App.tsx:89](frontend-admin/src/App.tsx#L89), [Shell.tsx:42](frontend-admin/src/layout/Shell.tsx#L42) | [AdminPage.tsx](frontend-admin/src/pages/AdminPage.tsx) — 1229 стр. | дублирует Today/Operations/Menu/Cash/Stock/Marketing |
-| D3 | Мёртвый UI-бандл | [public/ui/coffee.orig.js](frontend-admin/public/ui/coffee.orig.js) | 385 КБ | `grep -rl "coffee.orig.js" .` → только сам файл |
-| D4 | Мёртвый backend-модуль | [backend/src/modules/devices/addons.ts](backend/src/modules/devices/addons.ts) | 65 стр., 5 экспортов | 0 импортов; упоминается только в документации (`ADDONS-DATA-FLOW.md`, `ADDONS-ARCHITECTURE-AUDIT.md`, `REPORT-SAFE-ADDONS.md`) |
+| D3 | Мёртвый UI-бандл | [public/ui/coffee.orig.js](frontend-admin/public/ui/coffee.orig.js) | 385 КБ | **удалён** в `8dbadc2` |
+| D4 | Мёртвый backend-модуль | [backend/src/modules/devices/addons.ts](backend/src/modules/devices/addons.ts) | 65 стр., 5 экспортов | **удалён** в `8dbadc2` |
 | D5 | Нормализация имени в трёх местах | [addonScheme.ts:148](backend/src/modules/catalog/addonScheme.ts#L148), [devices/routes.ts:352](backend/src/modules/devices/routes.ts#L352), [devices/addons.ts:7](backend/src/modules/devices/addons.ts#L7) | 3 копии NFKC + ё→е + пробелы | `grep -rn "normalize('NFKC')" backend/src` |
-| D6 | Неиспользуемые компоненты (admin) | [components/SimpleChart.tsx](frontend-admin/src/components/SimpleChart.tsx) (`SimpleLineChart`) | 81 стр. | 0 импортов |
-| D7 | Неиспользуемые компоненты (PWA) | [components/ProductThumb.tsx](frontend/src/components/ProductThumb.tsx), [pages/LoginPage.tsx](frontend/src/pages/LoginPage.tsx), `BrandPanelMark` в [BrandLogo.tsx](frontend/src/components/BrandLogo.tsx) | 36 + 6 стр. | 0 импортов, маршрута `/login` нет (redirect на `/`) |
+| D6 | Неиспользуемые компоненты (admin) | [components/SimpleChart.tsx](frontend-admin/src/components/SimpleChart.tsx) (`SimpleLineChart`) | 81 стр. | **удалён** `SimpleLineChart` в `8dbadc2` (`SimpleBarChart` остался — используется) |
+| D7 | Неиспользуемые компоненты (PWA) | [components/ProductThumb.tsx](frontend/src/components/ProductThumb.tsx), [pages/LoginPage.tsx](frontend/src/pages/LoginPage.tsx), `BrandPanelMark` в [BrandLogo.tsx](frontend/src/components/BrandLogo.tsx) | 36 + 6 стр. | **удалены** в `8dbadc2` (`BrandPanelMark` вне задачи) |
 | D8 | ~~Две таблицы схем добавок~~ | `modifier_scheme_items` / `modifier_scheme_options` | — | **закрыто** в `7938d5a`/`7c16e34` (см. §0) |
 | D9 | Два парсера каталога в APK | `net/CatalogApi.kt` / `data/CatalogCache.kt` (репо `evotor-app`) | — | расходятся дефолты `maxCount` (2 vs 1) |
 | D10 | Словарь групп добавок продублирован в 4 местах | backend [addonScheme.ts:82](backend/src/modules/catalog/addonScheme.ts#L82) (канон `defaultAddonMaxCount`), мёртвый [devices/addons.ts:14](backend/src/modules/devices/addons.ts#L14), [frontend-admin/src/lib/addonScheme.ts:47](frontend-admin/src/lib/addonScheme.ts#L47) (`ADDON_GROUPS_FALLBACK` + `normalizeGroupKey`), APK `MainActivity.kt:1000` (`known` set) | 4 копии | `grep -rn "молоко" backend/src frontend-admin/src` |
-| D11 | Дефолт `maxCount` внутри бэкенда расходится | канон [addonScheme.ts:83](backend/src/modules/catalog/addonScheme.ts#L83): `extra→2, остальные→1`; легаси-писатель [addonScheme.ts:720](backend/src/modules/catalog/addonScheme.ts#L720): `milk\|syrup→1, остальные→2` → **sugar получает 2 вместо 1** | 1 строка | `grep -n "maxCount ??" modules/catalog/addonScheme.ts` |
+| D11 | Дефолт `maxCount` внутри бэкенда расходится | канон [addonScheme.ts:83](backend/src/modules/catalog/addonScheme.ts#L83): `extra→2, остальные→1`; легаси-писатель [addonScheme.ts:720](backend/src/modules/catalog/addonScheme.ts#L720): `milk\|syrup→1, остальные→2` → **sugar получает 2 вместо 1** | 1 строка | **закрыто** в `572d2c1` |
 
 **Дублей роутов нет:** проверено группировкой всех `(метод, путь)` среди `modules/admin/*` и
 `modules/staff/*` — совпадений ноль.
@@ -135,13 +154,13 @@
 
 | Метод | Путь | Где | Тест есть | Комментарий |
 |---|---|---|---|---|
-| GET | `/api/admin/addon-products` | [routes.ts:752](backend/src/modules/admin/routes.ts#L752) | нет | ни одного потребителя — решить: UI или удалить |
-| POST | `/api/admin/modifiers/backfill-products` | [routes.ts:768](backend/src/modules/admin/routes.ts#L768) | да | разовая операция; достаточно CLI/скрипта |
+| GET | ~~`/api/admin/addon-products`~~ | было `routes.ts:752` | нет | **удалён** в `c41b1de` |
+| POST | `/api/admin/modifiers/backfill-products` | [routes.ts:768](backend/src/modules/admin/routes.ts#L768) | да | **оставлен осознанно**: идемпотентная страховка после `A1` |
 | POST | `/api/admin/purchases/orders/:id/to-invoice` | [studio.ts:372](backend/src/modules/admin/studio.ts#L372) | да | в статической админке кнопки нет → заказ не превратить в накладную |
 | GET/POST/DELETE | `/api/admin/purchases/bank-rows` | [studio.ts:558](backend/src/modules/admin/studio.ts#L558) | да | см. §2.2 |
 | PUT | `/api/admin/stock/recipes/:productId` | [studio.ts:619](backend/src/modules/admin/studio.ts#L619) | — | редактирование рецептуры есть только в статической админке |
-| POST | `/api/devices/enroll` | [routes.ts:92](backend/src/modules/devices/routes.ts#L92) | да | привязка кассы; в APK не вызывается |
-| GET | `/api/devices/whoami` | [routes.ts:163](backend/src/modules/devices/routes.ts#L163) | — | подсказка точки; не вызывается ни APK, ни админкой |
+| POST | `/api/devices/enroll` | [routes.ts:92](backend/src/modules/devices/routes.ts#L92) | да | **оставлен**: единственный путь онбординга новой кассы (код → токен) |
+| GET | `/api/devices/whoami` | [routes.ts:163](backend/src/modules/devices/routes.ts#L163) | — | **оставлен**: публичный контракт, описан в `docs/DEVICE-CATALOG-API.md` |
 
 ---
 
@@ -174,7 +193,7 @@
 
 ---
 
-## 6. Остаток работ — задачи для агента
+## 6. Остаток работ — задачи для агента (T1–T8 выполнены, см. §0)
 
 Порядок обязателен. Каждая задача — отдельный коммит + проверка.
 
