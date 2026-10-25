@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
-import { api, uploadFile } from '../api/client'
+import { api } from '../api/client'
+import PromoMediaField from './marketing/PromoMediaField'
 import { useApi } from '../api/useApi'
 import type { VoucherTemplate } from '../api/types'
 import { fmtDate, fmtNum } from '../lib/format'
@@ -52,7 +53,6 @@ function Promos() {
   }
   const [edit, setEdit] = useState<(typeof empty & { id?: number }) | null>(null)
   const [del, setDel] = useState<PromoRow | null>(null)
-  const [uploading, setUploading] = useState(false)
   const now = Math.floor(Date.now() / 1000)
   const act = async (fn: () => Promise<unknown>, ok: string) => {
     try {
@@ -173,48 +173,17 @@ function Promos() {
             <Field label="Текст">
               <Input value={edit.body} onChange={(e) => setEdit({ ...edit, body: e.target.value })} />
             </Field>
-            <Field label="URL фото" hint="Или загрузите файл ниже">
-              <Input
-                value={edit.imageUrl}
-                onChange={(e) => setEdit({ ...edit, imageUrl: e.target.value })}
-                placeholder="/uploads/… или https://…"
-              />
-            </Field>
-            {edit.imageUrl ? (
-              edit.mediaType === 'video' ? <video src={edit.imageUrl} controls muted playsInline className="w-full max-h-48 rounded-xl bg-surface-secondary" /> : <img src={edit.imageUrl} alt="" className="w-full max-h-40 object-cover rounded-xl bg-surface-secondary" />
-            ) : null}
             <Field label="Тип медиа" hint="Фото или короткий ролик. Видео запускается без звука и по кругу.">
               <Select value={edit.mediaType} onChange={(e) => setEdit({ ...edit, mediaType: e.target.value as 'image' | 'video' })}>
                 <option value="image">Фотография</option>
                 <option value="video">Короткое видео</option>
               </Select>
             </Field>
-            <Field label={edit.mediaType === 'video' ? 'URL видео' : 'URL фото'} hint="Можно вставить публичный URL или загрузить файл ниже">
-              <Input value={edit.imageUrl} onChange={(e) => setEdit({ ...edit, imageUrl: e.target.value })} placeholder="/uploads/… или https://…" />
-            </Field>
-            <Field label={edit.mediaType === 'video' ? 'Загрузить видео' : 'Загрузить фото'}>
-              <input
-                type="file"
-                accept={edit.mediaType === 'video' ? "video/mp4,video/webm" : "image/jpeg,image/png,image/webp"}
-                className="block w-full text-sm"
-                disabled={uploading}
-                onChange={async (e) => {
-                  const f = e.target.files?.[0]
-                  if (!f) return
-                  setUploading(true)
-                  try {
-                    const j = await uploadFile(f)
-                    setEdit((prev) => (prev ? { ...prev, imageUrl: j.url, mediaType: f.type.startsWith('video/') ? 'video' : 'image' } : prev))
-                    toast.push(f.type.startsWith('video/') ? 'Видео загружено' : 'Фото загружено')
-                  } catch (err) {
-                    toast.push(err instanceof Error ? err.message : 'Ошибка загрузки', 'bad')
-                  } finally {
-                    setUploading(false)
-                    e.target.value = ''
-                  }
-                }}
-              />
-            </Field>
+            <PromoMediaField
+              value={edit.imageUrl}
+              mediaType={edit.mediaType}
+              onChange={(patch) => setEdit((prev) => (prev ? { ...prev, ...patch } : prev))}
+            />
             <Field label="Куда показать (placement)">
               <Select value={edit.placement} onChange={(e) => setEdit({ ...edit, placement: e.target.value })}>
                 <option value="home_hero">Фон шапки с логотипом и чашками (над QR)</option>
@@ -262,7 +231,7 @@ function Promos() {
               />
             </Field>
             <Button
-              disabled={uploading}
+              disabled={false}
               onClick={() =>
                 act(async () => {
                   const body = {
