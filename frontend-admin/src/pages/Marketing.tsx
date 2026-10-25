@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import { api } from '../api/client'
-import PromoMediaField from './marketing/PromoMediaField'
+import PromoMediaField, { mediaUrlError } from './marketing/PromoMediaField'
 import { useApi } from '../api/useApi'
 import type { VoucherTemplate } from '../api/types'
 import { fmtDate, fmtNum } from '../lib/format'
@@ -231,7 +231,7 @@ function Promos() {
               />
             </Field>
             <Button
-              disabled={false}
+              disabled={Boolean(edit && mediaUrlError(edit.imageUrl, edit.mediaType))}
               onClick={() =>
                 act(async () => {
                   const body = {

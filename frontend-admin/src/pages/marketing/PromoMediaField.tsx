@@ -155,6 +155,8 @@ export default function PromoMediaField({
         type="file"
         accept={mediaType === 'video' ? 'video/mp4,video/webm,video/*' : 'image/*'}
         className="sr-only"
+        aria-hidden="true"
+        tabIndex={-1}
         onChange={(e) => {
           const f = e.target.files?.[0]
           e.target.value = ''

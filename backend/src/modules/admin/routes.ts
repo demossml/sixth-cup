@@ -96,6 +96,18 @@ function clientIp(c: { req: { header: (n: string) => string | undefined } }): st
 }
 
 /** Mutating paths the manager role may not call (anchored, so /evotor/stores/... stays allowed). */
+/** Адрес медиа: пусто, наш /uploads/… или внешний http(s). Локальные пути не сохраняем. */
+const mediaUrl = z
+  .string()
+  .max(500)
+  .optional()
+  .nullable()
+  .refine((v) => {
+    const s = (v ?? '').trim()
+    if (!s) return true
+    return s.startsWith('/uploads/') || /^https?:\/\//i.test(s)
+  }, { message: 'Адрес медиа: /uploads/… или https://…' })
+
 export const MANAGER_BLOCKED =
   // Full path (/api/admin/...) and Hono-stripped path (/stores, /devices/...) both blocked.
   /\/(reset|wipe)(\/|$)|\/organizations(\/|$)|(?:^|\/)api\/admin\/(stores|devices)(\/|$)|^\/(stores|devices)(\/|$)|\/ai\/settings(\/|$)|\/vouchers\/grant-all(\/|$)/
@@ -1136,7 +1148,7 @@ export const adminRoutes = new Hono()
     days: z.number().int().min(1).max(365).optional(),
     startsAt: z.number().int().optional(),
     endsAt: z.number().int().optional(),
-    imageUrl: z.string().max(500).optional().nullable(),
+    imageUrl: mediaUrl,
     mediaType: z.enum(['image', 'video']).optional().default('image'),
     placement: z.enum(['home', 'menu', 'both', 'home_hero', 'home_feature']).optional().default('home'),
     status: z.enum(['draft', 'published', 'archived']).optional().default('draft'),
@@ -1175,7 +1187,7 @@ export const adminRoutes = new Hono()
     days: z.number().int().min(1).max(365).optional(),
     startsAt: z.number().int().optional(),
     endsAt: z.number().int().optional(),
-    imageUrl: z.string().max(500).optional().nullable(),
+    imageUrl: mediaUrl,
     mediaType: z.enum(['image', 'video']).optional(),
     placement: z.enum(['home', 'menu', 'both', 'home_hero', 'home_feature']).optional(),
     status: z.enum(['draft', 'published', 'archived']).optional(),

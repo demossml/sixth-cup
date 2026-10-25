@@ -71,3 +71,19 @@ describe('content without a title', () => {
     expect(r.status).toBe(400)
   })
 })
+
+describe('media address validation', () => {
+  it('keeps our uploads and public links', async () => {
+    expect((await admin('POST', '/promos', { imageUrl: '/uploads/a.webp' })).status).toBe(200)
+    expect((await admin('POST', '/promos', { imageUrl: 'https://cdn.example.com/a.jpg' })).status).toBe(200)
+    expect((await admin('POST', '/promos', { imageUrl: null })).status).toBe(200)
+    expect((await admin('POST', '/promos', { imageUrl: '' })).status).toBe(200)
+  })
+
+  it('refuses a local file path instead of storing an unusable URL', async () => {
+    expect((await admin('POST', '/promos', { imageUrl: 'C:\\Images\\photo.jpg' })).status).toBe(400)
+    expect((await admin('POST', '/promos', { imageUrl: '/Users/name/Pictures/a.jpg' })).status).toBe(400)
+    expect((await admin('POST', '/promos', { imageUrl: 'file:///Users/name/a.jpg' })).status).toBe(400)
+    expect((await admin('POST', '/promos', { imageUrl: 'photo.jpg' })).status).toBe(400)
+  })
+})
