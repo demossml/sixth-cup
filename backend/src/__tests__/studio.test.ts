@@ -48,6 +48,41 @@ describe('studio API', () => {
     expect(bank.json.imported).toBe(1)
   })
 
+  it('bank row can be matched to an invoice by hand and unmatched again', async () => {
+    const s = await call('POST', '/suppliers', { name: 'Ручной-матч' })
+    const other = await call('POST', '/suppliers', { name: 'Чужой-матч' })
+    const it = await call('POST', '/stock/items', { name: 'Сырьё-матч', unit: 'g' })
+    const o = await call('POST', '/purchases/orders', { supplierId: s.json.id, lines: [{ stockItemId: it.json.id, qty: 1, priceKop: 5000 }] })
+    await call('PATCH', `/purchases/orders/${o.json.id}`, { status: 'confirmed' })
+    const inv = await call('POST', `/purchases/orders/${o.json.id}/to-invoice`)
+    const invoiceId = inv.json.invoiceId as number
+
+    const imp = await call('POST', '/purchases/bank-rows', { rows: [{ dateAt: Date.now(), party: 'непонятный контрагент', purpose: 'без номера', amountKop: 5000 }] })
+    expect(imp.json.imported).toBe(1)
+    const list = await call('GET', '/purchases/bank-rows')
+    const row = list.json.rows[0]
+    expect(row.invoiceId).toBeNull()
+    expect(row.matched).toBe(false)
+
+    // привязка к накладной сама подставляет поставщика и отдаёт номер
+    const linked = await call('PATCH', `/purchases/bank-rows/${row.id}`, { invoiceId })
+    expect(linked.status).toBe(200)
+    expect(linked.json.row.matched).toBe(true)
+    expect(linked.json.row.supplierId).toBe(s.json.id)
+    expect(linked.json.row.invoiceNumber).toBe(`ЗК-${o.json.id}`)
+
+    // накладная чужого поставщика — 400
+    expect((await call('PATCH', `/purchases/bank-rows/${row.id}`, { invoiceId, supplierId: other.json.id })).status).toBe(400)
+    // несуществующая накладная — 404
+    expect((await call('PATCH', `/purchases/bank-rows/${row.id}`, { invoiceId: 999999 })).status).toBe(404)
+    // снятие привязки
+    const cleared = await call('PATCH', `/purchases/bank-rows/${row.id}`, { invoiceId: null, supplierId: null })
+    expect(cleared.json.row.invoiceId).toBeNull()
+    expect(cleared.json.row.matched).toBe(false)
+    // неизвестная строка — 404
+    expect((await call('PATCH', '/purchases/bank-rows/999999', { invoiceId })).status).toBe(404)
+  })
+
   it('recipes + inventory extras', async () => {
     const it = await call('POST', '/stock/items', { name: 'Кофе-тест', unit: 'kg' })
     const inv = await call('POST', '/inventory', { kind: 'partial', stockItemIds: [it.json.id] })

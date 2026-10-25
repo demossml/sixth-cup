@@ -12,9 +12,13 @@ type BankRow = {
   purpose: string | null
   amountKop: number
   supplierId: number | null
+  supplierName: string | null
   invoiceId: number | null
+  invoiceNumber: string | null
   matched: boolean
 }
+
+type InvoiceOption = { id: number; number: string | null; supplierName: string; totalKop: number }
 
 const money = (kop: number) => new Intl.NumberFormat('ru-RU').format(kop / 100) + ' ₽'
 const day = (ts: number) => new Date(ts).toLocaleDateString('ru-RU')
@@ -29,7 +33,10 @@ export function parseBankLine(line: string): Parsed | string {
   const amountRaw = rest.pop() ?? ''
   const dateAt = Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? `${rawDate}T12:00:00` : rawDate)
   if (Number.isNaN(dateAt)) return `дата не распознана: «${rawDate}»`
-  const amount = Number(amountRaw.replace(/\s/g, '').replace(',', '.').replace(/[^\d.-]/g, ''))
+  let normalized = amountRaw.replace(/\s/g, '').replace(/[₽рР]/g, '')
+  // «12.500,00» — точка как разделитель тысяч; «12,50» и «12.50» — обычные дроби
+  if (normalized.includes(',')) normalized = normalized.replace(/\./g, '').replace(',', '.')
+  const amount = Number(normalized.replace(/[^\d.-]/g, ''))
   if (!Number.isFinite(amount) || amount === 0) return `сумма не распознана: «${amountRaw}»`
   return {
     dateAt,
@@ -55,6 +62,7 @@ export function parseBankText(text: string): { rows: Parsed[]; errors: string[] 
 export default function BankTab() {
   const toast = useToast()
   const rows = useApi<{ rows: BankRow[] }>('/purchases/bank-rows')
+  const invoices = useApi<{ invoices: InvoiceOption[] }>('/purchases/invoices')
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [del, setDel] = useState<BankRow | null>(null)
@@ -74,6 +82,22 @@ export default function BankTab() {
       })
       toast.push(`Загружено ${res.imported}, сопоставлено с накладными ${res.matched}`)
       setText('')
+      rows.reload()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const link = async (row: BankRow, invoiceId: number | null) => {
+    setBusy(true)
+    try {
+      await api(`/purchases/bank-rows/${row.id}`, {
+        method: 'PATCH',
+        body: invoiceId == null ? { invoiceId: null, supplierId: null } : { invoiceId },
+      })
+      toast.push(invoiceId == null ? 'Привязка снята' : 'Строка привязана к накладной')
       rows.reload()
     } catch (e) {
       toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
@@ -112,11 +136,44 @@ export default function BankTab() {
       header: 'Сопоставление',
       render: (r) =>
         r.matched ? (
-          <Badge tone="ok">накладная #{r.invoiceId}</Badge>
-        ) : r.supplierId ? (
-          <Badge tone="warn">поставщик без накладной</Badge>
+          <span className="flex items-center gap-2">
+            <Badge tone="ok">накладная {r.invoiceNumber ?? `#${r.invoiceId}`}</Badge>
+            <button
+              type="button"
+              className="text-xs text-ink-secondary underline"
+              aria-label={`Снять привязку строки от ${day(r.dateAt)}`}
+              onClick={() => link(r, null)}
+            >
+              отвязать
+            </button>
+          </span>
         ) : (
-          <Badge tone="neutral">не найдено</Badge>
+          <span className="flex flex-wrap items-center gap-2">
+            {r.supplierId ? (
+              <Badge tone="warn">{r.supplierName ?? 'поставщик'} без накладной</Badge>
+            ) : (
+              <Badge tone="neutral">не найдено</Badge>
+            )}
+            <select
+              className="max-w-[220px] rounded-lg border border-line bg-card px-2 py-1 text-xs"
+              defaultValue=""
+              aria-label={`Привязать строку от ${day(r.dateAt)} к накладной`}
+              onChange={(e) => {
+                const id = Number(e.target.value)
+                if (id > 0) link(r, id)
+                e.currentTarget.value = ''
+              }}
+            >
+              <option value="">привязать к накладной…</option>
+              {[...(invoices.data?.invoices ?? [])]
+                .sort((a, b) => Number(b.supplierName === r.supplierName) - Number(a.supplierName === r.supplierName))
+                .map((i) => (
+                  <option key={i.id} value={i.id}>
+                    {i.number ?? `#${i.id}`} · {i.supplierName}
+                  </option>
+                ))}
+            </select>
+          </span>
         ),
     },
     {
