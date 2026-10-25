@@ -7,6 +7,7 @@ import {
 } from '../ui/kit'
 import { Plus, RefreshCw, Truck } from 'lucide-react'
 import { HelpLink } from '../components/HelpLink'
+import { LegacyHint } from './shared'
 
 type Supplier = { id: number; name: string; inn: string | null; contact: string | null; active: number }
 type Invoice = {
@@ -264,6 +265,8 @@ export default function Purchases() {
       )}
 
       <Tabs items={tabs} value={tab} onChange={setTab} />
+
+      <LegacyHint>Возвраты поставщику и заказ-помощник пока доступны только в прежнем интерфейсе.</LegacyHint>
 
       {tab === 'invoices' && (
         <Card pad={false}>

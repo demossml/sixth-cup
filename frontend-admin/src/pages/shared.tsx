@@ -22,6 +22,21 @@ export function CardRef({ row }: { row: Pick<OperationRow, 'userId' | 'cardCode'
 
 export const typeLabel = (t: string) => DOC_TYPE[t] ?? t
 
+/**
+ * Часть закупок и склада живёт только в прежнем интерфейсе админки (`/`).
+ * Пока фича не перенесена, показываем честную ссылку вместо пустого места.
+ */
+export function LegacyHint({ children }: { children: ReactNode }) {
+  return (
+    <div className="mb-3 rounded-xl border border-line bg-surface-2 px-3 py-2 text-xs text-ink-secondary">
+      {children}{' '}
+      <a href="/" className="font-semibold text-brand hover:underline">
+        Открыть прежний интерфейс
+      </a>
+    </div>
+  )
+}
+
 /** What actually happened with the doc, in one phrase. */
 export function opResult(o: OperationRow): string {
   if (o.status === 'FAILED') return o.lastError ? `Ошибка: ${o.lastError}` : 'Ошибка обработки'
