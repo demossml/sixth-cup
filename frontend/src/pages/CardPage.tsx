@@ -98,8 +98,13 @@ export default function CardPage() {
       <div className="absolute inset-0 bg-gradient-to-t from-[#073561]/75 via-[#0B4A8D]/25 to-transparent" />
       <div className={`relative p-4 flex flex-col justify-end text-white ${variant === 'hero' ? 'min-h-[132px]' : 'min-h-[168px]'}`}>
         {badge ? <span className="self-start text-[11px] font-semibold uppercase tracking-wide bg-brand-mid text-white rounded-full px-2.5 py-0.5 mb-2">{badge}</span> : null}
-        <div className="font-display font-semibold text-[18px] leading-6">{item.title}</div>
-        <div className="text-[13px] leading-[18px] text-white/85 mt-0.5">{item.ctaLabel || item.body || 'Смотреть в меню'}</div>
+        {/* Заголовок необязателен: без него не рисуем пустой блок и лишний отступ. */}
+        {item.title?.trim() ? (
+          <div className="font-display font-semibold text-[18px] leading-6">{item.title}</div>
+        ) : null}
+        <div className={`text-[13px] leading-[18px] text-white/85 ${item.title?.trim() ? 'mt-0.5' : ''}`}>
+          {item.ctaLabel || item.body || 'Смотреть в меню'}
+        </div>
       </div>
     </button>
   }

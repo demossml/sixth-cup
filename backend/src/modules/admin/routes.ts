@@ -1128,7 +1128,8 @@ export const adminRoutes = new Hono()
   })
 
   .post('/promos', zValidator('json', z.object({
-    title: z.string().min(1).max(80),
+    // Заголовок необязателен: баннер-фон и часть материалов идут без текста.
+    title: z.string().max(80).optional().default(''),
     body: z.string().max(500).optional().default(''),
     icon: z.string().max(24).default('Sparkles'),
     sponsor: z.string().max(80).optional().nullable(),
@@ -1167,7 +1168,7 @@ export const adminRoutes = new Hono()
   })
 
   .patch('/promos/:id', zValidator('json', z.object({
-    title: z.string().min(1).max(80).optional(),
+    title: z.string().max(80).optional(),
     body: z.string().max(500).optional(),
     icon: z.string().max(24).optional(),
     sponsor: z.string().max(80).optional().nullable(),

@@ -167,8 +167,8 @@ function Promos() {
               Фото: JPG/WebP, до 2 МБ, ширина 1200–1600 px; для фона шапки лучше 16:9, изображение будет кадрироваться под экран. Для карточки под QR — 4:3 или 16:9. PNG используйте для графики с прозрачностью.<br />
               Видео: MP4 (H.264) или WebM, до 20 МБ, 5–15 секунд, 720p/1080p, вертикальное 9:16 или горизонтальное 16:9. Автоповтор без звука.
             </Banner>
-            <Field label="Заголовок">
-              <Input value={edit.title} onChange={(e) => setEdit({ ...edit, title: e.target.value })} />
+            <Field label="Заголовок" hint="Необязательно. Пусто — баннер покажет только фото и подпись кнопки.">
+              <Input value={edit.title} onChange={(e) => setEdit({ ...edit, title: e.target.value })} placeholder="Можно оставить пустым" />
             </Field>
             <Field label="Текст">
               <Input value={edit.body} onChange={(e) => setEdit({ ...edit, body: e.target.value })} />
@@ -262,7 +262,7 @@ function Promos() {
               />
             </Field>
             <Button
-              disabled={uploading || !edit.title.trim()}
+              disabled={uploading}
               onClick={() =>
                 act(async () => {
                   const body = {
