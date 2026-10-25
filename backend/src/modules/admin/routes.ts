@@ -749,21 +749,6 @@ export const adminRoutes = new Hono()
     return c.json({ ok: true, detached: ids.length })
   })
 
-  .get('/addon-products', (c) => {
-    ensureAddonSchemeSchema(db)
-    const catId = resolveAddonsCategoryId(db)
-    const rows =
-      catId == null
-        ? []
-        : (db
-            .prepare(
-              `SELECT id, name, price, available, category_id AS categoryId, sort_order AS sortOrder
-               FROM products WHERE category_id=? ORDER BY sort_order, id`,
-            )
-            .all(catId) as { id: number; name: string; price: number; available: number; categoryId: number; sortOrder: number }[])
-    return c.json({ categoryId: catId, products: rows })
-  })
-
   /** Разовая привязка уже существующих добавок к товарам (идемпотентно). */
   .post('/modifiers/backfill-products', (c) => {
     ensureAddonSchemeSchema(db)
