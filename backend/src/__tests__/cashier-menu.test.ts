@@ -70,6 +70,7 @@ describe('cashier menu settings', () => {
     const j = await catalog()
     expect(j.menu.showAllTab).toBe(true)
     expect(j.menu.order).toEqual(['Чай', 'Кофе', 'Выпечка'])
+    expect(j.menu.hidden).toEqual([])
     expect(j.categories.map((c: any) => c.name)).toEqual(['Чай', 'Кофе', 'Выпечка'])
   })
 
@@ -86,6 +87,8 @@ describe('cashier menu settings', () => {
     expect((await admin('PATCH', '/cashier/menu', { hiddenGroups: ['Выпечка'] })).status).toBe(200)
     const j = await catalog()
     expect(j.menu.order).toEqual(['Чай', 'Кофе'])
+    // касса должна знать имя скрытой группы, иначе дорисует чип в конце по алфавиту
+    expect(j.menu.hidden).toEqual(['Выпечка'])
     expect(j.categories.map((c: any) => c.name)).toEqual(['Чай', 'Кофе'])
     // товар скрытой группы не должен светиться отдельной плиткой в списке категорий
     expect(j.products.some((p: any) => p.name === 'Круассан')).toBe(true)

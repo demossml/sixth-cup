@@ -466,9 +466,14 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         .filter((r) => out.some((p) => p.categoryId === r.id && !p.hideFromMenu))
         .filter((r) => !hiddenGroupNames.has(String(r.name).toLocaleLowerCase('ru-RU')))
         .map((r) => ({ id: r.id, name: r.name, sortOrder: r.sortOrder }))
+      // `hidden` нужен кассе явно: из order группа пропадает, но товары остаются в products,
+      // и без этого списка терминал дорисовал бы её чип в конце по алфавиту.
       const menu = {
         showAllTab: cashierMenu.showAllTab,
         order: categories.map((c) => c.name),
+        hidden: catRows
+          .filter((r) => hiddenGroupNames.has(String(r.name).toLocaleLowerCase('ru-RU')))
+          .map((r) => r.name),
       }
 
       // Размеры одного товара: APK рисует одну плитку и подставляет UUID выбранного варианта.
