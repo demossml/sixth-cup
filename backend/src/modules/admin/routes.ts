@@ -5,7 +5,7 @@ import { auditMiddleware } from './audit'
 import { enqueueProductSync } from './enqueue'
 import { timingSafeEqual } from 'node:crypto'
 import { looksLikeDrink } from '../loyalty/rules'
-import { getCashierMenu, setCashierMenu } from '../../lib/cashierMenu'
+import { getCashierMenu, hasStoreMenu, resetStoreMenu, setCashierMenu } from '../../lib/cashierMenu'
 import { randomBytes } from 'node:crypto'
 import { Hono } from 'hono'
 import { createMiddleware } from 'hono/factory'
@@ -381,30 +381,63 @@ export const adminRoutes = new Hono()
   })
 
   // —— Categories ——
-  /** Как касса рисует вкладки: порядок берётся из categories.sortOrder, «Всё» — отсюда. */
+  /**
+   * Меню кассы настраивается по каждой точке: /cashier/menu?storeUuid=…
+   * Без storeUuid — общая настройка-наследство (используется, если у точки своей нет).
+   */
   .get('/cashier/menu', (c) => {
-    const menu = getCashierMenu()
-    const order = db.prepare('SELECT name FROM categories ORDER BY sort_order, id').all() as { name: string }[]
-    return c.json({ ...menu, order: order.map((r) => r.name).filter((n) => !menu.hiddenGroups.includes(n)) })
+    const storeUuid = (c.req.query('storeUuid') || '').slice(0, 64) || null
+    // Точку не проверяем: касса может быть ещё не синхронизирована, настраивать это не мешает.
+    const menu = getCashierMenu(storeUuid)
+    const all = db.prepare('SELECT name FROM categories ORDER BY sort_order, id').all() as { name: string }[]
+    const norm = (v: string) => v.toLocaleLowerCase('ru-RU')
+    const byName = new Map(all.map((r) => [norm(r.name), r.name]))
+    const ordered: string[] = []
+    for (const n of menu.order) {
+      const real = byName.get(norm(n))
+      if (real && !ordered.includes(real)) ordered.push(real)
+    }
+    for (const r of all) if (!ordered.includes(r.name)) ordered.push(r.name)
+    const hidden = new Set(menu.hiddenGroups.map(norm))
+    return c.json({
+      storeUuid,
+      own: storeUuid ? hasStoreMenu(storeUuid) : true,
+      showAllTab: menu.showAllTab,
+      hiddenGroups: menu.hiddenGroups,
+      order: ordered.filter((n) => !hidden.has(norm(n))),
+      allGroups: ordered,
+    })
   })
 
   .patch(
     '/cashier/menu',
     zValidator('json', z.object({
+      storeUuid: z.string().min(1).max(64).optional(),
       showAllTab: z.boolean().optional(),
       hiddenGroups: z.array(z.string().min(1).max(60)).max(200).optional(),
+      order: z.array(z.string().min(1).max(60)).max(200).optional(),
     })),
     (c) => {
-      const patch = c.req.valid('json')
-      if (patch.hiddenGroups) {
-        const known = new Set((db.prepare('SELECT name FROM categories').all() as { name: string }[]).map((r) => r.name))
-        for (const n of patch.hiddenGroups) {
-          if (!known.has(n)) throw bad(`Группа «${n}» не найдена`, 400)
-        }
+      const { storeUuid, ...patch } = c.req.valid('json')
+      if (!storeUuid) throw bad('Укажите точку: меню настраивается по каждой кассе', 400)
+      const known = (db.prepare('SELECT name FROM categories').all() as { name: string }[]).map((r) => r.name)
+      const knownSet = new Set(known)
+      for (const n of patch.hiddenGroups ?? []) {
+        if (!knownSet.has(n)) throw bad(`Группа «${n}» не найдена`, 400)
       }
-      return c.json({ ok: true, ...setCashierMenu(patch) })
+      for (const n of patch.order ?? []) {
+        if (!knownSet.has(n)) throw bad(`Группа «${n}» не найдена`, 400)
+      }
+      return c.json({ ok: true, ...setCashierMenu(patch, storeUuid) })
     },
   )
+
+  /** Сброс точки на общую настройку. */
+  .delete('/cashier/menu', (c) => {
+    const storeUuid = (c.req.query('storeUuid') || '').slice(0, 64)
+    if (!storeUuid) throw bad('Укажите точку', 400)
+    return c.json({ ok: true, ...resetStoreMenu(storeUuid) })
+  })
 
   .get('/categories', (c) => {
     const categories = db.prepare(`

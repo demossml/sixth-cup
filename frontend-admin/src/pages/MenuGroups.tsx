@@ -4,7 +4,7 @@ import { api } from '../api/client'
 import { useApi } from '../api/useApi'
 import type { Category, Modifier, Product, Scheme } from '../api/types'
 import { fmtNum } from '../lib/format'
-import { Button, Card, Check, ConfirmDialog, DataTable, Drawer, EmptyState, ErrorBox, Field, Input, Select, Skeleton, Spinner, Toggle, useToast } from '../ui/kit'
+import { Button, Check, ConfirmDialog, DataTable, Drawer, EmptyState, ErrorBox, Field, Input, Select, Spinner, Toggle, useToast } from '../ui/kit'
 import type { Column } from '../ui/kit'
 import { ADDON_GROUPS_FALLBACK, GROUP_KEY_NOTE, defaultMaxCount, draftToOptions, requiredGroups, schemeToDraft, type AddonGroup, type SchemeOptionDraft } from '../lib/addonScheme'
 
@@ -17,61 +17,6 @@ function useSave(reload: () => void) {
     try { await fn(); toast.push(okText); reload(); return true }
     catch (e) { toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad'); return false }
   }
-}
-
-/** Как касса рисует вкладки: порядок = «Порядок» группы, «Всё» и скрытие — здесь. */
-function CashierTabs({ categories }: { categories: Category[] }) {
-  const toast = useToast()
-  const { data, error, loading, reload } = useApi<{ showAllTab: boolean; hiddenGroups: string[]; order: string[] }>('/cashier/menu')
-  const [busy, setBusy] = useState(false)
-
-  const patch = async (body: { showAllTab?: boolean; hiddenGroups?: string[] }, okText: string) => {
-    setBusy(true)
-    try {
-      await api('/cashier/menu', { method: 'PATCH', body })
-      toast.push(okText)
-      reload()
-    } catch (e) {
-      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  if (loading && !data) return <Card><Skeleton className="h-16" /></Card>
-  if (error) return <ErrorBox message={error} onRetry={reload} />
-  if (!data) return null
-
-  const hidden = new Set(data.hiddenGroups)
-  const toggleGroup = (name: string, show: boolean) => {
-    const next = show ? data.hiddenGroups.filter((n) => n !== name) : [...data.hiddenGroups, name]
-    patch({ hiddenGroups: next }, show ? `«${name}» снова на кассе` : `«${name}» скрыта на кассе`)
-  }
-
-  return (
-    <Card className="mb-3">
-      <div className="mb-2 text-[14px] font-semibold">Вкладки на кассе</div>
-      <p className="mb-3 text-[12px] text-ink-secondary">
-        Порядок вкладок — поле «Порядок» в таблице ниже. Здесь решаем, показывать ли «Всё» и какие группы скрыть.
-      </p>
-      <Check
-        checked={data.showAllTab}
-        onChange={(v) => patch({ showAllTab: v }, v ? 'Вкладка «Всё» включена' : 'Вкладка «Всё» скрыта на кассе')}
-        label="Показывать вкладку «Всё»"
-      />
-      <div className="mt-3 grid gap-1.5 sm:grid-cols-2">
-        {categories.map((c) => (
-          <Check
-            key={c.id}
-            checked={!hidden.has(c.name)}
-            onChange={(v) => toggleGroup(c.name, v)}
-            label={`${c.name}${c.available ? '' : ' (скрыта в приложении)'}`}
-          />
-        ))}
-      </div>
-      {busy && <div className="mt-2 text-[11px] text-ink-tertiary">Сохраняем…</div>}
-    </Card>
-  )
 }
 
 /* ───────── groups ───────── */
@@ -100,7 +45,6 @@ function Groups({ products }: { products: Product[] }) {
   ]
   return (
     <>
-      <CashierTabs categories={data?.categories ?? []} />
       <div className="mb-3"><Button icon={<Plus size={16} />} onClick={() => setEdit({ name: '', sortOrder: (data?.categories.length ?? 0) + 1, available: 1 })}>Новая группа</Button></div>
       <DataTable rows={data?.categories ?? []} columns={cols} rowKey={(c) => c.id} onRowClick={(c) => setEdit(c)} empty={<EmptyState title="Групп пока нет" />} />
       <Drawer open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? 'Группа' : 'Новая группа'}

@@ -459,21 +459,29 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         }
       })
 
-      // Порядок вкладок на кассе = categories.sort_order (админка → Меню → Группы → «Порядок»).
-      const cashierMenu = getCashierMenu()
-      const hiddenGroupNames = new Set(cashierMenu.hiddenGroups.map((n) => n.toLocaleLowerCase('ru-RU')))
-      const categories = catRows
+      // Меню настраивается по каждой кассе (админка → Касса → «Меню на кассе»).
+      const cashierMenu = getCashierMenu(storeUuid)
+      const norm = (v: unknown) => String(v).toLocaleLowerCase('ru-RU')
+      const hiddenGroupNames = new Set(cashierMenu.hiddenGroups.map(norm))
+      const visibleRows = catRows
         .filter((r) => out.some((p) => p.categoryId === r.id && !p.hideFromMenu))
-        .filter((r) => !hiddenGroupNames.has(String(r.name).toLocaleLowerCase('ru-RU')))
-        .map((r) => ({ id: r.id, name: r.name, sortOrder: r.sortOrder }))
+        .filter((r) => !hiddenGroupNames.has(norm(r.name)))
+      const categories = visibleRows.map((r) => ({ id: r.id, name: r.name, sortOrder: r.sortOrder }))
+      // Порядок: если у точки задан свой — уважаем его, остальные группы дописываем
+      // в порядке categories.sort_order. Иначе — просто sort_order.
+      const byName = new Map(visibleRows.map((r) => [norm(r.name), String(r.name)]))
+      const ordered: string[] = []
+      for (const name of cashierMenu.order) {
+        const real = byName.get(norm(name))
+        if (real && !ordered.includes(real)) ordered.push(real)
+      }
+      for (const r of visibleRows) if (!ordered.includes(String(r.name))) ordered.push(String(r.name))
       // `hidden` нужен кассе явно: из order группа пропадает, но товары остаются в products,
       // и без этого списка терминал дорисовал бы её чип в конце по алфавиту.
       const menu = {
         showAllTab: cashierMenu.showAllTab,
-        order: categories.map((c) => c.name),
-        hidden: catRows
-          .filter((r) => hiddenGroupNames.has(String(r.name).toLocaleLowerCase('ru-RU')))
-          .map((r) => r.name),
+        order: ordered,
+        hidden: catRows.filter((r) => hiddenGroupNames.has(norm(r.name))).map((r) => r.name),
       }
 
       // Размеры одного товара: APK рисует одну плитку и подставляет UUID выбранного варианта.
