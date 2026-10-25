@@ -5,6 +5,7 @@ import { auditMiddleware } from './audit'
 import { enqueueProductSync } from './enqueue'
 import { timingSafeEqual } from 'node:crypto'
 import { looksLikeDrink } from '../loyalty/rules'
+import { getCashierMenu, setCashierMenu } from '../../lib/cashierMenu'
 import { randomBytes } from 'node:crypto'
 import { Hono } from 'hono'
 import { createMiddleware } from 'hono/factory'
@@ -380,6 +381,31 @@ export const adminRoutes = new Hono()
   })
 
   // —— Categories ——
+  /** Как касса рисует вкладки: порядок берётся из categories.sortOrder, «Всё» — отсюда. */
+  .get('/cashier/menu', (c) => {
+    const menu = getCashierMenu()
+    const order = db.prepare('SELECT name FROM categories ORDER BY sort_order, id').all() as { name: string }[]
+    return c.json({ ...menu, order: order.map((r) => r.name).filter((n) => !menu.hiddenGroups.includes(n)) })
+  })
+
+  .patch(
+    '/cashier/menu',
+    zValidator('json', z.object({
+      showAllTab: z.boolean().optional(),
+      hiddenGroups: z.array(z.string().min(1).max(60)).max(200).optional(),
+    })),
+    (c) => {
+      const patch = c.req.valid('json')
+      if (patch.hiddenGroups) {
+        const known = new Set((db.prepare('SELECT name FROM categories').all() as { name: string }[]).map((r) => r.name))
+        for (const n of patch.hiddenGroups) {
+          if (!known.has(n)) throw bad(`Группа «${n}» не найдена`, 400)
+        }
+      }
+      return c.json({ ok: true, ...setCashierMenu(patch) })
+    },
+  )
+
   .get('/categories', (c) => {
     const categories = db.prepare(`
       SELECT id, name, sort_order AS sortOrder, available, created_at AS createdAt, updated_at AS updatedAt

@@ -18,6 +18,7 @@ import { resolveAndReserve } from '../loyalty/reservations'
 import { log, maskCode, shortId } from '../../lib/logBuffer'
 import { allowLogIngest, entryZ, ingest } from '../logs/routes'
 import { staffDeviceRoutes } from '../staff/deviceRoutes'
+import { getCashierMenu } from '../../lib/cashierMenu'
 
 export const deviceRoutes = new Hono<DeviceEnv>()
   .get('/ping', (c) => {
@@ -458,9 +459,17 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         }
       })
 
+      // Порядок вкладок на кассе = categories.sort_order (админка → Меню → Группы → «Порядок»).
+      const cashierMenu = getCashierMenu()
+      const hiddenGroupNames = new Set(cashierMenu.hiddenGroups.map((n) => n.toLocaleLowerCase('ru-RU')))
       const categories = catRows
         .filter((r) => out.some((p) => p.categoryId === r.id && !p.hideFromMenu))
+        .filter((r) => !hiddenGroupNames.has(String(r.name).toLocaleLowerCase('ru-RU')))
         .map((r) => ({ id: r.id, name: r.name, sortOrder: r.sortOrder }))
+      const menu = {
+        showAllTab: cashierMenu.showAllTab,
+        order: categories.map((c) => c.name),
+      }
 
       // Размеры одного товара: APK рисует одну плитку и подставляет UUID выбранного варианта.
       // groups содержит только карточки с 2+ доступными вариантами; одиночные идут как обычные products.
@@ -506,6 +515,7 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         generatedAt: Math.floor(Date.now() / 1000),
         storeUuid: storeUuid || null,
         categories,
+        menu,
         // Все категории-добавки: APK скрывает товар по categoryId, не по названию.
         addonCategoryIds: resolveAddonsCategoryIds(db),
         products: out,
