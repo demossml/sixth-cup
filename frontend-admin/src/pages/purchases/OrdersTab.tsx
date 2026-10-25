@@ -33,7 +33,12 @@ const STATUS: Record<string, { label: string; tone: Tone }> = {
 type Draft = { key: string; stockItemId: string; qty: string; priceRub: string }
 const emptyLine = (): Draft => ({ key: String(Date.now()) + Math.random(), stockItemId: '', qty: '1', priceRub: '0' })
 
-export default function OrdersTab({ suppliers, items }: { suppliers: Supplier[]; items: StockItem[] }) {
+export default function OrdersTab({ suppliers, items, onInvoiceCreated }: {
+  suppliers: Supplier[]
+  items: StockItem[]
+  /** Накладная создана из заказа — списку накладных и долгам нужно обновиться. */
+  onInvoiceCreated?: () => void
+}) {
   const toast = useToast()
   const list = useApi<{ orders: Order[] }>('/purchases/orders')
   const [busy, setBusy] = useState(false)
@@ -123,6 +128,7 @@ export default function OrdersTab({ suppliers, items }: { suppliers: Supplier[];
       const res = await api<{ invoiceId: number }>(`/purchases/orders/${o.id}/to-invoice`, { method: 'POST' })
       toast.push(`Создана накладная №${res.invoiceId} — проведите её во вкладке «Накладные»`)
       list.reload()
+      onInvoiceCreated?.()
     } catch (e) {
       toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
     } finally {

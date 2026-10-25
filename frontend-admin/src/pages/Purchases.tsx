@@ -272,7 +272,9 @@ export default function Purchases() {
 
       <Tabs items={tabs} value={tab} onChange={setTab} />
 
-      <LegacyHint>Возвраты поставщику пока доступны только в прежнем интерфейсе.</LegacyHint>
+      {tab === 'invoices' && (
+        <LegacyHint>Возвраты поставщику пока доступны только в прежнем интерфейсе.</LegacyHint>
+      )}
 
       {tab === 'invoices' && (
         <Card pad={false}>
@@ -350,7 +352,13 @@ export default function Purchases() {
         </Card>
       )}
 
-      {tab === 'orders' && <OrdersTab suppliers={suppliers.data?.suppliers ?? []} items={items.data?.items ?? []} />}
+      {tab === 'orders' && (
+        <OrdersTab
+          suppliers={suppliers.data?.suppliers ?? []}
+          items={items.data?.items ?? []}
+          onInvoiceCreated={() => { invoices.reload(); debt.reload() }}
+        />
+      )}
       {tab === 'bank' && <BankTab />}
       {tab === 'recon' && <ReconTab suppliers={suppliers.data?.suppliers ?? []} />}
 
