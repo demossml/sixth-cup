@@ -8,6 +8,8 @@ import {
 import { Plus, RefreshCw, Truck } from 'lucide-react'
 import { HelpLink } from '../components/HelpLink'
 import { LegacyHint } from './shared'
+import BankTab from './purchases/BankTab'
+import ReconTab from './purchases/ReconTab'
 
 type Supplier = { id: number; name: string; inn: string | null; contact: string | null; active: number }
 type Invoice = {
@@ -29,7 +31,7 @@ function statusBadge(s: string) {
 
 export default function Purchases() {
   const toast = useToast()
-  const [tab, setTab] = useState<'invoices' | 'suppliers' | 'debt'>('invoices')
+  const [tab, setTab] = useState<'invoices' | 'suppliers' | 'debt' | 'bank' | 'recon'>('invoices')
   const [showSupplier, setShowSupplier] = useState(false)
   const [showInvoice, setShowInvoice] = useState(false)
   const [sName, setSName] = useState('')
@@ -134,6 +136,8 @@ export default function Purchases() {
     { key: 'invoices' as const, label: 'Накладные', count: invoices.data?.invoices.length },
     { key: 'suppliers' as const, label: 'Поставщики', count: suppliers.data?.suppliers.length },
     { key: 'debt' as const, label: 'Долги', count: debt.data?.debts.length },
+    { key: 'bank' as const, label: 'Банк' },
+    { key: 'recon' as const, label: 'Сверки' },
   ], [invoices.data, suppliers.data, debt.data])
 
   const openDebt = invoices.data?.summary.openDebt ?? 0
@@ -343,6 +347,9 @@ export default function Purchases() {
           )}
         </Card>
       )}
+
+      {tab === 'bank' && <BankTab />}
+      {tab === 'recon' && <ReconTab suppliers={suppliers.data?.suppliers ?? []} />}
 
       {tab === 'debt' && (
         <Card pad={false}>
