@@ -7,6 +7,7 @@ import { qs, setParams } from '../lib/query'
 import { Button, DataTable, ErrorBox, Input, PageHeader, Select, Spinner } from '../ui/kit'
 import { HelpLink } from '../components/HelpLink'
 import type { Column } from '../ui/kit'
+import { csvName, downloadCsv } from '../lib/csv'
 
 const LIMIT = 50
 
@@ -33,7 +34,36 @@ export default function Customers() {
   const total = data?.total ?? 0
   return (
     <>
-      <PageHeader title="Клиенты" subtitle="Гостевая модель: клиент определяется картой, телефон не хранится" actions={<HelpLink article="map" />} />
+      <PageHeader
+        title="Клиенты"
+        subtitle="Гостевая модель: клиент определяется картой, телефон не хранится"
+        actions={
+          <span className="flex items-center gap-2">
+            <HelpLink article="map" />
+            <Button
+              variant="secondary"
+              disabled={!data?.customers.length}
+              onClick={() =>
+                downloadCsv(
+                  csvName('customers'),
+                  ['Карта', 'Ник', 'Чашек', 'Оплачено', 'Кэшбэк, ₽', 'Приглашено', 'Регистрация'],
+                  (data?.customers ?? []).map((c) => [
+                    c.cardCode ?? '',
+                    c.nickname ?? '',
+                    c.cups,
+                    c.paidTotal,
+                    (c.cashbackBalance / 100).toFixed(2).replace('.', ','),
+                    c.referrals,
+                    new Date(c.createdAt).toLocaleDateString('ru-RU'),
+                  ]),
+                )
+              }
+            >
+              CSV
+            </Button>
+          </span>
+        }
+      />
       <div className="mb-3 grid gap-2 sm:grid-cols-[1fr_auto]">
         <form onSubmit={(e) => { e.preventDefault(); patch({ q: qInput.trim(), page: null }) }}>
           <Input value={qInput} onChange={(e) => setQInput(e.target.value)} placeholder="Номер карты, id, ник или код приглашения" aria-label="Поиск клиента" />

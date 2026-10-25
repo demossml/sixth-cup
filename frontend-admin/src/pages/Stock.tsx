@@ -7,6 +7,7 @@ import {
 } from '../ui/kit'
 import { AlertTriangle, Clock, Plus, RefreshCw } from 'lucide-react'
 import { HelpLink } from '../components/HelpLink'
+import { csvName, downloadCsv } from '../lib/csv'
 import RecipesTab from './stock/RecipesTab'
 
 type StockItem = {
@@ -128,6 +129,20 @@ export default function Stock() {
         <div className="head-actions">
           <HelpLink article="logic-fefo" />
           <button type="button" className="btn btn-ghost" onClick={reloadAll}>Обновить</button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            disabled={!balances.data?.balances.length}
+            onClick={() =>
+              downloadCsv(
+                csvName('stock'),
+                ['Позиция', 'Ед.', 'Минимум', 'Ожидаемый остаток', 'В партиях', 'Уровень'],
+                (balances.data?.balances ?? []).map((b) => [b.name, b.unit, b.minQty, b.expectedQty, b.batchQtyLeft, b.level]),
+              )
+            }
+          >
+            CSV
+          </button>
           <button type="button" className="btn btn-primary" onClick={() => setShowForm((v) => !v)}>Позиция</button>
         </div>
       </div>

@@ -10,6 +10,7 @@ import { HelpLink } from '../components/HelpLink'
 import BankTab from './purchases/BankTab'
 import ReconTab from './purchases/ReconTab'
 import OrdersTab from './purchases/OrdersTab'
+import { csvName, downloadCsv } from '../lib/csv'
 import ReturnsTab from './purchases/ReturnsTab'
 
 type Supplier = { id: number; name: string; inn: string | null; contact: string | null; active: number }
@@ -362,6 +363,23 @@ export default function Purchases() {
 
       {tab === 'debt' && (
         <Card pad={false}>
+          {!!debt.data?.debts.length && (
+            <div className="flex justify-end border-b border-line px-4 py-2">
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() =>
+                  downloadCsv(
+                    csvName('debt'),
+                    ['Поставщик', 'Долг, ₽', 'Открытых накладных'],
+                    (debt.data?.debts ?? []).map((d) => [d.supplierName, (d.debtKop / 100).toFixed(2).replace('.', ','), d.openInvoices]),
+                  )
+                }
+              >
+                CSV
+              </button>
+            </div>
+          )}
           {debt.loading && <div className="p-4"><Skeleton className="h-24" /></div>}
           {debt.error && <div className="p-4"><ErrorBox message={debt.error} /></div>}
           {debt.data && !debt.data.debts.length && (
