@@ -116,3 +116,28 @@ need to be migrated. Ensure the Evotor cabinet URL mask remains `https://app\.67
 - Если `storeUuid` задан, `products[].evotorUuid` и `toppings[].evotorUuid` берутся **только** из `product_store_links` для этой точки. Чужой магазин не подставляется. Нет link → `null`.
 - Без `storeUuid` (legacy APK): берётся первый link (не рекомендуется при 2+ точках).
 - Подсказка точки: `GET /api/devices/whoami` (headers device/store) → `{ storeUuid, storeName, source }`.
+
+## Вкладки групп на кассе — `menu`
+
+Админка → Меню → Группы → блок «Вкладки на кассе» управляет тем, как терминал рисует чипы.
+
+```json
+{
+  "menu": {
+    "showAllTab": false,
+    "order": ["Чай", "Кофе", "Выпечка"]
+  },
+  "categories": [{ "id": 2, "name": "Чай", "sortOrder": 1 }]
+}
+```
+
+- `menu.order` — имена групп **в порядке показа**: берётся из `categories.sort_order`
+  (поле «Порядок» в админке). Группы без доступных товаров и скрытые на кассе сюда не попадают.
+- `menu.showAllTab` — показывать ли чип «Всё». По умолчанию `true` (поведение до настройки).
+- `categories` остаётся для совместимости и уже отфильтрован: скрытые на кассе группы в нём тоже нет.
+- Настройка хранится в `app_settings.cashier_menu` (`GET/PATCH /api/admin/cashier/menu`).
+
+Правила для кассы:
+1. Чипы групп рисовать в порядке `menu.order`; группы вне списка — в конце, по алфавиту.
+2. Чип «Всё» показывать только при `menu.showAllTab !== false`.
+3. Если `menu` в ответе нет (старый backend) — прежнее поведение: «Всё» есть, группы по алфавиту.
