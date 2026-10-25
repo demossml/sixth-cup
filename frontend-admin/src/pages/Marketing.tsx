@@ -309,7 +309,7 @@ function Promos() {
 }
 
 function Vouchers() {
-  const { data, error, loading } = useApi<{ templates: VoucherTemplate[] }>('/vouchers/templates')
+  const { data, error, loading } = useApi<{ templates: VoucherTemplate[] }>('/voucher-templates')
   const toast = useToast()
   const [code, setCode] = useState('')
   const [preview, setPreview] = useState<{ template: VoucherTemplate; users: number } | null>(null)
