@@ -2214,13 +2214,6 @@ html, body, #root {
   margin: 0 0.06em;
 }
 
-/* login overlay input, injected by ui/sc-api.js — brand focus ring */
-#scTok:focus {
-  border-color: var(--color-bright-blue);
-  outline: 2px solid rgba(23, 105, 255, 0.35);
-  outline-offset: 1px;
-}
-
 /* scroll chrome off: no native scrollbar band at the right edge; wheel/keys still scroll */
 .content, .main-scroll, .drawer, .modal-body {
   scrollbar-width: none;
