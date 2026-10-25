@@ -7,7 +7,6 @@ import {
   PageHeader, Card, EmptyState, ErrorBox, KpiTile, Select, Skeleton, Tabs,
 } from '../ui/kit'
 import { HelpLink } from '../components/HelpLink'
-import { LegacyHint } from './shared'
 import { SimpleBarChart } from '../components/SimpleChart'
 
 type Period = '24h' | '7d' | '30d' | 'yesterday'
@@ -47,6 +46,23 @@ type ByStoreRow = {
   resultRub?: number
 }
 
+type TopProduct = { name: string; category: string; qty: number; revenue: number; trendPct: number | null }
+type Overview = {
+  revenueRub: number
+  checks: number
+  cups: number
+  avgCheckRub: number
+  cashbackKop: number
+  freeCups: number
+  cardShare: number
+  newCustomers: number
+  prev: { revenueRub: number; checks: number }
+  topProducts: TopProduct[]
+  byCategory: { name: string; revenue: number }[]
+  note?: string
+}
+type Heat = { grid: number[][]; days: string[]; total: number }
+
 function pointsOf(data: SeriesResp | null): SeriesPoint[] {
   if (!data) return []
   return data.points ?? data.series ?? []
@@ -68,6 +84,10 @@ export default function Analytics() {
 
   const series = useApi<SeriesResp>(path)
   const byStore = useApi<{ stores?: ByStoreRow[]; rows?: ByStoreRow[] }>(byStorePath)
+  const overviewPath = useMemo(() => `/analytics/overview?${qs({ period, storeUuid: store || undefined })}`, [period, store])
+  const heatmapPath = useMemo(() => `/analytics/heatmap?${qs({ period, storeUuid: store || undefined })}`, [period, store])
+  const overview = useApi<Overview>(overviewPath)
+  const heat = useApi<Heat>(heatmapPath)
 
   const pts = pointsOf(series.data)
   const totals = series.data?.totals
@@ -124,8 +144,6 @@ export default function Analytics() {
         </div>
       )}
 
-      <LegacyHint>Теплокарта по часам и сводный обзор пока доступны только в прежнем интерфейсе.</LegacyHint>
-
       <Card className="mb-4">
         <div className="mb-2 text-[14px] font-semibold">Динамика</div>
         {series.loading && <Skeleton className="h-40" />}
@@ -166,6 +184,118 @@ export default function Analytics() {
                     </td>
                   </tr>
                 ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      <Card className="mt-4">
+        <div className="mb-3 text-[14px] font-semibold">Обзор периода</div>
+        {overview.loading && <Skeleton className="h-24" />}
+        {overview.error && <ErrorBox message={overview.error} onRetry={overview.reload} />}
+        {overview.data && (
+          <>
+            <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <KpiTile label="Средний чек" value={`${fmtNum(Math.round(overview.data.avgCheckRub))} ₽`} />
+              <KpiTile label="Доля с картой" value={`${Math.round(overview.data.cardShare * 100)}%`} sub="от чеков SELL" />
+              <KpiTile label="Бесплатных" value={fmtNum(overview.data.freeCups)} sub="чашек по карте" />
+              <KpiTile label="Новых клиентов" value={fmtNum(overview.data.newCustomers)} />
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <div className="mb-2 text-[13px] font-semibold">Топ товаров</div>
+                {!overview.data.topProducts.length && (
+                  <p className="text-xs text-ink-secondary">Нет продаж с позициями за период.</p>
+                )}
+                <ul className="space-y-1.5">
+                  {overview.data.topProducts.slice(0, 7).map((p) => (
+                    <li key={p.name} className="flex items-center justify-between gap-2 text-[13px]">
+                      <span className="min-w-0 truncate">
+                        {p.name}
+                        <span className="ml-1 text-[11px] text-ink-tertiary">{p.category}</span>
+                      </span>
+                      <span className="shrink-0 font-mono">
+                        {fmtNum(Math.round(p.revenue))} ₽
+                        {p.trendPct != null && (
+                          <span className={p.trendPct >= 0 ? ' ml-2 text-[11px] text-ink-secondary' : ' ml-2 text-[11px] text-ink-secondary'}>
+                            {p.trendPct >= 0 ? '+' : ''}{p.trendPct}%
+                          </span>
+                        )}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <div className="mb-2 text-[13px] font-semibold">По группам</div>
+                {!overview.data.byCategory.length && (
+                  <p className="text-xs text-ink-secondary">Нет данных за период.</p>
+                )}
+                <ul className="space-y-1.5">
+                  {overview.data.byCategory.slice(0, 7).map((c) => {
+                    const max = Math.max(...overview.data!.byCategory.map((x) => Number(x.revenue) || 0), 1)
+                    const w = Math.round((Number(c.revenue) / max) * 100)
+                    return (
+                      <li key={c.name} className="text-[13px]">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate">{c.name}</span>
+                          <span className="shrink-0 font-mono">{fmtNum(Math.round(Number(c.revenue)))} ₽</span>
+                        </div>
+                        <div className="mt-1 h-1.5 rounded-full bg-surface-2">
+                          <div className="h-1.5 rounded-full bg-brand" style={{ width: `${w}%` }} />
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
+            </div>
+            {overview.data.note && <p className="mt-3 text-[11px] text-ink-tertiary">{overview.data.note}</p>}
+          </>
+        )}
+      </Card>
+
+      <Card className="mt-4">
+        <div className="mb-3 flex items-center justify-between">
+          <div className="text-[14px] font-semibold">Теплокарта по часам</div>
+          {heat.data && <span className="text-[11px] text-ink-secondary">чеков с картой: {heat.data.total}</span>}
+        </div>
+        {heat.loading && <Skeleton className="h-32" />}
+        {heat.error && <ErrorBox message={heat.error} onRetry={heat.reload} />}
+        {heat.data && !heat.data.total && (
+          <p className="text-xs text-ink-secondary">Нет чеков с картой за период — теплокарта пустая.</p>
+        )}
+        {!!heat.data?.total && (
+          <div className="overflow-x-auto">
+            <table className="min-w-[560px] border-separate border-spacing-[2px] text-[10px]">
+              <thead>
+                <tr>
+                  <th />
+                  {Array.from({ length: 24 }, (_, h) => (
+                    <th key={h} className="font-normal text-ink-tertiary">{h % 3 === 0 ? h : ''}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {heat.data.grid.map((row, d) => {
+                  const max = Math.max(1, ...heat.data!.grid.flat())
+                  return (
+                    <tr key={d}>
+                      <td className="pr-1 text-right text-ink-secondary">{heat.data!.days[d]}</td>
+                      {row.map((v, h) => (
+                        <td key={h}>
+                          <div
+                            title={`${heat.data!.days[d]}, ${h}:00 — ${v}`}
+                            className="h-5 w-5 rounded-[3px]"
+                            style={{ backgroundColor: v ? `rgba(11,74,141,${0.12 + 0.8 * (v / max)})` : 'rgba(0,0,0,0.05)' }}
+                          />
+                        </td>
+                      ))}
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

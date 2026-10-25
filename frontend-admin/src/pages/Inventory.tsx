@@ -7,6 +7,7 @@ import {
 } from '../ui/kit'
 import { ClipboardList, Plus, RefreshCw } from 'lucide-react'
 import { HelpLink } from '../components/HelpLink'
+import { LegacyHint } from './shared'
 
 type InvDoc = {
   id: number; storeUuid: string | null; kind: string; status: string
@@ -143,6 +144,10 @@ export default function Inventory() {
           <div className={cx('mt-1 font-mono text-2xl font-bold', openDocs.length ? 'text-warn' : '')}>{openDocs.length}</div>
         </Card>
       </div>
+
+      <LegacyHint>
+        Сводный обзор инвентаризаций и действия «в пересчёт / отменить» пока доступны только в прежнем интерфейсе.
+      </LegacyHint>
 
       {showNew && (
         <Card className="mb-4">
