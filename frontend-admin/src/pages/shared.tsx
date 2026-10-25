@@ -30,7 +30,7 @@ export function LegacyHint({ children }: { children: ReactNode }) {
   return (
     <div className="mb-3 rounded-xl border border-line bg-surface-2 px-3 py-2 text-xs text-ink-secondary">
       {children}{' '}
-      <a href="/" className="font-semibold text-brand hover:underline">
+      <a href="/legacy-static.html" className="font-semibold text-brand hover:underline">
         Открыть прежний интерфейс
       </a>
     </div>
