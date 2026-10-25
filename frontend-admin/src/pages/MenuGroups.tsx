@@ -6,8 +6,8 @@ import type { Category, Modifier, Product, Scheme } from '../api/types'
 import { fmtNum } from '../lib/format'
 import { Button, Check, ConfirmDialog, DataTable, Drawer, EmptyState, ErrorBox, Field, Input, Select, Spinner, Toggle, useToast } from '../ui/kit'
 import type { Column } from '../ui/kit'
+import { ADDON_GROUPS_FALLBACK, GROUP_KEY_NOTE, defaultMaxCount, draftToOptions, requiredGroups, schemeToDraft, type AddonGroup, type SchemeOptionDraft } from '../lib/addonScheme'
 
-const GROUP_KEYS: Record<string, string> = { syrup: 'Сироп', topping: 'Топпинг', milk: 'Молоко', other: 'Другое' }
 
 type Section = 'groups' | 'modifiers' | 'schemes'
 
@@ -70,12 +70,15 @@ function Modifiers({ schemes, products }: { schemes: Scheme[]; products: Product
   const [edit, setEdit] = useState<Partial<Modifier> | null>(null)
   const [preview, setPreview] = useState<{ scheme: { id: number; name: string }; items: any[]; products: any[] } | null>(null)
   const [del, setDel] = useState<Modifier | null>(null)
-  const inSchemes = (id: number) => schemes.filter((s) => s.items.some((i) => i.modifierId === id)).length
+  const groupsApi = useApi<{ groups: AddonGroup[] }>('/addon-groups')
+  const groups: AddonGroup[] = groupsApi.data?.groups?.length ? groupsApi.data.groups : ADDON_GROUPS_FALLBACK
+  const labelOf = (key: string) => groups.find((g) => g.key === key)?.label ?? `${key} → extra`
+  const inSchemes = (id: number) => schemes.filter((s) => (s.options ?? s.items).some((i) => i.modifierId === id)).length
   if (loading && !data) return <Spinner />
   if (error) return <ErrorBox message={error} onRetry={reload} />
   const cols: Column<Modifier>[] = [
     { key: 'name', header: 'Добавка', primary: true, render: (m) => m.name },
-    { key: 'g', header: 'Тип', render: (m) => GROUP_KEYS[m.groupKey] ?? m.groupKey },
+    { key: 'g', header: 'Тип', render: (m) => labelOf(m.groupKey) },
     { key: 'p', header: 'Цена, ₽', align: 'right', render: (m) => fmtNum(m.price) },
     { key: 's', header: 'В схемах', align: 'right', render: (m) => inSchemes(m.id) },
     { key: 'av', header: 'Доступна', render: (m) => <span onClick={(e) => e.stopPropagation()}><Toggle checked={!!m.available} label={`Доступна: ${m.name}`} onChange={(v) => save(() => api('/modifiers', { method: 'POST', body: { id: m.id, name: m.name, price: m.price, groupKey: m.groupKey, available: v, sortOrder: m.sortOrder } }), 'Сохранено')} /></span> },
@@ -83,16 +86,19 @@ function Modifiers({ schemes, products }: { schemes: Scheme[]; products: Product
   ]
   return (
     <>
-      <div className="mb-3"><Button icon={<Plus size={16} />} onClick={() => setEdit({ name: '', price: 0, groupKey: 'other', available: 1, sortOrder: 0 })}>Новая добавка</Button></div>
+      <div className="mb-3"><Button icon={<Plus size={16} />} onClick={() => setEdit({ name: '', price: 0, groupKey: 'extra', available: 1, sortOrder: 0 })}>Новая добавка</Button></div>
       <DataTable rows={data?.modifiers ?? []} columns={cols} rowKey={(m) => m.id} onRowClick={(m) => setEdit(m)} empty={<EmptyState title="Добавок пока нет" />} />
       <Drawer open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? 'Добавка' : 'Новая добавка'}
         footer={<><Button variant="secondary" onClick={() => setEdit(null)}>Отмена</Button><Button disabled={!edit?.name?.trim()} onClick={async () => {
           if (!edit) return
-          if (await save(() => api('/modifiers', { method: 'POST', body: { id: edit.id, name: edit.name!.trim(), price: Math.max(0, Math.round(Number(edit.price) || 0)), groupKey: edit.groupKey ?? 'other', available: !!edit.available, sortOrder: Number(edit.sortOrder) || 0, linkedProductId: edit.linkedProductId ?? null } }), 'Добавка сохранена')) setEdit(null)
+          if (await save(() => api('/modifiers', { method: 'POST', body: { id: edit.id, name: edit.name!.trim(), price: Math.max(0, Math.round(Number(edit.price) || 0)), groupKey: edit.groupKey ?? 'extra', available: !!edit.available, sortOrder: Number(edit.sortOrder) || 0, linkedProductId: edit.linkedProductId ?? null } }), 'Добавка сохранена')) setEdit(null)
         }}>Сохранить</Button></>}>
         <Field label="Название"><Input value={edit?.name ?? ''} maxLength={60} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></Field>
         <Field label="Цена, ₽"><Input type="number" min={0} value={edit?.price ?? 0} onChange={(e) => setEdit({ ...edit, price: Number(e.target.value) })} /></Field>
-        <Field label="Тип"><Select value={edit?.groupKey ?? 'other'} onChange={(e) => setEdit({ ...edit, groupKey: e.target.value })}>{Object.entries(GROUP_KEYS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select></Field>
+        <Field label="Тип"><Select value={edit?.groupKey ?? 'extra'} onChange={(e) => setEdit({ ...edit, groupKey: e.target.value })}>
+          {!groups.some((g) => g.key === (edit?.groupKey ?? 'extra')) && <option value={edit?.groupKey ?? ''}>{labelOf(edit?.groupKey ?? '')}</option>}
+          {groups.map((g) => <option key={g.key} value={g.key}>{g.label}</option>)}
+        </Select></Field>
         <Field label="Товар Эвотор (для uuid на кассе)">
           <Select value={edit?.linkedProductId ?? ''} onChange={(e) => setEdit({ ...edit, linkedProductId: e.target.value ? Number(e.target.value) : null })}>
             <option value="">— не привязан —</option>
@@ -115,9 +121,11 @@ function Modifiers({ schemes, products }: { schemes: Scheme[]; products: Product
 function Schemes({ products }: { products: Product[] }) {
   const toast = useToast()
   const { data, error, loading, reload } = useApi<{ schemes: Scheme[] }>('/modifier-schemes')
+  const groupsApi = useApi<{ groups: AddonGroup[] }>('/addon-groups')
   const save = useSave(reload)
-  type ItemEdit = { productId?: number | null; modifierId?: number | null; groupKey: string; zeroOption?: boolean; isDefault?: boolean; maxCount?: number; nameOverride?: string }
-  const [edit, setEdit] = useState<{ id?: number; name: string; items: ItemEdit[] } | null>(null)
+  const groups: AddonGroup[] = groupsApi.data?.groups?.length ? groupsApi.data.groups : ADDON_GROUPS_FALLBACK
+  const labelOf = (key: string) => groups.find((g) => g.key === key)?.label ?? key
+  const [edit, setEdit] = useState<{ id?: number; name: string; options: SchemeOptionDraft[] } | null>(null)
   const [preview, setPreview] = useState<{ scheme: { id: number; name: string }; items: any[]; products: any[] } | null>(null)
   const [del, setDel] = useState<Scheme | null>(null)
   const used = (id: number) => products.filter((p) => p.modifierSchemeId === id).length
@@ -126,7 +134,15 @@ function Schemes({ products }: { products: Product[] }) {
   if (error) return <ErrorBox message={error} onRetry={reload} />
   const cols: Column<Scheme>[] = [
     { key: 'name', header: 'Схема', primary: true, render: (s) => s.name },
-    { key: 'm', header: 'Позиций', align: 'right', render: (s) => s.items.length },
+    { key: 'm', header: 'Позиций', align: 'right', render: (s) => s.options?.length ?? s.items.length },
+    {
+      key: 'req', header: 'Обязательные', render: (s) => {
+        const req = requiredGroups(s.options ?? s.items)
+        return req.length
+          ? <span className="inline-flex flex-wrap gap-1">{req.map((k) => <span key={k} className="rounded-full border border-line px-2 py-[1px] text-[11px]">{labelOf(k)}</span>)}</span>
+          : <span className="text-ink/40">—</span>
+      },
+    },
     { key: 'p', header: 'Товаров', align: 'right', render: (s) => used(s.id) },
     { key: 'x', header: '', align: 'right', render: (s) => <span className="inline-flex gap-1" onClick={(e) => e.stopPropagation()}>
       <Button size="sm" variant="ghost" onClick={async () => {
@@ -136,82 +152,80 @@ function Schemes({ products }: { products: Product[] }) {
     </span> },
   ]
   const openEdit = (s?: Scheme) => {
-    if (!s) { setEdit({ name: '', items: [] }); return }
-    setEdit({
-      id: s.id,
-      name: s.name,
-      items: (s.items || []).map((i) => ({
-        productId: i.productId ?? null,
-        modifierId: i.modifierId ?? null,
-        groupKey: (i.groupKey as string) || 'syrup',
-        zeroOption: !!i.zeroOption,
-        isDefault: !!i.isDefault,
-        maxCount: i.maxCount ?? 2,
-        nameOverride: i.nameOverride || '',
-      })),
-    })
+    if (!s) { setEdit({ name: '', options: [] }); return }
+    setEdit({ id: s.id, name: s.name, options: schemeToDraft(s) })
   }
+  const newZero = (): SchemeOptionDraft => ({ kind: 'zero', productId: null, modifierId: null, name: 'Без сиропа', groupKey: 'syrup', isDefault: true, required: false, maxCount: 1, priceOverride: null })
+  const newProduct = (): SchemeOptionDraft => ({ kind: 'product', productId: null, modifierId: null, name: '', groupKey: 'extra', isDefault: false, required: false, maxCount: defaultMaxCount('extra'), priceOverride: null })
   return (
     <>
       <div className="mb-3 flex flex-wrap gap-2 items-center">
         <Button icon={<Plus size={16} />} onClick={() => openEdit()}>Новая схема</Button>
-        <span className="text-[12px] text-ink/50">Платные позиции — товар из меню (категория «Добавки»); «Без сиропа» / «Обычное» — zero-option без UUID</span>
+        <span className="text-[12px] text-ink/50">Платные позиции — товар из меню (категория «Добавки»); «Без сиропа» / «Обычное» — zero-option без UUID. {GROUP_KEY_NOTE}</span>
       </div>
       <DataTable rows={data?.schemes ?? []} columns={cols} rowKey={(s) => s.id} onRowClick={(s) => openEdit(s)} empty={<EmptyState title="Схем пока нет" />} />
       <Drawer open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? 'Схема добавок' : 'Новая схема'}
         footer={<><Button variant="secondary" onClick={() => setEdit(null)}>Отмена</Button><Button disabled={!edit?.name.trim()} onClick={async () => {
           if (!edit) return
-          const items = edit.items.map((it, idx) => ({
-            productId: it.zeroOption ? null : (it.productId || null),
-            modifierId: it.modifierId || null,
-            groupKey: it.groupKey || 'extra',
-            zeroOption: !!it.zeroOption,
-            isDefault: !!it.isDefault,
-            maxCount: it.maxCount ?? 2,
-            nameOverride: it.nameOverride?.trim() || null,
-            sortOrder: idx,
-          }))
-          if (await save(() => api('/modifier-schemes', { method: 'POST', body: { id: edit.id, name: edit.name.trim(), items } }), 'Схема сохранена')) setEdit(null)
+          const options = draftToOptions(edit.options)
+          if (await save(() => api('/modifier-schemes', { method: 'POST', body: { id: edit.id, name: edit.name.trim(), options } }), 'Схема сохранена')) setEdit(null)
         }}>Сохранить</Button></>}>
         <Field label="Название"><Input value={edit?.name ?? ''} maxLength={80} onChange={(e) => setEdit(edit ? { ...edit, name: e.target.value } : edit)} /></Field>
         <div className="mt-3 space-y-2">
           <div className="flex items-center justify-between">
             <div className="text-[13px] font-medium">Позиции схемы</div>
             <div className="flex gap-1">
-              <Button size="sm" variant="secondary" onClick={() => setEdit(edit ? { ...edit, items: [...edit.items, { groupKey: 'syrup', zeroOption: true, isDefault: true, nameOverride: 'Без сиропа', maxCount: 1 }] } : edit)}>+ Zero</Button>
-              <Button size="sm" variant="secondary" onClick={() => setEdit(edit ? { ...edit, items: [...edit.items, { groupKey: 'syrup', productId: null, maxCount: 2 }] } : edit)}>+ Товар</Button>
+              <Button size="sm" variant="secondary" onClick={() => setEdit(edit ? { ...edit, options: [...edit.options, newZero()] } : edit)}>+ Zero</Button>
+              <Button size="sm" variant="secondary" onClick={() => setEdit(edit ? { ...edit, options: [...edit.options, newProduct()] } : edit)}>+ Товар</Button>
             </div>
           </div>
-          {(edit?.items ?? []).map((it, idx) => (
-            <div key={idx} className="rounded-lg border border-line p-2 space-y-1">
-              <div className="flex gap-2 items-center">
-                <Select className="flex-1" value={it.groupKey} onChange={(e) => {
-                  const items = [...(edit?.items ?? [])]; items[idx] = { ...items[idx], groupKey: e.target.value }; setEdit(edit ? { ...edit, items } : edit)
-                }}>{Object.entries(GROUP_KEYS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select>
-                <Button size="sm" variant="ghost" icon={<Trash2 size={14} />} onClick={() => {
-                  const items = (edit?.items ?? []).filter((_, i) => i !== idx); setEdit(edit ? { ...edit, items } : edit)
-                }} />
+          <div className="text-[11px] text-ink/50">Лимит — число разных опций в группе (не количество одной добавки): молоко/сироп/сахар — 1, «Дополнительно» — 2.</div>
+          {(edit?.options ?? []).map((it, idx) => {
+            const patch = (p: Partial<SchemeOptionDraft>) => {
+              const options = [...(edit?.options ?? [])]
+              options[idx] = { ...options[idx], ...p }
+              setEdit(edit ? { ...edit, options } : edit)
+            }
+            return (
+              <div key={idx} className="rounded-lg border border-line p-2 space-y-1">
+                <div className="flex gap-2 items-center">
+                  <Select className="flex-1" value={it.groupKey} onChange={(e) => patch({ groupKey: e.target.value, maxCount: it.kind === 'zero' ? 1 : defaultMaxCount(e.target.value) })}>
+                    {groups.map((g) => <option key={g.key} value={g.key}>{g.label}</option>)}
+                  </Select>
+                  <Button size="sm" variant="ghost" icon={<Trash2 size={14} />} onClick={() => {
+                    const options = (edit?.options ?? []).filter((_, i) => i !== idx); setEdit(edit ? { ...edit, options } : edit)
+                  }} />
+                </div>
+                <Check checked={it.kind === 'zero'} label="Zero-option (без UUID, цена 0)" onChange={(v) => patch({
+                  kind: v ? 'zero' : 'product',
+                  productId: v ? null : it.productId,
+                  modifierId: null,
+                  name: v ? (it.name || 'Без добавки') : '',
+                  maxCount: 1,
+                })} />
+                <Check checked={it.required} label="Обязательно: группа должна быть закрыта (любой выбранный вариант)" onChange={(v) => patch({ required: v })} />
+                <Check checked={it.isDefault} label="По умолчанию в секции" onChange={(v) => patch({ isDefault: v })} />
+                <Field label="Лимит разных опций в группе">
+                  <Input type="number" min={1} value={it.maxCount} onChange={(e) => patch({ maxCount: Math.max(1, Number(e.target.value) || 1) })} />
+                </Field>
+                {it.kind === 'modifier' && (
+                  <div className="text-[11px] text-ink/50">Legacy-добавка #{it.modifierId}: при выборе товара станет обычной позицией.</div>
+                )}
+                {it.kind === 'zero' ? (
+                  <Field label="Подпись"><Input value={it.name} placeholder="Без сиропа / Обычное молоко" onChange={(e) => patch({ name: e.target.value })} /></Field>
+                ) : (
+                  <Field label="Товар (Добавки)"><Select value={it.productId ?? ''} onChange={(e) => patch({
+                    kind: 'product',
+                    productId: e.target.value ? Number(e.target.value) : null,
+                    modifierId: null,
+                  })}>
+                    <option value="">— выберите —</option>
+                    {addonProducts.map((p) => <option key={p.id} value={p.id}>{p.name} · {p.price}₽</option>)}
+                  </Select></Field>
+                )}
               </div>
-              <Check checked={!!it.zeroOption} label="Zero-option (без UUID, цена 0)" onChange={(v) => {
-                const items = [...(edit?.items ?? [])]; items[idx] = { ...items[idx], zeroOption: v, productId: v ? null : items[idx].productId }; setEdit(edit ? { ...edit, items } : edit)
-              }} />
-              <Check checked={!!it.isDefault} label="По умолчанию в секции" onChange={(v) => {
-                const items = [...(edit?.items ?? [])]; items[idx] = { ...items[idx], isDefault: v }; setEdit(edit ? { ...edit, items } : edit)
-              }} />
-              {it.zeroOption ? (
-                <Field label="Подпись"><Input value={it.nameOverride ?? ''} placeholder="Без сиропа / Обычное молоко" onChange={(e) => {
-                  const items = [...(edit?.items ?? [])]; items[idx] = { ...items[idx], nameOverride: e.target.value }; setEdit(edit ? { ...edit, items } : edit)
-                }} /></Field>
-              ) : (
-                <Field label="Товар (Добавки)"><Select value={it.productId ?? ''} onChange={(e) => {
-                  const items = [...(edit?.items ?? [])]; items[idx] = { ...items[idx], productId: e.target.value ? Number(e.target.value) : null }; setEdit(edit ? { ...edit, items } : edit)
-                }}>
-                  <option value="">— выберите —</option>
-                  {addonProducts.map((p) => <option key={p.id} value={p.id}>{p.name} · {p.price}₽</option>)}
-                </Select></Field>
-              )}
-            </div>
-          ))}
+            )
+          })}
         </div>
       </Drawer>
       <ConfirmDialog open={!!del} title="Удалить схему?" danger confirmLabel="Удалить" onCancel={() => setDel(null)}
@@ -226,7 +240,6 @@ function Schemes({ products }: { products: Product[] }) {
     </>
   )
 }
-
 
 
 export default function MenuGroups({ section }: { section: Section | string }) {

@@ -150,7 +150,21 @@ export type SchemeItem = {
   nameOverride?: string | null
   sortOrder?: number
 }
-export type Scheme = { id: number; name: string; copyFromId?: number; items: SchemeItem[] }
+export type SchemeOption = {
+  id?: number
+  schemeId?: number
+  kind: 'product' | 'zero' | 'modifier'
+  productId?: number | null
+  modifierId?: number | null
+  name?: string | null
+  groupKey?: string
+  isDefault?: boolean
+  required?: boolean
+  maxCount?: number
+  priceOverride?: number | null
+  sortOrder?: number
+}
+export type Scheme = { id: number; name: string; copyFromId?: number; items: SchemeItem[]; options?: SchemeOption[] }
 export type EvotorStore = {
   uuid: string
   id?: string | number
