@@ -76,9 +76,23 @@ describe('per-store cashier menu', () => {
     expect(hasStoreMenu(A)).toBe(false)
   })
 
-  it('refuses to save without a store — меню настраивается по каждой кассе', async () => {
-    const r = await admin('PATCH', '/cashier/menu', { showAllTab: false })
-    expect(r.status).toBe(400)
+  it('общая настройка сохраняется и наследуется точками без своей', async () => {
+    const r = await admin('PATCH', '/cashier/menu', { showAllTab: false, hiddenGroups: ['Выпечка'] })
+    expect(r.status).toBe(200)
+
+    // точка без собственной настройки видит общую
+    const own = (await (await admin('GET', `/cashier/menu?storeUuid=${A}`)).json()) as any
+    expect(own.own).toBe(false)
+    expect(own.showAllTab).toBe(false)
+    expect(own.order).not.toContain('Выпечка')
+
+    // и каталог отдаёт её же
+    const cat = await catalog(A)
+    expect(cat.menu.showAllTab).toBe(false)
+    expect(cat.menu.hidden).toContain('Выпечка')
+
+    // возвращаем общую к дефолту, чтобы не влиять на следующие тесты
+    expect((await admin('PATCH', '/cashier/menu', { showAllTab: true, hiddenGroups: [] })).status).toBe(200)
   })
 
   it('settings of one store do not leak into another', async () => {

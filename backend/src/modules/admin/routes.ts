@@ -431,7 +431,7 @@ export const adminRoutes = new Hono()
     })),
     (c) => {
       const { storeUuid, ...patch } = c.req.valid('json')
-      if (!storeUuid) throw bad('Укажите точку: меню настраивается по каждой кассе', 400)
+      // Без storeUuid — общая настройка-наследство: её наследуют точки без собственной.
       const known = (db.prepare('SELECT name FROM categories').all() as { name: string }[]).map((r) => r.name)
       const knownSet = new Set(known)
       for (const n of patch.hiddenGroups ?? []) {
@@ -440,7 +440,7 @@ export const adminRoutes = new Hono()
       for (const n of patch.order ?? []) {
         if (!knownSet.has(n)) throw bad(`Группа «${n}» не найдена`, 400)
       }
-      return c.json({ ok: true, ...setCashierMenu(patch, storeUuid) })
+      return c.json({ ok: true, storeUuid: storeUuid ?? null, ...setCashierMenu(patch, storeUuid ?? null) })
     },
   )
 

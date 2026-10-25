@@ -4,6 +4,30 @@ import { useApi } from '../../api/useApi'
 import { Badge, Button, Card, Check, ErrorBox, Skeleton, useToast } from '../../ui/kit'
 import { ChevronDown, ChevronUp, RotateCcw } from 'lucide-react'
 
+/** Адрес настроек: с точкой — её собственная, без точки — общая. */
+export function cashierMenuUrl(storeUuid: string | null): string {
+  return storeUuid ? `/cashier/menu?storeUuid=${encodeURIComponent(storeUuid)}` : '/cashier/menu'
+}
+
+/** Тело PATCH: для точки добавляем storeUuid, для общей настройки — нет. */
+export function cashierMenuPatch(
+  storeUuid: string | null,
+  body: { showAllTab?: boolean; hiddenGroups?: string[]; order?: string[] },
+): Record<string, unknown> {
+  return storeUuid ? { storeUuid, ...body } : body
+}
+
+/** Меняет местами соседей; за границами списка возвращает null (двигать некуда). */
+export function movedTab(order: string[], index: number, delta: number): string[] | null {
+  const to = index + delta
+  if (index < 0 || index >= order.length || to < 0 || to >= order.length) return null
+  const next = [...order]
+  const a = next[index]
+  next[index] = next[to]
+  next[to] = a
+  return next
+}
+
 type MenuResp = {
   storeUuid: string | null
   own: boolean
@@ -14,19 +38,21 @@ type MenuResp = {
 }
 
 /**
- * Меню конкретной кассы: порядок вкладок и что скрыть.
- * Живёт в карточке точки, потому что у каждой кассы набор может быть своим.
+ * Меню кассы: порядок вкладок и что скрыть.
+ * storeUuid задан — настройка точки (живёт в её карточке); null — общая настройка-наследство
+ * для точек, у которых своей нет.
  */
-export default function CashierMenuPanel({ storeUuid, storeName }: { storeUuid: string; storeName: string }) {
+export default function CashierMenuPanel({ storeUuid, storeName }: { storeUuid: string | null; storeName?: string }) {
+  const shared = storeUuid == null
   const toast = useToast()
-  const { data, error, loading, reload } = useApi<MenuResp>(`/cashier/menu?storeUuid=${encodeURIComponent(storeUuid)}`)
+  const { data, error, loading, reload } = useApi<MenuResp>(cashierMenuUrl(storeUuid))
   const [busy, setBusy] = useState(false)
   const [open, setOpen] = useState(false)
 
   const patch = async (body: { showAllTab?: boolean; hiddenGroups?: string[]; order?: string[] }, okText: string) => {
     setBusy(true)
     try {
-      await api('/cashier/menu', { method: 'PATCH', body: { storeUuid, ...body } })
+      await api('/cashier/menu', { method: 'PATCH', body: cashierMenuPatch(storeUuid, body) })
       toast.push(okText)
       reload()
     } catch (e) {
@@ -37,9 +63,10 @@ export default function CashierMenuPanel({ storeUuid, storeName }: { storeUuid: 
   }
 
   const reset = async () => {
+    if (shared) return
     setBusy(true)
     try {
-      await api(`/cashier/menu?storeUuid=${encodeURIComponent(storeUuid)}`, { method: 'DELETE' })
+      await api(cashierMenuUrl(storeUuid), { method: 'DELETE' })
       toast.push('Касса снова на общей настройке')
       reload()
     } catch (e) {
@@ -51,10 +78,8 @@ export default function CashierMenuPanel({ storeUuid, storeName }: { storeUuid: 
 
   const move = (index: number, delta: number) => {
     if (!data) return
-    const next = [...data.order]
-    const to = index + delta
-    if (to < 0 || to >= next.length) return
-    ;[next[index], next[to]] = [next[to], next[index]]
+    const next = movedTab(data.order, index, delta)
+    if (!next) return
     void patch({ order: next }, 'Порядок вкладок сохранён')
   }
 
@@ -73,10 +98,13 @@ export default function CashierMenuPanel({ storeUuid, storeName }: { storeUuid: 
         aria-expanded={open}
       >
         <span className="flex items-center gap-2">
-          <span className="text-[14px] font-semibold">Меню на кассе</span>
-          {data && (
-            <Badge tone={data.own ? 'brand' : 'neutral'}>{data.own ? 'своя настройка' : 'как у всех'}</Badge>
-          )}
+          <span className="text-[14px] font-semibold">{shared ? 'Общее меню кассы' : 'Меню на кассе'}</span>
+          {data &&
+            (shared ? (
+              <Badge tone="brand">{data.own ? 'общая настройка' : 'заводская'}</Badge>
+            ) : (
+              <Badge tone={data.own ? 'brand' : 'neutral'}>{data.own ? 'своя настройка' : 'как у всех'}</Badge>
+            ))}
         </span>
         {open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
       </button>
@@ -88,7 +116,9 @@ export default function CashierMenuPanel({ storeUuid, storeName }: { storeUuid: 
           {data && (
             <>
               <p className="mb-3 text-[12px] text-ink-secondary">
-                Порядок вкладок и видимость — только для точки «{storeName}». Другие кассы не затрагиваются.
+                {shared
+                  ? 'Порядок вкладок и видимость по умолчанию: так касса выглядит, пока у точки нет своей настройки.'
+                  : `Порядок вкладок и видимость — только для точки «${storeName ?? storeUuid}». Другие кассы не затрагиваются.`}
               </p>
 
               <Check
@@ -139,7 +169,7 @@ export default function CashierMenuPanel({ storeUuid, storeName }: { storeUuid: 
                 ))}
               </div>
 
-              {data.own && (
+              {data.own && !shared && (
                 <Button size="sm" variant="ghost" icon={<RotateCcw size={14} />} className="mt-3" loading={busy} onClick={reset}>
                   Сбросить к общей настройке
                 </Button>

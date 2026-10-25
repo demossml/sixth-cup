@@ -177,6 +177,38 @@ describe('один вход: админ вводит добавки → касс
     expect([row.c, row.f]).toEqual([0, 0])
   })
 
+  it('товар-добавка реально уходит в выгрузку: outbox для точки с sync + фильтр push', async () => {
+    const { toEvotorProduct } = await import('../integrations/evotor/sync/ProductPushService')
+    const store = 'store-push-' + T
+    const cols = db.prepare('PRAGMA table_info(evotor_stores)').all() as { name: string }[]
+    if (!cols.some((c) => c.name === 'sync_enabled')) {
+      db.exec('ALTER TABLE evotor_stores ADD COLUMN sync_enabled INTEGER NOT NULL DEFAULT 0')
+    }
+    db.prepare('INSERT INTO evotor_stores(store_uuid,name,sync_enabled,updated_at) VALUES(?,?,1,?)')
+      .run(store, 'Точка выгрузки', Date.now())
+
+    const created = await adm('POST', '/modifiers', { name: 'Корица-выгрузка-' + T, price: 25, groupKey: 'syrup', available: true, sortOrder: 0 })
+    expect(created.s).toBe(200)
+    const productId = created.j.productId as number
+    expect(productId).toBeGreaterThan(0)
+
+    // 1) enqueueProductSync поставил задачу именно этой точке (sync_enabled=1)
+    const queued = db
+      .prepare(`SELECT status FROM evotor_outbox WHERE store_uuid=? AND entity='PRODUCT' AND entity_key=?`)
+      .get(store, String(productId)) as { status: string } | undefined
+    expect(queued?.status).toBe('PENDING')
+
+    // 2) условие outbound-фильтра ProductPushService.listLocal(false): только catalog_source='SIXTH_CUP'
+    const row = db.prepare('SELECT * FROM products WHERE id=?').get(productId) as any
+    expect(row.catalog_source).toBe('SIXTH_CUP')
+    expect(row.category_id).toBe((db.prepare("SELECT id FROM categories WHERE name='Добавки'").get() as any).id)
+
+    // 3) payload реальной выгрузки несёт стабильный артикул sc-<id>
+    const payload = toEvotorProduct(row, store)
+    expect(payload.article_number).toBe('sc-' + productId)
+    expect(payload.allow_to_sell).toBe(true)
+  })
+
   it('регистр названия категории: «Добавки» с заглавной находится', async () => {
     const { resolveAddonsCategoryId } = await import('../modules/catalog/addonScheme')
     expect(resolveAddonsCategoryId(db)).toBe((db.prepare("SELECT id FROM categories WHERE name='Добавки'").get() as any).id)

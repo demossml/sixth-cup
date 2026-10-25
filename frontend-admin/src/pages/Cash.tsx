@@ -203,6 +203,9 @@ export default function Cash() {
       )}
       {stores.loading && !stores.data && <Spinner />}
       {stores.data && !list.length && <Card><EmptyState title="Точек нет" text="Эвотор не вернул ни одной точки. Добавьте токен ниже или проверьте EVOTOR_API_TOKEN." /></Card>}
+      <div className="mb-3">
+        <CashierMenuPanel storeUuid={null} />
+      </div>
       <div className="grid gap-3 lg:grid-cols-2">
         {list.map((s) => (
           <StoreCard key={s.uuid} s={s} health={health.data?.stores.find((h) => h.uuid === s.uuid)} now={health.data?.now ?? Date.now()} onChanged={reloadAll} />
