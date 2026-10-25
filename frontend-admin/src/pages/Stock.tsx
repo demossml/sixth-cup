@@ -7,6 +7,7 @@ import {
 } from '../ui/kit'
 import { AlertTriangle, Clock, Plus, RefreshCw } from 'lucide-react'
 import { HelpLink } from '../components/HelpLink'
+import RecipesTab from './stock/RecipesTab'
 
 type StockItem = {
   id: number; name: string; sku: string | null; kind: string; unit: string
@@ -36,7 +37,7 @@ function urgencyBadge(u: string) {
 
 export default function Stock() {
   const toast = useToast()
-  const [tab, setTab] = useState<'balances' | 'expiry' | 'items' | 'norms' | 'risk'>('balances')
+  const [tab, setTab] = useState<'balances' | 'expiry' | 'items' | 'norms' | 'recipes' | 'risk'>('balances')
   const [showForm, setShowForm] = useState(false)
   const [name, setName] = useState('')
   const [kind, setKind] = useState<'raw' | 'unit'>('raw')
@@ -83,6 +84,7 @@ export default function Stock() {
     { key: 'expiry' as const, label: 'Сроки', count: (expSum?.expired ?? 0) + (expSum?.urgent ?? 0) || null },
     { key: 'items' as const, label: 'Номенклатура', count: items.data?.items.length },
     { key: 'norms' as const, label: 'Нормы', count: norms.data?.norms.length },
+    { key: 'recipes' as const, label: 'Рецептуры' },
     { key: 'risk' as const, label: 'Без нормы', count: risk.data?.products.length },
   ], [balances.data, expSum, items.data, norms.data, risk.data])
 
@@ -336,6 +338,8 @@ export default function Stock() {
           )}
         </Card>
       )}
+
+      {tab === 'recipes' && <RecipesTab items={items.data?.items ?? []} />}
 
       {tab === 'risk' && (
         <Card pad={false}>
