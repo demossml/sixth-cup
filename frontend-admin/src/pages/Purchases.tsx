@@ -10,6 +10,7 @@ import { HelpLink } from '../components/HelpLink'
 import { LegacyHint } from './shared'
 import BankTab from './purchases/BankTab'
 import ReconTab from './purchases/ReconTab'
+import OrdersTab from './purchases/OrdersTab'
 
 type Supplier = { id: number; name: string; inn: string | null; contact: string | null; active: number }
 type Invoice = {
@@ -31,7 +32,7 @@ function statusBadge(s: string) {
 
 export default function Purchases() {
   const toast = useToast()
-  const [tab, setTab] = useState<'invoices' | 'suppliers' | 'debt' | 'bank' | 'recon'>('invoices')
+  const [tab, setTab] = useState<'invoices' | 'orders' | 'suppliers' | 'debt' | 'bank' | 'recon'>('invoices')
   const [showSupplier, setShowSupplier] = useState(false)
   const [showInvoice, setShowInvoice] = useState(false)
   const [sName, setSName] = useState('')
@@ -134,6 +135,7 @@ export default function Purchases() {
 
   const tabs = useMemo(() => [
     { key: 'invoices' as const, label: 'Накладные', count: invoices.data?.invoices.length },
+    { key: 'orders' as const, label: 'Заказы' },
     { key: 'suppliers' as const, label: 'Поставщики', count: suppliers.data?.suppliers.length },
     { key: 'debt' as const, label: 'Долги', count: debt.data?.debts.length },
     { key: 'bank' as const, label: 'Банк' },
@@ -270,7 +272,7 @@ export default function Purchases() {
 
       <Tabs items={tabs} value={tab} onChange={setTab} />
 
-      <LegacyHint>Возвраты поставщику и заказ-помощник пока доступны только в прежнем интерфейсе.</LegacyHint>
+      <LegacyHint>Возвраты поставщику пока доступны только в прежнем интерфейсе.</LegacyHint>
 
       {tab === 'invoices' && (
         <Card pad={false}>
@@ -348,6 +350,7 @@ export default function Purchases() {
         </Card>
       )}
 
+      {tab === 'orders' && <OrdersTab suppliers={suppliers.data?.suppliers ?? []} items={items.data?.items ?? []} />}
       {tab === 'bank' && <BankTab />}
       {tab === 'recon' && <ReconTab suppliers={suppliers.data?.suppliers ?? []} />}
 
