@@ -22,6 +22,8 @@ export function CardRef({ row }: { row: Pick<OperationRow, 'userId' | 'cardCode'
 
 export const typeLabel = (t: string) => DOC_TYPE[t] ?? t
 
+
+
 /** What actually happened with the doc, in one phrase. */
 export function opResult(o: OperationRow): string {
   if (o.status === 'FAILED') return o.lastError ? `Ошибка: ${o.lastError}` : 'Ошибка обработки'

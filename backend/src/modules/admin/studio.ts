@@ -135,8 +135,12 @@ function reconRows() {
 function bankRows() {
   return all(
     `SELECT b.id, b.date_at AS dateAt, b.party, b.purpose, b.amount_kop AS amountKop,
-            b.supplier_id AS supplierId, b.invoice_id AS invoiceId
-     FROM bank_rows b ORDER BY b.date_at DESC, b.id DESC LIMIT 500`,
+            b.supplier_id AS supplierId, b.invoice_id AS invoiceId, i.number AS invoiceNumber,
+            s.name AS supplierName
+     FROM bank_rows b
+     LEFT JOIN purchase_invoices i ON i.id = b.invoice_id
+     LEFT JOIN suppliers s ON s.id = b.supplier_id
+     ORDER BY b.date_at DESC, b.id DESC LIMIT 500`,
   ).map((r) => ({ ...r, matched: r.invoiceId != null }))
 }
 
@@ -591,6 +595,53 @@ export const adminStudio = new Hono()
     db.prepare(`DELETE FROM bank_rows WHERE id=?`).run(idParam(c.req.param('id')))
     return c.json({ ok: true })
   })
+
+  /**
+   * Ручная привязка строки выписки: авто-матч ошибается на нестандартных назначениях,
+   * а без этой ручки исправить было нечем. invoiceId=null снимает привязку.
+   */
+  .patch(
+    '/purchases/bank-rows/:id',
+    zValidator('json', z.object({
+      supplierId: z.number().int().positive().nullable().optional(),
+      invoiceId: z.number().int().positive().nullable().optional(),
+    })),
+    (c) => {
+      const id = idParam(c.req.param('id'))
+      const row = one<{ supplier_id: number | null; invoice_id: number | null }>(
+        `SELECT supplier_id, invoice_id FROM bank_rows WHERE id=?`, id,
+      )
+      if (!row) throw bad('Строка выписки не найдена', 404)
+      const p = c.req.valid('json')
+
+      let supplierId = p.supplierId !== undefined ? p.supplierId : row.supplier_id
+      let invoiceId = p.invoiceId !== undefined ? p.invoiceId : row.invoice_id
+      if (p.invoiceId !== undefined && p.invoiceId !== null) {
+        const inv = one<{ supplier_id: number }>(`SELECT supplier_id FROM purchase_invoices WHERE id=?`, p.invoiceId)
+        if (!inv) throw bad('Накладная не найдена', 404)
+        if (p.supplierId !== undefined && p.supplierId !== null && p.supplierId !== inv.supplier_id) {
+          throw bad('Накладная принадлежит другому поставщику', 400)
+        }
+        // Накладная всегда тянет за собой своего поставщика.
+        supplierId = inv.supplier_id
+        invoiceId = p.invoiceId
+      }
+      if (p.supplierId !== undefined && p.supplierId !== null && !one(`SELECT id FROM suppliers WHERE id=?`, p.supplierId)) {
+        throw bad('Поставщик не найден', 404)
+      }
+      if (p.invoiceId === null) invoiceId = null
+      if (p.supplierId === null) supplierId = null
+
+      db.prepare(`UPDATE bank_rows SET supplier_id=?, invoice_id=? WHERE id=?`).run(supplierId ?? null, invoiceId ?? null, id)
+      const updated = one(
+        `SELECT b.id, b.date_at AS dateAt, b.party, b.purpose, b.amount_kop AS amountKop,
+                b.supplier_id AS supplierId, b.invoice_id AS invoiceId,
+                i.number AS invoiceNumber
+         FROM bank_rows b LEFT JOIN purchase_invoices i ON i.id = b.invoice_id WHERE b.id=?`, id,
+      ) as Row
+      return c.json({ ok: true, row: { ...updated, matched: updated.invoiceId != null } })
+    },
+  )
 
   /* ═════════ STOCK: recipes + snapshot ═════════ */
   .get('/stock/recipes', (c) => {

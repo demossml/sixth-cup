@@ -1,7 +1,19 @@
 import { describe, it, expect } from 'vitest'
-import { app } from '../app'
-import { config } from '../config'
-import { db } from '../db'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+const dir = mkdtempSync(join(tmpdir(), 'sc-addons-'))
+process.env.DB_PATH = join(dir, 'test.db')
+process.env.KEYS_PATH = join(dir, 'keys.json')
+process.env.UPLOADS_DIR = join(dir, 'uploads')
+process.env.ADMIN_TOKEN = 'test-admin'
+process.env.NODE_ENV = 'development'
+
+// Dynamic import AFTER env (static import hoists above DB_PATH → would open the real DB)
+const { app } = await import('../app')
+const { config } = await import('../config')
+const { db } = await import('../db')
 
 const H = { 'X-Admin-Token': config.adminToken, 'content-type': 'application/json' }
 const adm = async (m: string, p: string, b?: unknown) => {
@@ -30,21 +42,69 @@ describe('один вход: админ вводит добавки → касс
     expect([p.c, p.cc, p.fe, p.price, p.available]).toEqual([cat.id, 0, 0, 40, 1])
   })
 
-  it('существующий одноимённый товар привязывается (без дублей) — backfill', async () => {
+  it('розничный товар с тем же именем НЕ уезжает в «Добавки»: создаётся отдельный товар-добавка', async () => {
+    // Решение владельца (A1): переносим только товары, уже лежащие в «Добавках».
     const t = Date.now()
+    const cat = db.prepare("SELECT id FROM categories WHERE name='Добавки'").get() as any
     karProd = Number(db.prepare(`INSERT INTO products(name,price,icon,available,sort_order,created_at,updated_at,counts_as_cup,free_eligible) VALUES(?,?,?,1,0,?,?,0,1)`).run('Карамель-' + T, 35, 'Coffee', t, t).lastInsertRowid)
     caramel = Number(db.prepare(`INSERT INTO modifiers(name,price,group_key,available,sort_order,created_at,updated_at) VALUES(?,?,?,1,0,?,?)`).run('карамель-' + T.toString(), 35, 'syrup', t, t).lastInsertRowid)
     const before = (db.prepare('SELECT COUNT(*) n FROM products').get() as any).n
     const r = await adm('POST', '/modifiers/backfill-products')
     expect(r.s).toBe(200)
+
     const m = db.prepare('SELECT linked_product_id l FROM modifiers WHERE id=?').get(caramel) as any
-    expect(m.l).toBe(karProd)
-    expect((db.prepare('SELECT COUNT(*) n FROM products').get() as any).n).toBe(before) // новых товаров не появилось
-    const p = db.prepare('SELECT counts_as_cup cc, free_eligible fe FROM products WHERE id=?').get(karProd) as any
-    expect([p.cc, p.fe]).toEqual([0, 0])
+    expect(m.l).not.toBe(karProd) // розничный товар не забрали
+    expect((db.prepare('SELECT COUNT(*) n FROM products').get() as any).n).toBe(before + 1)
+
+    const retail = db.prepare('SELECT category_id c, price, counts_as_cup cc FROM products WHERE id=?').get(karProd) as any
+    expect([retail.c, retail.price, retail.cc]).toEqual([null, 35, 0]) // розница без изменений
+
+    const linked = db.prepare('SELECT category_id c, price, counts_as_cup cc, free_eligible fe FROM products WHERE id=?').get(m.l) as any
+    expect([linked.c, linked.price, linked.cc, linked.fe]).toEqual([cat.id, 35, 0, 0])
+
+    karProd = m.l // дальше по файлу это уже товар-добавка
     const again = await adm('POST', '/modifiers/backfill-products') // идемпотентность
-    expect((db.prepare('SELECT COUNT(*) n FROM products').get() as any).n).toBe(before)
+    expect((db.prepare('SELECT COUNT(*) n FROM products').get() as any).n).toBe(before + 1)
     expect(again.j.ok).toBe(true)
+  })
+
+  it('товар, который уже лежит в «Добавках», переиспользуется без дубля', async () => {
+    const t = Date.now()
+    const cat = db.prepare("SELECT id FROM categories WHERE name='Добавки'").get() as any
+    const prod = Number(db.prepare(`INSERT INTO products(name,price,icon,available,sort_order,category_id,created_at,updated_at,counts_as_cup,free_eligible) VALUES(?,?,?,1,0,?,?,?,0,0)`).run('Ваниль-' + T, 12, 'Coffee', cat.id, t, t).lastInsertRowid)
+    const mod = Number(db.prepare(`INSERT INTO modifiers(name,price,group_key,available,sort_order,created_at,updated_at) VALUES(?,?,?,1,0,?,?)`).run('Ваниль-' + T, 12, 'syrup', t, t).lastInsertRowid)
+    const before = (db.prepare('SELECT COUNT(*) n FROM products').get() as any).n
+    await adm('POST', '/modifiers/backfill-products')
+    expect((db.prepare('SELECT linked_product_id l FROM modifiers WHERE id=?').get(mod) as any).l).toBe(prod)
+    expect((db.prepare('SELECT COUNT(*) n FROM products').get() as any).n).toBe(before)
+  })
+
+  it('товар, уже занятый другой добавкой, не отбирается', async () => {
+    const t = Date.now()
+    const cat = db.prepare("SELECT id FROM categories WHERE name='Добавки'").get() as any
+    const prod = Number(db.prepare(`INSERT INTO products(name,price,icon,available,sort_order,category_id,created_at,updated_at,counts_as_cup,free_eligible) VALUES(?,?,?,1,0,?,?,?,0,0)`).run('Мята-' + T, 15, 'Coffee', cat.id, t, t).lastInsertRowid)
+    const mk = (n: string) => Number(db.prepare(`INSERT INTO modifiers(name,price,group_key,available,sort_order,created_at,updated_at) VALUES(?,?,?,1,0,?,?)`).run(n, 15, 'syrup', t, t).lastInsertRowid)
+    const first = mk('Мята-' + T)
+    await adm('POST', '/modifiers/backfill-products')
+    const firstLink = (db.prepare('SELECT linked_product_id l FROM modifiers WHERE id=?').get(first) as any).l
+    expect(firstLink).toBe(prod)
+
+    const second = mk('Мята-' + T) // то же имя, но товар уже занят
+    await adm('POST', '/modifiers/backfill-products')
+    const secondLink = (db.prepare('SELECT linked_product_id l FROM modifiers WHERE id=?').get(second) as any).l
+    expect(secondLink).not.toBeNull()
+    expect(secondLink).not.toBe(firstLink)
+  })
+
+  it('A2: две добавки не могут ссылаться на один товар (уникальный индекс)', async () => {
+    const t = Date.now()
+    const cat = db.prepare("SELECT id FROM categories WHERE name='Добавки'").get() as any
+    const prod = Number(db.prepare(`INSERT INTO products(name,price,icon,available,sort_order,category_id,created_at,updated_at,counts_as_cup,free_eligible) VALUES(?,?,?,1,0,?,?,?,0,0)`).run('Дубль-' + T, 5, 'Coffee', cat.id, t, t).lastInsertRowid)
+    const mk = (n: string) => Number(db.prepare(`INSERT INTO modifiers(name,price,group_key,available,sort_order,created_at,updated_at) VALUES(?,?,?,1,0,?,?)`).run(n, 5, 'syrup', t, t).lastInsertRowid)
+    const a = mk('Дубль-A-' + T)
+    const b = mk('Дубль-B-' + T)
+    db.prepare('UPDATE modifiers SET linked_product_id=? WHERE id=?').run(prod, a)
+    expect(() => db.prepare('UPDATE modifiers SET linked_product_id=? WHERE id=?').run(prod, b)).toThrow()
   })
 
   it('схема из чекбоксов Studio (modifierIds) + товар → до выгрузки опции недоступны, но zero есть', async () => {

@@ -5,6 +5,7 @@ import { config } from '../config'
 import { SCHEMA } from './schema'
 import { runMigrations } from './migrate'
 import { migrateEvotorSchema } from '../integrations/evotor/db'
+import { dedupeCategoriesByName } from '../modules/catalog/addonScheme'
 
 mkdirSync(dirname(config.dbPath), { recursive: true })
 mkdirSync(config.uploadsDir, { recursive: true })
@@ -15,3 +16,6 @@ db.pragma('foreign_keys = ON')
 db.exec(SCHEMA)
 migrateEvotorSchema(db)
 runMigrations(db)
+
+const collapsed = dedupeCategoriesByName(db)
+if (collapsed > 0) console.log(`[migrate] collapsed ${collapsed} duplicate categor${collapsed === 1 ? 'y' : 'ies'}`)

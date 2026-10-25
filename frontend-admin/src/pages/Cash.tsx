@@ -5,6 +5,7 @@ import type { EvotorStore, Health } from '../api/types'
 import { ago, fmtDateTime } from '../lib/format'
 import { Badge, Banner, Button, Card, ConfirmDialog, EmptyState, ErrorBox, Field, Input, PageHeader, Spinner, StatusDot, Toggle, useToast } from '../ui/kit'
 import { HelpLink } from '../components/HelpLink'
+import CashierMenuPanel from './cash/CashierMenuPanel'
 import type { Tone } from '../ui/kit'
 
 const LEVEL: Record<string, { tone: Tone; label: string }> = {
@@ -69,6 +70,8 @@ function StoreCard({ s, health, now, onChanged }: { s: EvotorStore; health?: Hea
           {drift.drift.slice(0, 20).map((d) => <li key={`${d.productId}-${d.evotorUuid}`}>{d.productId}: {d.issue}</li>)}
         </ul>
       )}
+      <CashierMenuPanel storeUuid={s.uuid} storeName={s.name ?? s.uuid.slice(0, 8)} />
+
       <ConfirmDialog open={wipe} title="Пересоздать каталог на точке?"
         onCancel={() => setWipe(false)}
         onConfirm={() => { void run('wipe', async () => { const r = await api<{ ok: boolean }>(`/evotor/stores/${s.uuid}/wipe-catalog`, { method: 'POST' }); return r.ok ? 'Каталог пересоздан' : 'Пересоздан с ошибками' }).finally(() => setWipe(false)) }}>
@@ -167,7 +170,7 @@ function TokensPanel({ allStoreUuids }: { allStoreUuids: string[] }) {
 }
 
 export default function Cash() {
-  const stores = useApi<{ stores: EvotorStore[] }>('/evotor/stores')
+  const stores = useApi<{ stores: EvotorStore[]; stale?: boolean; error?: string }>('/evotor/stores')
   const health = useApi<Health & { now: number }>('/evotor/health', { refreshMs: 60_000 })
   const emp = useApi<{ employees: Employee[] }>('/evotor/employees')
   const toast = useToast()
@@ -192,6 +195,12 @@ export default function Cash() {
         </div>
       </div>
       {stores.error && <ErrorBox message={stores.error} onRetry={stores.reload} />}
+      {stores.data?.stale && (
+        <Banner tone="warn">
+          Эвотор недоступен — список точек показан из кэша. Настройки меню и синхронизации продолжат работать,
+          данные обновятся при следующем успешном запросе.
+        </Banner>
+      )}
       {stores.loading && !stores.data && <Spinner />}
       {stores.data && !list.length && <Card><EmptyState title="Точек нет" text="Эвотор не вернул ни одной точки. Добавьте токен ниже или проверьте EVOTOR_API_TOKEN." /></Card>}
       <div className="grid gap-3 lg:grid-cols-2">

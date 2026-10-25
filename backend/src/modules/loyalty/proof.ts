@@ -4,8 +4,13 @@ import { config } from '../../config'
 import { serverKid, signToken, verifyServerToken } from '../../lib/crypto'
 import { activeVouchers } from '../vouchers/service'
 
+/**
+ * Номер карты, который кассир видит в приложении/на карте, показывается с пробелами
+ * каждые 4 цифры (`formatCardCode` в PWA). Кассир может ввести его как видит —
+ * поэтому разделители (пробелы, неразрывные пробелы, дефисы) отбрасываем до проверки.
+ */
 export function normalizeCardCode(value: string): string | null {
-  const raw = value.trim()
+  const raw = value.replace(/[\s\u00a0\u2010-\u2015\u2212-]+/g, '').trim()
   if (!/^\d{1,18}$/.test(raw)) return null
   const normalized = raw.replace(/^0+(?=\d)/, '')
   return normalized || '0'

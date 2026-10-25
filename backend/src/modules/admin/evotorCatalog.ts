@@ -118,7 +118,24 @@ export const adminEvotorCatalog = new Hono()
         }),
       })
     } catch (e) {
-      throw bad(String(e), 502)
+      // Эвотор недоступен — отдаём точки из кэша, иначе страница «Касса» мертва
+      // и настройку меню кассы (у каждой точки своя) не открыть.
+      try {
+        ensureStoresSchema()
+        const rows = db
+          .prepare(`SELECT store_uuid AS uuid, name, address, code, COALESCE(sync_enabled,0) AS syncEnabled
+                    FROM evotor_stores ORDER BY name COLLATE NOCASE`)
+          .all() as { uuid: string; name: string | null; address: string | null; code: string | null; syncEnabled: number }[]
+        if (!rows.length) throw bad(String(e), 502)
+        return c.json({
+          stores: rows.map((r) => ({ ...r, syncEnabled: r.syncEnabled === 1 })),
+          stale: true,
+          error: String(e),
+        })
+      } catch (fallbackErr) {
+        if (fallbackErr && typeof fallbackErr === 'object' && 'status' in fallbackErr) throw fallbackErr
+        throw bad(String(e), 502)
+      }
     }
   })
 

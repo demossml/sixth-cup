@@ -35,6 +35,54 @@ export type CatalogTopping = {
   available: boolean
 }
 
+/**
+ * Канонический словарь групп добавок — единственный источник для админки, каталога и валидации.
+ * Платная «Топпинг»/«Другое» в UI сохраняются как `extra`: касса трактует их одной группой.
+ */
+export const ADDON_GROUP_KEYS = ['milk', 'syrup', 'sugar', 'extra'] as const
+export type AddonGroupKey = (typeof ADDON_GROUP_KEYS)[number]
+
+export const ADDON_GROUPS: ReadonlyArray<{ key: AddonGroupKey; label: string }> = [
+  { key: 'milk', label: 'Молоко' },
+  { key: 'syrup', label: 'Сироп' },
+  { key: 'sugar', label: 'Сахар' },
+  { key: 'extra', label: 'Дополнительно' },
+]
+
+const ADDON_GROUP_ALIASES: Record<string, AddonGroupKey> = {
+  milk: 'milk',
+  'молоко': 'milk',
+  syrup: 'syrup',
+  'сироп': 'syrup',
+  sugar: 'sugar',
+  'сахар': 'sugar',
+  extra: 'extra',
+  topping: 'extra',
+  'топпинг': 'extra',
+  other: 'extra',
+  'прочее': 'extra',
+  'добавки': 'extra',
+  'добавка': 'extra',
+  'дополнительно': 'extra',
+}
+
+/** Синоним/кириллица → канонический ключ; неизвестное → null (мусор не проходит). */
+export function resolveAddonGroupKey(value: unknown): AddonGroupKey | null {
+  const key = normName(value)
+  if (!key) return null
+  return ADDON_GROUP_ALIASES[key] ?? null
+}
+
+/** Мягкая нормализация для данных из БД и старых клиентов: неизвестное → extra. */
+export function normalizeAddonGroupKey(value: unknown): AddonGroupKey {
+  return resolveAddonGroupKey(value) ?? 'extra'
+}
+
+/** Лимит по умолчанию для группы: extra — 2 разные опции, одиночные группы — 1. */
+export function defaultAddonMaxCount(groupKey: AddonGroupKey): number {
+  return groupKey === 'extra' ? 2 : 1
+}
+
 let ensured = false
 
 export function ensureAddonSchemeSchema(db: Database.Database): void {
@@ -87,18 +135,65 @@ CREATE INDEX IF NOT EXISTS idx_msi_product ON modifier_scheme_items(product_id);
     add('name_override', `ALTER TABLE modifier_scheme_items ADD COLUMN name_override TEXT`)
     add('sort_order', `ALTER TABLE modifier_scheme_items ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`)
   }
+
+  // 029: канон options получил price_override — добавляем и на БД, где миграция ещё не прошла.
+  const optionCols = cols('modifier_scheme_options')
+  if (optionCols.length && !optionCols.includes('price_override')) {
+    db.exec(`ALTER TABLE modifier_scheme_options ADD COLUMN price_override INTEGER`)
+  }
   ensured = true
 }
 
 const normName = (v: unknown) =>
   String(v ?? '').normalize('NFKC').toLocaleLowerCase('ru-RU').replace(/ё/g, 'е').replace(/\s+/g, ' ').trim()
 
-export function resolveAddonsCategoryId(db: Database.Database): number | null {
-  const env = Number(process.env.ADDONS_CATEGORY_ID || 0)
-  if (env > 0 && db.prepare('SELECT 1 FROM categories WHERE id=?').get(env)) return env
+/**
+ * Все категории-добавки. В БД может оказаться больше одной: guard в миграции 027
+ * использует SQLite lower(), который не складывает кириллицу, поэтому дубль создаётся
+ * на базе, где категория уже была заведена приложением.
+ */
+export function resolveAddonsCategoryIds(db: Database.Database): number[] {
   const rows = db.prepare('SELECT id, name FROM categories ORDER BY id').all() as { id: number; name: string }[]
-  const hit = rows.find((r) => normName(r.name).includes('добавк'))
-  return hit ? hit.id : null
+  const ids = rows.filter((r) => normName(r.name).includes('добавк')).map((r) => r.id)
+  const env = Number(process.env.ADDONS_CATEGORY_ID || 0)
+  if (env > 0 && rows.some((r) => r.id === env) && !ids.includes(env)) ids.unshift(env)
+  return ids
+}
+
+export function resolveAddonsCategoryId(db: Database.Database): number | null {
+  const ids = resolveAddonsCategoryIds(db)
+  return ids.length ? ids[0] : null
+}
+
+/**
+ * Схлопывает категории с одинаковым нормализованным названием (точные дубли).
+ * Товары и группы переносятся в оставшуюся категорию, лишние строки удаляются.
+ * Возвращает число удалённых категорий.
+ */
+export function dedupeCategoriesByName(db: Database.Database): number {
+  const rows = db.prepare('SELECT id, name FROM categories ORDER BY id').all() as { id: number; name: string }[]
+  const keep = new Map<string, number>()
+  const dups: { id: number; keepId: number }[] = []
+  for (const r of rows) {
+    const key = normName(r.name)
+    const kept = keep.get(key)
+    if (kept === undefined) keep.set(key, r.id)
+    else dups.push({ id: r.id, keepId: kept })
+  }
+  if (!dups.length) return 0
+
+  const hasProductGroups = !!db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='product_groups'")
+    .get()
+
+  db.transaction(() => {
+    for (const d of dups) {
+      db.prepare('UPDATE products SET category_id=? WHERE category_id=?').run(d.keepId, d.id)
+      if (hasProductGroups) db.prepare('UPDATE product_groups SET category_id=? WHERE category_id=?').run(d.keepId, d.id)
+      db.prepare('DELETE FROM categories WHERE id=?').run(d.id)
+    }
+  })()
+  return dups.length
 }
 
 /** Категория «Добавки»; если нет — создаём. */
@@ -175,21 +270,24 @@ export function syncModifierProduct(db: Database.Database, modifierId: number): 
 
   let pid: number | null = m.pid != null && db.prepare('SELECT 1 FROM products WHERE id=?').get(m.pid) ? m.pid : null
   if (pid == null) {
-    const all = db
-      .prepare('SELECT id, name, category_id AS cat, counts_as_cup AS cup, COALESCE(is_group,0) AS isGroup FROM products ORDER BY id')
-      .all() as { id: number; name: string; cat: number | null; cup: number; isGroup: number }[]
-    const same = all.filter((x) => normName(x.name) === normName(m.name) && x.isGroup === 0)
-    // 1) уже в «Добавки»  2) любой не-чашка с тем же именем (перенесём в «Добавки»)
-    // Напиток (counts_as_cup=1) не трогаем — создадим отдельный товар-добавку.
-    const takenByOther = (id: number) =>
-      db.prepare('SELECT 1 FROM modifiers WHERE linked_product_id=? AND id<>?').get(id, m.id) != null
-    // Товар, уже привязанный к другой добавке, повторно не забираем: иначе два модификатора
-    // делят один product и падает UNIQUE(modifiers.linked_product_id).
-    const free = same.filter((x) => !takenByOther(x.id))
-    const found =
-      free.find((x) => x.cat === cat) ??
-      free.find((x) => Number(x.cup) === 0) ??
-      null
+    // Owner decision (A1): adopt ONLY a product that already sits in «Добавки» and is not
+    // claimed by another modifier. Retail products are never pulled into «Добавки» just
+    // because the name matches — two different SKUs may share a name.
+    const taken = new Set(
+      (
+        db.prepare('SELECT linked_product_id AS pid FROM modifiers WHERE linked_product_id IS NOT NULL AND id<>?')
+          .all(m.id) as { pid: number }[]
+      ).map((r) => Number(r.pid)),
+    )
+    const candidates = db
+      .prepare(
+        `SELECT id, name FROM products
+         WHERE category_id=? AND COALESCE(is_group,0)=0
+         ORDER BY id`,
+      )
+      .all(cat) as { id: number; name: string }[]
+    const wanted = normName(m.name)
+    const found = candidates.find((x) => !taken.has(x.id) && normName(x.name) === wanted)
     pid = found ? found.id : null
   }
   if (pid != null) {
@@ -213,12 +311,16 @@ export function syncModifierProduct(db: Database.Database, modifierId: number): 
 
 export function listAddonProductIds(db: Database.Database): Set<number> {
   ensureAddonSchemeSchema(db)
-  const catId = resolveAddonsCategoryId(db)
+  // Все категории-добавки, а не только первая: на базе могло остаться несколько
+  // («Добавки», «Добавки » после переименования/дубля) — иначе часть добавок
+  // считается обычными товарами и показывается на кассе плиткой.
+  const catIds = resolveAddonsCategoryIds(db)
   const ids = new Set<number>()
-  if (catId != null) {
+  if (catIds.length) {
+    const placeholders = catIds.map(() => '?').join(',')
     for (const r of db
-      .prepare(`SELECT id FROM products WHERE available=1 AND category_id=?`)
-      .all(catId) as { id: number }[]) {
+      .prepare(`SELECT id FROM products WHERE available=1 AND category_id IN (${placeholders})`)
+      .all(...catIds) as { id: number }[]) {
       ids.add(r.id)
     }
   }
@@ -227,6 +329,13 @@ export function listAddonProductIds(db: Database.Database): Set<number> {
     .all() as { id: number }[]) {
     ids.add(r.id)
   }
+  try {
+    for (const r of db
+      .prepare(`SELECT DISTINCT product_id AS id FROM modifier_scheme_options WHERE product_id IS NOT NULL`)
+      .all() as { id: number }[]) {
+      ids.add(r.id)
+    }
+  } catch { /* options table may be missing on very old DBs */ }
   try {
     for (const r of db
       .prepare(`SELECT DISTINCT linked_product_id AS id FROM modifiers WHERE linked_product_id IS NOT NULL`)
@@ -251,6 +360,115 @@ export function loadSchemeItems(db: Database.Database, schemeId: number): Scheme
     .all(schemeId) as SchemeItemRow[]
 }
 
+/** Есть ли у схемы канонические опции (modifier_scheme_options). */
+export function schemeHasOptions(db: Database.Database, schemeId: number): boolean {
+  try {
+    const row = db
+      .prepare('SELECT COUNT(*) AS n FROM modifier_scheme_options WHERE scheme_id=?')
+      .get(schemeId) as { n: number } | undefined
+    return Number(row?.n ?? 0) > 0
+  } catch {
+    return false
+  }
+}
+
+/** id схем, где используется модификатор: канон (options) + легаси (items). */
+export function schemeIdsUsingModifier(db: Database.Database, modifierId: number): number[] {
+  const ids = new Set<number>()
+  try {
+    for (const r of db
+      .prepare('SELECT DISTINCT scheme_id AS id FROM modifier_scheme_options WHERE modifier_id=?')
+      .all(modifierId) as { id: number }[]) {
+      ids.add(Number(r.id))
+    }
+  } catch { /* options table may be missing */ }
+  for (const r of db
+    .prepare('SELECT DISTINCT scheme_id AS id FROM modifier_scheme_items WHERE modifier_id=?')
+    .all(modifierId) as { id: number }[]) {
+    ids.add(Number(r.id))
+  }
+  return [...ids]
+}
+
+/** Проекция options → легаси-форма items для совместимости старой админки (в БД не пишется). */
+export function schemeItemsFromOptions(
+  options: Array<{
+    id: number
+    schemeId: number
+    kind: string
+    productId: number | null
+    modifierId: number | null
+    name: string | null
+    groupKey: string
+    isDefault: boolean
+    required: boolean
+    maxCount: number
+    priceOverride?: number | null
+    sortOrder: number
+  }>,
+): SchemeItemRow[] {
+  return options.map((o) => ({
+    id: o.id,
+    schemeId: o.schemeId,
+    modifierId: o.kind === 'modifier' ? o.modifierId : null,
+    productId: o.kind === 'zero' ? null : o.productId,
+    groupKey: o.groupKey,
+    required: o.required ? 1 : 0,
+    maxCount: o.maxCount,
+    isDefault: o.isDefault ? 1 : 0,
+    zeroOption: o.kind === 'zero' ? 1 : 0,
+    priceOverride: o.priceOverride ?? null,
+    nameOverride: o.name,
+    sortOrder: o.sortOrder,
+  }))
+}
+
+/** Вход легаси-контракта items (что присылает старая админка) → строки options. */
+export function itemsPayloadToOptions(
+  items: {
+    modifierId?: number | null
+    productId?: number | null
+    groupKey?: string | null
+    required?: boolean | number
+    maxCount?: number
+    isDefault?: boolean | number
+    zeroOption?: boolean | number
+    priceOverride?: number | null
+    nameOverride?: string | null
+    sortOrder?: number
+  }[],
+) {
+  return items.map((it, idx) => {
+    const zero = !!it.zeroOption
+    const kind = zero ? 'zero' : it.modifierId != null ? 'modifier' : 'product'
+    return {
+      kind,
+      productId: zero ? null : (it.productId ?? null),
+      modifierId: zero || kind === 'product' ? null : (it.modifierId ?? null),
+      name: it.nameOverride ?? null,
+      groupKey: normalizeAddonGroupKey(it.groupKey),
+      isDefault: !!it.isDefault,
+      required: !!it.required,
+      maxCount: it.maxCount ?? 1,
+      priceOverride: zero ? null : (it.priceOverride ?? null),
+      sortOrder: it.sortOrder ?? idx,
+    }
+  })
+}
+
+/**
+ * Одноразовая конверсия легаси items → options.
+ * Нужна схемам, созданным до появления options: после конверсии канон один.
+ */
+export function convertLegacyItemsToOptions(db: Database.Database, schemeId: number): number {
+  if (schemeHasOptions(db, schemeId)) return 0
+  const items = loadSchemeItems(db, schemeId)
+  if (!items.length) return 0
+  replaceSchemeOptions(db, schemeId, itemsPayloadToOptions(items))
+  db.prepare('DELETE FROM modifier_scheme_items WHERE scheme_id=?').run(schemeId)
+  return items.length
+}
+
 function withZeroDefaults(schemeId: number, list: CatalogTopping[]): CatalogTopping[] {
   const spec: [string, string, number][] = [['milk', 'Обычное', 1], ['syrup', 'Без сиропа', 2]]
   for (const [key, label, n] of spec) {
@@ -269,9 +487,15 @@ export function buildCatalogToppings(
   db: Database.Database,
   schemeId: number | null,
   uuidByProduct: Map<number, string>,
+  /** Per-request cache: the catalog asks for the same scheme once per product. */
+  cache?: Map<number, CatalogTopping[]>,
 ): CatalogTopping[] {
   if (schemeId == null) return []
-  return withZeroDefaults(schemeId, buildCatalogToppingsRaw(db, schemeId, uuidByProduct))
+  const cached = cache?.get(schemeId)
+  if (cached) return [...cached]
+  const built = withZeroDefaults(schemeId, buildCatalogToppingsRaw(db, schemeId, uuidByProduct))
+  cache?.set(schemeId, built)
+  return [...built]
 }
 
 function buildCatalogToppingsRaw(
@@ -292,12 +516,14 @@ function buildCatalogToppingsRaw(
     isDefault: number
     required: number
     maxCount: number
+    priceOverride: number | null
   }> = []
   try {
     optionRows = db
       .prepare(
         `SELECT id, kind, product_id AS productId, modifier_id AS modifierId, name,
-                group_key AS groupKey, is_default AS isDefault, required, max_count AS maxCount
+                group_key AS groupKey, is_default AS isDefault, required, max_count AS maxCount,
+                price_override AS priceOverride
          FROM modifier_scheme_options WHERE scheme_id=? ORDER BY sort_order, id`,
       )
       .all(schemeId) as typeof optionRows
@@ -324,18 +550,7 @@ function buildCatalogToppingsRaw(
     .all() as { id: number; name: string; price: number; available: number }[]
   const prodById = new Map(prodRows.map((p) => [p.id, p]))
 
-  const normKey = (v: unknown) => {
-    const k = String(v ?? '')
-      .normalize('NFKC')
-      .toLocaleLowerCase('ru-RU')
-      .replace(/ё/g, 'е')
-      .replace(/\s+/g, ' ')
-      .trim()
-    if (k === 'milk' || k === 'молоко') return 'milk'
-    if (k === 'syrup' || k === 'сироп') return 'syrup'
-    if (k === 'sugar' || k === 'сахар') return 'sugar'
-    return 'extra'
-  }
+  const normKey = normalizeAddonGroupKey
 
   const out: CatalogTopping[] = []
 
@@ -372,6 +587,7 @@ function buildCatalogToppingsRaw(
       }
 
       if (!name) continue
+      if (it.priceOverride != null) price = Number(it.priceOverride)
       const uuid = productId != null ? uuidByProduct.get(productId) ?? null : null
       const paid = !zero && price > 0
       const available = zero ? true : modAvailable && (paid ? uuid != null : true)
@@ -456,6 +672,11 @@ function buildCatalogToppingsRaw(
 }
 
 
+/**
+ * Легаси-запись в modifier_scheme_items.
+ * @deprecated Канон схемы — modifier_scheme_options ([replaceSchemeOptions]); маршруты админки
+ * больше не пишут items. Функция сохранена только для совместимости внешних вызовов.
+ */
 export function replaceSchemeItems(
   db: Database.Database,
   schemeId: number,
@@ -500,7 +721,7 @@ export function replaceSchemeItems(
       zero ? null : productId,
       groupKey,
       raw.required ? 1 : 0,
-      raw.maxCount ?? (groupKey === 'milk' || groupKey === 'syrup' ? 1 : 2),
+      raw.maxCount ?? defaultAddonMaxCount(normalizeAddonGroupKey(groupKey)),
       isDefaultVal,
       zero ? 1 : 0,
       zero ? 0 : (raw.priceOverride ?? null),
@@ -516,7 +737,8 @@ export function loadSchemeOptions(db: Database.Database, schemeId: number) {
     return db
       .prepare(
         `SELECT id, scheme_id AS schemeId, kind, product_id AS productId, modifier_id AS modifierId,
-                name, group_key AS groupKey, is_default AS isDefault, required, max_count AS maxCount, sort_order AS sortOrder
+                name, group_key AS groupKey, is_default AS isDefault, required, max_count AS maxCount,
+                COALESCE(price_override, 0) AS priceOverride, sort_order AS sortOrder
          FROM modifier_scheme_options WHERE scheme_id=? ORDER BY sort_order, id`,
       )
       .all(schemeId)
@@ -531,6 +753,7 @@ export function loadSchemeOptions(db: Database.Database, schemeId: number) {
         isDefault: !!o.isDefault,
         required: !!o.required,
         maxCount: o.maxCount,
+        priceOverride: o.priceOverride ? Number(o.priceOverride) : null,
         sortOrder: o.sortOrder,
       }))
   } catch {
@@ -550,28 +773,48 @@ export function replaceSchemeOptions(
     isDefault?: boolean
     required?: boolean
     maxCount?: number
+    priceOverride?: number | null
     sortOrder?: number
   }>,
 ) {
-  db.prepare('DELETE FROM modifier_scheme_options WHERE scheme_id=?').run(schemeId)
-  const ins = db.prepare(
-    `INSERT INTO modifier_scheme_options(scheme_id, kind, product_id, modifier_id, name, group_key, is_default, required, max_count, sort_order)
-     VALUES (?,?,?,?,?,?,?,?,?,?)`,
+  // id опции — это `Topping.id`, на который ссылаются строки корзины и чека.
+  // Поэтому обновляем позиции на месте, а не удаляем/вставляем: иначе повторное сохранение
+  // схемы «теряет» уже выбранные добавки (ReceiptValidator → option_removed).
+  const existing = (db.prepare(
+    'SELECT id FROM modifier_scheme_options WHERE scheme_id=? ORDER BY sort_order, id',
+  ).all(schemeId) as { id: number }[]).map((r) => r.id)
+  const upd = db.prepare(
+    `UPDATE modifier_scheme_options
+        SET kind=?, product_id=?, modifier_id=?, name=?, group_key=?, is_default=?, required=?,
+            max_count=?, price_override=?, sort_order=?
+      WHERE id=?`,
   )
+  const ins = db.prepare(
+    `INSERT INTO modifier_scheme_options(scheme_id, kind, product_id, modifier_id, name, group_key, is_default, required, max_count, price_override, sort_order)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+  )
+  // Уникальный индекс допускает один default на группу — снимаем флаги до перезаписи.
+  db.prepare('UPDATE modifier_scheme_options SET is_default=0 WHERE scheme_id=?').run(schemeId)
   options.forEach((o, idx) => {
     const kind = o.kind
-    const groupKey = (o.groupKey || 'extra').trim() || 'extra'
-    ins.run(
-      schemeId,
+    const groupKey = normalizeAddonGroupKey(o.groupKey)
+    const values = [
       kind,
-      kind === 'product' ? o.productId ?? null : null,
+      kind === 'zero' ? null : o.productId ?? null,
       kind === 'modifier' ? o.modifierId ?? null : null,
       o.name ?? null,
       groupKey,
       o.isDefault ? 1 : 0,
       o.required ? 1 : 0,
-      o.maxCount ?? 1,
+      o.maxCount ?? defaultAddonMaxCount(groupKey),
+      kind === 'zero' ? null : (o.priceOverride ?? null),
       o.sortOrder ?? idx,
-    )
+    ] as const
+    const id = existing[idx]
+    if (id != null) upd.run(...values, id)
+    else ins.run(schemeId, ...values)
   })
+  for (let i = options.length; i < existing.length; i++) {
+    db.prepare('DELETE FROM modifier_scheme_options WHERE id=?').run(existing[i])
+  }
 }

@@ -7,7 +7,8 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
-import { buildCatalogToppings, listAddonProductIds, ensureAddonSchemeSchema } from '../catalog/addonScheme'
+import { buildCatalogToppings, listAddonProductIds, ensureAddonSchemeSchema, resolveAddonsCategoryIds, type CatalogTopping } from '../catalog/addonScheme'
+import { productArticleNumber } from '../catalog/productIdentity'
 import { hashToken, requireDevice, type DeviceEnv } from '../../middleware/device'
 import { applyReceipts } from '../loyalty/receipts'
 import { applyOnlineSale } from './sales'
@@ -17,6 +18,7 @@ import { resolveAndReserve } from '../loyalty/reservations'
 import { log, maskCode, shortId } from '../../lib/logBuffer'
 import { allowLogIngest, entryZ, ingest } from '../logs/routes'
 import { staffDeviceRoutes } from '../staff/deviceRoutes'
+import { getCashierMenu } from '../../lib/cashierMenu'
 
 export const deviceRoutes = new Hono<DeviceEnv>()
   .get('/ping', (c) => {
@@ -290,13 +292,22 @@ export const deviceRoutes = new Hono<DeviceEnv>()
                p.recipe_text AS recipeText, p.available AS globalAvailable,
                p.category_id AS categoryId,
                p.group_id AS groupId, p.variant_label AS variantLabel, p.variant_sort AS variantSort,
-               p.size_value AS sizeValue, p.size_unit AS sizeUnit
+               p.size_value AS sizeValue, p.size_unit AS sizeUnit,
+               COALESCE(p.is_group, 0) AS isGroup,
+               p.parent_product_id AS parentProductId
         FROM products p
         LEFT JOIN product_groups g ON g.id = p.group_id
         WHERE (p.season_start_at IS NULL OR p.season_start_at<=?)
           AND (p.season_end_at IS NULL OR p.season_end_at>=?)
         ORDER BY p.sort_order, p.id
       `).all(nowMs, nowMs) as Record<string, unknown>[]
+
+      // Добавки вычисляем ДО фильтра доступности: товар-добавка, выключенный для точки,
+      // всё равно должен доехать до кассы с hideFromMenu — иначе APK покажет его плиткой,
+      // пока SKU остаётся продаваемым в Эвоторе.
+      ensureAddonSchemeSchema(db)
+      const addonProductIds = listAddonProductIds(db)
+      const allProducts = products
 
       if (storeUuid) {
         try {
@@ -315,6 +326,12 @@ export const deviceRoutes = new Hono<DeviceEnv>()
       } else {
         products = products.filter((p) => Number(p.globalAvailable) === 1)
       }
+
+      const keptIds = new Set(products.map((p) => Number(p.id)))
+      const droppedAddons = allProducts.filter(
+        (p) => Number(p.globalAvailable) === 1 && !keptIds.has(Number(p.id)) && addonProductIds.has(Number(p.id)),
+      )
+      if (droppedAddons.length) products = products.concat(droppedAddons)
 
       // evotor uuid per product (prefer link for store, else any link, else products.evotor_uuid)
       const linkRows = db.prepare(`
@@ -335,9 +352,6 @@ export const deviceRoutes = new Hono<DeviceEnv>()
           if (!uuidByProduct.has(l.productId)) uuidByProduct.set(l.productId, l.evotorUuid)
         }
       }
-
-      ensureAddonSchemeSchema(db)
-      const addonProductIds = listAddonProductIds(db)
 
       const modifiers = db.prepare(`
         SELECT id, name, price, group_key AS groupKey, sort_order AS sortOrder, available,
@@ -378,6 +392,7 @@ export const deviceRoutes = new Hono<DeviceEnv>()
       // upsell candidates: available products not counting as cup (food/extra), max pool
       const upsellPool = products
         .filter((p) => !p.countsAsCup)
+        .filter((p) => Number(p.isGroup) !== 1)
         .filter((p) => !modifierProductIds.has(Number(p.id)))
         .slice(0, 20)
         .map((p) => ({
@@ -401,10 +416,12 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         return false
       }
 
+      // One DB read per scheme instead of one per product (was N+1: full products/modifiers scans).
+      const toppingsCache = new Map<number, CatalogTopping[]>()
       const out = products.map((p) => {
         const id = Number(p.id)
         const schemeId = p.schemeId != null ? Number(p.schemeId) : null
-        const toppings = buildCatalogToppings(db, schemeId, uuidByProduct)
+        const toppings = buildCatalogToppings(db, schemeId, uuidByProduct, toppingsCache)
         const upsell = upsellPool.filter((u) => u.id !== id).slice(0, 6)
         const description = (p.description as string | null) ?? null
         const categoryId = p.categoryId != null ? Number(p.categoryId) : null
@@ -426,6 +443,8 @@ export const deviceRoutes = new Hono<DeviceEnv>()
           recipeText: p.recipeText ?? null,
           recipe: p.recipeText ?? null,
           evotorUuid: uuidByProduct.get(id) || null,
+          // Стабильная связка с ProductTable.ROW_CODE на терминале (см. productIdentity.ts).
+          articleNumber: productArticleNumber(id),
           groupId: p.groupId != null ? Number(p.groupId) : null,
           variantLabel: (p.variantLabel as string | null) ?? null,
           variantSort: Number(p.variantSort ?? 0),
@@ -434,13 +453,36 @@ export const deviceRoutes = new Hono<DeviceEnv>()
           toppings,
           upsell,
           isModifier: modifierProductIds.has(id),
-          hideFromMenu: modifierProductIds.has(id),
+          isGroup: Number(p.isGroup) === 1,
+          parentProductId: (p.parentProductId as number | null) ?? null,
+          hideFromMenu: modifierProductIds.has(id) || Number(p.isGroup) === 1,
         }
       })
 
-      const categories = catRows
+      // Меню настраивается по каждой кассе (админка → Касса → «Меню на кассе»).
+      const cashierMenu = getCashierMenu(storeUuid)
+      const norm = (v: unknown) => String(v).toLocaleLowerCase('ru-RU')
+      const hiddenGroupNames = new Set(cashierMenu.hiddenGroups.map(norm))
+      const visibleRows = catRows
         .filter((r) => out.some((p) => p.categoryId === r.id && !p.hideFromMenu))
-        .map((r) => ({ id: r.id, name: r.name, sortOrder: r.sortOrder }))
+        .filter((r) => !hiddenGroupNames.has(norm(r.name)))
+      const categories = visibleRows.map((r) => ({ id: r.id, name: r.name, sortOrder: r.sortOrder }))
+      // Порядок: если у точки задан свой — уважаем его, остальные группы дописываем
+      // в порядке categories.sort_order. Иначе — просто sort_order.
+      const byName = new Map(visibleRows.map((r) => [norm(r.name), String(r.name)]))
+      const ordered: string[] = []
+      for (const name of cashierMenu.order) {
+        const real = byName.get(norm(name))
+        if (real && !ordered.includes(real)) ordered.push(real)
+      }
+      for (const r of visibleRows) if (!ordered.includes(String(r.name))) ordered.push(String(r.name))
+      // `hidden` нужен кассе явно: из order группа пропадает, но товары остаются в products,
+      // и без этого списка терминал дорисовал бы её чип в конце по алфавиту.
+      const menu = {
+        showAllTab: cashierMenu.showAllTab,
+        order: ordered,
+        hidden: catRows.filter((r) => hiddenGroupNames.has(norm(r.name))).map((r) => r.name),
+      }
 
       // Размеры одного товара: APK рисует одну плитку и подставляет UUID выбранного варианта.
       // groups содержит только карточки с 2+ доступными вариантами; одиночные идут как обычные products.
@@ -486,6 +528,9 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         generatedAt: Math.floor(Date.now() / 1000),
         storeUuid: storeUuid || null,
         categories,
+        menu,
+        // Все категории-добавки: APK скрывает товар по categoryId, не по названию.
+        addonCategoryIds: resolveAddonsCategoryIds(db),
         products: out,
         groups,
       })

@@ -129,3 +129,36 @@ describe('referral aggregate and partial refund', () => {
     expect(bal2.cashback_balance).toBe(0)
   })
 })
+
+describe('manual card number as the guest sees it', () => {
+  it('card exists in the backend right after guest registration', async () => {
+    const g = await guest()
+    const code = String(g.card.cardCode)
+    expect(code).toMatch(/^\d+$/)
+    const row = db.prepare('SELECT card_id, card_code FROM cards c JOIN users u ON u.id=c.user_id WHERE u.card_code=?').get(code)
+    expect(row).toBeTruthy()
+  })
+
+  it('finds the card by a number typed with groups of four', async () => {
+    const g = await guest()
+    const code = String(g.card.cardCode)
+    const spaced = code.padStart(4, '0').replace(/(.{4})(?=.)/g, '$1 ')
+    const r = await resolve('dev-manual', spaced)
+    expect(r.status).toBe(200)
+    expect(r.data.ok).toBe(true)
+    expect(String(r.data.cardCode)).toBe(code)
+    // ручной ввод — только начисление: бонусы и бесплатные не резервируются
+    expect(r.data.freeStatus).toBe('NONE')
+    expect(r.data.reservationId).toBeNull()
+  })
+
+  it('distinguishes an unknown card from garbage without leaking data', async () => {
+    const missing = await resolve('dev-manual', '999999999')
+    expect(missing.status).toBe(404)
+    expect(missing.data).toMatchObject({ ok: false, error: 'card_not_found' })
+
+    const garbage = await resolve('dev-manual', 'abcdef')
+    expect(garbage.status).toBe(404)
+    expect(garbage.data).toMatchObject({ ok: false, error: 'invalid_card' })
+  })
+})

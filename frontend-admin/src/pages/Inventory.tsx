@@ -33,6 +33,7 @@ export default function Inventory() {
   const [selectedItems, setSelectedItems] = useState<number[]>([])
   const [openId, setOpenId] = useState<number | null>(null)
   const [facts, setFacts] = useState<Record<number, string>>({})
+  const [recountIds, setRecountIds] = useState<number[]>([])
 
   const list = useApi<{ docs: InvDoc[] }>('/inventory')
   const items = useApi<{ items: StockItem[] }>('/stock/items?active=1')
@@ -95,6 +96,52 @@ export default function Inventory() {
     try {
       await api(`/inventory/${openId}/post`, { method: 'POST' })
       toast.push('Проведена — остатки выровнены по факту')
+      detail.reload()
+      list.reload()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const sendRecount = async () => {
+    if (openId == null || !recountIds.length) return
+    setBusy(true)
+    try {
+      await api(`/inventory/${openId}/recount`, { method: 'POST', body: { stockItemIds: recountIds } })
+      toast.push(`Отправлено в пересчёт: ${recountIds.length}`)
+      setRecountIds([])
+      detail.reload()
+      list.reload()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const submitDoc = async () => {
+    if (openId == null) return
+    setBusy(true)
+    try {
+      await api(`/inventory/${openId}/submit`, { method: 'POST' })
+      toast.push('Подсчёт завершён — можно проводить')
+      detail.reload()
+      list.reload()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const cancelDoc = async () => {
+    if (openId == null) return
+    setBusy(true)
+    try {
+      await api(`/inventory/${openId}/cancel`, { method: 'POST' })
+      toast.push('Документ отменён')
       detail.reload()
       list.reload()
     } catch (e) {
@@ -235,6 +282,7 @@ export default function Inventory() {
                 <table className="w-full min-w-[400px] text-left text-[13px]">
                   <thead className="sticky top-0 border-b border-line bg-surface-2 text-[11px] uppercase tracking-wide text-ink-tertiary">
                     <tr>
+                      <th className="w-8 px-2 py-2 font-semibold" aria-label="Выбрать для пересчёта" />
                       <th className="px-3 py-2 font-semibold">Позиция</th>
                       <th className="px-3 py-2 font-semibold text-right">Учёт</th>
                       <th className="px-3 py-2 font-semibold text-right">Факт</th>
@@ -250,6 +298,21 @@ export default function Inventory() {
                       const closed = detail.data!.doc.status === 'posted'
                       return (
                         <tr key={l.id} className="border-b border-line/70 last:border-0">
+                          <td className="px-2 py-2">
+                            {!closed && (
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4 accent-[#0B4A8D]"
+                                aria-label={`Выбрать «${l.itemName}» для пересчёта`}
+                                checked={recountIds.includes(l.stockItemId)}
+                                onChange={() =>
+                                  setRecountIds((prev) =>
+                                    prev.includes(l.stockItemId) ? prev.filter((x) => x !== l.stockItemId) : [...prev, l.stockItemId],
+                                  )
+                                }
+                              />
+                            )}
+                          </td>
                           <td className="px-3 py-2 font-medium">
                             {l.itemName}
                             <span className="ml-1 text-ink-tertiary">{l.unit}</span>
@@ -278,10 +341,15 @@ export default function Inventory() {
                   </tbody>
                 </table>
               </div>
-              {detail.data.doc.status !== 'posted' && (
+              {detail.data.doc.status !== 'posted' && detail.data.doc.status !== 'cancelled' && (
                 <div className="flex flex-wrap gap-2 border-t border-line p-3">
                   <Button size="sm" variant="secondary" loading={busy} onClick={saveFacts}>Сохранить факт</Button>
+                  <Button size="sm" variant="secondary" loading={busy} disabled={!recountIds.length} onClick={sendRecount}>
+                    В пересчёт{recountIds.length ? ` (${recountIds.length})` : ''}
+                  </Button>
+                  <Button size="sm" variant="secondary" loading={busy} onClick={submitDoc}>Завершить подсчёт</Button>
                   <Button size="sm" loading={busy} disabled={!canPost} onClick={postDoc}>Провести</Button>
+                  <Button size="sm" variant="ghost" loading={busy} onClick={cancelDoc}>Отменить</Button>
                 </div>
               )}
             </>

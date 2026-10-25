@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS evotor_stores (
   store_uuid TEXT PRIMARY KEY,
   name TEXT,
   local_store_id INTEGER,
-  updated_at INTEGER
+  updated_at INTEGER,
+  sync_enabled INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS evotor_devices (
@@ -129,5 +130,10 @@ CREATE TABLE IF NOT EXISTS card_denylist (
     ensureTokenSchema(db)
   } catch {
     /* tokens optional if crypto fails in exotic env */
+  }
+  // Older DBs were created before sync_enabled was part of the base schema.
+  const storeCols = (db.prepare('PRAGMA table_info(evotor_stores)').all() as { name: string }[]).map((c) => c.name)
+  if (!storeCols.includes('sync_enabled')) {
+    db.exec('ALTER TABLE evotor_stores ADD COLUMN sync_enabled INTEGER NOT NULL DEFAULT 0')
   }
 }
