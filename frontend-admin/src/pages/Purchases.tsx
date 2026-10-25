@@ -7,10 +7,10 @@ import {
 } from '../ui/kit'
 import { Plus, RefreshCw, Truck } from 'lucide-react'
 import { HelpLink } from '../components/HelpLink'
-import { LegacyHint } from './shared'
 import BankTab from './purchases/BankTab'
 import ReconTab from './purchases/ReconTab'
 import OrdersTab from './purchases/OrdersTab'
+import ReturnsTab from './purchases/ReturnsTab'
 
 type Supplier = { id: number; name: string; inn: string | null; contact: string | null; active: number }
 type Invoice = {
@@ -32,7 +32,7 @@ function statusBadge(s: string) {
 
 export default function Purchases() {
   const toast = useToast()
-  const [tab, setTab] = useState<'invoices' | 'orders' | 'suppliers' | 'debt' | 'bank' | 'recon'>('invoices')
+  const [tab, setTab] = useState<'invoices' | 'orders' | 'returns' | 'suppliers' | 'debt' | 'bank' | 'recon'>('invoices')
   const [showSupplier, setShowSupplier] = useState(false)
   const [showInvoice, setShowInvoice] = useState(false)
   const [sName, setSName] = useState('')
@@ -136,6 +136,7 @@ export default function Purchases() {
   const tabs = useMemo(() => [
     { key: 'invoices' as const, label: 'Накладные', count: invoices.data?.invoices.length },
     { key: 'orders' as const, label: 'Заказы' },
+    { key: 'returns' as const, label: 'Возвраты' },
     { key: 'suppliers' as const, label: 'Поставщики', count: suppliers.data?.suppliers.length },
     { key: 'debt' as const, label: 'Долги', count: debt.data?.debts.length },
     { key: 'bank' as const, label: 'Банк' },
@@ -273,10 +274,6 @@ export default function Purchases() {
       <Tabs items={tabs} value={tab} onChange={setTab} />
 
       {tab === 'invoices' && (
-        <LegacyHint>Возвраты поставщику пока доступны только в прежнем интерфейсе.</LegacyHint>
-      )}
-
-      {tab === 'invoices' && (
         <Card pad={false}>
           {invoices.loading && <div className="p-4"><Skeleton className="h-24" /></div>}
           {invoices.error && <div className="p-4"><ErrorBox message={invoices.error} /></div>}
@@ -359,6 +356,7 @@ export default function Purchases() {
           onInvoiceCreated={() => { invoices.reload(); debt.reload() }}
         />
       )}
+      {tab === 'returns' && <ReturnsTab suppliers={suppliers.data?.suppliers ?? []} items={items.data?.items ?? []} />}
       {tab === 'bank' && <BankTab />}
       {tab === 'recon' && <ReconTab suppliers={suppliers.data?.suppliers ?? []} />}
 

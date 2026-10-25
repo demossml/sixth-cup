@@ -7,6 +7,7 @@ import {
   PageHeader, Card, EmptyState, ErrorBox, KpiTile, Select, Skeleton, Tabs,
 } from '../ui/kit'
 import { HelpLink } from '../components/HelpLink'
+import { LegacyHint } from './shared'
 import { SimpleBarChart } from '../components/SimpleChart'
 
 type Period = '24h' | '7d' | '30d' | 'yesterday'
@@ -122,6 +123,8 @@ export default function Analytics() {
           <KpiTile label="Кэшбэк" value={fmtKop(sum('cashbackKop'))} sub="начислено" />
         </div>
       )}
+
+      <LegacyHint>Теплокарта по часам и сводный обзор пока доступны только в прежнем интерфейсе.</LegacyHint>
 
       <Card className="mb-4">
         <div className="mb-2 text-[14px] font-semibold">Динамика</div>
