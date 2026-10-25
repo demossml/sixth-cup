@@ -28,3 +28,37 @@ describe('manual loyalty card codes', () => {
     expect(normalizeCardCode('   ')).toBeNull()
   })
 })
+
+describe('cards are real backend records and stay single', () => {
+  it('assigns one card_id and one card_code per user, repeat calls change nothing', async () => {
+    const { db } = await import('../db')
+    const { ensureCard } = await import('../modules/loyalty/proof')
+    const t = Date.now()
+    const uid = Number(db.prepare(`INSERT INTO users(phone,nickname,invite_code,created_at) VALUES(?,?,?,?)`)
+      .run(`guest:${t}`, 'Гость ТЕСТ', `T${t.toString(36).toUpperCase()}`, t).lastInsertRowid)
+
+    ensureCard(uid)
+    const first = db.prepare('SELECT card_id, card_code FROM users WHERE id=?').get(uid) as { card_id: string; card_code: string }
+    expect(first.card_id).toBeTruthy()
+    expect(first.card_code).toMatch(/^\d+$/)
+    const cards = db.prepare('SELECT COUNT(*) AS n FROM cards WHERE user_id=?').get(uid) as { n: number }
+
+    ensureCard(uid)
+    ensureCard(uid)
+    const again = db.prepare('SELECT card_id, card_code FROM users WHERE id=?').get(uid) as { card_id: string; card_code: string }
+    const cardsAfter = db.prepare('SELECT COUNT(*) AS n FROM cards WHERE user_id=?').get(uid) as { n: number }
+    expect(again).toEqual(first)
+    expect(cardsAfter.n).toBe(cards.n)
+    expect(cardsAfter.n).toBe(1)
+  })
+
+  it('gives different guests different codes', async () => {
+    const { db } = await import('../db')
+    const { createGuestUser } = await import('../modules/auth/service')
+    const a = createGuestUser()
+    const b = createGuestUser()
+    const ca = db.prepare('SELECT card_code FROM users WHERE id=?').get(a) as { card_code: string }
+    const cb = db.prepare('SELECT card_code FROM users WHERE id=?').get(b) as { card_code: string }
+    expect(ca.card_code).not.toBe(cb.card_code)
+  })
+})
