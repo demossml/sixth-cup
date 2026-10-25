@@ -717,7 +717,7 @@ export function replaceSchemeItems(
       zero ? null : productId,
       groupKey,
       raw.required ? 1 : 0,
-      raw.maxCount ?? (groupKey === 'milk' || groupKey === 'syrup' ? 1 : 2),
+      raw.maxCount ?? defaultAddonMaxCount(normalizeAddonGroupKey(groupKey)),
       isDefaultVal,
       zero ? 1 : 0,
       zero ? 0 : (raw.priceOverride ?? null),
