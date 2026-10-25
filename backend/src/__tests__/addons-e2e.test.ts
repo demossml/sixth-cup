@@ -43,6 +43,7 @@ const catalog = async (storeUuid = STORE) => {
 /** Стабильная часть ответа каталога: без generatedAt, чтобы фикстура не «старела». */
 const snap = (j: any) => ({
   storeUuid: j.storeUuid,
+  addonCategoryIds: j.addonCategoryIds,
   categories: j.categories,
   products: j.products,
   groups: j.groups,

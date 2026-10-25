@@ -7,7 +7,8 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
-import { buildCatalogToppings, listAddonProductIds, ensureAddonSchemeSchema, type CatalogTopping } from '../catalog/addonScheme'
+import { buildCatalogToppings, listAddonProductIds, ensureAddonSchemeSchema, resolveAddonsCategoryIds, type CatalogTopping } from '../catalog/addonScheme'
+import { productArticleNumber } from '../catalog/productIdentity'
 import { hashToken, requireDevice, type DeviceEnv } from '../../middleware/device'
 import { applyReceipts } from '../loyalty/receipts'
 import { applyOnlineSale } from './sales'
@@ -300,6 +301,13 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         ORDER BY p.sort_order, p.id
       `).all(nowMs, nowMs) as Record<string, unknown>[]
 
+      // Добавки вычисляем ДО фильтра доступности: товар-добавка, выключенный для точки,
+      // всё равно должен доехать до кассы с hideFromMenu — иначе APK покажет его плиткой,
+      // пока SKU остаётся продаваемым в Эвоторе.
+      ensureAddonSchemeSchema(db)
+      const addonProductIds = listAddonProductIds(db)
+      const allProducts = products
+
       if (storeUuid) {
         try {
           const rows = db.prepare(
@@ -317,6 +325,12 @@ export const deviceRoutes = new Hono<DeviceEnv>()
       } else {
         products = products.filter((p) => Number(p.globalAvailable) === 1)
       }
+
+      const keptIds = new Set(products.map((p) => Number(p.id)))
+      const droppedAddons = allProducts.filter(
+        (p) => Number(p.globalAvailable) === 1 && !keptIds.has(Number(p.id)) && addonProductIds.has(Number(p.id)),
+      )
+      if (droppedAddons.length) products = products.concat(droppedAddons)
 
       // evotor uuid per product (prefer link for store, else any link, else products.evotor_uuid)
       const linkRows = db.prepare(`
@@ -337,9 +351,6 @@ export const deviceRoutes = new Hono<DeviceEnv>()
           if (!uuidByProduct.has(l.productId)) uuidByProduct.set(l.productId, l.evotorUuid)
         }
       }
-
-      ensureAddonSchemeSchema(db)
-      const addonProductIds = listAddonProductIds(db)
 
       const modifiers = db.prepare(`
         SELECT id, name, price, group_key AS groupKey, sort_order AS sortOrder, available,
@@ -431,6 +442,8 @@ export const deviceRoutes = new Hono<DeviceEnv>()
           recipeText: p.recipeText ?? null,
           recipe: p.recipeText ?? null,
           evotorUuid: uuidByProduct.get(id) || null,
+          // Стабильная связка с ProductTable.ROW_CODE на терминале (см. productIdentity.ts).
+          articleNumber: productArticleNumber(id),
           groupId: p.groupId != null ? Number(p.groupId) : null,
           variantLabel: (p.variantLabel as string | null) ?? null,
           variantSort: Number(p.variantSort ?? 0),
@@ -493,6 +506,8 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         generatedAt: Math.floor(Date.now() / 1000),
         storeUuid: storeUuid || null,
         categories,
+        // Все категории-добавки: APK скрывает товар по categoryId, не по названию.
+        addonCategoryIds: resolveAddonsCategoryIds(db),
         products: out,
         groups,
       })

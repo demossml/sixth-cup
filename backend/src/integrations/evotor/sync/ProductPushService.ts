@@ -5,6 +5,7 @@ import { clientForStore } from '../tokenStore'
 import { evotorConfig } from '../../../config'
 import { log, shortId } from '../../../lib/logBuffer'
 import { buildCatalogToppings, ensureAddonSchemeSchema } from '../../../modules/catalog/addonScheme'
+import { groupArticleNumber, productArticleNumber } from '../../../modules/catalog/productIdentity'
 
 const UUID_NS = '151071e8-88a4-44f6-b71a-b17c559f9b7d'
 
@@ -88,7 +89,7 @@ export function toEvotorProduct(
       price: 0,
       cost_price: 0,
       description: '',
-      article_number: `sc-g-${p.id}`,
+      article_number: groupArticleNumber(p.id),
     }
     if (parentUuid) body.parent_id = parentUuid
     return body
@@ -103,7 +104,7 @@ export function toEvotorProduct(
     price: Math.round(Number(p.price) * 100) / 100,
     cost_price: Math.round(Number(p.cost_price_kopecks)) / 100,
     description: p.recipe_text || '',
-    article_number: `sc-${p.id}`,
+    article_number: productArticleNumber(p.id),
   }
   if (parentUuid) body.parent_id = parentUuid
   return body

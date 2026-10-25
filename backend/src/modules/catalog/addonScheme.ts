@@ -311,12 +311,16 @@ export function syncModifierProduct(db: Database.Database, modifierId: number): 
 
 export function listAddonProductIds(db: Database.Database): Set<number> {
   ensureAddonSchemeSchema(db)
-  const catId = resolveAddonsCategoryId(db)
+  // Все категории-добавки, а не только первая: на базе могло остаться несколько
+  // («Добавки», «Добавки » после переименования/дубля) — иначе часть добавок
+  // считается обычными товарами и показывается на кассе плиткой.
+  const catIds = resolveAddonsCategoryIds(db)
   const ids = new Set<number>()
-  if (catId != null) {
+  if (catIds.length) {
+    const placeholders = catIds.map(() => '?').join(',')
     for (const r of db
-      .prepare(`SELECT id FROM products WHERE available=1 AND category_id=?`)
-      .all(catId) as { id: number }[]) {
+      .prepare(`SELECT id FROM products WHERE available=1 AND category_id IN (${placeholders})`)
+      .all(...catIds) as { id: number }[]) {
       ids.add(r.id)
     }
   }
