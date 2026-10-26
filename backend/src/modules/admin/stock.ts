@@ -379,10 +379,31 @@ export const adminStock = new Hono()
 
   .delete('/suppliers/:id', (c) => {
     const id = Number(c.req.param('id'))
-    const used = db.prepare(`SELECT COUNT(*) AS n FROM purchase_invoices WHERE supplier_id=?`).get(id) as { n: number }
-    if (used.n > 0) {
+    const supplier = db.prepare(`SELECT id FROM suppliers WHERE id=?`).get(id)
+    if (!supplier) throw bad('Поставщик не найден', 404)
+
+    // Поставщика с документами нельзя удалить физически (FK), но и падать 500 нельзя:
+    // выключаем его — справочник чистый, история и долги сохраняются.
+    const deps = [
+      ['purchase_invoices', 'накладные'],
+      ['purchase_orders', 'заказы'],
+      ['supplier_returns', 'возвраты'],
+      ['supplier_reconciliations', 'сверки'],
+      ['purchase_payments', 'оплаты'],
+      ['bank_rows', 'строки выписки'],
+      ['stock_batches', 'партии'],
+    ] as const
+    const blocking: string[] = []
+    for (const [table, label] of deps) {
+      const row = db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE supplier_id=?`).get(id) as { n: number }
+      if (row.n > 0) blocking.push(`${label} (${row.n})`)
+    }
+    // Позиции склада ссылаются на поставщика «по умолчанию» — обнуляем ссылку, удалять товар нельзя.
+    db.prepare(`UPDATE stock_items SET default_supplier_id=NULL WHERE default_supplier_id=?`).run(id)
+
+    if (blocking.length) {
       db.prepare(`UPDATE suppliers SET active=0, updated_at=? WHERE id=?`).run(now(), id)
-      return c.json({ ok: true, deactivated: true })
+      return c.json({ ok: true, deactivated: true, reason: `Есть документы: ${blocking.join(', ')}. Поставщик выключен.` })
     }
     db.prepare(`DELETE FROM suppliers WHERE id=?`).run(id)
     return c.json({ ok: true, deleted: true })

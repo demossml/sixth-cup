@@ -4,7 +4,7 @@ import { useApi } from '../api/useApi'
 import { api } from '../api/client'
 import {
   PageHeader, Card, EmptyState, Badge, Button, Input, Select, Field,
-  ErrorBox, Skeleton, Tabs, useToast, cx,
+  ErrorBox, Skeleton, Tabs, useToast, cx, ConfirmDialog,
 } from '../ui/kit'
 import { Plus, RefreshCw, Truck } from 'lucide-react'
 import { HelpLink } from '../components/HelpLink'
@@ -44,10 +44,13 @@ export default function Purchases() {
   const tab: PurchasesTab = tabParam && PURCHASES_TABS.includes(tabParam) ? tabParam : 'invoices'
   const setTab = (next: PurchasesTab) =>
     setSp(setParams(sp, { tab: next === 'invoices' ? null : next }), { replace: true })
-  const [showSupplier, setShowSupplier] = useState(false)
   const [showInvoice, setShowInvoice] = useState(false)
-  const [sName, setSName] = useState('')
   const [busy, setBusy] = useState(false)
+  // R-03: правка и удаление поставщика без SQL.
+  type SupplierForm = { id?: number; name: string; inn: string; contact: string; bankDetails: string; paymentDelayDays: string; active: boolean }
+  const emptySupplier = (): SupplierForm => ({ name: '', inn: '', contact: '', bankDetails: '', paymentDelayDays: '0', active: true })
+  const [sForm, setSForm] = useState<SupplierForm | null>(null)
+  const [sDel, setSDel] = useState<Supplier | null>(null)
 
   // invoice form (multi-line per audit)
   const [supplierId, setSupplierId] = useState('')
@@ -68,18 +71,6 @@ export default function Purchases() {
   const items = useApi<{ items: StockItem[] }>('/stock/items?active=1')
 
   const reloadAll = () => { invoices.reload(); suppliers.reload(); debt.reload() }
-
-  const createSupplier = async () => {
-    if (!sName.trim()) return
-    setBusy(true)
-    try {
-      await api('/suppliers', { method: 'POST', body: { name: sName.trim() } })
-      toast.push('Поставщик создан')
-      setSName(''); setShowSupplier(false); suppliers.reload()
-    } catch (e) {
-      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
-    } finally { setBusy(false) }
-  }
 
   const createInvoice = async () => {
     const parsed = lines
@@ -144,6 +135,59 @@ export default function Purchases() {
     } finally { setBusy(false) }
   }
 
+  const openSupplier = (s?: Supplier) => {
+    setSForm(s
+      ? {
+          id: s.id,
+          name: s.name,
+          inn: s.inn ?? '',
+          contact: s.contact ?? '',
+          bankDetails: '',
+          paymentDelayDays: '0',
+          active: !!s.active,
+        }
+      : emptySupplier())
+  }
+
+  const saveSupplier = async () => {
+    if (!sForm || !sForm.name.trim()) return
+    setBusy(true)
+    try {
+      const body = {
+        name: sForm.name.trim(),
+        inn: sForm.inn.trim() || null,
+        contact: sForm.contact.trim() || null,
+        bankDetails: sForm.bankDetails.trim() || null,
+        paymentDelayDays: Number(sForm.paymentDelayDays) || 0,
+        active: sForm.active,
+      }
+      if (sForm.id) await api(`/suppliers/${sForm.id}`, { method: 'PATCH', body })
+      else await api('/suppliers', { method: 'POST', body })
+      toast.push(sForm.id ? 'Поставщик сохранён' : 'Поставщик создан')
+      setSForm(null)
+      suppliers.reload()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const deleteSupplier = async () => {
+    if (!sDel) return
+    setBusy(true)
+    try {
+      const res = await api<{ deleted?: boolean; deactivated?: boolean; reason?: string }>(`/suppliers/${sDel.id}`, { method: 'DELETE' })
+      toast.push(res.deactivated ? (res.reason ?? 'Поставщик выключен') : 'Поставщик удалён')
+      setSDel(null)
+      reloadAll()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const tabs = useMemo(() => [
     { key: 'invoices' as const, label: 'Накладные', count: invoices.data?.invoices.length },
     { key: 'orders' as const, label: 'Заказы' },
@@ -166,7 +210,7 @@ export default function Purchases() {
         <div className="head-actions">
           <HelpLink article="scenario-receipt" />
           <button type="button" className="btn btn-ghost" onClick={reloadAll}>Обновить</button>
-          <button type="button" className="btn btn-ghost" onClick={() => setShowSupplier((v) => !v)}>Поставщик</button>
+          <button type="button" className="btn btn-ghost" onClick={() => openSupplier()}>Поставщик</button>
           <button type="button" className="btn btn-primary" onClick={() => setShowInvoice((v) => !v)}>Накладная</button>
         </div>
       </div>
@@ -188,18 +232,44 @@ export default function Purchases() {
         </Card>
       </div>
 
-      {showSupplier && (
+      {sForm && (
         <Card className="mb-4">
-          <div className="mb-3 text-[14px] font-semibold">Новый поставщик</div>
-          <Field label="Название">
-            <Input value={sName} onChange={(e) => setSName(e.target.value)} placeholder="ООО Поставщик" />
-          </Field>
-          <div className="mt-3 flex gap-2">
-            <Button loading={busy} onClick={createSupplier} disabled={!sName.trim()}>Сохранить</Button>
-            <Button variant="ghost" onClick={() => setShowSupplier(false)}>Отмена</Button>
+          <div className="mb-3 text-[14px] font-semibold">{sForm.id ? 'Поставщик' : 'Новый поставщик'}</div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Название">
+              <Input value={sForm.name} onChange={(e) => setSForm({ ...sForm, name: e.target.value })} placeholder="ООО Поставщик" />
+            </Field>
+            <Field label="ИНН">
+              <Input value={sForm.inn} onChange={(e) => setSForm({ ...sForm, inn: e.target.value })} placeholder="опционально" />
+            </Field>
+            <Field label="Контакт">
+              <Input value={sForm.contact} onChange={(e) => setSForm({ ...sForm, contact: e.target.value })} placeholder="Имя, телефон" />
+            </Field>
+            <Field label="Реквизиты для акта">
+              <Input value={sForm.bankDetails} onChange={(e) => setSForm({ ...sForm, bankDetails: e.target.value })} placeholder="р/с, банк" />
+            </Field>
+            <Field label="Отсрочка, дней">
+              <Input type="number" min={0} value={sForm.paymentDelayDays} onChange={(e) => setSForm({ ...sForm, paymentDelayDays: e.target.value })} />
+            </Field>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button loading={busy} onClick={saveSupplier} disabled={!sForm.name.trim()}>Сохранить</Button>
+            <Button variant="ghost" onClick={() => setSForm(null)}>Отмена</Button>
           </div>
         </Card>
       )}
+
+      <ConfirmDialog
+        open={!!sDel}
+        danger
+        busy={busy}
+        title="Удалить поставщика?"
+        confirmLabel="Удалить"
+        onCancel={() => setSDel(null)}
+        onConfirm={deleteSupplier}
+      >
+        {sDel && `«${sDel.name}» будет удалён. Если по нему есть документы — он не удалится, а будет выключен (история и долги сохранятся).`}
+      </ConfirmDialog>
 
       {showInvoice && (
         <Card className="mb-4">
@@ -347,12 +417,20 @@ export default function Purchases() {
           {!!suppliers.data?.suppliers.length && (
             <ul className="divide-y divide-line">
               {suppliers.data.suppliers.map((s) => (
-                <li key={s.id} className="flex items-center justify-between gap-3 px-4 py-3">
+                <li key={s.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
                   <div>
                     <div className="font-medium">{s.name}</div>
                     <div className="text-[12px] text-ink-secondary">{s.contact || s.inn || '—'}</div>
                   </div>
-                  {s.active ? <Badge tone="ok">активен</Badge> : <Badge tone="neutral">выкл</Badge>}
+                  <div className="flex items-center gap-2">
+                    {s.active ? <Badge tone="ok">активен</Badge> : <Badge tone="neutral">выкл</Badge>}
+                    <Button size="sm" variant="secondary" aria-label={`Изменить поставщика ${s.name}`} onClick={() => openSupplier(s)}>
+                      Изменить
+                    </Button>
+                    <Button size="sm" variant="ghost" aria-label={`Удалить поставщика ${s.name}`} onClick={() => setSDel(s)}>
+                      Удалить
+                    </Button>
+                  </div>
                 </li>
               ))}
             </ul>
