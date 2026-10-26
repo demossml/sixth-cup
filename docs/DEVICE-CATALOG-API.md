@@ -115,6 +115,7 @@ need to be migrated. Ensure the Evotor cabinet URL mask remains `https://app\.67
   - и/или header: `X-Evotor-Store-Uuid: …`
 - Если `storeUuid` задан, `products[].evotorUuid` и `toppings[].evotorUuid` берутся **только** из `product_store_links` для этой точки. Чужой магазин не подставляется. Нет link → `null`.
 - Без `storeUuid` (legacy APK): берётся первый link (не рекомендуется при 2+ точках).
+- Выгрузка **в облако** (`ProductPushService` / `enqueueProductSync`) идёт только на точки, где товар разрешён галочкой «На каких точках продаётся» (`product_store_links.enabled=1`). Нет строки в `product_store_links` — товар выгружается на все точки с включённой синхронизацией (обратная совместимость). `enabled=0` не удаляет уже созданную позицию и не переключает `allow_to_sell`.
 - Подсказка точки: `GET /api/devices/whoami` (headers device/store) → `{ storeUuid, storeName, source }`.
 
 ## Вкладки групп на кассе — `menu`

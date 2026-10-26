@@ -153,3 +153,35 @@
 **Заметки (важно для ревью)**
 - Hono регистрирует параметр шаблона `:id.csv` под ключом `id.csv` (проверено пробой) — в обработчике читается `c.req.param('id.csv')`, это прокомментировано в коде.
 - `toCsv` защищает от формул-инъекций, поэтому отрицательное расхождение выгружается как `'-200,00` — одинаковое поведение с `operations.csv`/`products.csv`, тест это фиксирует.
+
+---
+
+## STEP-05 — R-02: адресная выгрузка по `product_store_links.enabled`
+
+**Статус:** DONE
+
+**Гипотеза подтвердилась:** `enqueueProductSync` ставил товар в очередь **всем** точкам с `sync_enabled=1`, а `ProductPushService` отправлял всё, что оказалось в очереди — галочка «На каких точках продаётся» (`enabled`) влияла только на подсчёт в `assignments`, но не на выгрузку.
+
+**Что сделано**
+- `backend/src/integrations/evotor/sync/ProductPushService.ts`:
+  - `product_store_links` в `ensureSchema()` получил колонку `enabled INTEGER NOT NULL DEFAULT 1` (+ `ALTER TABLE` для старых БД);
+  - новый публичный метод `productEnabledForStore(productId, storeUuid)`: нет строки → `true` (как раньше), `enabled=0` → `false` (ошибки чтения трактуются как «разрешено», чтобы не блокировать выгрузку);
+  - `enqueue()` не ставит в очередь продукт, выключенный для этой точки;
+  - `pushToStoreInternal()` дополнительно фильтрует уже стоящие в очереди строки: выключенные помечаются `DONE` с `last_error='skipped: product disabled for this store'` — они не крутятся в очереди каждый цикл.
+- `backend/src/modules/admin/enqueue.ts`: строит набор `store:product` с `enabled=0` и пропускает их при постановке в очередь (админский путь).
+- `docs/DEVICE-CATALOG-API.md`: добавлено правило про фильтр выгрузки и обратную совместимость.
+
+**Default из PROMPTS соблюдён:** при `enabled=0` не вызывается cloud delete и не отправляется `allow_to_sell=false`; уже созданная позиция в облаке не трогается.
+
+**Тесты** — `backend/src/__tests__/product-store-enabled-push.test.ts` (4 кейса):
+1. товар, разрешённый только на A, попадает в очередь только A;
+2. товар без строк в links — в очередь обеих sync-точек (обратная совместимость);
+3. `productEnabledForStore` читает галочку и по умолчанию разрешает;
+4. после снятия галочки новые изменения не ставятся в очередь.
+
+**Проверки**
+| Команда | Результат |
+|---|---|
+| `backend`: `tsc --noEmit` | OK |
+| `backend`: полный прогон | **224 passed / 40 файлов** (было 220) |
+| `contract-admin-routes` | 4 passed |

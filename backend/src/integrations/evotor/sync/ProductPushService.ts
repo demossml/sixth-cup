@@ -198,6 +198,16 @@ export class ProductPushService {
     if (!names.has('is_group')) this.db.exec(`ALTER TABLE products ADD COLUMN is_group INTEGER NOT NULL DEFAULT 0`)
     if (!names.has('parent_product_id')) this.db.exec(`ALTER TABLE products ADD COLUMN parent_product_id INTEGER REFERENCES products(id)`)
 
+    // product_store_links.enabled: галочка «продаётся на точке» (R-02). Старые БД её не имеют.
+    try {
+      const linkCols = this.db.prepare(`PRAGMA table_info(product_store_links)`).all() as { name: string }[]
+      if (linkCols.length && !linkCols.some((c) => c.name === 'enabled')) {
+        this.db.exec(`ALTER TABLE product_store_links ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1`)
+      }
+    } catch {
+      /* таблицы ещё нет — создастся ниже с колонкой */
+    }
+
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS product_store_links (
         product_id INTEGER NOT NULL,
@@ -205,6 +215,7 @@ export class ProductPushService {
         evotor_uuid TEXT,
         last_pushed_at INTEGER,
         last_error TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
         PRIMARY KEY (product_id, store_uuid)
       );
       CREATE UNIQUE INDEX IF NOT EXISTS idx_product_store_links_store_evotor
@@ -229,7 +240,25 @@ export class ProductPushService {
     return rows
   }
 
+  /**
+   * Галочка «продаётся на точке» (`product_store_links.enabled`, R-02).
+   * Нет строки — товар выгружается на все sync-точки, как раньше (обратная совместимость).
+   * enabled=0 — новые изменения в облако не уходят; уже созданная позиция не удаляется
+   * и `allow_to_sell` не переключается (решение из PROMPTS Defaults).
+   */
+  productEnabledForStore(productId: number, storeUuid: string): boolean {
+    try {
+      const row = this.db.prepare(
+        `SELECT COALESCE(enabled,1) AS enabled FROM product_store_links WHERE product_id=? AND store_uuid=?`,
+      ).get(productId, storeUuid) as { enabled: number } | undefined
+      return row ? Number(row.enabled) !== 0 : true
+    } catch {
+      return true
+    }
+  }
+
   private enqueue(storeUuid: string, product: LocalProduct): boolean {
+    if (!this.productEnabledForStore(Number(product.id), storeUuid)) return false
     const payloadHash = this.syncHash(product)
     const entityKey = String(product.id)
     const last = this.db.prepare(`SELECT last_hash,status,evotor_uuid FROM evotor_products WHERE product_id=? AND variant='' AND store_uuid=?`)
@@ -370,9 +399,17 @@ export class ProductPushService {
     if (!products.length) return { pushed: 0, linked: 0, errors: [], extrasFailed: 0 }
     for (const p of products) this.enqueue(storeUuid, p)
 
-    const ready = this.db.prepare(`SELECT id,entity_key,attempts FROM evotor_outbox
+    const pendingRows = this.db.prepare(`SELECT id,entity_key,attempts FROM evotor_outbox
       WHERE store_uuid=? AND entity='PRODUCT' AND status='PENDING' AND next_at<=?
       ORDER BY priority,id LIMIT 200`).all(storeUuid, Date.now()) as { id: number; entity_key: string; attempts: number }[]
+    // Строки, поставленные в очередь до снятия галочки «продаётся на точке», не отправляем:
+    // помечаем их DONE, чтобы они не крутились в очереди каждый цикл (R-02).
+    const ready: typeof pendingRows = []
+    for (const item of pendingRows) {
+      if (this.productEnabledForStore(Number(item.entity_key), storeUuid)) ready.push(item)
+      else this.db.prepare(`UPDATE evotor_outbox SET status='DONE',last_error=? WHERE id=?`)
+        .run('skipped: product disabled for this store', item.id)
+    }
     if (!ready.length) return { pushed: 0, linked: 0, errors: [], extrasFailed: 0 }
 
     const remote = await this.remoteProducts(storeUuid)
