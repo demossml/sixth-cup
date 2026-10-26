@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { useApi } from '../../api/useApi'
-import { api } from '../../api/client'
-import { Badge, Button, Card, DataTable, EmptyState, ErrorBox, Field, Select, Skeleton, useToast } from '../../ui/kit'
+import { api, download } from '../../api/client'
+import { Badge, Button, Card, ConfirmDialog, DataTable, EmptyState, ErrorBox, Field, Select, Skeleton, useToast } from '../../ui/kit'
 import type { Column, Tone } from '../../ui/kit'
+import { Trash2 } from 'lucide-react'
 
 type Recon = {
   id: number
@@ -38,6 +39,7 @@ export default function ReconTab({ suppliers }: { suppliers: Supplier[] }) {
   const [from, setFrom] = useState(() => isoDay(Date.now() - 30 * 86400000))
   const [to, setTo] = useState(() => isoDay(Date.now()))
   const [busy, setBusy] = useState(false)
+  const [del, setDel] = useState<Recon | null>(null)
 
   const nameOf = (id: number) => suppliers.find((s) => s.id === id)?.name ?? `#${id}`
 
@@ -77,6 +79,29 @@ export default function ReconTab({ suppliers }: { suppliers: Supplier[] }) {
       toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
     } finally {
       setBusy(false)
+    }
+  }
+
+  const remove = async () => {
+    if (!del) return
+    setBusy(true)
+    try {
+      await api(`/purchases/reconciliations/${del.id}`, { method: 'DELETE' })
+      toast.push('Сверка удалена')
+      setDel(null)
+      list.reload()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const exportCsv = async (r: Recon) => {
+    try {
+      await download(`/purchases/reconciliations/${r.id}.csv`, `reconciliation-${r.id}.csv`)
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка выгрузки', 'bad')
     }
   }
 
@@ -143,6 +168,21 @@ export default function ReconTab({ suppliers }: { suppliers: Supplier[] }) {
         )
       },
     },
+    {
+      key: 'x',
+      header: '',
+      align: 'right',
+      render: (r) => (
+        <span className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+          <Button size="sm" variant="ghost" aria-label={`Выгрузить сверку ${r.id} в CSV`} onClick={() => exportCsv(r)}>
+            CSV
+          </Button>
+          <Button size="sm" variant="ghost" aria-label={`Удалить сверку ${r.id}`} onClick={() => setDel(r)}>
+            <Trash2 size={14} />
+          </Button>
+        </span>
+      ),
+    },
   ]
 
   return (
@@ -182,6 +222,18 @@ export default function ReconTab({ suppliers }: { suppliers: Supplier[] }) {
           сравнивается с ними автоматически.
         </p>
       </Card>
+
+      <ConfirmDialog
+        open={!!del}
+        danger
+        busy={busy}
+        title="Удалить сверку?"
+        confirmLabel="Удалить"
+        onCancel={() => setDel(null)}
+        onConfirm={remove}
+      >
+        {del && `Сверка с «${nameOf(del.supplierId)}» за ${day(del.periodFrom)} — ${day(del.periodTo)} будет удалена. Накладные и оплаты не меняются.`}
+      </ConfirmDialog>
 
       {list.loading && !list.data && (
         <Card>

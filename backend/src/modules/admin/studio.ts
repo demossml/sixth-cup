@@ -13,6 +13,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
+import { toCsv } from './consoleLib'
 
 const now = () => Date.now()
 const DAY = 86_400_000
@@ -112,7 +113,10 @@ function returnRows() {
 
 /** Reconciliation figures are computed from real documents, never stored. */
 function reconRows() {
-  const rs = all<{ id: number; supplierId: number; periodFrom: number; periodTo: number; theirBalanceKop: number | null; status: string }>(
+  const rs = all<{
+    id: number; supplierId: number; periodFrom: number; periodTo: number
+    theirBalanceKop: number | null; status: string; notes: string | null
+  }>(
     `SELECT id, supplier_id AS supplierId, period_from AS periodFrom, period_to AS periodTo,
             their_balance_kop AS theirBalanceKop, status, notes, created_at AS createdAt, updated_at AS updatedAt
      FROM supplier_reconciliations ORDER BY id DESC LIMIT 300`,
@@ -557,6 +561,51 @@ export const adminStudio = new Hono()
       return c.json({ ok: true })
     },
   )
+
+  /** Удаление сверки: ошибочный период/поставщик нужно уметь убрать, иначе список копится мусором. */
+  .delete('/purchases/reconciliations/:id', (c) => {
+    const id = idParam(c.req.param('id'))
+    if (!one(`SELECT id FROM supplier_reconciliations WHERE id=?`, id)) throw bad('Сверка не найдена', 404)
+    db.prepare(`DELETE FROM supplier_reconciliations WHERE id=?`).run(id)
+    return c.json({ ok: true })
+  })
+
+  /** CSV акта сверки: одна сверка, те же цифры, что в UI (оборот, оплаты, долг, данные поставщика, расхождение). */
+  .get('/purchases/reconciliations/:id.csv', (c) => {
+    // Hono кладёт параметр шаблона `:id.csv` под ключ `id.csv`, а не `id`.
+    const id = idParam((c.req.param('id.csv') ?? '').replace(/\.csv$/, ''))
+    const recon = reconRows().find((r) => Number(r.id) === id)
+    if (recon === undefined) throw bad('Сверка не найдена', 404)
+    const supplier = one<{ name: string; inn: string | null; contact: string | null; bankDetails: string | null }>(
+      `SELECT name, inn, contact, bank_details AS bankDetails FROM suppliers WHERE id=?`, recon.supplierId,
+    )
+    const iso = (ts: number) => new Date(Number(ts)).toISOString().slice(0, 10)
+    const rub = (kop: number) => (Number(kop) / 100).toFixed(2).replace('.', ',')
+    const csv = toCsv(
+      [{ key: 'field', title: 'Показатель' }, { key: 'value', title: 'Значение' }],
+      [
+        { field: 'Поставщик', value: supplier?.name ?? `#${recon.supplierId}` },
+        { field: 'ИНН', value: supplier?.inn ?? '' },
+        { field: 'Контакт', value: supplier?.contact ?? '' },
+        { field: 'Реквизиты', value: supplier?.bankDetails ?? '' },
+        { field: 'Период с', value: iso(recon.periodFrom) },
+        { field: 'Период по', value: iso(recon.periodTo) },
+        { field: 'Оборот, ₽', value: rub(recon.turnoverKop) },
+        { field: 'Оплаты, ₽', value: rub(recon.paidKop) },
+        { field: 'Наш долг, ₽', value: rub(recon.ourBalanceKop) },
+        { field: 'По данным поставщика, ₽', value: recon.theirBalanceKop == null ? '' : rub(recon.theirBalanceKop) },
+        { field: 'Расхождение, ₽', value: recon.diffKop == null ? '' : rub(recon.diffKop) },
+        { field: 'Статус', value: recon.status },
+        { field: 'Комментарий', value: recon.notes ?? '' },
+      ],
+    )
+    return new Response(csv, {
+      headers: {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': `attachment; filename="reconciliation-${id}.csv"`,
+      },
+    })
+  })
 
   /* ═════════ BANK ROWS (stage 2: manual input, auto-match by supplier name / invoice number) ═════════ */
   .get('/purchases/bank-rows', (c) => c.json({ rows: bankRows() }))
