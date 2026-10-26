@@ -136,12 +136,12 @@ function bankRows() {
   return all(
     `SELECT b.id, b.date_at AS dateAt, b.party, b.purpose, b.amount_kop AS amountKop,
             b.supplier_id AS supplierId, b.invoice_id AS invoiceId, i.number AS invoiceNumber,
-            s.name AS supplierName
+            b.payment_id AS paymentId, s.name AS supplierName
      FROM bank_rows b
      LEFT JOIN purchase_invoices i ON i.id = b.invoice_id
      LEFT JOIN suppliers s ON s.id = b.supplier_id
      ORDER BY b.date_at DESC, b.id DESC LIMIT 500`,
-  ).map((r) => ({ ...r, matched: r.invoiceId != null }))
+  ).map((r) => ({ ...r, matched: r.invoiceId != null, paid: r.paymentId != null }))
 }
 
 /* ───────── AI feed (rule based on real data) ───────── */
@@ -640,6 +640,99 @@ export const adminStudio = new Hono()
          FROM bank_rows b LEFT JOIN purchase_invoices i ON i.id = b.invoice_id WHERE b.id=?`, id,
       ) as Row
       return c.json({ ok: true, row: { ...updated, matched: updated.invoiceId != null } })
+    },
+  )
+
+  /**
+   * POST /purchases/bank-rows/:id/pay — превращает сопоставленную строку выписки в платёж.
+   * До этого шага привязка строки к накладной не влияла на долг: деньги появлялись только
+   * через POST /purchases/payments. Здесь платёж создаётся по тем же правилам, что и там
+   * (та же валидация статуса/поставщика), а повторный вызов идемпотентен по bank_rows.payment_id.
+   */
+  .post(
+    '/purchases/bank-rows/:id/pay',
+    async (c) => {
+      const id = idParam(c.req.param('id'))
+      const row = one<{
+        amountKop: number; supplierId: number | null; invoiceId: number | null; paymentId: number | null
+      }>(
+        `SELECT amount_kop AS amountKop, supplier_id AS supplierId, invoice_id AS invoiceId, payment_id AS paymentId
+         FROM bank_rows WHERE id=?`, id,
+      )
+      if (!row) throw bad('Строка выписки не найдена', 404)
+      if (row.paymentId != null) {
+        return c.json({ ok: true, paymentId: row.paymentId, idempotent: true })
+      }
+      if (row.invoiceId == null) throw bad('Сначала привяжите строку к накладной', 400)
+
+      const linked = one<{ id: number; supplierId: number; status: string; debt: number }>(
+        `SELECT id, supplier_id AS supplierId, status, MAX(0, total_kop - paid_kop) AS debt
+         FROM purchase_invoices WHERE id=?`, row.invoiceId,
+      )
+      if (!linked) throw bad('Накладная не найдена', 404)
+      if (linked.status !== 'posted') throw bad('Оплата только по проведённым накладным', 400)
+      if (row.supplierId != null && row.supplierId !== linked.supplierId) {
+        throw bad('Накладная принадлежит другому поставщику', 400)
+      }
+
+      // Тело необязательно: пустой запрос — «оплатить по привязке», как удобнее из UI.
+      const raw = await c.req.text()
+      let body: unknown
+      if (raw.trim()) {
+        try {
+          body = JSON.parse(raw)
+        } catch {
+          throw bad('Некорректный JSON', 400)
+        }
+      }
+      const parsed = z.object({
+        allocations: z.array(z.object({
+          invoiceId: z.number().int().positive(),
+          amountKop: z.number().int().positive(),
+        })).min(1).max(50).optional(),
+      }).optional().safeParse(body)
+      if (!parsed.success) throw bad('Некорректное распределение оплаты', 400)
+      const request = parsed.data ?? {}
+      // По умолчанию — вся строка в привязанную накладную, но не больше её долга.
+      const allocations = request.allocations ?? [
+        { invoiceId: linked.id, amountKop: Math.min(Number(row.amountKop), Number(linked.debt)) },
+      ]
+      if (allocations.every((a) => a.amountKop <= 0)) throw bad('Накладная уже оплачена', 400)
+
+      const total = allocations.reduce((s, a) => s + a.amountKop, 0)
+      if (total > Number(row.amountKop)) throw bad('Сумма распределения больше суммы строки', 400)
+
+      for (const a of allocations) {
+        const inv = one<{ supplierId: number; status: string; debt: number }>(
+          `SELECT supplier_id AS supplierId, status, MAX(0, total_kop - paid_kop) AS debt
+           FROM purchase_invoices WHERE id=?`, a.invoiceId,
+        )
+        if (!inv) throw bad(`Накладная ${a.invoiceId} не найдена`, 404)
+        if (inv.supplierId !== linked.supplierId) throw bad('Накладная другого поставщика', 400)
+        if (inv.status !== 'posted') throw bad('Оплата только по проведённым накладным', 400)
+        if (a.amountKop > Number(inv.debt)) throw bad(`Сумма больше долга по накладной ${a.invoiceId}`, 400)
+      }
+
+      const paymentId = db.transaction(() => {
+        const info = db.prepare(
+          `INSERT INTO purchase_payments(supplier_id, amount_kop, paid_at, notes, created_at) VALUES(?,?,?,?,?)`,
+        ).run(linked.supplierId, total, now(), `Выписка банка №${id}`, now())
+        const pid = Number(info.lastInsertRowid)
+        const ins = db.prepare(`INSERT INTO purchase_payment_alloc(payment_id, invoice_id, amount_kop) VALUES(?,?,?)`)
+        const addPaid = db.prepare(`UPDATE purchase_invoices SET paid_kop = paid_kop + ?, updated_at=? WHERE id=?`)
+        for (const a of allocations) {
+          ins.run(pid, a.invoiceId, a.amountKop)
+          addPaid.run(a.amountKop, now(), a.invoiceId)
+        }
+        const claimed = db.prepare(
+          `UPDATE bank_rows SET payment_id=? WHERE id=? AND payment_id IS NULL`,
+        ).run(pid, id)
+        // Гонка двух одновременных POST: второй не должен оставить «висящий» платёж.
+        if (claimed.changes === 0) throw bad('Строка уже оплачена', 409)
+        return pid
+      })()
+
+      return c.json({ ok: true, paymentId, allocations })
     },
   )
 

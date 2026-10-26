@@ -60,3 +60,42 @@
 | `frontend-admin`: `tsc --noEmit` | OK |
 | `frontend-admin`: `vitest` | 18 passed / 4 файла |
 | grep «не интегрирована» в `Help.tsx` | 0 совпадений |
+
+---
+
+## STEP-02 — R-01 backend: миграция + `POST /purchases/bank-rows/:id/pay`
+
+**Статус:** DONE
+
+**Что сделано**
+- Миграция `backend/src/db/migrations/030_bank_rows_payment.sql`:
+  - `ALTER TABLE bank_rows ADD COLUMN payment_id INTEGER REFERENCES purchase_payments(id)`;
+  - уникальный частичный индекс `uq_bank_rows_payment` (одна строка — один платёж).
+- `backend/src/modules/admin/studio.ts`:
+  - `bankRows()` теперь отдаёт `paymentId` и `paid`;
+  - новый эндпоинт `POST /api/admin/purchases/bank-rows/:id/pay` (роли — как у `POST /purchases/payments`, т.е. owner/manager; viewer получает 403 от общего adminAuth):
+    1. 404 если строки нет; **идемпотентно** возвращает существующий `paymentId` (`idempotent: true`);
+    2. 400 если строка не привязана к накладной;
+    3. требует `posted` и совпадения поставщика;
+    4. по умолчанию — вся строка в привязанную накладную, но не больше её долга;
+    5. явные `allocations` валидируются по сумме строки и по долгу каждой накладной;
+    6. транзакция: `purchase_payments` + `purchase_payment_alloc` + `paid_kop` + `bank_rows.payment_id`;
+    7. гонка двух POST-ов: `UPDATE … WHERE payment_id IS NULL`, при 0 changes — 409 и откат.
+  - тело запроса необязательно (пустой POST = «оплатить по привязке»); невалидный JSON → 400, а не 500.
+
+**Тесты** — `backend/src/__tests__/bank-row-pay.test.ts` (7 кейсов, isolated DB):
+1. платёж создаётся, `paid_kop` растёт, `paymentId`/`paid` в списке, долг уменьшается;
+2. повторный POST идемпотентен — платежей не прибавилось;
+3. строка без привязки → 400 с понятным текстом;
+4. чужая накладная и черновик → 400;
+5. распределение больше строки / больше долга → 400, частичная оплата в пределах долга → 200;
+6. нет строки → 404, без токена → 403;
+7. полностью оплаченная накладная → 400 без второго платежа.
+
+**Проверки**
+| Команда | Результат |
+|---|---|
+| `backend`: `tsc --noEmit` | OK |
+| `backend`: новый файл тестов | 7 passed |
+| `backend`: полный прогон (`DB_PATH=/tmp/sc-step-test.db`) | **216 passed / 38 файлов** |
+| `contract-admin-routes` | 4 passed (новый серверный маршрут не ломает контракт) |
