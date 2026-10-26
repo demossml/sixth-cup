@@ -45,6 +45,8 @@ describe('stock items edit/delete + inventory overview (R-08/R-09)', () => {
     expect(del.status).toBe(200)
     expect(del.json.deactivated).toBe(true)
     expect(String(del.json.reason)).toMatch(/движения|накладные/)
+    expect(del.json.reasonCode).toBe('has_linked_documents')
+    expect(Object.keys(del.json.linked).length).toBeGreaterThan(0)
 
     const all = await call('GET', '/stock/items')
     const row = all.json.items.find((i: any) => i.id === item.json.id)

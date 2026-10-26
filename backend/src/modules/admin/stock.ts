@@ -193,16 +193,22 @@ export const adminStock = new Hono()
       ['supplier_return_lines', 'возвраты'],
     ] as const
     const blocking: string[] = []
+    const linked: Record<string, number> = {}
     for (const [table, label] of refs) {
       const row = db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE stock_item_id=?`).get(id) as { n: number }
-      if (row.n > 0) blocking.push(`${label} (${row.n})`)
+      if (row.n > 0) {
+        blocking.push(`${label} (${row.n})`)
+        linked[table] = row.n
+      }
     }
     if (blocking.length) {
       db.prepare(`UPDATE stock_items SET active=0, updated_at=? WHERE id=?`).run(now(), id)
       return c.json({
         ok: true,
         deactivated: true,
+        reasonCode: 'has_linked_documents',
         reason: `Позиция используется: ${blocking.join(', ')}. Она выключена, история сохранена.`,
+        linked,
       })
     }
     db.prepare(`DELETE FROM stock_items WHERE id=?`).run(id)
@@ -415,16 +421,27 @@ export const adminStock = new Hono()
       ['stock_batches', 'партии'],
     ] as const
     const blocking: string[] = []
+    const linked: Record<string, number> = {}
     for (const [table, label] of deps) {
       const row = db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE supplier_id=?`).get(id) as { n: number }
-      if (row.n > 0) blocking.push(`${label} (${row.n})`)
+      if (row.n > 0) {
+        blocking.push(`${label} (${row.n})`)
+        linked[table] = row.n
+      }
     }
     // Позиции склада ссылаются на поставщика «по умолчанию» — обнуляем ссылку, удалять товар нельзя.
     db.prepare(`UPDATE stock_items SET default_supplier_id=NULL WHERE default_supplier_id=?`).run(id)
 
     if (blocking.length) {
       db.prepare(`UPDATE suppliers SET active=0, updated_at=? WHERE id=?`).run(now(), id)
-      return c.json({ ok: true, deactivated: true, reason: `Есть документы: ${blocking.join(', ')}. Поставщик выключен.` })
+      return c.json({
+        ok: true,
+        deactivated: true,
+        // reasonCode — стабильный признак для клиентов, reason — человеческий текст.
+        reasonCode: 'has_linked_documents',
+        reason: `Есть документы: ${blocking.join(', ')}. Поставщик выключен, история сохранена.`,
+        linked,
+      })
     }
     db.prepare(`DELETE FROM suppliers WHERE id=?`).run(id)
     return c.json({ ok: true, deleted: true })

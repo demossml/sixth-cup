@@ -8,6 +8,7 @@ import {
 } from '../ui/kit'
 import { Plus, RefreshCw, Truck } from 'lucide-react'
 import { HelpLink } from '../components/HelpLink'
+import { DEACTIVATED_HINT, entityStatusLabel } from '../lib/format'
 import BankTab from './purchases/BankTab'
 import ReconTab from './purchases/ReconTab'
 import OrdersTab from './purchases/OrdersTab'
@@ -177,7 +178,7 @@ export default function Purchases() {
     if (!sDel) return
     setBusy(true)
     try {
-      const res = await api<{ deleted?: boolean; deactivated?: boolean; reason?: string }>(`/suppliers/${sDel.id}`, { method: 'DELETE' })
+      const res = await api<{ deleted?: boolean; deactivated?: boolean; reason?: string; reasonCode?: string }>(`/suppliers/${sDel.id}`, { method: 'DELETE' })
       toast.push(res.deactivated ? (res.reason ?? 'Поставщик выключен') : 'Поставщик удалён')
       setSDel(null)
       reloadAll()
@@ -268,7 +269,7 @@ export default function Purchases() {
         onCancel={() => setSDel(null)}
         onConfirm={deleteSupplier}
       >
-        {sDel && `«${sDel.name}» будет удалён. Если по нему есть документы — он не удалится, а будет выключен (история и долги сохранятся).`}
+        {sDel && `«${sDel.name}» будет удалён. Если по нему есть документы — запись не удалится, а перейдёт в статус «выключен»: история и долги сохранятся.`}
       </ConfirmDialog>
 
       {showInvoice && (
@@ -421,9 +422,10 @@ export default function Purchases() {
                   <div>
                     <div className="font-medium">{s.name}</div>
                     <div className="text-[12px] text-ink-secondary">{s.contact || s.inn || '—'}</div>
+                    {!s.active && <div className="text-[11px] text-ink-tertiary">{DEACTIVATED_HINT}</div>}
                   </div>
                   <div className="flex items-center gap-2">
-                    {s.active ? <Badge tone="ok">активен</Badge> : <Badge tone="neutral">выкл</Badge>}
+                    <Badge tone={entityStatusLabel(s.active).tone}>{entityStatusLabel(s.active).label}</Badge>
                     <Button size="sm" variant="secondary" aria-label={`Изменить поставщика ${s.name}`} onClick={() => openSupplier(s)}>
                       Изменить
                     </Button>

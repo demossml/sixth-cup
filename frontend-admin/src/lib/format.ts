@@ -58,3 +58,19 @@ export const DOC_STATUS: Record<string, { label: string; tone: 'ok' | 'warn' | '
 }
 
 export const DOC_TYPE: Record<string, string> = { SELL: 'Продажа', PAYBACK: 'Возврат', CORRECTION: 'Коррекция' }
+
+/**
+ * Статус записи справочника после «Удалить». Если удаление невозможно из-за связанных
+ * документов, сервер выключает запись (soft-delete) — в UI это должно читаться как
+ * «выключен», а не «удалён», иначе владелец решит, что данные пропали.
+ */
+export function entityStatusLabel(
+  active: number | boolean | null | undefined,
+  gender: 'm' | 'f' = 'm',
+): { label: string; tone: 'ok' | 'neutral' } {
+  if (active) return { label: gender === 'f' ? 'активна' : 'активен', tone: 'ok' }
+  return { label: gender === 'f' ? 'выключена' : 'выключен', tone: 'neutral' }
+}
+
+/** Пояснение к выключенной записи (одна строка под названием). */
+export const DEACTIVATED_HINT = 'Не удалён: есть связанные документы, история сохранена'

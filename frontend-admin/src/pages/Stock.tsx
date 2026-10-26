@@ -8,6 +8,7 @@ import {
 import { AlertTriangle, Clock, Plus, RefreshCw } from 'lucide-react'
 import { HelpLink } from '../components/HelpLink'
 import { csvName, downloadCsv } from '../lib/csv'
+import { DEACTIVATED_HINT, entityStatusLabel } from '../lib/format'
 import RecipesTab from './stock/RecipesTab'
 
 type StockItem = {
@@ -58,12 +59,15 @@ export default function Stock() {
   const balances = useApi<BalanceResp>('/stock/balances')
   const expiry = useApi<ExpiryResp>('/stock/expiry?days=14')
   const items = useApi<{ items: StockItem[] }>('/stock/items?active=1')
+  // Список номенклатуры показывает и выключенные позиции: после «Удалить» со связями
+  // запись остаётся в базе, и владелец должен это видеть, а не искать пропажу.
+  const allItems = useApi<{ items: StockItem[] }>('/stock/items')
   const risk = useApi<{ products: NoNorm[] }>('/stock/products-without-norms')
   const norms = useApi<{ norms: { id: number; productId: number; stockItemId: number; qty: number; productName?: string; itemName?: string; unit?: string }[] }>('/stock/norms')
   const productsList = useApi<{ products: { id: number; name: string }[] }>('/products')
 
   const reloadAll = () => {
-    balances.reload(); expiry.reload(); items.reload(); risk.reload(); norms.reload()
+    balances.reload(); expiry.reload(); items.reload(); risk.reload(); norms.reload(); allItems.reload()
   }
 
   const createItem = async () => {
@@ -365,20 +369,24 @@ export default function Stock() {
 
       {tab === 'items' && (
         <Card pad={false}>
-          {items.loading && <div className="p-4"><Skeleton className="h-24" /></div>}
-          {items.error && <div className="p-4"><ErrorBox message={items.error} /></div>}
-          {items.data && !items.data.items.length && (
+          {allItems.loading && !allItems.data && <div className="p-4"><Skeleton className="h-24" /></div>}
+          {allItems.error && <div className="p-4"><ErrorBox message={allItems.error} onRetry={allItems.reload} /></div>}
+          {allItems.data && !allItems.data.items.length && (
             <EmptyState title="Номенклатура пуста" text="Сырьё (кг/л) и штуки. Остаток не правят вручную — только документами." />
           )}
-          {!!items.data?.items.length && (
+          {!!allItems.data?.items.length && (
             <ul className="divide-y divide-line">
-              {items.data.items.map((it) => (
-                <li key={it.id} className="flex items-center justify-between gap-3 px-4 py-3">
+              {allItems.data.items.map((it) => (
+                <li key={it.id} className={it.active ? 'flex items-center justify-between gap-3 px-4 py-3' : 'flex items-center justify-between gap-3 px-4 py-3 opacity-60'}>
                   <div className="min-w-0">
-                    <div className="truncate font-medium">{it.name}</div>
+                    <div className="flex items-center gap-2">
+                      <span className="truncate font-medium">{it.name}</span>
+                      {!it.active && <Badge tone={entityStatusLabel(it.active, 'f').tone}>{entityStatusLabel(it.active, 'f').label}</Badge>}
+                    </div>
                     <div className="text-[12px] text-ink-secondary">
                       {it.kind === 'raw' ? 'сырьё' : 'штука'} · {it.unit} · мин. {it.minQty}
                     </div>
+                    {!it.active && <div className="text-[11px] text-ink-tertiary">{DEACTIVATED_HINT}</div>}
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
                     {levelBadge(it.level)}

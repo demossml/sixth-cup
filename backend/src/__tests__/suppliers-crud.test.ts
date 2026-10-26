@@ -65,6 +65,9 @@ describe('suppliers: edit and delete (R-03)', () => {
     expect(del.status).toBe(200)
     expect(del.json.deactivated).toBe(true)
     expect(String(del.json.reason)).toMatch(/накладные/)
+    expect(del.json.reasonCode).toBe('has_linked_documents')
+    expect(del.json.linked.purchase_invoices).toBeGreaterThan(0)
+    expect(del.json.deleted).toBeUndefined()
 
     const list = await call('GET', '/suppliers')
     const row = list.json.suppliers.find((x: any) => x.id === s.json.id)
