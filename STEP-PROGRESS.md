@@ -314,3 +314,35 @@
 | `backend`: полный прогон | **246 passed / 45 файлов** (было 242) |
 | `frontend-admin`: `tsc --noEmit` | OK |
 | `frontend-admin`: `vitest` | 19 passed / 4 файла |
+
+---
+
+## STEP-11 — R-23 / R-24: гигиена
+
+**Статус:** DONE
+
+**R-23 — мёртвый middleware** (`backend/src/app.ts`)
+- удалён блок `app.use('*')`, который на каждый не-API запрос делал `existsSync(...)` и ничего не возвращал (пустая ветка с комментарием); реальная отдача статики ниже не тронута.
+- **Проверено запуском** (`NODE_ENV=production`, временная БД `/tmp/spa-check.db`):
+  | Запрос | Код |
+  |---|---|
+  | `/health` | 200 |
+  | `/` (customer host) | 200 |
+  | `/menu` (SPA fallback) | 200 |
+  | `/` и `/menu` при `Host: admin.localhost` | 200 |
+  | `/assets/<hashed>.css` (customer) и `.js` (admin) | 200 / 200 |
+  | `/classic.html` (удалённый файл) | 404 — как и должно быть |
+  | `/api/admin/meta` с токеном | 200 |
+
+**R-24 — `.gitignore`**
+- убрано правило `backend/src/integrations/evotor/__fixtures__/` (оно скрывало каталог **внутри** `src`, из-за чего будущие фикстуры молча не попадали в git);
+- локальная выгрузка `sell-sample.json` перемещена в `backend/data/fixtures/` (этот каталог уже игнорируется: `git check-ignore` подтверждает), каталог `src/.../__fixtures__` удалён;
+- фикстура тестов `backend/src/__tests__/fixtures/addons-catalog-fixture.json` отслеживается как раньше, тесты не затронуты.
+
+**Проверки**
+| Команда | Результат |
+|---|---|
+| `backend`: `tsc --noEmit` | OK |
+| `backend`: полный прогон | **246 passed / 45 файлов** |
+| `npm run build` (turbo, 3 пакета) | 3/3 OK |
+| smoke-тест статики в production-режиме | см. таблицу выше |

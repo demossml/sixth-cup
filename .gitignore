@@ -5,7 +5,6 @@ backend/data
 .env
 *.log
 .DS_Store
-backend/src/integrations/evotor/__fixtures__/
 
 # пользовательские выгрузки/логи — не часть проекта
 n.md

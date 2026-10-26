@@ -180,21 +180,6 @@ function distRoot(admin: boolean): string {
 }
 
 if (!config.isDev) {
-  app.use('*', async (c, next) => {
-    const path = c.req.path
-    if (path.startsWith('/api') || path.startsWith('/uploads') || path === '/health') {
-      return next()
-    }
-    const admin = isAdminHost(c.req.header('host'))
-    const root = distRoot(admin)
-    const filePath = path === '/' ? '/index.html' : path
-    const full = join(root, filePath)
-    if (existsSync(full) && !full.endsWith('/')) {
-      // let serveStatic handle via rewrite — fallback index
-    }
-    await next()
-  })
-
   // Customer static
   app.use('*', async (c, next) => {
     if (c.req.path.startsWith('/api') || c.req.path.startsWith('/uploads') || c.req.path === '/health') {
