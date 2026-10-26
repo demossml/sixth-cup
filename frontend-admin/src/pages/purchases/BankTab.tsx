@@ -228,6 +228,11 @@ export default function BankTab({ onPaid }: { onPaid?: () => void } = {}) {
 
   return (
     <div className="space-y-3">
+      <p className="text-[12px] text-ink-secondary">
+        Два шага: <b>сопоставить</b> строку с накладной (долг не меняется), затем{' '}
+        <b>«Провести оплату»</b> — только она создаёт платёж и уменьшает долг в «Долгах» и «Сверках».
+      </p>
+
       <Card>
         <Field
           label="Импорт выписки"
