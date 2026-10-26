@@ -7,11 +7,11 @@ import { useApi } from '../api/useApi'
 import type { AuditEntry } from '../api/types'
 import { fmtDateTime } from '../lib/format'
 import { qs, setParams } from '../lib/query'
-import { Badge, Banner, Button, Card, Check, ConfirmDialog, DataTable, Drawer, EmptyState, ErrorBox, Input, PageHeader, Select, Spinner, Tabs, useToast } from '../ui/kit'
+import { Badge, Banner, Button, Card, Check, ConfirmDialog, DataTable, Drawer, EmptyState, ErrorBox, Field, Input, PageHeader, Select, Skeleton, Spinner, Tabs, useToast } from '../ui/kit'
 import { HelpLink } from '../components/HelpLink'
 import type { Column } from '../ui/kit'
 
-type Tab = 'logs' | 'audit' | 'ai' | 'danger'
+type Tab = 'logs' | 'audit' | 'ai' | 'orgs' | 'danger'
 
 /* ───────── logs ───────── */
 function Logs() {
@@ -250,6 +250,158 @@ function Danger() {
   )
 }
 
+/* ───────── organizations (R-04) ───────── */
+type Organization = {
+  id: number; name: string; legalName: string; inn: string; kpp: string | null
+  taxRegime: string; vatRate: number; active: number
+}
+
+const TAX_REGIMES = [
+  { value: 'usn_income', label: 'УСН доходы' },
+  { value: 'usn_income_expense', label: 'УСН доходы−расходы' },
+  { value: 'osn', label: 'ОСН' },
+  { value: 'patent', label: 'Патент' },
+] as const
+
+type OrgForm = { id?: number; name: string; legalName: string; inn: string; kpp: string; taxRegime: string; vatRate: string; active: boolean }
+const emptyOrg = (): OrgForm => ({ name: '', legalName: '', inn: '', kpp: '', taxRegime: 'usn_income', vatRate: '0', active: true })
+
+function Organizations() {
+  const toast = useToast()
+  const list = useApi<{ organizations: Organization[] }>('/organizations')
+  const [form, setForm] = useState<OrgForm | null>(null)
+  const [del, setDel] = useState<Organization | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const open = (o?: Organization) => setForm(o
+    ? { id: o.id, name: o.name, legalName: o.legalName, inn: o.inn, kpp: o.kpp ?? '', taxRegime: o.taxRegime, vatRate: String(o.vatRate), active: !!o.active }
+    : emptyOrg())
+
+  const save = async () => {
+    if (!form) return
+    setBusy(true)
+    try {
+      const body: Record<string, unknown> = {
+        name: form.name.trim(),
+        legalName: form.legalName.trim(),
+        inn: form.inn.trim(),
+        kpp: form.kpp.trim() || null,
+        taxRegime: form.taxRegime,
+        vatRate: Number(form.vatRate) || 0,
+        active: form.active,
+      }
+      if (form.id) await api(`/organizations/${form.id}`, { method: 'PATCH', body })
+      else await api('/organizations', { method: 'POST', body })
+      toast.push(form.id ? 'Юрлицо сохранено' : 'Юрлицо создано')
+      setForm(null)
+      list.reload()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const remove = async () => {
+    if (!del) return
+    setBusy(true)
+    try {
+      await api(`/organizations/${del.id}`, { method: 'DELETE' })
+      toast.push('Юрлицо удалено')
+      setDel(null)
+      list.reload()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const cols: Column<Organization>[] = [
+    { key: 'n', header: 'Юрлицо', primary: true, render: (o) => <span className="font-medium">{o.name}</span> },
+    { key: 'ln', header: 'Полное название', render: (o) => <span className="text-ink-secondary">{o.legalName}</span>, hideOnPhone: true },
+    { key: 'inn', header: 'ИНН', render: (o) => <span className="font-mono text-[12px]">{o.inn}</span> },
+    { key: 'tax', header: 'СНО', render: (o) => TAX_REGIMES.find((t) => t.value === o.taxRegime)?.label ?? o.taxRegime, hideOnPhone: true },
+    { key: 'vat', header: 'НДС', align: 'right', render: (o) => `${o.vatRate}%` },
+    { key: 'st', header: 'Статус', render: (o) => (o.active ? <Badge tone="ok">активно</Badge> : <Badge tone="neutral">выкл</Badge>) },
+    {
+      key: 'x',
+      header: '',
+      align: 'right',
+      render: (o) => (
+        <span className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+          <Button size="sm" variant="secondary" aria-label={`Изменить юрлицо ${o.name}`} onClick={() => open(o)}>Изменить</Button>
+          <Button size="sm" variant="ghost" aria-label={`Удалить юрлицо ${o.name}`} onClick={() => setDel(o)}>Удалить</Button>
+        </span>
+      ),
+    },
+  ]
+
+  return (
+    <>
+      <div className="mb-3">
+        <Button icon={<RefreshCw size={14} />} onClick={() => open()}>Новое юрлицо</Button>
+      </div>
+
+      {form && (
+        <Card className="mb-4">
+          <div className="mb-3 text-[14px] font-semibold">{form.id ? 'Юрлицо' : 'Новое юрлицо'}</div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Короткое название">
+              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="ИП Иванов" />
+            </Field>
+            <Field label="Полное название">
+              <Input value={form.legalName} onChange={(e) => setForm({ ...form, legalName: e.target.value })} placeholder="Индивидуальный предприниматель Иванов И. И." />
+            </Field>
+            <Field label="ИНН" hint="10 или 12 цифр">
+              <Input value={form.inn} onChange={(e) => setForm({ ...form, inn: e.target.value })} placeholder="7700000000" />
+            </Field>
+            <Field label="КПП" hint="необязательно">
+              <Input value={form.kpp} onChange={(e) => setForm({ ...form, kpp: e.target.value })} placeholder="—" />
+            </Field>
+            <Field label="СНО">
+              <Select value={form.taxRegime} onChange={(e) => setForm({ ...form, taxRegime: e.target.value })}>
+                {TAX_REGIMES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </Select>
+            </Field>
+            <Field label="Ставка НДС, %">
+              <Input type="number" min={0} max={22} value={form.vatRate} onChange={(e) => setForm({ ...form, vatRate: e.target.value })} />
+            </Field>
+          </div>
+          <div className="mt-2"><Check checked={form.active} onChange={(v) => setForm({ ...form, active: v })} label="Активно" /></div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button loading={busy} onClick={save} disabled={!form.name.trim() || !form.legalName.trim() || form.inn.trim().length < 10}>Сохранить</Button>
+            <Button variant="ghost" onClick={() => setForm(null)}>Отмена</Button>
+          </div>
+        </Card>
+      )}
+
+      <ConfirmDialog
+        open={!!del}
+        danger
+        busy={busy}
+        title="Удалить юрлицо?"
+        confirmLabel="Удалить"
+        onCancel={() => setDel(null)}
+        onConfirm={remove}
+      >
+        {del && `«${del.name}» будет удалено. Если к нему привязаны точки — удаление запрещено: сначала переназначьте точки.`}
+      </ConfirmDialog>
+
+      {list.loading && !list.data && <Card><Skeleton className="h-20" /></Card>}
+      {list.error && <ErrorBox message={list.error} onRetry={list.reload} />}
+      {list.data && (
+        <DataTable
+          rows={list.data.organizations}
+          columns={cols}
+          rowKey={(o) => o.id}
+          empty={<EmptyState title="Юрлиц ещё нет" text="Реквизиты нужны кассе для чеков: СНО и НДС попадают в каталог устройства." />}
+        />
+      )}
+    </>
+  )
+}
+
 export default function System() {
   const [sp, setSp] = useSearchParams()
   const tab = (sp.get('tab') ?? 'logs') as Tab
@@ -257,8 +409,8 @@ export default function System() {
   return (
     <>
       <PageHeader title="Система" subtitle={meta.production ? 'Рабочий сервер' : 'Режим разработки'} actions={<HelpLink article="roles" label="Роли" />} />
-      <Tabs items={[{ key: 'logs', label: 'Логи' }, { key: 'audit', label: 'Журнал' }, { key: 'ai', label: 'ИИ' }, { key: 'danger', label: 'Опасная зона' }]} value={tab} onChange={(k) => setSp(setParams(sp, { tab: k }), { replace: true })} />
-      {tab === 'logs' ? <Logs /> : tab === 'audit' ? <Audit /> : tab === 'ai' ? <AiSettings /> : <Danger />}
+      <Tabs items={[{ key: 'logs', label: 'Логи' }, { key: 'audit', label: 'Журнал' }, { key: 'ai', label: 'ИИ' }, { key: 'orgs', label: 'Юрлица' }, { key: 'danger', label: 'Опасная зона' }]} value={tab} onChange={(k) => setSp(setParams(sp, { tab: k }), { replace: true })} />
+      {tab === 'logs' ? <Logs /> : tab === 'audit' ? <Audit /> : tab === 'ai' ? <AiSettings /> : tab === 'orgs' ? <Organizations /> : <Danger />}
     </>
   )
 }
