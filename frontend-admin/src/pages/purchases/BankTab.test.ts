@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseBankText, parseBankLine } from './BankTab'
+import { canPayRow, parseBankText, parseBankLine } from './BankTab'
 
 describe('bank statement parsing', () => {
   it('parses a full row with russian decimal comma', () => {
@@ -51,5 +51,13 @@ describe('bank statement parsing', () => {
     expect(rows).toHaveLength(2)
     expect(errors).toHaveLength(1)
     expect(errors[0]).toContain('Строка 3')
+  })
+})
+
+describe('bank row pay availability', () => {
+  it('allows pay only for a matched row without a payment', () => {
+    expect(canPayRow({ invoiceId: 5, paymentId: null })).toBe(true)
+    expect(canPayRow({ invoiceId: 5, paymentId: 12 })).toBe(false)
+    expect(canPayRow({ invoiceId: null, paymentId: null })).toBe(false)
   })
 })

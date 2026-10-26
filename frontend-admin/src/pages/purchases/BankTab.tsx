@@ -15,6 +15,8 @@ type BankRow = {
   supplierName: string | null
   invoiceId: number | null
   invoiceNumber: string | null
+  paymentId: number | null
+  paid: boolean
   matched: boolean
 }
 
@@ -46,6 +48,11 @@ export function parseBankLine(line: string): Parsed | string {
   }
 }
 
+/** Оплату из строки можно провести, когда есть привязанная накладная и платежа ещё нет. */
+export function canPayRow(row: Pick<BankRow, 'invoiceId' | 'paymentId'>): boolean {
+  return row.invoiceId != null && row.paymentId == null
+}
+
 export function parseBankText(text: string): { rows: Parsed[]; errors: string[] } {
   const rows: Parsed[] = []
   const errors: string[] = []
@@ -59,7 +66,7 @@ export function parseBankText(text: string): { rows: Parsed[]; errors: string[] 
   return { rows, errors }
 }
 
-export default function BankTab() {
+export default function BankTab({ onPaid }: { onPaid?: () => void } = {}) {
   const toast = useToast()
   const rows = useApi<{ rows: BankRow[] }>('/purchases/bank-rows')
   const invoices = useApi<{ invoices: InvoiceOption[] }>('/purchases/invoices')
@@ -106,6 +113,22 @@ export default function BankTab() {
     }
   }
 
+  const pay = async (row: BankRow) => {
+    setBusy(true)
+    try {
+      const res = await api<{ paymentId: number; idempotent?: boolean }>(`/purchases/bank-rows/${row.id}/pay`, {
+        method: 'POST',
+      })
+      toast.push(res.idempotent ? 'Оплата уже проведена' : 'Оплата проведена — долг уменьшился')
+      rows.reload()
+      onPaid?.()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const remove = async () => {
     if (!del) return
     setBusy(true)
@@ -136,8 +159,21 @@ export default function BankTab() {
       header: 'Сопоставление',
       render: (r) =>
         r.matched ? (
-          <span className="flex items-center gap-2">
+          <span className="flex flex-wrap items-center gap-2">
             <Badge tone="ok">накладная {r.invoiceNumber ?? `#${r.invoiceId}`}</Badge>
+            {r.paid ? (
+              <Badge tone="brand">оплачено</Badge>
+            ) : (
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={busy}
+                aria-label={`Провести оплату по строке от ${day(r.dateAt)}`}
+                onClick={() => pay(r)}
+              >
+                Провести оплату
+              </Button>
+            )}
             <button
               type="button"
               className="text-xs text-ink-secondary underline"

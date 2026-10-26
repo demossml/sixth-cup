@@ -368,7 +368,7 @@ export default function Purchases() {
         />
       )}
       {tab === 'returns' && <ReturnsTab suppliers={suppliers.data?.suppliers ?? []} items={items.data?.items ?? []} />}
-      {tab === 'bank' && <BankTab />}
+      {tab === 'bank' && <BankTab onPaid={reloadAll} />}
       {tab === 'recon' && <ReconTab suppliers={suppliers.data?.suppliers ?? []} />}
 
       {tab === 'debt' && (
