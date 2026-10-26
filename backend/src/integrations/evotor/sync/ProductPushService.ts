@@ -241,10 +241,12 @@ export class ProductPushService {
   }
 
   /**
-   * Галочка «продаётся на точке» (`product_store_links.enabled`, R-02).
-   * Нет строки — товар выгружается на все sync-точки, как раньше (обратная совместимость).
-   * enabled=0 — новые изменения в облако не уходят; уже созданная позиция не удаляется
-   * и `allow_to_sell` не переключается (решение из PROMPTS Defaults).
+   * Галочка «продаётся на точке» (`product_store_links.enabled`, R-02) — единственная семантика:
+   * • строки нет → `true` (товар выгружается на все sync-точки, как до R-02);
+   * • `enabled=1` → `true` (выгружается);
+   * • `enabled=0` → `false`: новые изменения в облако не уходят, уже созданная позиция
+   *   не удаляется и `allow_to_sell` не переключается.
+   * Ошибка чтения трактуется как `true`, чтобы не остановить выгрузку из-за схемы.
    */
   productEnabledForStore(productId: number, storeUuid: string): boolean {
     try {
@@ -255,6 +257,28 @@ export class ProductPushService {
     } catch {
       return true
     }
+  }
+
+  /**
+   * Строки очереди, которые уже нельзя отправлять: товар выключен для этой точки
+   * (`product_store_links.enabled = 0`). Помечаем `DONE`, чтобы они не крутились каждый цикл.
+   * Возвращает число снятых строк. Публичный, чтобы это можно было проверить тестом
+   * без похода в облако (в `pushToStoreInternal` он вызывается перед выборкой `PENDING`).
+   */
+  pruneDisabledOutbox(storeUuid: string): number {
+    this.ensureSchema()
+    const rows = this.db.prepare(
+      `SELECT id, entity_key FROM evotor_outbox
+       WHERE store_uuid=? AND entity='PRODUCT' AND status='PENDING'`,
+    ).all(storeUuid) as { id: number; entity_key: string }[]
+    const drop = this.db.prepare(`UPDATE evotor_outbox SET status='DONE',last_error=? WHERE id=?`)
+    let removed = 0
+    for (const row of rows) {
+      if (this.productEnabledForStore(Number(row.entity_key), storeUuid)) continue
+      drop.run('skipped: product disabled for this store', row.id)
+      removed++
+    }
+    return removed
   }
 
   private enqueue(storeUuid: string, product: LocalProduct): boolean {
@@ -399,17 +423,11 @@ export class ProductPushService {
     if (!products.length) return { pushed: 0, linked: 0, errors: [], extrasFailed: 0 }
     for (const p of products) this.enqueue(storeUuid, p)
 
-    const pendingRows = this.db.prepare(`SELECT id,entity_key,attempts FROM evotor_outbox
+    // Снимаем из очереди то, что было поставлено до снятия галочки «продаётся на точке» (R-02).
+    this.pruneDisabledOutbox(storeUuid)
+    const ready = this.db.prepare(`SELECT id,entity_key,attempts FROM evotor_outbox
       WHERE store_uuid=? AND entity='PRODUCT' AND status='PENDING' AND next_at<=?
       ORDER BY priority,id LIMIT 200`).all(storeUuid, Date.now()) as { id: number; entity_key: string; attempts: number }[]
-    // Строки, поставленные в очередь до снятия галочки «продаётся на точке», не отправляем:
-    // помечаем их DONE, чтобы они не крутились в очереди каждый цикл (R-02).
-    const ready: typeof pendingRows = []
-    for (const item of pendingRows) {
-      if (this.productEnabledForStore(Number(item.entity_key), storeUuid)) ready.push(item)
-      else this.db.prepare(`UPDATE evotor_outbox SET status='DONE',last_error=? WHERE id=?`)
-        .run('skipped: product disabled for this store', item.id)
-    }
     if (!ready.length) return { pushed: 0, linked: 0, errors: [], extrasFailed: 0 }
 
     const remote = await this.remoteProducts(storeUuid)
