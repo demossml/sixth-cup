@@ -53,6 +53,10 @@ export default function Staff() {
   const [schedStart, setSchedStart] = useState('08:00')
   const [schedEnd, setSchedEnd] = useState('16:00')
 
+  // R-07: правка ФИО/роли без удаления.
+  const [edit, setEdit] = useState<{ id: number; name: string; role: string } | null>(null)
+  const [editBusy, setEditBusy] = useState(false)
+
   const [ruleMonth, setRuleMonth] = useState(month)
   const [ruleLimit, setRuleLimit] = useState(3)
   const [rulePeriod, setRulePeriod] = useState('')
@@ -60,6 +64,21 @@ export default function Staff() {
 
   const staff = data?.staff ?? []
   const activeStaff = useMemo(() => staff.filter((s) => s.active), [staff])
+
+  const saveStaff = async () => {
+    if (!edit || !edit.name.trim()) return
+    setEditBusy(true)
+    try {
+      await api(`/staff/${edit.id}`, { method: 'PATCH', body: { name: edit.name.trim(), role: edit.role.trim() || 'Кассир' } })
+      push('Сотрудник сохранён')
+      setEdit(null)
+      reload()
+    } catch (e) {
+      push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+    } finally {
+      setEditBusy(false)
+    }
+  }
 
   const addStaff = async () => {
     if (!name.trim()) return
@@ -157,6 +176,29 @@ export default function Staff() {
           <Input value={role} onChange={(e) => setRole(e.target.value)} placeholder="Роль" aria-label="Роль" className="min-w-[8rem]" />
           <Button onClick={addStaff} disabled={!name.trim()}>Добавить</Button>
         </div>
+        {edit && (
+          <div className="mb-4 rounded-xl border border-line bg-surface-2/50 p-3">
+            <div className="mb-2 text-[13px] font-semibold">Сотрудник №{edit.id}</div>
+            <div className="flex flex-wrap gap-2">
+              <Input
+                value={edit.name}
+                onChange={(e) => setEdit({ ...edit, name: e.target.value })}
+                placeholder="ФИО"
+                aria-label="ФИО сотрудника"
+                className="min-w-[12rem]"
+              />
+              <Input
+                value={edit.role}
+                onChange={(e) => setEdit({ ...edit, role: e.target.value })}
+                placeholder="Роль"
+                aria-label="Роль сотрудника"
+                className="min-w-[8rem]"
+              />
+              <Button onClick={saveStaff} loading={editBusy} disabled={!edit.name.trim()}>Сохранить</Button>
+              <Button variant="ghost" onClick={() => setEdit(null)}>Отмена</Button>
+            </div>
+          </div>
+        )}
         {!activeStaff.length ? (
           <EmptyState title="Пока никого нет" text="Добавьте сотрудника, затем привяжите UUID кассы и заполните график." />
         ) : (
@@ -167,7 +209,17 @@ export default function Staff() {
                   <div className="font-semibold">{s.name}</div>
                   <div className="text-ink-secondary">{s.role} · id {s.id}</div>
                 </div>
-                <Button variant="ghost" size="sm" onClick={() => deactivate(s.id)}>Отключить</Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    aria-label={`Изменить сотрудника ${s.name}`}
+                    onClick={() => setEdit({ id: s.id, name: s.name, role: s.role })}
+                  >
+                    Изменить
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => deactivate(s.id)}>Отключить</Button>
+                </div>
               </li>
             ))}
           </ul>

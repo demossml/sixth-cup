@@ -41,6 +41,33 @@ export const staffAdminRoutes = new Hono()
       return c.json({ ok: true, id })
     })
 
+  /**
+   * PATCH /staff/:id — переименование/смена роли без удаления (R-07).
+   * PATCH, а не второй POST: частичное обновление, остальные поля не затираются.
+   */
+  .patch(
+    '/staff/:id',
+    zValidator('json', z.object({
+      name: z.string().min(1).max(120).optional(),
+      role: z.string().min(1).max(80).optional(),
+      active: z.boolean().optional(),
+    })),
+    (c) => {
+      const id = Number(c.req.param('id'))
+      const cur = db.prepare(`SELECT name, role, active FROM staff_members WHERE id=?`)
+        .get(id) as { name: string; role: string; active: number } | undefined
+      if (!cur) throw bad('Staff not found', 404)
+      const p = c.req.valid('json')
+      db.prepare(`UPDATE staff_members SET name=?, role=?, active=? WHERE id=?`).run(
+        p.name ?? cur.name,
+        p.role ?? cur.role,
+        p.active !== undefined ? (p.active ? 1 : 0) : cur.active,
+        id,
+      )
+      return c.json({ ok: true, id })
+    },
+  )
+
   .delete('/staff/:id', (c) => {
     const id = Number(c.req.param('id'))
     db.prepare(`UPDATE staff_members SET active=0 WHERE id=?`).run(id)
