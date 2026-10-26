@@ -169,6 +169,176 @@ function TokensPanel({ allStoreUuids }: { allStoreUuids: string[] }) {
   )
 }
 
+type DeviceRow = {
+  id: number; name: string; storeId: number; storeName: string
+  revoked: number; enrollCode: string | null; enrolled: number; createdAt: number
+}
+type LocalStore = { id: number; name: string; address: string | null; organizationId: number | null }
+
+/** Кассовые устройства: код регистрации для терминала, отзыв и удаление (R-05). */
+function DevicesPanel() {
+  const toast = useToast()
+  const devices = useApi<{ devices: DeviceRow[] }>('/devices')
+  const stores = useApi<{ stores: LocalStore[] }>('/stores')
+  const [name, setName] = useState('')
+  const [storeId, setStoreId] = useState('')
+  const [busy, setBusy] = useState('')
+  const [enroll, setEnroll] = useState<{ name: string; code: string } | null>(null)
+  const [del, setDel] = useState<DeviceRow | null>(null)
+
+  const list = devices.data?.devices ?? []
+  const localStores = stores.data?.stores ?? []
+
+  const create = async () => {
+    if (!name.trim() || !storeId) return
+    setBusy('create')
+    try {
+      const res = await api<{ id: number; enrollCode: string }>('/devices', {
+        method: 'POST',
+        body: { storeId: Number(storeId), name: name.trim() },
+      })
+      setEnroll({ name: name.trim(), code: res.enrollCode })
+      setName('')
+      devices.reload()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const revoke = async (d: DeviceRow) => {
+    setBusy(`revoke-${d.id}`)
+    try {
+      await api(`/devices/${d.id}/revoke`, { method: 'POST' })
+      toast.push('Устройство отозвано — терминал больше не авторизуется')
+      devices.reload()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const remove = async () => {
+    if (!del) return
+    setBusy('delete')
+    try {
+      await api(`/devices/${del.id}`, { method: 'DELETE' })
+      toast.push('Устройство удалено')
+      setDel(null)
+      devices.reload()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  return (
+    <>
+      <h2 className="mb-2 mt-6 text-base font-bold">Устройства</h2>
+      <p className="mb-2 text-[12px] text-ink-secondary">
+        Код регистрации вводится на терминале один раз (экрана «Касса» → регистрация). Код виден только владельцу и только
+        до регистрации.
+      </p>
+      {!localStores.length && (
+        <Banner tone="warn">
+          Нет локальных точек — устройство привязывается к точке из справочника. Сначала заведите точку (или дождитесь
+          синхронизации точек Эвотор).
+        </Banner>
+      )}
+      {localStores.length > 0 && (
+        <Card className="mb-3">
+          <div className="grid gap-2 sm:grid-cols-3">
+            <Field label="Точка">
+              <select
+                className="w-full rounded-xl border border-line bg-card px-3 py-2 text-sm"
+                value={storeId}
+                onChange={(e) => setStoreId(e.target.value)}
+                aria-label="Точка для устройства"
+              >
+                <option value="">— выберите —</option>
+                {localStores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </Field>
+            <Field label="Название устройства">
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Касса на Ленина" />
+            </Field>
+            <div className="flex items-end">
+              <Button loading={busy === 'create'} disabled={!name.trim() || !storeId} onClick={() => void create()}>
+                Создать код
+              </Button>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {enroll && (
+        <Card className="mb-3">
+          <div className="text-[13px]">
+            Код регистрации для «{enroll.name}»: <b className="font-mono text-base">{enroll.code}</b>
+          </div>
+          <p className="mt-1 text-[12px] text-ink-secondary">
+            Введите его на терминале при первом запуске. Код одноразовый: после регистрации он исчезает.
+          </p>
+          <div className="mt-2"><Button size="sm" variant="ghost" onClick={() => setEnroll(null)}>Скрыть</Button></div>
+        </Card>
+      )}
+
+      {devices.loading && !devices.data && <Spinner />}
+      {devices.error && <ErrorBox message={devices.error} onRetry={devices.reload} />}
+      {devices.data && !list.length && <Card><EmptyState title="Устройств нет" text="Создайте устройство и введите код регистрации на терминале." /></Card>}
+      {!!list.length && (
+        <Card pad={false}>
+          <ul className="divide-y divide-line text-sm">
+            {list.map((d) => (
+              <li key={d.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
+                <div className="min-w-0">
+                  <div className="font-medium">{d.name}</div>
+                  <div className="text-[12px] text-ink-secondary">
+                    {d.storeName} · {d.enrolled ? 'зарегистрировано' : 'код не использован'} · {fmtDateTime(d.createdAt)}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {d.revoked ? <Badge tone="bad">отозвано</Badge> : <Badge tone="ok">активно</Badge>}
+                  {d.enrollCode && <Badge tone="brand">код {d.enrollCode}</Badge>}
+                  {!d.revoked && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      loading={busy === `revoke-${d.id}`}
+                      aria-label={`Отозвать устройство ${d.name}`}
+                      onClick={() => void revoke(d)}
+                    >
+                      Отозвать
+                    </Button>
+                  )}
+                  <Button size="sm" variant="ghost" aria-label={`Удалить устройство ${d.name}`} onClick={() => setDel(d)}>
+                    Удалить
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
+      <ConfirmDialog
+        open={!!del}
+        danger
+        busy={busy === 'delete'}
+        title="Удалить устройство?"
+        confirmLabel="Удалить"
+        onCancel={() => setDel(null)}
+        onConfirm={remove}
+      >
+        {del && `«${del.name}» будет удалено из справочника. Если терминал ещё используется — вместо удаления лучше «Отозвать».`}
+      </ConfirmDialog>
+    </>
+  )
+}
+
 export default function Cash() {
   const stores = useApi<{ stores: EvotorStore[]; stale?: boolean; error?: string }>('/evotor/stores')
   const health = useApi<Health & { now: number }>('/evotor/health', { refreshMs: 60_000 })
@@ -212,6 +382,7 @@ export default function Cash() {
         ))}
       </div>
       <TokensPanel allStoreUuids={list.map((s) => s.uuid)} />
+      <DevicesPanel />
       <h2 className="mb-2 mt-6 text-base font-bold">Сотрудники</h2>
       {emp.loading && !emp.data && <Spinner />}
       {emp.error && <ErrorBox message={emp.error} onRetry={emp.reload} />}
