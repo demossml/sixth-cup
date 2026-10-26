@@ -289,3 +289,28 @@
 | `backend`: полный прогон | **242 passed / 44 файла** (было 237) |
 | `frontend-admin`: `tsc --noEmit` | OK |
 | `frontend-admin`: `vitest` | 19 passed / 4 файла |
+
+---
+
+## STEP-10 — R-08 / R-09: склад-номенклатура и счётчики инвентаризации
+
+**Статус:** DONE
+
+**Backend** (`backend/src/modules/admin/stock.ts`, `DELETE /stock/items/:id`)
+- было: проверялись только `stock_movements`; при наличии партий/норм/строк документов `DELETE` падал сырой ошибкой FK (500).
+- стало: 404 на отсутствующую; проверяются ссылки `stock_movements`, `stock_batches`, `product_stock_norms`, `inventory_lines`, `purchase_invoice_lines`, `purchase_order_lines`, `supplier_return_lines`; при любой — позиция **выключается** (`active=0`) с `reason='Позиция используется: …'`, иначе физическое удаление.
+- `PATCH /stock/items/:id` (уже был) проверен тестами: имя/минимум/артикул, 404.
+
+**UI**
+- `frontend-admin/src/pages/Stock.tsx`, вкладка «Номенклатура»: кнопки **«Изменить»**/**«Удалить»** у каждой позиции; форма правки/создания (название, артикул, тип, единица, минимум) в существующем стиле; удаление через `ConfirmDialog` с пояснением про историю.
+- `frontend-admin/src/pages/Inventory.tsx`: подключён `GET /inventory/overview` — в каждой строке документа появился прогресс «посчитано N из M», кнопка «Обновить» обновляет и его. Новых экранов/маршрутов нет.
+
+**Тесты** — `backend/src/__tests__/stock-items-inventory.test.ts` (4 кейса): PATCH/DELETE без ссылок (+404 на повтор и несуществующий); DELETE позиции с движениями → `deactivated` + причина + `active=0`; `overview` показывает `total/counted` и растёт после ввода факта; `overview` не перехватывается `/inventory/:id`.
+
+**Проверки**
+| Команда | Результат |
+|---|---|
+| `backend`: `tsc --noEmit` | OK |
+| `backend`: полный прогон | **246 passed / 45 файлов** (было 242) |
+| `frontend-admin`: `tsc --noEmit` | OK |
+| `frontend-admin`: `vitest` | 19 passed / 4 файла |

@@ -17,6 +17,10 @@ type InvLine = {
   bookQty: number | null; factQty: number | null
 }
 type StockItem = { id: number; name: string; unit: string }
+type InvOverview = {
+  id: number; storeUuid: string | null; storeName: string | null; kind: string; status: string
+  author: string | null; total: number; counted: number; createdAt: number
+}
 
 function statusBadge(s: string) {
   if (s === 'posted') return <Badge tone="ok">проведена</Badge>
@@ -38,6 +42,8 @@ export default function Inventory() {
   const list = useApi<{ docs: InvDoc[] }>('/inventory')
   const items = useApi<{ items: StockItem[] }>('/stock/items?active=1')
   const detail = useApi<{ doc: InvDoc; lines: InvLine[] }>(openId != null ? `/inventory/${openId}` : null)
+  // R-09: прогресс «посчитано/всего» одним запросом для списка.
+  const overview = useApi<{ docs: InvOverview[] }>('/inventory/overview')
 
   const createDoc = async () => {
     if (kind === 'partial' && !selectedItems.length) {
@@ -173,7 +179,7 @@ export default function Inventory() {
         </div>
         <div className="head-actions">
           <HelpLink article="scenario-inv-partial" />
-          <button type="button" className="btn btn-ghost" onClick={() => { list.reload(); detail.reload() }}>Обновить</button>
+          <button type="button" className="btn btn-ghost" onClick={() => { list.reload(); detail.reload(); overview.reload() }}>Обновить</button>
           <button type="button" className="btn btn-primary" onClick={() => setShowNew((v) => !v)}>Новая</button>
         </div>
       </div>
@@ -238,7 +244,9 @@ export default function Inventory() {
           )}
           {!!list.data?.docs.length && (
             <ul className="divide-y divide-line">
-              {list.data.docs.map((d) => (
+              {list.data.docs.map((d) => {
+                const ov = overview.data?.docs.find((o) => o.id === d.id)
+                return (
                 <li key={d.id}>
                   <button
                     type="button"
@@ -248,16 +256,18 @@ export default function Inventory() {
                       openId === d.id && 'bg-surface-2',
                     )}
                   >
-                    <div>
+                    <div className="min-w-0">
                       <div className="font-medium">№{d.id} · {d.kind === 'full' ? 'сплошная' : 'частичная'}</div>
                       <div className="text-[12px] text-ink-secondary">
                         {new Date(d.createdAt).toLocaleString('ru-RU')}
+                        {ov && ` · посчитано ${ov.counted} из ${ov.total}`}
                       </div>
                     </div>
                     {statusBadge(d.status)}
                   </button>
                 </li>
-              ))}
+                )
+              })}
             </ul>
           )}
         </Card>

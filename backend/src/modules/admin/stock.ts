@@ -179,10 +179,31 @@ export const adminStock = new Hono()
   .delete('/stock/items/:id', (c) => {
     const id = Number(c.req.param('id'))
     if (!Number.isFinite(id)) throw bad('Invalid id', 400)
-    const mov = db.prepare(`SELECT COUNT(*) AS n FROM stock_movements WHERE stock_item_id=?`).get(id) as { n: number }
-    if (mov.n > 0) {
+    if (!db.prepare(`SELECT id FROM stock_items WHERE id=?`).get(id)) throw bad('Позиция не найдена', 404)
+
+    // Любая ссылка (движения, партии, нормы, строки документов) запрещает физическое удаление:
+    // история остатков и себестоимость не должны рассыпаться. Вместо 500 — деактивация.
+    const refs = [
+      ['stock_movements', 'движения'],
+      ['stock_batches', 'партии'],
+      ['product_stock_norms', 'нормы списания'],
+      ['inventory_lines', 'инвентаризации'],
+      ['purchase_invoice_lines', 'накладные'],
+      ['purchase_order_lines', 'заказы'],
+      ['supplier_return_lines', 'возвраты'],
+    ] as const
+    const blocking: string[] = []
+    for (const [table, label] of refs) {
+      const row = db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE stock_item_id=?`).get(id) as { n: number }
+      if (row.n > 0) blocking.push(`${label} (${row.n})`)
+    }
+    if (blocking.length) {
       db.prepare(`UPDATE stock_items SET active=0, updated_at=? WHERE id=?`).run(now(), id)
-      return c.json({ ok: true, deactivated: true })
+      return c.json({
+        ok: true,
+        deactivated: true,
+        reason: `Позиция используется: ${blocking.join(', ')}. Она выключена, история сохранена.`,
+      })
     }
     db.prepare(`DELETE FROM stock_items WHERE id=?`).run(id)
     return c.json({ ok: true, deleted: true })

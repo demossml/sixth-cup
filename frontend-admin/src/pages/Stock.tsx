@@ -3,7 +3,7 @@ import { useApi } from '../api/useApi'
 import { api } from '../api/client'
 import {
   PageHeader, Card, EmptyState, Badge, Button, Input, Select, Field,
-  ErrorBox, Skeleton, Tabs, useToast, cx,
+  ErrorBox, Skeleton, Tabs, useToast, cx, ConfirmDialog,
 } from '../ui/kit'
 import { AlertTriangle, Clock, Plus, RefreshCw } from 'lucide-react'
 import { HelpLink } from '../components/HelpLink'
@@ -49,6 +49,12 @@ export default function Stock() {
   const [normItemId, setNormItemId] = useState('')
   const [normQty, setNormQty] = useState('18')
 
+  // R-08: правка и удаление позиции номенклатуры.
+  type ItemForm = { id?: number; name: string; kind: 'raw' | 'unit'; unit: string; minQty: string; sku: string }
+  const [itemForm, setItemForm] = useState<ItemForm | null>(null)
+  const [itemDel, setItemDel] = useState<{ id: number; name: string } | null>(null)
+  const [itemBusy, setItemBusy] = useState(false)
+
   const balances = useApi<BalanceResp>('/stock/balances')
   const expiry = useApi<ExpiryResp>('/stock/expiry?days=14')
   const items = useApi<{ items: StockItem[] }>('/stock/items?active=1')
@@ -88,6 +94,44 @@ export default function Stock() {
     { key: 'recipes' as const, label: 'Рецептуры' },
     { key: 'risk' as const, label: 'Без нормы', count: risk.data?.products.length },
   ], [balances.data, expSum, items.data, norms.data, risk.data])
+
+  const saveItem = async () => {
+    if (!itemForm || !itemForm.name.trim()) return
+    setItemBusy(true)
+    try {
+      const body = {
+        name: itemForm.name.trim(),
+        kind: itemForm.kind,
+        unit: itemForm.unit,
+        minQty: Number(itemForm.minQty) || 0,
+        sku: itemForm.sku.trim() || null,
+      }
+      if (itemForm.id) await api(`/stock/items/${itemForm.id}`, { method: 'PATCH', body })
+      else await api('/stock/items', { method: 'POST', body })
+      toast.push(itemForm.id ? 'Позиция сохранена' : 'Позиция создана')
+      setItemForm(null)
+      reloadAll()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+    } finally {
+      setItemBusy(false)
+    }
+  }
+
+  const removeItem = async () => {
+    if (!itemDel) return
+    setItemBusy(true)
+    try {
+      const res = await api<{ deleted?: boolean; deactivated?: boolean; reason?: string }>(`/stock/items/${itemDel.id}`, { method: 'DELETE' })
+      toast.push(res.deactivated ? (res.reason ?? 'Позиция выключена') : 'Позиция удалена')
+      setItemDel(null)
+      reloadAll()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+    } finally {
+      setItemBusy(false)
+    }
+  }
 
   const saveNorm = async () => {
     if (!normProductId || !normItemId) return
@@ -197,6 +241,50 @@ export default function Stock() {
         </Card>
       )}
 
+      {itemForm && (
+        <Card className="mb-4">
+          <div className="mb-3 text-[14px] font-semibold">{itemForm.id ? 'Позиция склада' : 'Новая позиция склада'}</div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Название">
+              <Input value={itemForm.name} onChange={(e) => setItemForm({ ...itemForm, name: e.target.value })} />
+            </Field>
+            <Field label="Артикул" hint="необязательно">
+              <Input value={itemForm.sku} onChange={(e) => setItemForm({ ...itemForm, sku: e.target.value })} />
+            </Field>
+            <Field label="Тип">
+              <Select value={itemForm.kind} onChange={(e) => setItemForm({ ...itemForm, kind: e.target.value as 'raw' | 'unit' })}>
+                <option value="raw">Сырьё</option>
+                <option value="unit">Штука</option>
+              </Select>
+            </Field>
+            <Field label="Единица">
+              <Select value={itemForm.unit} onChange={(e) => setItemForm({ ...itemForm, unit: e.target.value })}>
+                {['kg', 'l', 'pcs', 'g', 'ml'].map((u) => <option key={u} value={u}>{u}</option>)}
+              </Select>
+            </Field>
+            <Field label="Минимум">
+              <Input type="number" min={0} step="any" value={itemForm.minQty} onChange={(e) => setItemForm({ ...itemForm, minQty: e.target.value })} />
+            </Field>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button loading={itemBusy} onClick={saveItem} disabled={!itemForm.name.trim()}>Сохранить</Button>
+            <Button variant="ghost" onClick={() => setItemForm(null)}>Отмена</Button>
+          </div>
+        </Card>
+      )}
+
+      <ConfirmDialog
+        open={!!itemDel}
+        danger
+        busy={itemBusy}
+        title="Удалить позицию склада?"
+        confirmLabel="Удалить"
+        onCancel={() => setItemDel(null)}
+        onConfirm={removeItem}
+      >
+        {itemDel && `«${itemDel.name}» будет удалена. Если по ней есть движения или документы — позиция выключится, история остатков сохранится.`}
+      </ConfirmDialog>
+
       <Tabs items={tabs} value={tab} onChange={setTab} />
 
       {tab === 'balances' && (
@@ -292,7 +380,20 @@ export default function Stock() {
                       {it.kind === 'raw' ? 'сырьё' : 'штука'} · {it.unit} · мин. {it.minQty}
                     </div>
                   </div>
-                  {levelBadge(it.level)}
+                  <div className="flex shrink-0 items-center gap-2">
+                    {levelBadge(it.level)}
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      aria-label={`Изменить позицию ${it.name}`}
+                      onClick={() => setItemForm({ id: it.id, name: it.name, kind: it.kind === 'raw' ? 'raw' : 'unit', unit: it.unit, minQty: String(it.minQty), sku: '' })}
+                    >
+                      Изменить
+                    </Button>
+                    <Button size="sm" variant="ghost" aria-label={`Удалить позицию ${it.name}`} onClick={() => setItemDel({ id: it.id, name: it.name })}>
+                      Удалить
+                    </Button>
+                  </div>
                 </li>
               ))}
             </ul>
