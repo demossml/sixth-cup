@@ -8,7 +8,7 @@ import {
 } from '../ui/kit'
 import { Plus, RefreshCw, Truck } from 'lucide-react'
 import { HelpLink } from '../components/HelpLink'
-import { DEACTIVATED_HINT, entityStatusLabel } from '../lib/format'
+import { deactivatedHint, entityStatusLabel } from '../lib/format'
 import BankTab from './purchases/BankTab'
 import ReconTab from './purchases/ReconTab'
 import OrdersTab from './purchases/OrdersTab'
@@ -422,7 +422,7 @@ export default function Purchases() {
                   <div>
                     <div className="font-medium">{s.name}</div>
                     <div className="text-[12px] text-ink-secondary">{s.contact || s.inn || '—'}</div>
-                    {!s.active && <div className="text-[11px] text-ink-tertiary">{DEACTIVATED_HINT}</div>}
+                    {!s.active && <div className="text-[11px] text-ink-tertiary">{deactivatedHint()}</div>}
                   </div>
                   <div className="flex items-center gap-2">
                     <Badge tone={entityStatusLabel(s.active).tone}>{entityStatusLabel(s.active).label}</Badge>

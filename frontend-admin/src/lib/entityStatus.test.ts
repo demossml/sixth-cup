@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEACTIVATED_HINT, entityStatusLabel } from './format'
+import { deactivatedHint, entityStatusLabel } from './format'
 
 describe('entity status label (F-01)', () => {
   it('активная запись — «активен»', () => {
@@ -19,8 +19,9 @@ describe('entity status label (F-01)', () => {
     expect(entityStatusLabel(1, 'f').label).toBe('активна')
   })
 
-  it('подсказка объясняет, что запись сохранена', () => {
-    expect(DEACTIVATED_HINT).toMatch(/история сохранена/i)
-    expect(DEACTIVATED_HINT).not.toMatch(/^удалена?$/i)
+  it('подсказка объясняет, что запись сохранена (с родом)', () => {
+    expect(deactivatedHint()).toMatch(/^Не удалён: есть связанные документы, история сохранена$/)
+    expect(deactivatedHint('f')).toMatch(/^Не удалена: .*история сохранена$/)
+    expect(deactivatedHint()).not.toMatch(/^удалён$/i)
   })
 })

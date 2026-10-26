@@ -8,7 +8,7 @@ import {
 import { AlertTriangle, Clock, Plus, RefreshCw } from 'lucide-react'
 import { HelpLink } from '../components/HelpLink'
 import { csvName, downloadCsv } from '../lib/csv'
-import { DEACTIVATED_HINT, entityStatusLabel } from '../lib/format'
+import { deactivatedHint, entityStatusLabel } from '../lib/format'
 import RecipesTab from './stock/RecipesTab'
 
 type StockItem = {
@@ -386,7 +386,7 @@ export default function Stock() {
                     <div className="text-[12px] text-ink-secondary">
                       {it.kind === 'raw' ? 'сырьё' : 'штука'} · {it.unit} · мин. {it.minQty}
                     </div>
-                    {!it.active && <div className="text-[11px] text-ink-tertiary">{DEACTIVATED_HINT}</div>}
+                    {!it.active && <div className="text-[11px] text-ink-tertiary">{deactivatedHint('f')}</div>}
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
                     {levelBadge(it.level)}

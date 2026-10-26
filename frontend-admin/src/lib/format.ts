@@ -73,4 +73,8 @@ export function entityStatusLabel(
 }
 
 /** Пояснение к выключенной записи (одна строка под названием). */
-export const DEACTIVATED_HINT = 'Не удалён: есть связанные документы, история сохранена'
+export function deactivatedHint(gender: 'm' | 'f' = 'm'): string {
+  return gender === 'f'
+    ? 'Не удалена: есть связанные документы, история сохранена'
+    : 'Не удалён: есть связанные документы, история сохранена'
+}
