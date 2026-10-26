@@ -118,13 +118,18 @@
 
 Локальная симуляция всех шагов workflow пройдена.
 
-### Чеклист после push (выполняет пользователь)
+### Push и фактический статус Actions
 
-- [ ] `git push origin main` выполнен владельцем репозитория
-- [ ] Actions run зелёный: typecheck, build
-- [ ] Actions run зелёный: backend vitest (248), admin vitest (23), frontend vitest (52)
+- [x] `git push origin main` — выполнен: `7e67a23..c781f33` (18 коммитов)
+- [ ] Actions run зелёный: **не достигнут по внешней причине**
 
-**Push в этом прогоне не выполнялся** — в инструкции окружения нет разрешения на push, пользователь пушит сам.
+Run №1 ([40279153760](https://github.com/demossml/sixth-cup/actions/runs/40279153760), HEAD `c781f33`) завершился `failure` за 3 секунды, при этом **ни один шаг workflow не запускался**. Аннотация GitHub:
+
+> The job was not started because your account is locked due to a billing issue.
+
+То есть это блокировка аккаунта владельца репозитория на стороне GitHub (Actions-минуты для приватного репозитория), а не падение typecheck/build/тестов. Код и конфигурация CI в порядке: все 8 шагов workflow прогнаны локально в тех же версиях инструментов и зелёные.
+
+Что нужно, чтобы получить зелёный run: восстановить биллинг GitHub Actions у владельца аккаунта и перезапустить workflow (`Re-run all jobs`) либо дождаться следующего push. Код менять не требуется.
 
 ---
 
