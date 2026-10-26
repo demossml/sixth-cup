@@ -15,6 +15,16 @@ describe('shared cashier menu requests', () => {
       order: ['Кофе'],
     })
   })
+
+  it('sends showAllTab in the same PATCH as order and hidden', () => {
+    expect(cashierMenuPatch(null, { showAllTab: true })).toEqual({ showAllTab: true })
+    expect(cashierMenuPatch('store-lenina', { showAllTab: false, order: ['Кофе'], hiddenGroups: ['Чай'] })).toEqual({
+      storeUuid: 'store-lenina',
+      showAllTab: false,
+      order: ['Кофе'],
+      hiddenGroups: ['Чай'],
+    })
+  })
 })
 
 describe('tab reordering', () => {

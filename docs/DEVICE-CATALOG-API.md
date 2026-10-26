@@ -143,8 +143,8 @@ need to be migrated. Ensure the Evotor cabinet URL mask remains `https://app\.67
   остаются в `products[]` (видны в «Всё» и поиске) — скрывается только вкладка.
 - `categories` остаётся для совместимости и уже отфильтрован: скрытые на кассе группы в нём тоже нет.
 - Настройка хранится в `app_settings.cashier_menu:<storeUuid>`;
-  `GET /api/admin/cashier/menu?storeUuid=…`, `PATCH` (обязателен `storeUuid`, поля
-  `showAllTab` / `hiddenGroups` / `order`), `DELETE ?storeUuid=…` — сброс к общей.
+  `GET /api/admin/cashier/menu?storeUuid=…`, `PATCH` (поля `showAllTab` / `hiddenGroups` / `order`;
+  без `storeUuid` — общая настройка-наследство), `DELETE ?storeUuid=…` — сброс к общей.
 
 Правила для кассы:
 1. Чипы групп рисовать в порядке `menu.order`; группы вне списка — в конце, по алфавиту,

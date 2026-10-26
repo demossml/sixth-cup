@@ -124,7 +124,8 @@ export default function CashierMenuPanel({ storeUuid, storeName }: { storeUuid: 
               <Check
                 checked={data.showAllTab}
                 onChange={(v) => patch({ showAllTab: v }, v ? 'Вкладка «Всё» включена' : 'Вкладка «Всё» скрыта')}
-                label="Показывать вкладку «Всё»"
+                label="Показывать вкладку «Всё» на кассе"
+                hint="Системная вкладка со всеми товарами. Снимите галочку, если на кассе нужны только настроенные группы."
               />
 
               <div className="mt-3 text-[12px] font-medium text-ink-secondary">Порядок вкладок</div>

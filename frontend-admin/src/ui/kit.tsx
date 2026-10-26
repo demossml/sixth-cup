@@ -185,11 +185,29 @@ export function Toggle({ checked, onChange, label, disabled }: { checked: boolea
     </button>
   )
 }
-export function Check({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: ReactNode }) {
+export function Check({
+  checked,
+  onChange,
+  label,
+  hint,
+}: {
+  checked: boolean
+  onChange: (v: boolean) => void
+  label: ReactNode
+  hint?: ReactNode
+}) {
   return (
     <label className="flex min-h-[44px] cursor-pointer items-center gap-2.5 text-[15px]">
-      <input type="checkbox" className="h-5 w-5 accent-[#002FA7]" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-      <span>{label}</span>
+      <input
+        type="checkbox"
+        className="h-5 w-5 shrink-0 accent-[#002FA7]"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      <span className="min-w-0">
+        {label}
+        {hint && <span className="mt-0.5 block text-[12px] leading-snug text-ink-secondary">{hint}</span>}
+      </span>
     </label>
   )
 }
