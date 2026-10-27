@@ -157,3 +157,13 @@ DEFAULT-AD-HOC: нет
 Тесты: admin — 24 passed; контрактный `contract-admin-routes.test.ts` — 4 passed (новые `/stock/writeoffs`, `/stock/stores` имеют обработчики); typecheck и build OK
 Изменённые тесты: нет
 DEFAULT-AD-HOC: нет
+
+## STEP-W13 — Help: честные правила учёта (U-04)
+Статус: DONE
+Коммит: `docs(admin): update stock help to match write-off, unit and receipt rules`
+Что сделано:
+- Статья «Принципы учёта»: документы вместо правки ячейки, лимит оплаты долгом, норма в единице позиции и запрет смены единицы, FEFO с партиями точки, приёмка заказа по проведённой накладной.
+- Статья «Как списывается кофе»: списание на любом чеке (с картой и без), возврат чека, вкладка «Списания», исторические чеки без карты, ошибка списания в «Спорах» (`stock_writeoff_failed`).
+Тесты: typecheck OK; admin — 24 passed
+Изменённые тесты: нет
+DEFAULT-AD-HOC: название раздела «Споры» сверено с `Operations.tsx` (`label: 'Споры'`), замена не потребовалась.
