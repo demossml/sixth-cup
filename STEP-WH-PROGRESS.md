@@ -92,3 +92,12 @@ DEFAULT-AD-HOC: нет
 Тесты: `wh-units.test.ts` — 6 passed; полный backend — 288 passed / 51 файл; admin — 24 passed; typecheck OK
 Изменённые тесты: нет
 DEFAULT-AD-HOC: нет
+
+## STEP-W07 — Лимит платежа по долгу накладной (M-01)
+Статус: DONE
+Коммит: `fix(purchases): cap supplier payments by invoice debt (M-01)`
+Что сделано:
+- `POST /purchases/payments`: аллокации суммируются по накладной, проверяется `sum ≤ total_kop − paid_kop`; иначе 400 и транзакция откатывается (D-16). Проверка поставщика и статуса `posted` сохранена.
+Тесты: `wh-payment-cap.test.ts` — 4 passed; `bank-row-pay.test.ts` в полном прогоне зелёный; полный backend — 292 passed / 52 файла; typecheck OK
+Изменённые тесты: нет
+DEFAULT-AD-HOC: нет

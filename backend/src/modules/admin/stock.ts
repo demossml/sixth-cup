@@ -666,6 +666,21 @@ export const adminStock = new Hono()
       if (sumAlloc !== p.amountKop) throw bad('Сумма распределения должна равняться сумме оплаты', 400)
       if (!db.prepare(`SELECT id FROM suppliers WHERE id=?`).get(p.supplierId)) throw bad('Поставщик не найден', 404)
       const t = p.paidAt ?? now()
+      // D-16: несколько аллокаций на одну накладную суммируются и не могут превысить её долг.
+      const byInvoice = new Map<number, number>()
+      for (const a of p.allocations) byInvoice.set(a.invoiceId, (byInvoice.get(a.invoiceId) ?? 0) + a.amountKop)
+      for (const [invoiceId, sum] of byInvoice) {
+        const inv = db
+          .prepare(`SELECT id, status, supplier_id, total_kop, paid_kop FROM purchase_invoices WHERE id=?`)
+          .get(invoiceId) as
+          | { id: number; status: string; supplier_id: number; total_kop: number; paid_kop: number }
+          | undefined
+        if (!inv) throw bad(`Накладная ${invoiceId} не найдена`, 404)
+        if (inv.supplier_id !== p.supplierId) throw bad('Накладная другого поставщика', 400)
+        if (inv.status !== 'posted') throw bad('Оплата только по проведённым накладным', 400)
+        const debt = inv.total_kop - inv.paid_kop
+        if (sum > debt) throw bad(`Сумма больше долга по накладной ${invoiceId} (долг ${debt} коп.)`, 400)
+      }
       const paymentId = db.transaction(() => {
         const info = db
           .prepare(
