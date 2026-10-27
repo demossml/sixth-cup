@@ -158,7 +158,10 @@ export default function Inventory() {
   }
 
   const lines = detail.data?.lines ?? []
-  const canPost = detail.data?.doc.status !== 'posted' && lines.length > 0 && lines.every((l) => {
+  const docStatus = detail.data?.doc.status
+  // D-11: сервер проводит только counting/review — кнопка не должна обещать больше.
+  const postableStatus = docStatus === 'counting' || docStatus === 'review'
+  const canPost = postableStatus && lines.length > 0 && lines.every((l) => {
     const f = facts[l.stockItemId]
     if (f !== undefined && f !== '') return Number.isFinite(Number(f))
     return l.factQty != null

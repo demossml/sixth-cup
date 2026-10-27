@@ -795,15 +795,25 @@ export const adminStock = new Hono()
       .get(id) as { id: number; status: string; storeUuid: string | null } | undefined
     if (!doc) throw bad('Документ не найден', 404)
     if (doc.status === 'posted') throw bad('Уже проведена', 400)
+    if (doc.status === 'cancelled') throw bad('Документ отменён', 400)
+    if (doc.status !== 'counting' && doc.status !== 'review') throw bad('Сначала внесите подсчёт', 400)
     const lines = db
       .prepare(
         `SELECT stock_item_id AS stockItemId, book_qty AS bookQty, fact_qty AS factQty
          FROM inventory_lines WHERE doc_id=?`,
       )
       .all(id) as { stockItemId: number; bookQty: number | null; factQty: number | null }[]
+    if (!lines.length) throw bad('В документе нет строк', 400)
     if (lines.some((l) => l.factQty == null)) throw bad('Заполните факт по всем строкам', 400)
     const t = now()
     db.transaction(() => {
+      // Захват статуса: защищает от двойного проведения (D-11).
+      const claimed = db
+        .prepare(
+          `UPDATE inventory_docs SET status='posted', posted_at=?, updated_at=? WHERE id=? AND status IN ('counting','review')`,
+        )
+        .run(t, t, id)
+      if (claimed.changes === 0) throw bad('Документ уже проведён или закрыт', 409)
       for (const l of lines) {
         const book = l.bookQty ?? 0
         const fact = l.factQty ?? 0
@@ -836,7 +846,6 @@ export const adminStock = new Hono()
           }
         }
       }
-      db.prepare(`UPDATE inventory_docs SET status='posted', posted_at=?, updated_at=? WHERE id=?`).run(t, t, id)
     })()
     return c.json({ ok: true, postedAt: t })
   })

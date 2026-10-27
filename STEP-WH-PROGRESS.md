@@ -49,3 +49,14 @@ DEFAULT-AD-HOC: нет
 Тесты: `wh-payback-stock.test.ts` — 9 passed; охранный набор — 40 passed; полный backend — 268 passed / 47 файлов; typecheck OK
 Изменённые тесты: `wh-sell-stock.test.ts` → «applyStockForDocument пропускает PAYBACK как неизвестный тип» переименован в «PAYBACK уходит в ветку возврата (с W02)»: тест фиксировал промежуточное поведение W01, которое этот STEP и меняет.
 DEFAULT-AD-HOC: нет
+
+## STEP-W03 — Инвентаризация: защита статусов проведения (Q-03)
+Статус: DONE
+Коммит: `fix(stock): block inventory posting from cancelled/draft and double-post (Q-03)`
+Что сделано:
+- `POST /inventory/:id/post`: проведение только из `counting`/`review`; `cancelled` → 400 «Документ отменён»; `draft` → 400 «Сначала внесите подсчёт»; документ без строк → 400.
+- Статус захватывается внутри транзакции (`UPDATE … WHERE status IN ('counting','review')`), `changes = 0` → 409; прежний UPDATE статуса в конце транзакции убран (D-11).
+- UI `Inventory.tsx`: `canPost` учитывает статус документа, кнопка «Провести» неактивна вне `counting`/`review`.
+Тесты: `wh-inventory-guards.test.ts` — 6 passed; полный backend — 274 passed / 48 файлов; admin — 24 passed; typecheck OK
+Изменённые тесты: нет
+DEFAULT-AD-HOC: нет
