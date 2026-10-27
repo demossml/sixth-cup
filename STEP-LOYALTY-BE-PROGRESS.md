@@ -108,3 +108,10 @@ DEFAULT-AD-HOC: нет
 Что сделано: `/api/public/content` читает `evotorConfig.pushEnabled` (поле `PUSH_ENABLED`), а не `(config as {pushEnabled?}).pushEnabled` — такого поля в `config` нет, поэтому флаг был всегда `false`.
 Тесты: `public-content.test.ts` — 3 passed (флаг совпадает с `evotorConfig.pushEnabled`; в `config` поля нет; фолбэк правил содержит порог и не содержит «шест»). Backend — 338 passed / 62 файла.
 DEFAULT-AD-HOC: нет
+
+## STEP-B10 — Full gate, self-check, report
+Статус: DONE
+Коммит: `docs(loyalty): backend/PWA series implementation report`
+Что сделано: полный прогон (typecheck, build, backend 338, PWA 52), self-check по 8 пунктам — все «да», отчёт `IMPLEMENTATION-LOYALTY-BE-REPORT.md`.
+Тесты: backend 338 / 62 файла; PWA 52 / 4 файла; typecheck и build OK
+DEFAULT-AD-HOC: нет
