@@ -60,3 +60,13 @@ DEFAULT-AD-HOC: нет
 Тесты: `wh-inventory-guards.test.ts` — 6 passed; полный backend — 274 passed / 48 файлов; admin — 24 passed; typecheck OK
 Изменённые тесты: нет
 DEFAULT-AD-HOC: нет
+
+## STEP-W04 — Инвентаризация: книжный остаток на момент проведения (Q-04)
+Статус: DONE
+Коммит: `fix(stock): compute inventory delta from fresh balance at posting time (Q-04)`
+Что сделано:
+- В транзакции проведения `book_qty` пересчитывается через `expectedQty(item, doc.storeUuid)` и записывается в `inventory_lines.book_qty`; дельта считается от него (D-12).
+- Допуск `abs(delta) < 1e-6` — строка пропускается (D-13). Снимок при создании документа остался для экрана подсчёта.
+Тесты: `wh-inventory-book.test.ts` — 5 passed; полный backend — 279 passed / 49 файлов; typecheck OK
+Изменённые тесты: нет
+DEFAULT-AD-HOC: нет

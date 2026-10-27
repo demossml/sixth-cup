@@ -814,11 +814,14 @@ export const adminStock = new Hono()
         )
         .run(t, t, id)
       if (claimed.changes === 0) throw bad('Документ уже проведён или закрыт', 409)
+      const setBook = db.prepare(`UPDATE inventory_lines SET book_qty=? WHERE doc_id=? AND stock_item_id=?`)
       for (const l of lines) {
-        const book = l.bookQty ?? 0
+        // D-12: книга считается на момент проведения, а не на момент создания документа.
+        const book = expectedQty(l.stockItemId, doc.storeUuid)
+        setBook.run(book, id, l.stockItemId)
         const fact = l.factQty ?? 0
         const delta = fact - book
-        if (delta === 0) continue
+        if (Math.abs(delta) < 1e-6) continue
         db.prepare(
           `INSERT INTO stock_movements(stock_item_id, batch_id, store_uuid, qty, kind, doc_type, doc_id, note, created_at)
            VALUES(?,NULL,?,?,'inventory_adj','inventory',?,?,?)`,
