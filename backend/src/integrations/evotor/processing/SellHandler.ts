@@ -3,8 +3,10 @@ import { verifyServerToken } from '../../../lib/crypto'
 import { normalizeCardCode } from '../../../modules/loyalty/proof'
 import { cashbackOf, freeEarned } from '../../../modules/loyalty/rules'
 import { consumeReservation } from '../../../modules/loyalty/reservations'
+import { bindQueueNumber } from '../../../modules/queue/numbers'
 import { extractScRaw } from '../loyaltyExtras'
 import { grantVoucherOnce } from '../../../modules/vouchers/service'
+import { log } from '../../../lib/logBuffer'
 
 type Tx = Record<string, unknown>
 
@@ -17,6 +19,10 @@ type ScClaim = {
   cb?: number
   ts?: number
   kind?: 'token' | 'code'
+  /** order_id из queue_numbers: канонический ключ связи чека с публичным номером. */
+  ord?: string
+  /** public_order_number строкой — только для логов, не источник истины. */
+  qn?: string
 }
 
 function obj(value: unknown): Record<string, unknown> | null {
@@ -104,11 +110,28 @@ function baseDocumentIdOf(doc: Record<string, unknown>): string {
   ).trim()
 }
 
+/**
+ * `ord`/`qn` — необязательная связка с публичным номером заказа (см. modules/queue/numbers.ts).
+ * Старые чеки без этих полей обрабатываются как раньше: отсутствие — не ошибка.
+ */
+function queueRefOf(sc: Record<string, unknown>): { ord?: string; qn?: string } {
+  const ord = typeof sc.ord === 'string' ? sc.ord.trim().slice(0, 64) : ''
+  const qn = typeof sc.qn === 'string' ? sc.qn.trim().slice(0, 8) : ''
+  return { ...(ord ? { ord } : {}), ...(qn ? { qn } : {}) }
+}
+
 function getSc(doc: Record<string, unknown>): ScClaim | null {
   const raw = extractScRaw(doc.extras)
   const sc = typeof raw === 'string' ? (() => { try { return JSON.parse(raw) } catch { return null } })() : obj(raw)
   if (!sc || typeof sc.v !== 'number' || sc.v < 2 || typeof sc.c !== 'string') return null
-  return sc as unknown as ScClaim
+  // Trim/normalize: пустые значения отбрасываем совсем, чтобы не тащить мусор в логи.
+  const out = { ...(sc as unknown as ScClaim) }
+  const ref = queueRefOf(sc)
+  if (ref.ord) out.ord = ref.ord
+  else delete out.ord
+  if (ref.qn) out.qn = ref.qn
+  else delete out.qn
+  return out
 }
 
 function cupsForDocument(db: Database.Database, storeUuid: string, txs: Tx[]): number {
@@ -251,7 +274,29 @@ export function handleSell(db: Database.Database, storeUuid: string, doc: Record
     }
   })()
 
+  bindQueueRef(sc, doc, docId)
+
   return { processed: true }
+}
+
+/**
+ * Связать публичный номер заказа с документом Эвотора. Никогда не влияет на лояльность:
+ * любая ошибка здесь только логируется (номер мог быть уже связан, отменён или не выдавался).
+ */
+function bindQueueRef(sc: ScClaim, doc: Record<string, unknown>, docId: string) {
+  const orderId = sc.ord?.trim()
+  if (!orderId) return
+  try {
+    const fiscal = doc.fiscalDocumentNumber ?? doc.fiscal_document_number ?? (obj(doc.body)?.fiscalDocumentNumber as unknown)
+    const bound = bindQueueNumber(orderId, {
+      evotorDocumentUuid: docId,
+      fiscalDocumentNumber: typeof fiscal === 'string' || typeof fiscal === 'number' ? String(fiscal) : null,
+    })
+    if (bound) log.info('queue number bound', { orderId, qn: sc.qn ?? null, doc: docId.slice(0, 8) })
+    else log.info('queue number bind skipped', { orderId })
+  } catch (e) {
+    log.warn('queue number bind failed', { orderId, error: String(e).slice(0, 160) })
+  }
 }
 
 export function handlePayback(db: Database.Database, storeUuid: string, doc: Record<string, unknown>): { processed: boolean; reason?: string } {
