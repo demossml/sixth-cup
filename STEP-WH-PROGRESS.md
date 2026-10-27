@@ -123,3 +123,14 @@ DEFAULT-AD-HOC: нет
 Тесты: `wh-stores.test.ts` — 5 passed; полный backend — 303 passed / 54 файла; контрактный тест — 4 passed; admin — 24 passed; typecheck OK
 Изменённые тесты: нет
 DEFAULT-AD-HOC: нет
+
+## STEP-W10 — FEFO по точке и единый помощник списания (Q-08, Q-09)
+Статус: DONE
+Коммит: `refactor(stock): single store-aware FEFO helper, batch-linked inventory movements (Q-08, Q-09)`
+Что сделано:
+- Новый `modules/admin/stockFefo.ts` — `consumeFefo` (D-20: партии своей точки + общего склада; порядок срок→id; нехватка даёт движение без партии).
+- `stockWriteOff` (продажа), проведение инвентаризации (`stock.ts`) и возврат поставщику (`studio.ts`) переведены на помощник. Инвентаризация: недостача идёт через FEFO, излишек создаёт партию и движение, привязанное к ней.
+- Самостоятельных FEFO-запросов на списание вне `stockFefo.ts` не осталось (оставшиеся `FROM stock_batches` — чтение для экранов: остатки, сроки, себестоимость).
+Тесты: `wh-fefo-store.test.ts` — 6 passed (включая инвариант `Σ движений = Σ qty_left`); полный backend — 309 passed / 55 файлов; typecheck OK
+Изменённые тесты: нет
+DEFAULT-AD-HOC: нет

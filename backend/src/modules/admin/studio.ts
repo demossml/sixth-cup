@@ -15,6 +15,7 @@ import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import { toCsv } from './consoleLib'
 import { assertNormSane, normalizeStoreUuid } from './stock'
+import { consumeFefo } from './stockFefo'
 
 const now = () => Date.now()
 const DAY = 86_400_000
@@ -530,27 +531,18 @@ export const adminStudio = new Hono()
     const t = now()
     db.transaction(() => {
       for (const l of ls) {
-        let left = l.qty
-        const batches = all<{ id: number; qty_left: number }>(
-          `SELECT id, qty_left FROM stock_batches WHERE stock_item_id=? AND qty_left>0
-           ORDER BY CASE WHEN expires_at IS NULL THEN 1 ELSE 0 END, expires_at ASC, id ASC`, l.stock_item_id)
-        for (const b of batches) {
-          if (left <= 0) break
-          const take = Math.min(left, b.qty_left)
-          db.prepare(`UPDATE stock_batches SET qty_left = qty_left - ? WHERE id=?`).run(take, b.id)
-          db.prepare(
-            `INSERT INTO stock_movements(stock_item_id, batch_id, store_uuid, qty, kind, doc_type, doc_id, note, created_at)
-             VALUES(?,?,?,?,'return','supplier_return',?,?,?)`,
-          ).run(l.stock_item_id, b.id, r.store_uuid, -take, id, 'Возврат поставщику', t)
-          left -= take
-        }
-        if (left > 0.0001) {
-          // No batches left for the remainder: still book the movement so the ledger stays honest.
-          db.prepare(
-            `INSERT INTO stock_movements(stock_item_id, batch_id, store_uuid, qty, kind, doc_type, doc_id, note, created_at)
-             VALUES(?,NULL,?,?,'return','supplier_return',?,?,?)`,
-          ).run(l.stock_item_id, r.store_uuid, -left, id, 'Возврат поставщику (без партии)', t)
-        }
+        // Q-08: возврат поставщику списывает только партии своей точки (или общего склада).
+        consumeFefo(db, {
+          stockItemId: l.stock_item_id,
+          need: l.qty,
+          storeUuid: r.store_uuid,
+          kind: 'return',
+          docType: 'supplier_return',
+          docId: id,
+          note: 'Возврат поставщику',
+          noBatchNote: 'Возврат поставщику (без партии)',
+          now: t,
+        })
       }
       db.prepare(`UPDATE supplier_returns SET status='posted', posted_at=?, updated_at=? WHERE id=?`).run(t, t, id)
     })()

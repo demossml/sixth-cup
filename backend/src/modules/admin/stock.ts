@@ -7,6 +7,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
+import { consumeFefo } from './stockFefo'
 
 const now = () => Date.now()
 
@@ -916,32 +917,33 @@ export const adminStock = new Hono()
         const fact = l.factQty ?? 0
         const delta = fact - book
         if (Math.abs(delta) < 1e-6) continue
-        db.prepare(
-          `INSERT INTO stock_movements(stock_item_id, batch_id, store_uuid, qty, kind, doc_type, doc_id, note, created_at)
-           VALUES(?,NULL,?,?,'inventory_adj','inventory',?,?,?)`,
-        ).run(l.stockItemId, doc.storeUuid, delta, id, 'Инвентаризация', t)
-        // Adjust FEFO batches roughly: if positive, create adjustment batch; if negative, consume
         if (delta > 0) {
-          db.prepare(
-            `INSERT INTO stock_batches(stock_item_id, store_uuid, lot_code, qty_in, qty_left, unit_cost_kop, expires_at, source_type, source_id, created_at)
-             VALUES(?,?,NULL,?,?,0,NULL,'inventory',?,?)`,
-          ).run(l.stockItemId, doc.storeUuid, delta, delta, id, t)
-        } else {
-          let need = -delta
-          const batches = db
+          // Излишек: партия + движение, привязанное к ней (Q-09).
+          const b = db
             .prepare(
-              `SELECT id, qty_left FROM stock_batches
-               WHERE stock_item_id=? AND qty_left>0
-               ORDER BY CASE WHEN expires_at IS NULL THEN 1 ELSE 0 END, expires_at ASC, id ASC`,
+              `INSERT INTO stock_batches(stock_item_id, store_uuid, lot_code, qty_in, qty_left, unit_cost_kop, expires_at, source_type, source_id, created_at)
+               VALUES(?,?,NULL,?,?,0,NULL,'inventory',?,?)`,
             )
-            .all(l.stockItemId) as { id: number; qty_left: number }[]
-          for (const b of batches) {
-            if (need <= 0) break
-            const take = Math.min(b.qty_left, need)
-            db.prepare(`UPDATE stock_batches SET qty_left = qty_left - ? WHERE id=?`).run(take, b.id)
-            need -= take
-          }
+            .run(l.stockItemId, doc.storeUuid, delta, delta, id, t)
+          db.prepare(
+            `INSERT INTO stock_movements(stock_item_id, batch_id, store_uuid, qty, kind, doc_type, doc_id, note, created_at)
+             VALUES(?,?,?,?,'inventory_adj','inventory',?,?,?)`,
+          ).run(l.stockItemId, Number(b.lastInsertRowid), doc.storeUuid, delta, id, 'Инвентаризация', t)
+          continue
         }
+        consumeFefo(db, {
+          stockItemId: l.stockItemId,
+          need: -delta,
+          storeUuid: doc.storeUuid,
+          kind: 'inventory_adj',
+          docType: 'inventory',
+          docId: id,
+          note: 'Инвентаризация',
+          noBatchNote: 'Инвентаризация (без партии)',
+          now: t,
+        })
+        // Adjust FEFO batches roughly: if positive, create adjustment batch; if negative, consume
+
       }
     })()
     return c.json({ ok: true, postedAt: t })

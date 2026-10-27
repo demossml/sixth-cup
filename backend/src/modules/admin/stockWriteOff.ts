@@ -8,6 +8,7 @@
  * D-06: идемпотентность по `doc_type='evotor_sell' AND doc_id=<uuid чека>`.
  */
 import type Database from 'better-sqlite3'
+import { consumeFefo } from './stockFefo'
 
 export type WriteOffResult = {
   /** Движения по этому чеку уже есть — повторная обработка ничего не пишет. */
@@ -18,42 +19,6 @@ export type WriteOffResult = {
   skippedNoProduct: number
   /** Товар найден, но норм у него нет. */
   skippedNoNorms: number
-}
-
-function consumeFefo(
-  db: Database.Database,
-  stockItemId: number,
-  need: number,
-  storeUuid: string,
-  docId: string,
-  now: number,
-): void {
-  let left = need
-  const batches = db
-    .prepare(
-      `SELECT id, qty_left FROM stock_batches
-       WHERE stock_item_id=? AND qty_left>0
-       ORDER BY CASE WHEN expires_at IS NULL THEN 1 ELSE 0 END, expires_at ASC, id ASC`,
-    )
-    .all(stockItemId) as { id: number; qty_left: number }[]
-
-  for (const b of batches) {
-    if (left <= 0) break
-    const take = Math.min(b.qty_left, left)
-    db.prepare(`UPDATE stock_batches SET qty_left = qty_left - ? WHERE id=?`).run(take, b.id)
-    db.prepare(
-      `INSERT INTO stock_movements(stock_item_id, batch_id, store_uuid, qty, kind, doc_type, doc_id, note, created_at)
-       VALUES(?,?,?,?,'sale_out','evotor_sell',?,?,?)`,
-    ).run(stockItemId, b.id, storeUuid, -take, docId, 'Списание по продаже (норма)', now)
-    left -= take
-  }
-  if (left > 0) {
-    // Нехватка (D-21): продажу не блокируем, остаток уходит в минус — движение без партии.
-    db.prepare(
-      `INSERT INTO stock_movements(stock_item_id, batch_id, store_uuid, qty, kind, doc_type, doc_id, note, created_at)
-       VALUES(?,NULL,?,?,'sale_out','evotor_sell',?,?,?)`,
-    ).run(stockItemId, storeUuid, -left, docId, 'Списание без партии (недостаток)', now)
-  }
 }
 
 /** Списание по нормам для одного документа продажи. Бросает ошибки — их ловит вызывающий. */
@@ -104,7 +69,17 @@ export function writeOffSellByNorms(
       for (const n of norms) {
         const need = n.qty * pos.qty
         if (!(need > 0)) continue
-        consumeFefo(db, n.stockItemId, need, storeUuid, docId, now)
+        consumeFefo(db, {
+          stockItemId: n.stockItemId,
+          need,
+          storeUuid,
+          kind: 'sale_out',
+          docType: 'evotor_sell',
+          docId,
+          note: 'Списание по продаже (норма)',
+          noBatchNote: 'Списание без партии (недостаток)',
+          now,
+        })
         res.written++
       }
     }
