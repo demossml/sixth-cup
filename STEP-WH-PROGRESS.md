@@ -134,3 +134,15 @@ DEFAULT-AD-HOC: нет
 Тесты: `wh-fefo-store.test.ts` — 6 passed (включая инвариант `Σ движений = Σ qty_left`); полный backend — 309 passed / 55 файлов; typecheck OK
 Изменённые тесты: нет
 DEFAULT-AD-HOC: нет
+
+## STEP-W11 — Ручное списание, backend (Q-11)
+Статус: DONE
+Коммит: `feat(stock): manual write-off document with reasons (Q-11)`
+Что сделано:
+- Миграция `033_stock_writeoffs.sql`: `stock_writeoffs` + `stock_writeoff_lines` + индекс.
+- `POST /stock/writeoffs` (причины spoilage/expired/staff/tasting/other, проверка точки, активности позиции, остатка `expectedQty`, суммирование одинаковых строк) — документ создаётся сразу как `posted` (D-22); списание идёт через `consumeFefo(kind='write_off')`.
+- `GET /stock/writeoffs` — последние 100 документов со строками, названиями и единицами.
+- `stock_writeoff_lines` добавлен в `stockItemLinks`: позиция со списанием деактивируется, а не удаляется.
+Тесты: `wh-manual-writeoff.test.ts` — 7 passed; полный backend — 316 passed / 56 файлов; typecheck OK
+Изменённые тесты: нет
+DEFAULT-AD-HOC: нет

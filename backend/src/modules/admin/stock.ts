@@ -266,6 +266,93 @@ export const adminStock = new Hono()
     }),
   )
 
+  /* ───── Ручное списание (Q-11) ───── */
+  .get('/stock/writeoffs', (c) => {
+    const docs = db
+      .prepare(
+        `SELECT id, store_uuid AS storeUuid, reason, notes, status, posted_at AS postedAt, created_at AS createdAt
+         FROM stock_writeoffs ORDER BY id DESC LIMIT 100`,
+      )
+      .all() as Record<string, unknown>[]
+    const lineStmt = db.prepare(
+      `SELECT l.stock_item_id AS stockItemId, l.qty, i.name AS itemName, i.unit
+       FROM stock_writeoff_lines l JOIN stock_items i ON i.id = l.stock_item_id
+       WHERE l.writeoff_id=? ORDER BY i.name COLLATE NOCASE`,
+    )
+    const stores = db.prepare(`SELECT store_uuid AS uuid, name FROM evotor_stores`).all() as { uuid: string; name: string }[]
+    const storeName = new Map(stores.map((s) => [s.uuid, s.name]))
+    return c.json({
+      writeoffs: docs.map((d) => ({
+        ...d,
+        storeName: d.storeUuid ? (storeName.get(String(d.storeUuid)) ?? null) : null,
+        lines: lineStmt.all(d.id as number),
+      })),
+    })
+  })
+
+  .post(
+    '/stock/writeoffs',
+    zValidator(
+      'json',
+      z.object({
+        storeUuid: z.string().max(64).nullable().optional(),
+        reason: z.enum(['spoilage', 'expired', 'staff', 'tasting', 'other']),
+        notes: z.string().max(2000).nullable().optional(),
+        lines: z
+          .array(z.object({ stockItemId: z.number().int().positive(), qty: z.number().positive() }))
+          .min(1)
+          .max(100),
+      }),
+    ),
+    (c) => {
+      const p = c.req.valid('json')
+      const storeUuid = normalizeStoreUuid(p.storeUuid)
+      const t = now()
+
+      // Одинаковые позиции суммируются: иначе остаток можно обойти двумя строками.
+      const byItem = new Map<number, number>()
+      for (const l of p.lines) byItem.set(l.stockItemId, (byItem.get(l.stockItemId) ?? 0) + l.qty)
+
+      const id = db.transaction(() => {
+        for (const [itemId, qty] of byItem) {
+          const item = db.prepare(`SELECT id, name, unit, active FROM stock_items WHERE id=?`).get(itemId) as
+            | { id: number; name: string; unit: string; active: number }
+            | undefined
+          if (!item) throw bad(`Позиция ${itemId} не найдена`, 404)
+          if (!item.active) throw bad(`Позиция «${item.name}» выключена`, 400)
+          const have = expectedQty(itemId, storeUuid)
+          if (qty > have + 1e-9) {
+            throw bad(`Недостаточно остатка: «${item.name}» есть ${have} ${item.unit}, списываете ${qty}`, 400)
+          }
+        }
+        const info = db
+          .prepare(
+            `INSERT INTO stock_writeoffs(store_uuid, reason, notes, status, posted_at, created_at)
+             VALUES(?,?,?,'posted',?,?)`,
+          )
+          .run(storeUuid, p.reason, p.notes ?? null, t, t)
+        const docId = Number(info.lastInsertRowid)
+        const ins = db.prepare(`INSERT INTO stock_writeoff_lines(writeoff_id, stock_item_id, qty) VALUES(?,?,?)`)
+        for (const [itemId, qty] of byItem) {
+          ins.run(docId, itemId, qty)
+          consumeFefo(db, {
+            stockItemId: itemId,
+            need: qty,
+            storeUuid,
+            kind: 'write_off',
+            docType: 'stock_writeoff',
+            docId,
+            note: `Списание: ${p.reason}`,
+            noBatchNote: `Списание: ${p.reason} (без партии)`,
+            now: t,
+          })
+        }
+        return docId
+      })()
+      return c.json({ id, postedAt: t }, 201)
+    },
+  )
+
   /* ───── Balances & expiry monitor ───── */
   .get('/stock/balances', (c) => {
     const storeUuid = c.req.query('storeUuid') || null
