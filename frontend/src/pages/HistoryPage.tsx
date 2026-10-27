@@ -110,7 +110,14 @@ export default function HistoryPage() {
                     {i.cupsDelta !== 0 && ` · ${i.cupsDelta > 0 ? '+' : '−'}${Math.abs(i.cupsDelta)} ${cupsWord(Math.abs(i.cupsDelta))}`}
                   </p>
                 </div>
-                <div className="text-right text-[15px] font-display font-semibold num text-ink">{amountOf(i)}</div>
+                <div
+                  className={
+                    'text-right text-[15px] font-display font-semibold num ' +
+                    (i.cashbackDeltaKop < 0 ? 'text-bad' : 'text-ink')
+                  }
+                >
+                  {amountOf(i)}
+                </div>
               </article>
             ))}
           </section>

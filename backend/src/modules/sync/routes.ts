@@ -30,12 +30,25 @@ export const syncRoutes = new Hono<AuthEnv>()
           CASE WHEN kind='PAYBACK' THEN -COALESCE(cups_counted,0) ELSE COALESCE(cups_counted,0) END AS cupsDelta,
           0 AS cashbackDeltaKop, result_rub AS resultRub
         FROM loyalty_ops WHERE card_id=? AND kind IN ('SELL','PAYBACK')
+        -- L-08: отдельные строки за кэшбэк, чтобы не подменять сумму покупки
+        UNION ALL
+        SELECT created_at AS at, 'spend:' || doc_store || ':' || doc_id AS id, 'cashback_spend' AS kind,
+          'Списано кэшбэком' AS title, 0 AS cupsDelta, -cb AS cashbackDeltaKop, NULL AS resultRub
+        FROM loyalty_ops WHERE card_id=? AND kind='SELL' AND COALESCE(cb,0)>0
+        UNION ALL
+        SELECT created_at AS at, 'cbback:' || doc_store || ':' || doc_id AS id, 'cashback_back' AS kind,
+          'Кэшбэк возвращён' AS title, 0 AS cupsDelta, cb AS cashbackDeltaKop, NULL AS resultRub
+        FROM loyalty_ops WHERE card_id=? AND kind='PAYBACK' AND COALESCE(cb,0)>0
         UNION ALL
         SELECT l.created_at AS at, 'referral:' || l.id AS id, 'referral' AS kind,
           'Кэшбэк от покупок друга' AS title, 0 AS cupsDelta, l.amount AS cashbackDeltaKop, NULL AS resultRub
         FROM cashback_ledger l WHERE l.beneficiary_id=? AND l.amount>0
+        UNION ALL
+        SELECT l.created_at AS at, 'referral_rev:' || l.id AS id, 'referral_reversal' AS kind,
+          'Возврат кэшбэка за друга' AS title, 0 AS cupsDelta, l.amount AS cashbackDeltaKop, NULL AS resultRub
+        FROM cashback_ledger l WHERE l.beneficiary_id=? AND l.amount<0
       ) ORDER BY at DESC, id DESC LIMIT ? OFFSET ?
-    `).all(user.card_id, userId, limit + 1, offset) as Array<{
+    `).all(user.card_id, user.card_id, user.card_id, userId, userId, limit + 1, offset) as Array<{
       at:number; id:string; kind:string; title:string; cupsDelta:number; cashbackDeltaKop:number; resultRub:number|null
     }>
     const hasMore = rows.length > limit

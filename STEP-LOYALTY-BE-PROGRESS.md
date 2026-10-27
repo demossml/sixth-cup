@@ -85,3 +85,12 @@ DEFAULT-AD-HOC:
 - `frontend/src/pages/GamePage.tsx`: дисклеймер про игровые показатели больше не ссылается на «шестой стакан».
 Тесты: typecheck OK; backend — 333 passed; PWA — 52 passed; `grep "шест"` по PWA/public/seed даёт только комментарий.
 DEFAULT-AD-HOC: нет
+
+## STEP-B07 — L-08: PWA history минимально
+Статус: DONE
+Коммит: `feat(pwa): history shows cashback spend and referral reversal (L-08)`
+Что сделано:
+- `modules/sync/routes.ts`: в историю добавлены три новых типа строк — `cashback_spend` («Списано кэшбэком», `-cb`), `cashback_back` («Кэшбэк возвращён», `+cb` при PAYBACK) и `referral_reversal` («Возврат кэшбэка за друга», отрицательные `cashback_ledger`). Строка покупки по-прежнему берётся из `loyalty_ops` и не дублируется из `loyalty_ledger`.
+- `HistoryPage.tsx`: отрицательный кэшбэк показывается красным; сумма покупки не подменяется списанием (это отдельная строка). Новые подписи приходят с сервера, отдельного словаря в PWA не потребовалось.
+Тесты: `sync-history.test.ts` — 4 passed (покупка + списание отдельно, возврат кэшбэка, сторно referral, отсутствие дубля SELL). Backend — 335 passed / 61 файл; PWA — 52 passed.
+DEFAULT-AD-HOC: нет
