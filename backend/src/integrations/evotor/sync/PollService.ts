@@ -6,6 +6,7 @@ import type Database from 'better-sqlite3'
 import { EvotorClient, formatDateWithTime } from '../client/EvotorClient'
 import { evotorConfig } from '../../../config'
 import { handlePayback, handleSell } from '../processing/SellHandler'
+import { applyStockForDocument } from '../processing/StockHandler'
 import { hasLoyaltySc } from '../loyaltyExtras'
 import { log, shortId } from '../../../lib/logBuffer'
 import { anyTokenConfigured, clientForStore, listActivePlainTokens } from '../tokenStore'
@@ -79,6 +80,8 @@ export class PollService {
     private readonly db: Database.Database,
     /** Injected for tests; production passes nothing and clients are resolved per store token. */
     private readonly client?: EvotorClient,
+    /** Подмена склада в тестах (Q-05); в продакшене — реальная функция. */
+    private readonly deps: { applyStock?: typeof applyStockForDocument } = {},
   ) {}
 
   async ensureStores(): Promise<string[]> {
@@ -109,9 +112,35 @@ export class PollService {
     return ids
   }
 
+  /**
+   * Документ кассы: сначала лояльность (как было), затем склад.
+   * Склад идёт вторым, чтобы его ошибка не затирала статус лояльности (W05).
+   */
   private processDocument(storeUuid: string, doc: Record<string, unknown>) {
     const type = String(doc.type ?? '')
     if (type !== 'SELL' && type !== 'PAYBACK') return
+    this.processLoyalty(storeUuid, doc, type)
+    this.processStock(storeUuid, doc)
+  }
+
+  /** Склад: сырьё списывается на любом чеке, независимо от карты (Q-01). */
+  private processStock(storeUuid: string, doc: Record<string, unknown>) {
+    const id = docIdOf(doc) ?? ''
+    try {
+      const apply = this.deps.applyStock ?? applyStockForDocument
+      const result = apply(this.db, storeUuid, doc)
+      log.info('evotor stock applied', {
+        doc: shortId(id, 8),
+        store: shortId(storeUuid),
+        result: JSON.stringify(result).slice(0, 200),
+      })
+    } catch (e) {
+      // D-04: продажа и лояльность уже прошли — документ остаётся PROCESSED, ошибка видна снаружи.
+      log.error(`evotor stock failed: ${String(e).slice(0, 200)}`, { doc: shortId(id, 8), store: shortId(storeUuid) })
+    }
+  }
+
+  private processLoyalty(storeUuid: string, doc: Record<string, unknown>, type: string) {
     const extras = doc.extras && typeof doc.extras === 'object' ? doc.extras as Record<string, unknown> : {}
     const hasSc = hasLoyaltySc(extras)
     if (!hasSc) {

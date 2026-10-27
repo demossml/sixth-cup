@@ -1,8 +1,24 @@
 /**
- * Soft stock write-off on Evotor SELL by product_stock_norms (audit: sale consumes norm).
- * Never throws into loyalty path — missing norms / empty stock only log and skip.
+ * Списание сырья на складе по нормам `product_stock_norms` на каждый чек кассы (Q-01).
+ *
+ * Вызывается из `PollService` (а не из `handleSell`), чтобы склад работал и на чеках
+ * без карты лояльности. Ошибки не глотаются: их обрабатывает вызывающий код (Q-05).
+ *
+ * D-05: весь чек списывается одной транзакцией — либо все строки, либо ни одной.
+ * D-06: идемпотентность по `doc_type='evotor_sell' AND doc_id=<uuid чека>`.
  */
 import type Database from 'better-sqlite3'
+
+export type WriteOffResult = {
+  /** Движения по этому чеку уже есть — повторная обработка ничего не пишет. */
+  duplicate: boolean
+  /** Сколько строк норм реально списано. */
+  written: number
+  /** Позиции чека без связи с товаром меню. */
+  skippedNoProduct: number
+  /** Товар найден, но норм у него нет. */
+  skippedNoNorms: number
+}
 
 function consumeFefo(
   db: Database.Database,
@@ -32,7 +48,7 @@ function consumeFefo(
     left -= take
   }
   if (left > 0) {
-    // Still record movement without batch — expected goes negative / short (visible as risk)
+    // Нехватка (D-21): продажу не блокируем, остаток уходит в минус — движение без партии.
     db.prepare(
       `INSERT INTO stock_movements(stock_item_id, batch_id, store_uuid, qty, kind, doc_type, doc_id, note, created_at)
        VALUES(?,NULL,?,?,'sale_out','evotor_sell',?,?,?)`,
@@ -40,49 +56,59 @@ function consumeFefo(
   }
 }
 
-/**
- * Call inside the same transaction as SELL success, or after — idempotent per docId+item.
- */
+/** Списание по нормам для одного документа продажи. Бросает ошибки — их ловит вызывающий. */
 export function writeOffSellByNorms(
   db: Database.Database,
   storeUuid: string,
   docId: string,
   positions: { productUuid: string | null; qty: number }[],
-): void {
-  try {
-    if (!positions.length) return
-    // Skip if already written for this doc
+): WriteOffResult {
+  const res: WriteOffResult = { duplicate: false, written: 0, skippedNoProduct: 0, skippedNoNorms: 0 }
+  if (!positions.length) return res
+
+  const findProduct = db.prepare(
+    `SELECT p.id FROM products p
+     JOIN product_store_links l ON l.product_id = p.id
+     WHERE l.evotor_uuid = ? LIMIT 1`,
+  )
+  const findProductByAny = db.prepare(
+    `SELECT product_id AS id FROM product_store_links WHERE evotor_uuid=? LIMIT 1`,
+  )
+  const normsFor = db.prepare(
+    `SELECT stock_item_id AS stockItemId, qty FROM product_stock_norms WHERE product_id=?`,
+  )
+
+  db.transaction(() => {
     const exists = db
       .prepare(`SELECT 1 FROM stock_movements WHERE doc_type='evotor_sell' AND doc_id=? LIMIT 1`)
       .get(docId)
-    if (exists) return
+    if (exists) {
+      res.duplicate = true
+      return
+    }
 
     const now = Date.now()
-    const findProduct = db.prepare(
-      `SELECT p.id FROM products p
-       JOIN product_store_links l ON l.product_id = p.id
-       WHERE l.evotor_uuid = ? LIMIT 1`,
-    )
-    const findProductByAny = db.prepare(
-      `SELECT product_id AS id FROM product_store_links WHERE evotor_uuid=? LIMIT 1`,
-    )
-    const normsFor = db.prepare(
-      `SELECT stock_item_id AS stockItemId, qty FROM product_stock_norms WHERE product_id=?`,
-    )
-
     for (const pos of positions) {
       if (!pos.productUuid || !(pos.qty > 0)) continue
       let prod = findProduct.get(pos.productUuid) as { id: number } | undefined
       if (!prod) prod = findProductByAny.get(pos.productUuid) as { id: number } | undefined
-      if (!prod) continue
+      if (!prod) {
+        res.skippedNoProduct++
+        continue
+      }
       const norms = normsFor.all(prod.id) as { stockItemId: number; qty: number }[]
+      if (!norms.length) {
+        res.skippedNoNorms++
+        continue
+      }
       for (const n of norms) {
         const need = n.qty * pos.qty
         if (!(need > 0)) continue
         consumeFefo(db, n.stockItemId, need, storeUuid, docId, now)
+        res.written++
       }
     }
-  } catch {
-    // Soft: never break SELL/loyalty
-  }
+  })()
+
+  return res
 }

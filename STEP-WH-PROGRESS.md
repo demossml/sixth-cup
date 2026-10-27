@@ -25,3 +25,15 @@
 Изменённые тесты: нет
 DEFAULT-AD-HOC:
 - **W00-1 (ветка).** D-01 предписывает ветку `wh/w0-w2`, но пользователь в этой сессии трижды явно требовал работать только в существующей `main` без новых ветвей. Приоритет у прямого указания пользователя: работа идёт в `main`, коммиты локальные, push не выполняется. Если понадобится изоляция — ветку можно нарезать одним `git branch wh/w0-w2 <sha>` в любой момент, история линейна.
+
+## STEP-W01 — Списание сырья на каждом SELL (Q-01)
+Статус: DONE
+Коммит: `fix(stock): write off raw stock on every SELL, not only loyalty-card receipts (Q-01)`
+Что сделано:
+- `PollService.processDocument` разделён на `processLoyalty` (прежняя логика без изменений) и `processStock` (склад на любом SELL, после лояльности).
+- `SellHandler.handleSell` больше не трогает склад: импорт `stockWriteOff` и блок «Soft stock write-off» удалены, `qty` добавлен в `sellInternals`.
+- `stockWriteOff.writeOffSellByNorms` возвращает `WriteOffResult` (`duplicate/written/skippedNoProduct/skippedNoNorms`), работает в одной транзакции и бросает ошибки наружу (D-05).
+- Новый `processing/StockHandler.ts` с `applyStockForDocument`.
+Тесты: `wh-sell-stock.test.ts` — 11 passed; охранный набор лояльности — 40 passed; полный backend — 259 passed / 46 файлов; typecheck OK
+Изменённые тесты: нет
+DEFAULT-AD-HOC: нет
