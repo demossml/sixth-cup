@@ -67,12 +67,20 @@ function applyOne(r: Receipt) {
     }
   }
 
+  // L-06: погашение атомарное — условие `used_at IS NULL` в самом UPDATE.
+  // Два разных чека с одним ваучером не могут оба «выиграть»: успех только при changes === 1.
+  const redeem = db.prepare(
+    'UPDATE vouchers SET used_at=?, receipt_id=? WHERE id=? AND user_id=? AND used_at IS NULL',
+  )
   for (const id of r.vu) {
     const v = db.prepare('SELECT user_id, used_at FROM vouchers WHERE id=?')
       .get(id) as { user_id: number; used_at: number | null } | undefined
-    if (!v || v.user_id !== r.u) dispute('voucher_invalid', r.u, r.r, `voucher ${id}`)
-    else if (v.used_at) dispute('voucher_double_use', r.u, r.r, `voucher ${id} already used`)
-    else db.prepare('UPDATE vouchers SET used_at=?, receipt_id=? WHERE id=?').run(Date.now(), r.r, id)
+    if (!v || v.user_id !== r.u) {
+      dispute('voucher_invalid', r.u, r.r, `voucher ${id}`)
+      continue
+    }
+    const res = redeem.run(Date.now(), r.r, id, r.u)
+    if (res.changes !== 1) dispute('voucher_double_use', r.u, r.r, `voucher ${id} already used`)
   }
 
   const after = db.prepare('SELECT paid_total, free_used FROM cards WHERE user_id=?')

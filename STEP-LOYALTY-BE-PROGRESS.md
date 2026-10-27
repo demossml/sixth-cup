@@ -51,3 +51,13 @@ DEFAULT-AD-HOC:
 Тесты: `loyalty-referral-floor.test.ts` — 2 passed (потраченный бонус → баланс 0, ровно одна строка `-500`, спор с requested 3000; нетронутый бонус → полное сторно, спора нет).
 DEFAULT-AD-HOC:
 - **B03-1.** `Σ cashback_ledger == баланс` не является инвариантом: таблица учитывает только referral-начисления и сторно, но не траты. Тест проверяет факт сторно и отсутствие фантомного долга, а не сумму по таблице.
+
+## STEP-B04 — L-06: atomic voucher redeem
+Статус: DONE
+Коммит: `fix(loyalty): atomic voucher redeem where used_at is null (L-06)`
+Что сделано: в `modules/loyalty/receipts.ts` погашение ваучера идёт одним запросом
+`UPDATE vouchers SET used_at=?, receipt_id=? WHERE id=? AND user_id=? AND used_at IS NULL`;
+успех только при `changes === 1`, иначе спор `voucher_double_use`. Проверка владельца сохранена (`voucher_invalid`).
+Тесты: `loyalty-voucher-redeem.test.ts` — 2 passed (второй чек не перезаписывает `receipt_id` и получает спор; чужой ваучер не погашается). Полный backend — 329 passed / 60 файлов.
+DEFAULT-AD-HOC:
+- **B04-1.** В тесте пришлось эмулировать подписанные чеки (ed25519 ключ устройства + `receiptId` вида `<deviceId>-…`) и шаг `q` = +2: после чека `cards.seq` становится `q+1`, поэтому соседний чек с `q+1` отбраковывается как `stale_receipt_sequence`. Это свойство контракта, не дефект.
