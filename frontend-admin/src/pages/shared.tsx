@@ -37,3 +37,41 @@ export function opResult(o: OperationRow): string {
   if (o.free) parts.push(`бесплатных ${o.free}`)
   return parts.join(', ')
 }
+
+/* ───────── Store picker (D-19: точка или общий склад) ───────── */
+
+export type StoreOption = { uuid: string; name: string }
+
+/** Значение по умолчанию: единственная точка, иначе «общий склад» (пустая строка). */
+export function defaultStoreUuid(stores: StoreOption[]): string {
+  return stores.length === 1 ? stores[0].uuid : ''
+}
+
+/** Общий склад + точки. `null` в теле запроса означает «общий склад». */
+export function StorePicker({
+  value,
+  onChange,
+  stores,
+  label = 'Точка',
+}: {
+  value: string
+  onChange: (v: string) => void
+  stores: StoreOption[]
+  label?: string
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[12px] font-medium text-ink-secondary">{label}</span>
+      <select
+        className="w-full rounded-xl border border-line bg-card px-3 py-2 text-sm"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        <option value="">Общий склад</option>
+        {stores.map((s) => (
+          <option key={s.uuid} value={s.uuid}>{s.name}</option>
+        ))}
+      </select>
+    </label>
+  )
+}

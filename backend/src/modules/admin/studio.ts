@@ -14,7 +14,7 @@ import { z } from 'zod'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import { toCsv } from './consoleLib'
-import { assertNormSane } from './stock'
+import { assertNormSane, normalizeStoreUuid } from './stock'
 
 const now = () => Date.now()
 const DAY = 86_400_000
@@ -317,11 +317,12 @@ export const adminStudio = new Hono()
     (c) => {
       const p = c.req.valid('json')
       if (!one(`SELECT id FROM suppliers WHERE id=?`, p.supplierId)) throw bad('Поставщик не найден', 404)
+      const storeUuid = normalizeStoreUuid(p.storeUuid)
       const t = now()
       const id = db.transaction(() => {
         const info = db.prepare(
           `INSERT INTO purchase_orders(supplier_id, store_uuid, status, delivery_at, notes, created_at, updated_at) VALUES(?,?, 'draft',?,?,?,?)`,
-        ).run(p.supplierId, p.storeUuid ?? null, p.deliveryAt ?? null, p.notes ?? null, t, t)
+        ).run(p.supplierId, storeUuid, p.deliveryAt ?? null, p.notes ?? null, t, t)
         const oid = Number(info.lastInsertRowid)
         const ins = db.prepare(`INSERT INTO purchase_order_lines(order_id, stock_item_id, qty, price_kop) VALUES(?,?,?,?)`)
         for (const l of p.lines) {

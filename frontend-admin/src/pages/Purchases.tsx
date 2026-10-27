@@ -13,6 +13,7 @@ import BankTab from './purchases/BankTab'
 import ReconTab from './purchases/ReconTab'
 import OrdersTab from './purchases/OrdersTab'
 import { csvName, downloadCsv } from '../lib/csv'
+import { StorePicker, type StoreOption } from './shared'
 import { setParams } from '../lib/query'
 import ReturnsTab from './purchases/ReturnsTab'
 
@@ -70,6 +71,9 @@ export default function Purchases() {
   const suppliers = useApi<{ suppliers: Supplier[] }>('/suppliers')
   const debt = useApi<{ debts: Debt[] }>('/purchases/debt')
   const items = useApi<{ items: StockItem[] }>('/stock/items?active=1')
+  // D-19: точка прихода. Пусто — «общий склад».
+  const stores = useApi<{ stores: StoreOption[] }>('/stock/stores')
+  const [storeUuid, setStoreUuid] = useState('')
   // D-14: количество строки накладной — в единице позиции, показываем её в подписи.
   const lineUnit = (stockItemId: string) =>
     (items.data?.items ?? []).find((it) => String(it.id) === stockItemId)?.unit ?? ''
@@ -95,6 +99,7 @@ export default function Purchases() {
         method: 'POST',
         body: {
           supplierId: Number(supplierId),
+          storeUuid: storeUuid || null,
           number: number || null,
           lines: parsed,
         },
@@ -102,6 +107,7 @@ export default function Purchases() {
       toast.push(`Накладная №${res.id} · ${parsed.length} поз. (черновик)`)
       setShowInvoice(false)
       setLines([emptyLine()])
+      setStoreUuid('')
       invoices.reload()
     } catch (e) {
       toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
@@ -296,6 +302,12 @@ export default function Purchases() {
             <Field label="Номер">
               <Input value={number} onChange={(e) => setNumber(e.target.value)} placeholder="опционально" />
             </Field>
+            <StorePicker
+              stores={stores.data?.stores ?? []}
+              value={storeUuid}
+              onChange={setStoreUuid}
+              label="Точка прихода"
+            />
           </div>
           <div className="mb-2 text-[12px] font-medium text-ink-secondary">Строки · единица склада и «Годен до» на каждой</div>
           <div className="space-y-3">

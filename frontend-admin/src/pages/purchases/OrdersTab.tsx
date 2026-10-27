@@ -4,6 +4,7 @@ import { api } from '../../api/client'
 import { Badge, Button, Card, DataTable, EmptyState, ErrorBox, Field, Select, Skeleton, useToast } from '../../ui/kit'
 import type { Column, Tone } from '../../ui/kit'
 import { Check, FileInput, Plus, Trash2, Wand2 } from 'lucide-react'
+import { StorePicker, type StoreOption } from '../shared'
 
 type OrderLine = { lineId: number; stockItemId: number; qty: number; priceKop: number; receivedQty: number }
 type Order = {
@@ -44,6 +45,9 @@ export default function OrdersTab({ suppliers, items, onInvoiceCreated }: {
   const [busy, setBusy] = useState(false)
   const [supplierId, setSupplierId] = useState('')
   const [deliveryAt, setDeliveryAt] = useState('')
+  // D-19: точка заказа; пусто — «общий склад».
+  const [storeUuid, setStoreUuid] = useState('')
+  const stores = useApi<{ stores: StoreOption[] }>('/stock/stores')
   const [lines, setLines] = useState<Draft[]>([emptyLine()])
   const [del, setDel] = useState<Order | null>(null)
 
@@ -69,6 +73,7 @@ export default function OrdersTab({ suppliers, items, onInvoiceCreated }: {
         method: 'POST',
         body: {
           supplierId: Number(supplierId),
+          storeUuid: storeUuid || null,
           deliveryAt: deliveryAt ? Date.parse(`${deliveryAt}T12:00:00`) : null,
           lines: parsed,
         },
@@ -76,6 +81,7 @@ export default function OrdersTab({ suppliers, items, onInvoiceCreated }: {
       toast.push(`Заказ ЗК-${res.id} создан (черновик)`)
       setLines([emptyLine()])
       setDeliveryAt('')
+      setStoreUuid('')
       list.reload()
     } catch (e) {
       toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
@@ -228,6 +234,12 @@ export default function OrdersTab({ suppliers, items, onInvoiceCreated }: {
               onChange={(e) => setDeliveryAt(e.target.value)}
             />
           </Field>
+          <StorePicker
+            stores={stores.data?.stores ?? []}
+            value={storeUuid}
+            onChange={setStoreUuid}
+            label="Точка поставки"
+          />
           <div className="flex items-end gap-2">
             <Button icon={<Wand2 size={16} />} variant="secondary" loading={busy} onClick={fillFromHelper}>
               Подсказать

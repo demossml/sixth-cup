@@ -112,3 +112,14 @@ DEFAULT-AD-HOC: нет
 Тесты: `wh-order-receive.test.ts` — 6 passed; полный backend — 298 passed / 53 файла; typecheck OK
 Изменённые тесты: нет
 DEFAULT-AD-HOC: нет
+
+## STEP-W09 — Точка в накладной, заказе и инвентаризации (U-01)
+Статус: DONE
+Коммит: `feat(stock): choose store in invoice, order and inventory forms (U-01)`
+Что сделано:
+- `GET /stock/stores` — список точек для форм.
+- `normalizeStoreUuid` (экспорт из `stock.ts`): пустая строка → `null` («общий склад»), неизвестная точка → 400 «Точка не найдена». Применено в `POST /purchases/invoices`, `POST /purchases/orders`, `POST /inventory`.
+- UI: компонент `StorePicker` + `defaultStoreUuid` в `shared.tsx`; подключён в форму накладной (`Purchases.tsx`), заказа (`OrdersTab.tsx`) и инвентаризации (`Inventory.tsx`), в тело уходит `storeUuid: value || null`.
+Тесты: `wh-stores.test.ts` — 5 passed; полный backend — 303 passed / 54 файла; контрактный тест — 4 passed; admin — 24 passed; typecheck OK
+Изменённые тесты: нет
+DEFAULT-AD-HOC: нет

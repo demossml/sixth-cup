@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useApi } from '../api/useApi'
 import { api } from '../api/client'
+import { StorePicker, type StoreOption } from './shared'
 import {
   PageHeader, Card, EmptyState, Badge, Button, Select, Field, Input,
   ErrorBox, Skeleton, useToast, cx,
@@ -44,6 +45,9 @@ export default function Inventory() {
   const detail = useApi<{ doc: InvDoc; lines: InvLine[] }>(openId != null ? `/inventory/${openId}` : null)
   // R-09: прогресс «посчитано/всего» одним запросом для списка.
   const overview = useApi<{ docs: InvOverview[] }>('/inventory/overview')
+  // D-19: точка инвентаризации; пусто — «общий склад».
+  const [storeUuid, setStoreUuid] = useState('')
+  const stores = useApi<{ stores: StoreOption[] }>('/stock/stores')
 
   const createDoc = async () => {
     if (kind === 'partial' && !selectedItems.length) {
@@ -56,11 +60,13 @@ export default function Inventory() {
         method: 'POST',
         body: {
           kind,
+          storeUuid: storeUuid || null,
           stockItemIds: kind === 'partial' ? selectedItems : undefined,
         },
       })
       toast.push(`Инвентаризация №${res.id}`)
       setShowNew(false)
+      setStoreUuid('')
       setOpenId(res.id)
       list.reload()
     } catch (e) {
@@ -203,12 +209,20 @@ export default function Inventory() {
       {showNew && (
         <Card className="mb-4">
           <div className="mb-3 text-[14px] font-semibold">Новая инвентаризация</div>
-          <Field label="Тип">
-            <Select value={kind} onChange={(e) => setKind(e.target.value as 'full' | 'partial')}>
-              <option value="partial">Частичная</option>
-              <option value="full">Сплошная (все активные позиции)</option>
-            </Select>
-          </Field>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Тип">
+              <Select value={kind} onChange={(e) => setKind(e.target.value as 'full' | 'partial')}>
+                <option value="partial">Частичная</option>
+                <option value="full">Сплошная (все активные позиции)</option>
+              </Select>
+            </Field>
+            <StorePicker
+              stores={stores.data?.stores ?? []}
+              value={storeUuid}
+              onChange={setStoreUuid}
+              label="Точка"
+            />
+          </div>
           {kind === 'partial' && (
             <div className="mt-3">
               <div className="mb-2 text-[12px] text-ink-secondary">Выберите позиции (без выбора «Начать» нельзя):</div>

@@ -51,6 +51,15 @@ export function stockItemLinks(stockItemId: number): { blocking: string[]; linke
   return { blocking, linked }
 }
 
+/** D-19: пустая строка = «общий склад»; непустая должна существовать в `evotor_stores`. */
+export function normalizeStoreUuid(storeUuid?: string | null): string | null {
+  const value = (storeUuid ?? '').trim()
+  if (!value) return null
+  const row = db.prepare(`SELECT store_uuid FROM evotor_stores WHERE store_uuid=?`).get(value)
+  if (!row) throw bad('Точка не найдена', 400)
+  return value
+}
+
 function expectedQty(stockItemId: number, storeUuid?: string | null): number {
   if (storeUuid) {
     const r = db
@@ -246,6 +255,15 @@ export const adminStock = new Hono()
     db.prepare(`DELETE FROM stock_items WHERE id=?`).run(id)
     return c.json({ ok: true, deleted: true })
   })
+
+  /** D-19: список точек для выбора «точка / общий склад» в формах. */
+  .get('/stock/stores', (c) =>
+    c.json({
+      stores: db
+        .prepare(`SELECT store_uuid AS uuid, name FROM evotor_stores ORDER BY name COLLATE NOCASE`)
+        .all(),
+    }),
+  )
 
   /* ───── Balances & expiry monitor ───── */
   .get('/stock/balances', (c) => {
@@ -558,6 +576,7 @@ export const adminStock = new Hono()
     (c) => {
       const p = c.req.valid('json')
       if (!db.prepare(`SELECT id FROM suppliers WHERE id=?`).get(p.supplierId)) throw bad('Поставщик не найден', 404)
+      const storeUuid = normalizeStoreUuid(p.storeUuid)
       const t = now()
       const total = p.lines.reduce((s, l) => s + Math.round(l.qty * l.unitCostKop), 0)
       const id = db.transaction(() => {
@@ -566,7 +585,7 @@ export const adminStock = new Hono()
             `INSERT INTO purchase_invoices(supplier_id, store_uuid, number, status, total_kop, paid_kop, due_at, notes, created_at, updated_at)
              VALUES(?,?,?,'draft',?,0,?,?,?,?)`,
           )
-          .run(p.supplierId, p.storeUuid ?? null, p.number ?? null, total, p.dueAt ?? null, p.notes ?? null, t, t)
+          .run(p.supplierId, storeUuid, p.number ?? null, total, p.dueAt ?? null, p.notes ?? null, t, t)
         const invoiceId = Number(info.lastInsertRowid)
         const ins = db.prepare(
           `INSERT INTO purchase_invoice_lines(invoice_id, stock_item_id, qty, unit_cost_kop, expires_at, lot_code)
@@ -781,6 +800,7 @@ export const adminStock = new Hono()
       if (p.kind === 'partial' && !(p.stockItemIds && p.stockItemIds.length)) {
         throw bad('Для частичной инвентаризации выберите позиции', 400)
       }
+      const storeUuid = normalizeStoreUuid(p.storeUuid)
       const t = now()
       const id = db.transaction(() => {
         const info = db
@@ -788,7 +808,7 @@ export const adminStock = new Hono()
             `INSERT INTO inventory_docs(store_uuid, kind, status, notes, created_at, updated_at)
              VALUES(?,?,'draft',?,?,?)`,
           )
-          .run(p.storeUuid ?? null, p.kind, p.notes ?? null, t, t)
+          .run(storeUuid, p.kind, p.notes ?? null, t, t)
         const docId = Number(info.lastInsertRowid)
         let itemIds = p.stockItemIds
         if (p.kind === 'full') {
@@ -800,7 +820,7 @@ export const adminStock = new Hono()
           `INSERT INTO inventory_lines(doc_id, stock_item_id, book_qty, fact_qty, unit_cost_kop) VALUES(?,?,?,?,0)`,
         )
         for (const sid of itemIds ?? []) {
-          const book = expectedQty(sid, p.storeUuid ?? null)
+          const book = expectedQty(sid, storeUuid)
           ins.run(docId, sid, book, null)
         }
         return docId
