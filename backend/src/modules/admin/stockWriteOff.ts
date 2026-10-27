@@ -175,7 +175,8 @@ export function restoreByPayback(
     }
 
     const now = Date.now()
-    const addBatch = db.prepare(`UPDATE stock_batches SET qty_left = MIN(qty_in, qty_left + ?) WHERE id=?`)
+    const batchState = db.prepare(`SELECT qty_in AS qtyIn, qty_left AS qtyLeft FROM stock_batches WHERE id=?`)
+    const addToBatch = db.prepare(`UPDATE stock_batches SET qty_left = qty_left + ? WHERE id=?`)
     const insMovement = db.prepare(
       `INSERT INTO stock_movements(stock_item_id, batch_id, store_uuid, qty, kind, doc_type, doc_id, ref_doc_id, note, created_at)
        VALUES(?,?,?,?,'sale_back','evotor_payback',?,?,?,?)`,
@@ -186,18 +187,25 @@ export function restoreByPayback(
       const remaining = Math.max(0, sold - (backByItem.get(itemId) ?? 0))
       let left = Math.min(want, remaining)
       if (left <= 1e-9) continue
-      let wrote = false
       for (const row of orig) {
         if (left <= 1e-9) break
         if (row.stock_item_id !== itemId) continue
-        const take = Math.min(-row.qty, left)
+        let take = Math.min(-row.qty, left)
         if (!(take > 0)) continue
-        if (row.batch_id != null) addBatch.run(take, row.batch_id)
+        // D-09: партия не наполняется выше qty_in. Возвращаем ровно столько, сколько влезает,
+        // остаток переносим на следующую строку — иначе движение и qty_left разойдутся.
+        if (row.batch_id != null) {
+          const b = batchState.get(row.batch_id) as { qtyIn: number; qtyLeft: number } | undefined
+          const room = b ? Math.max(0, Number(b.qtyIn) - Number(b.qtyLeft)) : 0
+          take = Math.min(take, room)
+          if (!(take > 1e-9)) continue
+          addToBatch.run(take, row.batch_id)
+        }
         insMovement.run(itemId, row.batch_id, storeUuid, take, paybackId, baseId, 'Возврат чека (сырьё)', now)
         left -= take
-        wrote = true
       }
-      if (!wrote && left > 1e-9) {
+      if (left > 1e-9) {
+        // Возвращать некуда (партии заполнены) — пишем движение без партии, чтобы учёт остался честным.
         insMovement.run(itemId, null, storeUuid, left, paybackId, baseId, 'Возврат чека без партии', now)
       }
       res.restoredItems++

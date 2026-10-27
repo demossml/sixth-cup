@@ -173,11 +173,22 @@ export default function Inventory() {
   const docStatus = detail.data?.doc.status
   // D-11: сервер проводит только counting/review — кнопка не должна обещать больше.
   const postableStatus = docStatus === 'counting' || docStatus === 'review'
-  const canPost = postableStatus && lines.length > 0 && lines.every((l) => {
+  const factsFilled = lines.length > 0 && lines.every((l) => {
     const f = facts[l.stockItemId]
     if (f !== undefined && f !== '') return Number.isFinite(Number(f))
     return l.factQty != null
   })
+  const canPost = postableStatus && factsFilled
+  /** Почему кнопка «Провести» недоступна — иначе она просто серая и непонятная. */
+  const postBlockedReason = !postableStatus
+    ? docStatus === 'cancelled'
+      ? 'Документ отменён — провести нельзя'
+      : 'Сначала сохраните факт или нажмите «Завершить подсчёт»'
+    : !lines.length
+      ? 'В документе нет строк'
+      : !factsFilled
+        ? 'Заполните факт по всем строкам'
+        : ''
 
   const toggleItem = (id: number) => {
     setSelectedItems((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
@@ -376,12 +387,21 @@ export default function Inventory() {
               </div>
               {detail.data.doc.status !== 'posted' && detail.data.doc.status !== 'cancelled' && (
                 <div className="flex flex-wrap gap-2 border-t border-line p-3">
+                  {postBlockedReason && <p className="w-full text-[12px] text-ink-secondary">{postBlockedReason}</p>}
                   <Button size="sm" variant="secondary" loading={busy} onClick={saveFacts}>Сохранить факт</Button>
                   <Button size="sm" variant="secondary" loading={busy} disabled={!recountIds.length} onClick={sendRecount}>
                     В пересчёт{recountIds.length ? ` (${recountIds.length})` : ''}
                   </Button>
                   <Button size="sm" variant="secondary" loading={busy} onClick={submitDoc}>Завершить подсчёт</Button>
-                  <Button size="sm" loading={busy} disabled={!canPost} onClick={postDoc}>Провести</Button>
+                  <Button
+                    size="sm"
+                    loading={busy}
+                    disabled={!canPost}
+                    title={postBlockedReason || undefined}
+                    onClick={postDoc}
+                  >
+                    Провести
+                  </Button>
                   <Button size="sm" variant="ghost" loading={busy} onClick={cancelDoc}>Отменить</Button>
                 </div>
               )}

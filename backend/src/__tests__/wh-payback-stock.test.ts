@@ -202,6 +202,40 @@ describe('Q-02: возврат сырья при PAYBACK', () => {
     expect(docStatus(STORE, backUuid)).toBe('PROCESSED')
   })
 
+  it('возврат не переполняет партию: излишек уходит движением без партии', async () => {
+    const item = await createItem('Возврат переполнение', 'g')
+    const supplier = await createSupplier('Пост переполнения')
+    await receive(supplier, [{ stockItemId: item, qty: 100 }])
+    const commodity = uniq('uuid')
+    await productWithNorm(400 + ++seq, commodity, STORE, item, 10)
+
+    const sellUuid = uniq('sell')
+    docs = [sellDoc(sellUuid, [{ commodityUuid: commodity, qty: 5 }])]
+    await poll()
+
+    // В партии осталось место только на 20 из 50 возвращаемых граммов.
+    const batch = db.prepare(`SELECT id, qty_in AS qtyIn FROM stock_batches WHERE stock_item_id=?`).get(item) as {
+      id: number
+      qtyIn: number
+    }
+    db.prepare('UPDATE stock_batches SET qty_left = ? WHERE id=?').run(batch.qtyIn - 20, batch.id)
+
+    docs = [paybackDoc(uniq('payback'), sellUuid, [{ commodityUuid: commodity, qty: 5 }])]
+    await poll()
+
+    const toBatch = backs(item).filter((m) => m.batchId !== null).reduce((s, m) => s + m.qty, 0)
+    const toNoBatch = backs(item).filter((m) => m.batchId === null).reduce((s, m) => s + m.qty, 0)
+    const after = db
+      .prepare(`SELECT qty_in AS qtyIn, qty_left AS qtyLeft FROM stock_batches WHERE id=?`)
+      .get(batch.id) as { qtyIn: number; qtyLeft: number }
+
+    expect(toBatch).toBe(20) // влезло ровно столько, сколько было места
+    expect(toNoBatch).toBe(30) // остаток честно виден движением без партии
+    expect(toBatch + toNoBatch).toBe(50) // вернули всю норму, ничего не потеряли
+    expect(after.qtyLeft).toBe(after.qtyIn) // партия не превысила qty_in
+    expect(after.qtyLeft).toBe(toBatch + (after.qtyIn - 20))
+  })
+
   it('прямой вызов restoreByPayback уважает ref_doc_id и позиции', async () => {
     const { item, commodity } = await fixture('Возврат прямой')
     const sellUuid = uniq('sell')
