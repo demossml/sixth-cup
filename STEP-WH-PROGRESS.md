@@ -70,3 +70,14 @@ DEFAULT-AD-HOC: нет
 Тесты: `wh-inventory-book.test.ts` — 5 passed; полный backend — 279 passed / 49 файлов; typecheck OK
 Изменённые тесты: нет
 DEFAULT-AD-HOC: нет
+
+## STEP-W05 — Видимые ошибки списания (Q-05)
+Статус: DONE
+Коммит: `fix(stock): surface stock write-off failures via log, disputes and evotor_docs.last_error (Q-05)`
+Что сделано:
+- `PollService` принимает третий необязательный параметр `deps.applyStock` (подмена в тестах, прежняя сигнатура сохранена).
+- `processStock` при ошибке пишет лог, строку `disputes(kind='stock_writeoff_failed', receipt_id=<чек>)` и `evotor_docs.last_error='stock: …'`; статус остаётся `PROCESSED` (D-04).
+- Пустых `catch {}` вокруг склада не осталось (единственный оставшийся — `JSON.parse` в `getSc`, к складу не относится).
+Тесты: `wh-stock-errors.test.ts` — 3 passed; охранный набор — 40 passed; полный backend — 282 passed / 50 файлов; typecheck OK
+Изменённые тесты: нет
+DEFAULT-AD-HOC: нет

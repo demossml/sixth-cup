@@ -135,8 +135,20 @@ export class PollService {
         result: JSON.stringify(result).slice(0, 200),
       })
     } catch (e) {
-      // D-04: продажа и лояльность уже прошли — документ остаётся PROCESSED, ошибка видна снаружи.
-      log.error(`evotor stock failed: ${String(e).slice(0, 200)}`, { doc: shortId(id, 8), store: shortId(storeUuid) })
+      // D-04: продажа и лояльность уже прошли — документ остаётся PROCESSED, но ошибка обязана
+      // быть видна: лог, «Споры» и `evotor_docs.last_error` (Q-05).
+      const msg = `stock: ${String(e).slice(0, 300)}`
+      log.error(`evotor stock failed: ${msg}`, { doc: shortId(id, 8), store: shortId(storeUuid) })
+      try {
+        this.db
+          .prepare(`INSERT INTO disputes(kind,receipt_id,details,created_at) VALUES(?,?,?,?)`)
+          .run('stock_writeoff_failed', id, msg, Date.now())
+        this.db
+          .prepare(`UPDATE evotor_docs SET last_error=? WHERE store_uuid=? AND doc_id=?`)
+          .run(msg, storeUuid, id)
+      } catch (e2) {
+        log.error('evotor stock failure not recorded', { error: String(e2).slice(0, 160) })
+      }
     }
   }
 
