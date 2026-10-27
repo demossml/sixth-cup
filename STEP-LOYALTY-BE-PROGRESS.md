@@ -43,3 +43,11 @@ DEFAULT-AD-HOC: нет
 Тесты: `loyalty-payback-retry.test.ts` — 4 passed (PAYBACK раньше SELL → PROCESSED после повтора и одно сторно; повтор не сторнирует дважды; исчерпание попыток → терминальный `FAILED` с `giving up`; ошибка карты в очередь не ставится). Полный backend — 325 passed / 58 файлов.
 DEFAULT-AD-HOC:
 - **B02-1.** Отдельный статус `RETRY` не вводился: CHECK-констрейнт `evotor_docs.status` не расширяется ALTER-ом, а пересоздание таблицы с историей — риск. Признак повтора вынесен в `next_retry_at`, как и предлагалось в постановке («вписаться в существующие колонки»).
+
+## STEP-B03 — L-01: referral ledger vs MAX(0, balance)
+Статус: DONE
+Коммит: `fix(loyalty): referral reversal ledger matches balance floor (L-01)`
+Что сделано: в `handlePayback` сторно referral теперь считает `actual = min(requested, balance)` и пишет в `cashback_ledger` **только фактически снятую** сумму (`-actual`) — и в `loyalty_ledger` тоже. Баланс больше не уводится в минус и не «обнуляется» фантомной строкой. Если `requested > actual`, пишется спор `referral_reversal_shortfall` с `{requested, actual, balance, payback}`.
+Тесты: `loyalty-referral-floor.test.ts` — 2 passed (потраченный бонус → баланс 0, ровно одна строка `-500`, спор с requested 3000; нетронутый бонус → полное сторно, спора нет).
+DEFAULT-AD-HOC:
+- **B03-1.** `Σ cashback_ledger == баланс` не является инвариантом: таблица учитывает только referral-начисления и сторно, но не траты. Тест проверяет факт сторно и отсутствие фантомного долга, а не сумму по таблице.

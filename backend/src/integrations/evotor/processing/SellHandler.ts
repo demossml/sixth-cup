@@ -287,16 +287,35 @@ export function handlePayback(db: Database.Database, storeUuid: string, doc: Rec
     db.prepare(`INSERT INTO loyalty_ledger(card_id,operation,cups_delta,free_delta,cashback_delta,source_type,source_id,created_at)
       VALUES(?,?,?,?,?,?,?,?)`).run(user.card_id, 'REVERSAL', -Math.max(0, cups - free), -free, cb, 'EVOTOR_PAYBACK', docId, now)
     const refs = db.prepare('SELECT beneficiary_id, amount FROM cashback_ledger WHERE receipt_id=? AND amount>0').all(baseId) as { beneficiary_id: number; amount: number }[]
+    // L-01: в ledger пишем фактически снятую сумму, а не «идеальную». Иначе Σ ledger
+    // расходится с балансом, когда пригласивший уже потратил бонус. Недобор фиксируем спором.
     for (const ref of refs) {
-      const amount = full && prev.rub === 0 ? ref.amount : Math.floor(ref.amount * fracDelta)
-      if (amount <= 0) continue
-      db.prepare('UPDATE users SET cashback_balance=MAX(0,cashback_balance-?) WHERE id=?').run(amount, ref.beneficiary_id)
+      const requested = full && prev.rub === 0 ? ref.amount : Math.floor(ref.amount * fracDelta)
+      if (requested <= 0) continue
+      const balance = Number(
+        (db.prepare('SELECT cashback_balance FROM users WHERE id=?').get(ref.beneficiary_id) as
+          | { cashback_balance: number }
+          | undefined)?.cashback_balance ?? 0,
+      )
+      const actual = Math.min(requested, Math.max(0, balance))
+      if (actual < requested) {
+        db.prepare(`INSERT INTO disputes(kind,user_id,receipt_id,details,created_at) VALUES(?,?,?,?,?)`)
+          .run(
+            'referral_reversal_shortfall',
+            ref.beneficiary_id,
+            baseId,
+            JSON.stringify({ requested, actual, balance, payback: docId }),
+            now,
+          )
+      }
+      if (actual <= 0) continue
+      db.prepare('UPDATE users SET cashback_balance=cashback_balance-? WHERE id=?').run(actual, ref.beneficiary_id)
       db.prepare(`INSERT INTO cashback_ledger(beneficiary_id,from_user_id,receipt_id,amount,created_at) VALUES(?,?,?,?,?)`)
-        .run(ref.beneficiary_id, user.id, baseId, -amount, now)
+        .run(ref.beneficiary_id, user.id, baseId, -actual, now)
       const beneficiary = db.prepare('SELECT card_id FROM users WHERE id=?').get(ref.beneficiary_id) as { card_id: string | null } | undefined
       if (beneficiary?.card_id) {
         db.prepare(`INSERT INTO loyalty_ledger(card_id,operation,cups_delta,free_delta,cashback_delta,source_type,source_id,created_at)
-          VALUES(?,?,?,?,?,?,?,?)`).run(beneficiary.card_id, 'REVERSAL', 0, 0, -amount, 'EVOTOR_PAYBACK_REFERRAL', docId, now)
+          VALUES(?,?,?,?,?,?,?,?)`).run(beneficiary.card_id, 'REVERSAL', 0, 0, -actual, 'EVOTOR_PAYBACK_REFERRAL', docId, now)
       }
     }
   })()
