@@ -5,10 +5,16 @@
  */
 import type Database from 'better-sqlite3'
 import { sellInternals as s } from './SellHandler'
-import { writeOffSellByNorms, type WriteOffResult } from '../../../modules/admin/stockWriteOff'
+import {
+  restoreByPayback,
+  writeOffSellByNorms,
+  type RestoreResult,
+  type WriteOffResult,
+} from '../../../modules/admin/stockWriteOff'
 
 export type StockApplyResult =
   | ({ kind: 'sell' } & WriteOffResult)
+  | ({ kind: 'payback' } & RestoreResult)
   | { kind: 'skipped'; reason: string }
 
 export function applyStockForDocument(
@@ -27,6 +33,11 @@ export function applyStockForDocument(
 
   if (type === 'SELL') {
     return { kind: 'sell', ...writeOffSellByNorms(db, storeUuid, docId, positions) }
+  }
+  if (type === 'PAYBACK') {
+    const baseId = s.baseDocumentIdOf(doc)
+    if (!baseId) return { kind: 'skipped', reason: 'no_base_document' }
+    return { kind: 'payback', ...restoreByPayback(db, storeUuid, docId, baseId, positions) }
   }
   return { kind: 'skipped', reason: `type_${type}` }
 }

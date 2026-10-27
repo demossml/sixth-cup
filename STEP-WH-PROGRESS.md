@@ -37,3 +37,15 @@ DEFAULT-AD-HOC:
 Тесты: `wh-sell-stock.test.ts` — 11 passed; охранный набор лояльности — 40 passed; полный backend — 259 passed / 46 файлов; typecheck OK
 Изменённые тесты: нет
 DEFAULT-AD-HOC: нет
+
+## STEP-W02 — Возврат сырья при PAYBACK (Q-02)
+Статус: DONE
+Коммит: `fix(stock): restore raw stock on PAYBACK from prior sale_out movements (Q-02)`
+Что сделано:
+- Миграция `031_stock_movements_ref.sql`: `stock_movements.ref_doc_id` + индекс (D-10).
+- `stockWriteOff.restoreByPayback`: идемпотентность по PAYBACK, база — `sale_out` по `baseDocumentUUID`, лимит `списано − возвращено`, распределение LIFO по партиям с капом `qty_in` (D-07…D-10).
+- `SellHandler.baseDocumentIdOf` вынесен в `sellInternals` и используется в `handlePayback` (поведение то же).
+- `StockHandler` маршрутизирует `PAYBACK` → `restoreByPayback`; без `baseDocumentUUID` — `skipped: no_base_document`.
+Тесты: `wh-payback-stock.test.ts` — 9 passed; охранный набор — 40 passed; полный backend — 268 passed / 47 файлов; typecheck OK
+Изменённые тесты: `wh-sell-stock.test.ts` → «applyStockForDocument пропускает PAYBACK как неизвестный тип» переименован в «PAYBACK уходит в ветку возврата (с W02)»: тест фиксировал промежуточное поведение W01, которое этот STEP и меняет.
+DEFAULT-AD-HOC: нет

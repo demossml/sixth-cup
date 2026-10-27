@@ -240,13 +240,14 @@ describe('Q-01: атомарность списания (D-05)', () => {
   })
 })
 
-describe('W01: PAYBACK пока не трогает склад (это STEP-W02)', () => {
-  it('applyStockForDocument пропускает PAYBACK как неизвестный тип', async () => {
+describe('W01/W02: маршрутизация документов склада', () => {
+  it('PAYBACK уходит в ветку возврата (с W02), а не в «неизвестный тип»', async () => {
     const item = await createItem('Пейбек', 'g')
     await receive(await createSupplier('Поставщик W01i'), [{ stockItemId: item, qty: 100 }])
+    // базового чека нет — возвращать нечего, но тип распознан
     const doc = paybackDoc('payback-1', 'sell-1', [{ commodityUuid: 'x', qty: 1 }])
     const r = applyStockForDocument(db, STORE, doc)
-    expect(r.kind).toBe('skipped')
+    expect(r).toEqual({ kind: 'payback', duplicate: false, restoredItems: 0, reason: 'no_prior_sale_out' })
     expect(balance(item)).toBe(100)
   })
 

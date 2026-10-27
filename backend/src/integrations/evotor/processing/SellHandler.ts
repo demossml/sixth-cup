@@ -95,6 +95,14 @@ function documentIdOf(doc: Record<string, unknown>): string | null {
   return typeof id === 'string' && id ? id : null
 }
 
+/** Базовый чек для PAYBACK: инвойс Эвотора кладёт его в разных формах (см. облачный API). */
+function baseDocumentIdOf(doc: Record<string, unknown>): string {
+  const body = obj(doc.body)
+  return String(
+    doc.baseDocumentUUID ?? doc.base_document_uuid ?? body?.baseDocumentUUID ?? body?.base_document_id ?? '',
+  ).trim()
+}
+
 function getSc(doc: Record<string, unknown>): ScClaim | null {
   const raw = extractScRaw(doc.extras)
   const sc = typeof raw === 'string' ? (() => { try { return JSON.parse(raw) } catch { return null } })() : obj(raw)
@@ -127,7 +135,7 @@ function cupsForDocument(db: Database.Database, storeUuid: string, txs: Tx[]): n
 }
 
 /** Pure helpers, exported so tests exercise the real code (not copies). */
-export const sellInternals = { documentIdOf, productUuid, number, amountKopecks, transactions, getSc, cupsForDocument, qty }
+export const sellInternals = { documentIdOf, productUuid, number, amountKopecks, transactions, getSc, cupsForDocument, qty, baseDocumentIdOf }
 
 export function handleSell(db: Database.Database, storeUuid: string, doc: Record<string, unknown>): { processed: boolean; reason?: string } {
   const docId = documentIdOf(doc)
@@ -244,8 +252,7 @@ export function handlePayback(db: Database.Database, storeUuid: string, doc: Rec
   const docId = documentIdOf(doc)
   if (!docId) return { processed: false, reason: 'missing document id' }
   if (db.prepare('SELECT 1 FROM loyalty_ops WHERE doc_store=? AND doc_id=?').get(storeUuid, docId)) return { processed: true, reason: 'duplicate' }
-  const body = obj(doc.body)
-  const baseId = String(doc.baseDocumentUUID ?? doc.base_document_uuid ?? body?.baseDocumentUUID ?? body?.base_document_id ?? '').trim()
+  const baseId = baseDocumentIdOf(doc)
   if (!baseId) return { processed: false, reason: 'missing baseDocumentUUID' }
   const original = db.prepare(`SELECT * FROM loyalty_ops WHERE doc_store=? AND doc_id=? AND kind='SELL'`).get(storeUuid, baseId) as Record<string, unknown> | undefined
   if (!original || typeof original.card_id !== 'string') return { processed: false, reason: 'base SELL not found' }
