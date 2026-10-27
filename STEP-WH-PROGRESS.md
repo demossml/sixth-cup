@@ -167,3 +167,17 @@ DEFAULT-AD-HOC: нет
 Тесты: typecheck OK; admin — 24 passed
 Изменённые тесты: нет
 DEFAULT-AD-HOC: название раздела «Споры» сверено с `Operations.tsx` (`label: 'Споры'`), замена не потребовалась.
+
+## STEP-W14 — Полный прогон и `IMPLEMENTATION-WH-REPORT.md`
+Статус: DONE
+Коммит: `docs(stock): implementation report for warehouse W0-W2`
+Что сделано: сквозной тест `wh-e2e.test.ts` (отдельный коммит `957d688`), полный прогон всех наборов, итоговый отчёт.
+Тесты: backend 317 passed / 57 файлов; admin 24; PWA 52; typecheck OK; build OK
+Изменённые тесты: нет
+DEFAULT-AD-HOC: нет
+
+---
+
+## Итог серии
+
+Все 15 STEP выполнены. Backend: 248 → 317 тестов. Ничего не запушено.
