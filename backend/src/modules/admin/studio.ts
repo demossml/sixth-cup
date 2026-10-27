@@ -14,6 +14,7 @@ import { z } from 'zod'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import { toCsv } from './consoleLib'
+import { assertNormSane } from './stock'
 
 const now = () => Date.now()
 const DAY = 86_400_000
@@ -825,7 +826,9 @@ export const adminStudio = new Hono()
         db.prepare(`DELETE FROM product_stock_norms WHERE product_id=?`).run(pid)
         const ins = db.prepare(`INSERT INTO product_stock_norms(product_id, stock_item_id, qty) VALUES(?,?,?)`)
         if (p.mode !== 'none') for (const l of p.components) {
-          if (!one(`SELECT id FROM stock_items WHERE id=?`, l.stockItemId)) throw bad(`Позиция ${l.stockItemId} не найдена`, 404)
+          const item = one<{ id: number; unit: string }>(`SELECT id, unit FROM stock_items WHERE id=?`, l.stockItemId)
+          if (!item) throw bad(`Позиция ${l.stockItemId} не найдена`, 404)
+          assertNormSane(item.unit, l.qty)
           ins.run(pid, l.stockItemId, l.qty)
         }
       })()

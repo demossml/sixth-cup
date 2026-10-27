@@ -10,6 +10,47 @@ import { bad } from '../../lib/errors'
 
 const now = () => Date.now()
 
+/**
+ * D-14/D-15: количество везде в `unit` позиции, автоконвертации нет.
+ * Норма больше 2 для кг/л — почти наверняка граммы, вбитые в килограммы.
+ */
+export function assertNormSane(unit: string, qty: number): void {
+  if ((unit === 'kg' || unit === 'l') && qty > 2) {
+    const hint = unit === 'kg' ? 'g' : 'ml'
+    throw bad(
+      `Норма ${qty} ${unit} на единицу товара выглядит как граммы/мл. Укажите ${qty / 1000} ${unit} или переведите позицию в ${hint}`,
+      400,
+    )
+  }
+}
+
+/** Есть ли у позиции история: движения, партии, нормы или строки документов. */
+export function stockItemLinks(stockItemId: number): { blocking: string[]; linked: Record<string, number> } {
+  const refs = [
+    ['stock_movements', 'движения'],
+    ['stock_batches', 'партии'],
+    ['product_stock_norms', 'нормы списания'],
+    ['inventory_lines', 'инвентаризации'],
+    ['purchase_invoice_lines', 'накладные'],
+    ['purchase_order_lines', 'заказы'],
+    ['supplier_return_lines', 'возвраты'],
+    ['stock_writeoff_lines', 'списания'],
+  ] as const
+  const blocking: string[] = []
+  const linked: Record<string, number> = {}
+  for (const [table, label] of refs) {
+    // Таблица может появиться позже (миграция W11): отсутствие — не ошибка.
+    const exists = db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(table)
+    if (!exists) continue
+    const row = db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE stock_item_id=?`).get(stockItemId) as { n: number }
+    if (row.n > 0) {
+      blocking.push(`${label} (${row.n})`)
+      linked[table] = row.n
+    }
+  }
+  return { blocking, linked }
+}
+
 function expectedQty(stockItemId: number, storeUuid?: string | null): number {
   if (storeUuid) {
     const r = db
@@ -156,6 +197,14 @@ export const adminStock = new Hono()
     if (!cur) throw bad('Позиция не найдена', 404)
     const p = c.req.valid('json')
     const row = db.prepare(`SELECT * FROM stock_items WHERE id=?`).get(id) as Record<string, unknown>
+    // D-14: единица — часть контракта количеств. После первого документа её менять нельзя,
+    // иначе старые движения прочитаются в других единицах.
+    if (p.unit !== undefined && p.unit !== row.unit) {
+      const { blocking } = stockItemLinks(id)
+      if (blocking.length) {
+        throw bad(`Единицу нельзя менять: у позиции есть документы, нормы или движения (${blocking.join(', ')})`, 400)
+      }
+    }
     db.prepare(
       `UPDATE stock_items SET name=?, sku=?, kind=?, unit=?, min_qty=?, multiplicity=?, shelf_life_days=?,
        default_supplier_id=?, notes=?, active=?, updated_at=? WHERE id=?`,
@@ -183,24 +232,7 @@ export const adminStock = new Hono()
 
     // Любая ссылка (движения, партии, нормы, строки документов) запрещает физическое удаление:
     // история остатков и себестоимость не должны рассыпаться. Вместо 500 — деактивация.
-    const refs = [
-      ['stock_movements', 'движения'],
-      ['stock_batches', 'партии'],
-      ['product_stock_norms', 'нормы списания'],
-      ['inventory_lines', 'инвентаризации'],
-      ['purchase_invoice_lines', 'накладные'],
-      ['purchase_order_lines', 'заказы'],
-      ['supplier_return_lines', 'возвраты'],
-    ] as const
-    const blocking: string[] = []
-    const linked: Record<string, number> = {}
-    for (const [table, label] of refs) {
-      const row = db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE stock_item_id=?`).get(id) as { n: number }
-      if (row.n > 0) {
-        blocking.push(`${label} (${row.n})`)
-        linked[table] = row.n
-      }
-    }
+    const { blocking, linked } = stockItemLinks(id)
     if (blocking.length) {
       db.prepare(`UPDATE stock_items SET active=0, updated_at=? WHERE id=?`).run(now(), id)
       return c.json({
@@ -313,7 +345,11 @@ export const adminStock = new Hono()
     (c) => {
       const p = c.req.valid('json')
       if (!db.prepare(`SELECT id FROM products WHERE id=?`).get(p.productId)) throw bad('Товар не найден', 404)
-      if (!db.prepare(`SELECT id FROM stock_items WHERE id=?`).get(p.stockItemId)) throw bad('Позиция склада не найдена', 404)
+      const item = db.prepare(`SELECT id, unit FROM stock_items WHERE id=?`).get(p.stockItemId) as
+        | { id: number; unit: string }
+        | undefined
+      if (!item) throw bad('Позиция склада не найдена', 404)
+      assertNormSane(item.unit, p.qty)
       db.prepare(
         `INSERT INTO product_stock_norms(product_id, stock_item_id, qty) VALUES(?,?,?)
          ON CONFLICT(product_id, stock_item_id) DO UPDATE SET qty=excluded.qty`,

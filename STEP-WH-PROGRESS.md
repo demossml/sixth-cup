@@ -81,3 +81,14 @@ DEFAULT-AD-HOC: нет
 Тесты: `wh-stock-errors.test.ts` — 3 passed; охранный набор — 40 passed; полный backend — 282 passed / 50 файлов; typecheck OK
 Изменённые тесты: нет
 DEFAULT-AD-HOC: нет
+
+## STEP-W06 — Контракт единиц (Q-06, минимум)
+Статус: DONE
+Коммит: `fix(stock): enforce unit contract for norms and item units (Q-06)`
+Что сделано:
+- `stock.assertNormSane(unit, qty)`: норма > 2 для `kg`/`l` отклоняется с подсказкой в г/мл (D-15). Используется в `POST /stock/norms` и в `PUT /stock/recipes/:productId` (studio.ts).
+- `stock.stockItemLinks(itemId)` — единый список ссылок (движения, партии, нормы, инвентаризации, накладные, заказы, возвраты, списания). Используется в `DELETE /stock/items/:id` и в новом запрете смены `unit` в `PATCH /stock/items/:id` (D-14). Отсутствующая таблица пропускается.
+- UI: единица показывается рядом с количеством в форме норм (`Stock.tsx`), в строке рецептуры (`RecipesTab.tsx`) и в строке накладной (`Purchases.tsx`).
+Тесты: `wh-units.test.ts` — 6 passed; полный backend — 288 passed / 51 файл; admin — 24 passed; typecheck OK
+Изменённые тесты: нет
+DEFAULT-AD-HOC: нет

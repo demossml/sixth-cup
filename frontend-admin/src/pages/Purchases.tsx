@@ -70,6 +70,9 @@ export default function Purchases() {
   const suppliers = useApi<{ suppliers: Supplier[] }>('/suppliers')
   const debt = useApi<{ debts: Debt[] }>('/purchases/debt')
   const items = useApi<{ items: StockItem[] }>('/stock/items?active=1')
+  // D-14: количество строки накладной — в единице позиции, показываем её в подписи.
+  const lineUnit = (stockItemId: string) =>
+    (items.data?.items ?? []).find((it) => String(it.id) === stockItemId)?.unit ?? ''
 
   const reloadAll = () => { invoices.reload(); suppliers.reload(); debt.reload() }
 
@@ -309,7 +312,13 @@ export default function Purchases() {
                     ))}
                   </Select>
                 </Field>
-                <Field label={idx === 0 ? 'Кол-во' : '\u00a0'}>
+                <Field
+                  label={
+                    idx === 0
+                      ? `Кол-во${lineUnit(line.stockItemId) ? `, ${lineUnit(line.stockItemId)}` : ''}`
+                      : '\u00a0'
+                  }
+                >
                   <Input
                     type="number" min={0} step="any" value={line.qty}
                     onChange={(e) => setLines((all) => all.map((x) => x.key === line.key ? { ...x, qty: e.target.value } : x))}

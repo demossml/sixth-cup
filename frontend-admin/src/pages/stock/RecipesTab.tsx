@@ -33,6 +33,8 @@ export default function RecipesTab({ items }: { items: StockItem[] }) {
   const [mode, setMode] = useState<'raw' | 'piece' | 'none'>('raw')
   const [drafts, setDrafts] = useState<Draft[]>([emptyDraft()])
   const [busy, setBusy] = useState(false)
+  // D-14: количество вводится в единице выбранной позиции — показываем её в подписи.
+  const unitOf = (stockItemId: string) => items.find((x) => String(x.id) === stockItemId)?.unit ?? ''
 
   const open = (r: Recipe) => {
     setEdit(r)
@@ -154,7 +156,7 @@ export default function RecipesTab({ items }: { items: StockItem[] }) {
                     ))}
                   </Select>
                 </Field>
-                <Field label={i === 0 ? 'Кол-во' : ''}>
+                <Field label={i === 0 ? `Кол-во${unitOf(d.stockItemId) ? `, ${unitOf(d.stockItemId)}` : ''}` : ''}>
                   <input
                     className="w-28 rounded-xl border border-line bg-card px-3 py-2 text-sm"
                     inputMode="decimal"

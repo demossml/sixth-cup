@@ -62,6 +62,8 @@ export default function Stock() {
   // Список номенклатуры показывает и выключенные позиции: после «Удалить» со связями
   // запись остаётся в базе, и владелец должен это видеть, а не искать пропажу.
   const allItems = useApi<{ items: StockItem[] }>('/stock/items')
+  // D-14: количество нормы задаётся в единице выбранной позиции — показываем её рядом с полем.
+  const normUnit = (items.data?.items ?? []).find((it) => String(it.id) === normItemId)?.unit ?? ''
   const risk = useApi<{ products: NoNorm[] }>('/stock/products-without-norms')
   const norms = useApi<{ norms: { id: number; productId: number; stockItemId: number; qty: number; productName?: string; itemName?: string; unit?: string }[] }>('/stock/norms')
   const productsList = useApi<{ products: { id: number; name: string }[] }>('/products')
@@ -432,7 +434,7 @@ export default function Stock() {
                   ))}
                 </Select>
               </Field>
-              <Field label="Кол-во на 1 шт.">
+              <Field label={`Кол-во на 1 шт.${normUnit ? `, ${normUnit}` : ''}`}>
                 <Input type="number" min={0} step="any" value={normQty} onChange={(e) => setNormQty(e.target.value)} />
               </Field>
               <div className="flex items-end">
