@@ -101,3 +101,10 @@ DEFAULT-AD-HOC: нет
 Что сделано: `docs/LOYALTY-CHANNELS.md` — единственный writer сегодня (APK → `extras.sc` → Evotor poll), таблица ключей дедупликации по каналам, четыре условия включения второго writer (канонический фискальный ключ, `ON CONFLICT DO NOTHING` + спор `cross_channel_duplicate`, один источник дельт, наблюдение), объяснение, почему уникальный индекс на существующей истории — отдельная миграционная задача.
 Тесты: не требуются (документ)
 DEFAULT-AD-HOC: нет
+
+## STEP-B09 — L-16: pushEnabled one-liner
+Статус: DONE
+Коммит: `fix: align pushEnabled in public content with config (L-16)`
+Что сделано: `/api/public/content` читает `evotorConfig.pushEnabled` (поле `PUSH_ENABLED`), а не `(config as {pushEnabled?}).pushEnabled` — такого поля в `config` нет, поэтому флаг был всегда `false`.
+Тесты: `public-content.test.ts` — 3 passed (флаг совпадает с `evotorConfig.pushEnabled`; в `config` поля нет; фолбэк правил содержит порог и не содержит «шест»). Backend — 338 passed / 62 файла.
+DEFAULT-AD-HOC: нет

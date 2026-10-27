@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { db } from '../../db'
-import { config } from '../../config'
+import { config, evotorConfig } from '../../config'
 
 function setting(key: string, fallback: string): string {
   try {
@@ -29,6 +29,7 @@ export const publicRoutes = new Hono().get('/content', (c) =>
     seller_info: setting('seller_info', fallbacks.seller_info),
     home_banner: setting('home_banner', fallbacks.home_banner),
     install_hint: setting('install_hint', fallbacks.install_hint),
-    pushEnabled: Boolean((config as { pushEnabled?: boolean }).pushEnabled),
+    // L-16: флаг живёт в evotorConfig; раньше читался из config, где его нет → всегда false.
+    pushEnabled: evotorConfig.pushEnabled,
   }),
 )
