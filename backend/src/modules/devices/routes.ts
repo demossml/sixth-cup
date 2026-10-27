@@ -19,6 +19,7 @@ import { log, maskCode, shortId } from '../../lib/logBuffer'
 import { allowLogIngest, entryZ, ingest } from '../logs/routes'
 import { staffDeviceRoutes } from '../staff/deviceRoutes'
 import { getCashierMenu } from '../../lib/cashierMenu'
+import { formatQueueNumber, issueQueueNumber } from '../queue/numbers'
 
 export const deviceRoutes = new Hono<DeviceEnv>()
   .get('/ping', (c) => {
@@ -38,6 +39,40 @@ export const deviceRoutes = new Hono<DeviceEnv>()
       proxy: { authOk, storeUuid: storeUuid || undefined, deviceUuid: deviceUuid || undefined },
     })
   })
+  /**
+   * Публичный номер заказа для печати на чеке (очередь).
+   * Тот же контур, что у resolve: прокси-токен Эвотора обязателен, точка — из заголовка.
+   * Номер выдаёт только сервер; при недоступности касса печатает чек без номера.
+   */
+  .post('/queue-number',
+    evotorProxyStrict,
+    zValidator('json', z.object({
+      orderId: z.string().min(3).max(64).optional(),
+      storeUuid: z.string().min(1).max(64).optional(),
+    })),
+    (c) => {
+      const storeUuid = (c.req.valid('json').storeUuid
+        ?? c.req.header('X-Evotor-Store-Uuid')
+        ?? '').slice(0, 64)
+      if (!storeUuid) throw bad('store_uuid_required', 400)
+      const issued = issueQueueNumber({
+        storeUuid,
+        orderId: c.req.valid('json').orderId,
+        ttlMs: 12 * 60 * 60 * 1000,
+      })
+      log.info('queue number issued', {
+        store: shortId(storeUuid),
+        order: shortId(issued.orderId, 8),
+        number: issued.number,
+      })
+      return c.json({
+        ok: true,
+        orderId: issued.orderId,
+        publicOrderNumber: formatQueueNumber(issued.number),
+        periodKey: issued.periodKey,
+        expiresAt: issued.expiresAt,
+      })
+    })
   .post('/loyalty/resolve',
     evotorProxyStrict,
     zValidator('json', z.object({ code: z.string().min(1).max(4000) })),

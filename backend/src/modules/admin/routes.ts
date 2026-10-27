@@ -32,6 +32,7 @@ import {
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import { grantVoucher } from '../vouchers/service'
+import { listQueueNumbers } from '../queue/numbers'
 import { resetLoyaltyData, resetCatalogData } from '../../db/seed'
 import { adminEvotorCatalog } from './evotorCatalog'
 import { adminEvotorTokens } from './evotorTokens'
@@ -1274,6 +1275,13 @@ export const adminRoutes = new Hono()
     return c.json({ granted: ids.length })
   })
 
+  // —— Queue numbers (публичный номер заказа на чеке) ——
+  .get('/queue-numbers', (c) => {
+    const store = (c.req.query('storeUuid') ?? '').slice(0, 64)
+    if (!store) throw bad('storeUuid required', 400)
+    const period = (c.req.query('period') ?? '').slice(0, 10) || undefined
+    return c.json({ numbers: listQueueNumbers(store, period) })
+  })
   .get('/disputes', (c) => c.json({
     disputes: db.prepare('SELECT * FROM disputes ORDER BY id DESC LIMIT 100').all(),
   }))
