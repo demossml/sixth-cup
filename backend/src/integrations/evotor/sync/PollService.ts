@@ -72,6 +72,27 @@ function whitelist(row: Record<string, unknown>): string {
   })
 }
 
+/** Сколько раз пробуем переобработать документ и с какой паузой (L-07). */
+export const RETRY_MAX_ATTEMPTS = 10
+export function retryDelayMs(attempts: number): number {
+  const steps = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000]
+  return steps[Math.min(Math.max(0, attempts - 1), steps.length - 1)]
+}
+/** Ошибки данных не лечатся повтором: карта не та, ссылки нет, id нет. */
+const PERMANENT_REASONS = [
+  'invalid signed card token',
+  'card not found',
+  'card code not found',
+  'invalid card code',
+  'missing baseDocumentUUID',
+  'missing document id',
+  'no loyalty extra',
+]
+export function isRetryableReason(reason: string | undefined): boolean {
+  if (!reason) return true
+  return !PERMANENT_REASONS.includes(reason)
+}
+
 export class PollService {
   /** Per-run counters so the heartbeat can tell "Cloud returned nothing" from "documents already known". */
   private stats = { seen: 0, sellSeen: 0 }
@@ -165,16 +186,95 @@ export class PollService {
       const result = type === 'SELL'
         ? handleSell(this.db, storeUuid, doc)
         : handlePayback(this.db, storeUuid, doc)
-      this.db.prepare(`UPDATE evotor_docs SET status=?, processed_at=?, last_error=? WHERE store_uuid=? AND doc_id=?`)
-        .run(result.processed ? 'PROCESSED' : 'FAILED', Date.now(), result.processed ? null : (result.reason ?? 'processing failed'), storeUuid, docIdOf(doc))
       const meta = { doc: shortId(docIdOf(doc), 8), store: shortId(storeUuid) }
-      if (result.processed) log.info(`evotor ${type} processed${result.reason ? ` (${result.reason})` : ''}`, meta)
-      else log.warn(`evotor ${type} rejected: ${result.reason ?? 'processing failed'}`, meta)
+      if (result.processed) {
+        this.db
+          .prepare(`UPDATE evotor_docs SET status='PROCESSED', processed_at=?, last_error=NULL, next_retry_at=NULL WHERE store_uuid=? AND doc_id=?`)
+          .run(Date.now(), storeUuid, docIdOf(doc))
+        log.info(`evotor ${type} processed${result.reason ? ` (${result.reason})` : ''}`, meta)
+      } else if (isRetryableReason(result.reason)) {
+        // L-07: базовый чек мог ещё не прийти в окно poll — ставим в очередь на повтор.
+        this.scheduleRetry(storeUuid, docIdOf(doc) ?? '', result.reason ?? 'processing failed')
+        log.warn(`evotor ${type} deferred for retry: ${result.reason ?? 'processing failed'}`, meta)
+      } else {
+        this.failTerminal(storeUuid, docIdOf(doc) ?? '', result.reason ?? 'processing failed')
+        log.warn(`evotor ${type} rejected: ${result.reason ?? 'processing failed'}`, meta)
+      }
     } catch (e) {
       log.error(`evotor ${type} processing failed: ${String(e).slice(0, 200)}`, { doc: shortId(docIdOf(doc), 8), store: shortId(storeUuid) })
-      this.db.prepare(`UPDATE evotor_docs SET status='FAILED', attempts=attempts+1, last_error=? WHERE store_uuid=? AND doc_id=?`)
-        .run(String(e), storeUuid, docIdOf(doc))
+      this.scheduleRetry(storeUuid, docIdOf(doc) ?? '', String(e))
     }
+  }
+
+  /** Попытка не удалась, но её имеет смысл повторить: ставим next_retry_at или закрываем окончательно. */
+  private scheduleRetry(storeUuid: string, docId: string, reason: string) {
+    const row = this.db
+      .prepare(`SELECT attempts FROM evotor_docs WHERE store_uuid=? AND doc_id=?`)
+      .get(storeUuid, docId) as { attempts: number } | undefined
+    const attempts = (row?.attempts ?? 0) + 1
+    if (attempts >= RETRY_MAX_ATTEMPTS) {
+      this.failTerminal(storeUuid, docId, `giving up after ${attempts} attempts: ${reason}`, attempts)
+      return
+    }
+    this.db
+      .prepare(`UPDATE evotor_docs SET status='FAILED', attempts=?, last_error=?, next_retry_at=? WHERE store_uuid=? AND doc_id=?`)
+      .run(attempts, reason.slice(0, 300), Date.now() + retryDelayMs(attempts), storeUuid, docId)
+    log.info('evotor document scheduled for retry', {
+      doc: shortId(docId, 8),
+      store: shortId(storeUuid),
+      attempts,
+      reason: reason.slice(0, 120),
+    })
+  }
+
+  /** Окончательный отказ: документ больше не переобрабатывается. */
+  private failTerminal(storeUuid: string, docId: string, reason: string, attempts?: number) {
+    const row = this.db
+      .prepare(`SELECT attempts FROM evotor_docs WHERE store_uuid=? AND doc_id=?`)
+      .get(storeUuid, docId) as { attempts: number } | undefined
+    const tries = attempts ?? (row?.attempts ?? 0) + 1
+    this.db
+      .prepare(`UPDATE evotor_docs SET status='FAILED', attempts=?, last_error=?, next_retry_at=NULL WHERE store_uuid=? AND doc_id=?`)
+      .run(tries, reason.slice(0, 300), storeUuid, docId)
+    if (tries >= RETRY_MAX_ATTEMPTS) {
+      log.error('evotor document retries exhausted', { doc: shortId(docId, 8), store: shortId(storeUuid), attempts: tries })
+    }
+  }
+
+  /**
+   * L-07: повторная обработка отложенных документов. Сырой документ не хранится
+   * (data minimisation), поэтому перечитываем узкое окно Cloud вокруг даты чека.
+   */
+  private async retryPending(storeUuid: string): Promise<number> {
+    const rows = this.db
+      .prepare(
+        `SELECT doc_id AS docId, close_date_ms AS closeMs FROM evotor_docs
+         WHERE store_uuid=? AND status='FAILED' AND next_retry_at IS NOT NULL AND next_retry_at<=?
+         ORDER BY next_retry_at LIMIT 25`,
+      )
+      .all(storeUuid, Date.now()) as { docId: string; closeMs: number }[]
+    if (!rows.length) return 0
+
+    const client = this.client ?? clientForStore(this.db, storeUuid)
+    let retried = 0
+    for (const row of rows) {
+      try {
+        const since = formatDateWithTime(new Date(Number(row.closeMs) - 6 * 3600_000), false)
+        const until = formatDateWithTime(new Date(Number(row.closeMs) + 6 * 3600_000), true)
+        const raw = await client.getDocuments(storeUuid, since, until)
+        const doc = (asArray(raw) as Record<string, unknown>[]).find((d) => docIdOf(d) === row.docId)
+        if (!doc) {
+          this.scheduleRetry(storeUuid, row.docId, 'retry: document not found in cloud window')
+          continue
+        }
+        this.processDocument(storeUuid, doc)
+        retried++
+      } catch (e) {
+        this.scheduleRetry(storeUuid, row.docId, `retry failed: ${String(e)}`)
+      }
+    }
+    if (retried) log.info('evotor retry pass', { store: shortId(storeUuid), docs: retried })
+    return retried
   }
 
   async pollStore(storeUuid: string, sinceMs: number): Promise<number> {
@@ -227,6 +327,8 @@ export class PollService {
     }
     this.db.prepare(`UPDATE evotor_sync_state SET last_seen_close_ms=MAX(last_seen_close_ms,?),last_fast_at=? WHERE store_uuid=?`)
       .run(maxClose, now, storeUuid)
+    // L-07: после разбора новых документов пробуем отложенные (например, PAYBACK без базового SELL).
+    await this.retryPending(storeUuid)
     return inserted
   }
 

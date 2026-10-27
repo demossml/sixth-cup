@@ -31,3 +31,15 @@ DEFAULT-AD-HOC: нет
 Продуктовый код не менялся: поведение уже верное, зафиксировано тестами и комментарием «L-00 contract».
 Тесты: `reservations.test.ts` — 12 passed (было 9)
 DEFAULT-AD-HOC: нет
+
+## STEP-B02 — L-07: PAYBACK / FAILED retry
+Статус: DONE
+Коммит: `fix(loyalty): retry PAYBACK when base SELL missing (L-07)`
+Что сделано:
+- Миграция `034_evotor_docs_retry.sql`: `evotor_docs.next_retry_at` + индекс. Статус остаётся `FAILED` (CHECK таблицы менять нельзя без пересоздания): `next_retry_at IS NOT NULL` = в очереди, `NULL` = окончательно.
+- `PollService`: `scheduleRetry` / `failTerminal` / `retryPending`. Повтор перечитывает узкое окно Cloud (±6 ч от `close_date_ms`), потому что сырой документ не хранится (data minimisation). Попыток до `RETRY_MAX_ATTEMPTS = 10`, пауза `1м → 5м → 15м → 1ч`.
+- Повторяются только «лечимые» причины (`base SELL not found`, исключения, документ не найден в окне). Ошибки данных (`card not found`, `card code not found`, `invalid signed card token`, `missing baseDocumentUUID`) закрываются сразу.
+- Идемпотентность не менялась: сторно ограничено проверкой `loyalty_ops` и суммой базового чека.
+Тесты: `loyalty-payback-retry.test.ts` — 4 passed (PAYBACK раньше SELL → PROCESSED после повтора и одно сторно; повтор не сторнирует дважды; исчерпание попыток → терминальный `FAILED` с `giving up`; ошибка карты в очередь не ставится). Полный backend — 325 passed / 58 файлов.
+DEFAULT-AD-HOC:
+- **B02-1.** Отдельный статус `RETRY` не вводился: CHECK-констрейнт `evotor_docs.status` не расширяется ALTER-ом, а пересоздание таблицы с историей — риск. Признак повтора вынесен в `next_retry_at`, как и предлагалось в постановке («вписаться в существующие колонки»).
