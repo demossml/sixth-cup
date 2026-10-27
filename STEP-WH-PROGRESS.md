@@ -101,3 +101,14 @@ DEFAULT-AD-HOC: нет
 Тесты: `wh-payment-cap.test.ts` — 4 passed; `bank-row-pay.test.ts` в полном прогоне зелёный; полный backend — 292 passed / 52 файла; typecheck OK
 Изменённые тесты: нет
 DEFAULT-AD-HOC: нет
+
+## STEP-W08 — `received_qty` заказа растёт при проведении накладной (M-03)
+Статус: DONE
+Коммит: `fix(purchases): count order receipt at invoice posting, support partial receipt (M-03)`
+Что сделано:
+- Миграция `032_invoice_order_link.sql`: `purchase_invoices.order_id`, `purchase_invoice_lines.order_line_id` + индекс.
+- `to-invoice`: читает необязательное тело `{ lines: [{ lineId, qty }] }` (ручное чтение, пустое тело допустимо), отклоняет создание при существующем черновике, проверяет `qty ≤ остатка строки`, пишет связки заказ↔накладная. Присваивания `received_qty = qty` и `status='closed'` удалены.
+- `POST /purchases/invoices/:id/post`: в транзакции увеличивает `received_qty` строк заказа и выставляет статус заказа `closed`/`partial`.
+Тесты: `wh-order-receive.test.ts` — 6 passed; полный backend — 298 passed / 53 файла; typecheck OK
+Изменённые тесты: нет
+DEFAULT-AD-HOC: нет

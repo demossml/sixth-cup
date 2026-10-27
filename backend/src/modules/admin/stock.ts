@@ -586,13 +586,19 @@ export const adminStock = new Hono()
   .post('/purchases/invoices/:id/post', (c) => {
     const id = Number(c.req.param('id'))
     const inv = db
-      .prepare(`SELECT id, status, supplier_id AS supplierId, store_uuid AS storeUuid FROM purchase_invoices WHERE id=?`)
-      .get(id) as { id: number; status: string; supplierId: number; storeUuid: string | null } | undefined
+      .prepare(
+        `SELECT id, status, supplier_id AS supplierId, store_uuid AS storeUuid, order_id AS orderId
+         FROM purchase_invoices WHERE id=?`,
+      )
+      .get(id) as
+      | { id: number; status: string; supplierId: number; storeUuid: string | null; orderId: number | null }
+      | undefined
     if (!inv) throw bad('Накладная не найдена', 404)
     if (inv.status !== 'draft') throw bad('Провести можно только черновик', 400)
     const lines = db
       .prepare(
-        `SELECT id, stock_item_id AS stockItemId, qty, unit_cost_kop AS unitCostKop, expires_at AS expiresAt, lot_code AS lotCode
+        `SELECT id, stock_item_id AS stockItemId, qty, unit_cost_kop AS unitCostKop, expires_at AS expiresAt,
+                lot_code AS lotCode, order_line_id AS orderLineId
          FROM purchase_invoice_lines WHERE invoice_id=?`,
       )
       .all(id) as {
@@ -602,6 +608,7 @@ export const adminStock = new Hono()
         unitCostKop: number
         expiresAt: number | null
         lotCode: string | null
+        orderLineId: number | null
       }[]
     if (!lines.length) throw bad('Нет строк накладной', 400)
     const t = now()
@@ -632,6 +639,22 @@ export const adminStock = new Hono()
         ).run(l.stockItemId, batchId, inv.storeUuid, l.qty, id, 'Приход по накладной', t)
       }
       db.prepare(`UPDATE purchase_invoices SET status='posted', posted_at=?, updated_at=? WHERE id=?`).run(t, t, id)
+      // D-17: заказ считается принятым по ПРОВЕДЁННОЙ накладной, а не по её созданию.
+      const orderLines = lines.filter((l) => l.orderLineId != null)
+      const addReceived = db.prepare(`UPDATE purchase_order_lines SET received_qty = received_qty + ? WHERE id=?`)
+      for (const l of orderLines) addReceived.run(l.qty, l.orderLineId)
+      if (inv.orderId) {
+        const rows = db
+          .prepare(`SELECT qty, received_qty AS received FROM purchase_order_lines WHERE order_id=?`)
+          .all(inv.orderId) as { qty: number; received: number }[]
+        const allDone = rows.every((r) => r.received + 1e-9 >= r.qty)
+        const any = rows.some((r) => r.received > 0)
+        if (allDone) {
+          db.prepare(`UPDATE purchase_orders SET status='closed', updated_at=? WHERE id=?`).run(t, inv.orderId)
+        } else if (any) {
+          db.prepare(`UPDATE purchase_orders SET status='partial', updated_at=? WHERE id=?`).run(t, inv.orderId)
+        }
+      }
     })()
     return c.json({ ok: true, postedAt: t })
   })

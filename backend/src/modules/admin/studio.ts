@@ -377,28 +377,63 @@ export const adminStudio = new Hono()
     return c.json({ ok: true })
   })
 
-  /** Order → draft purchase invoice (creates the document the warehouse will post). */
-  .post('/purchases/orders/:id/to-invoice', (c) => {
+  /**
+   * Order → draft purchase invoice (creates the document the warehouse will post).
+   * D-17/D-18: приёмка заказа (received_qty, статус) меняется только при ПРОВЕДЕНИИ накладной.
+   * Необязательное тело `{ lines: [{ lineId, qty }] }` позволяет принять часть заказа.
+   */
+  .post('/purchases/orders/:id/to-invoice', async (c) => {
     const id = idParam(c.req.param('id'))
     const o = one<{ supplier_id: number; store_uuid: string | null; status: string }>(`SELECT * FROM purchase_orders WHERE id=?`, id)
     if (!o) throw bad('Заказ не найден', 404)
     if (o.status === 'draft') throw bad('Сначала подтвердите заказ', 400)
-    const ls = all<{ stock_item_id: number; qty: number; price_kop: number; received_qty: number }>(
-      `SELECT * FROM purchase_order_lines WHERE order_id=?`, id,
-    ).map((l) => ({ ...l, rest: l.qty - l.received_qty })).filter((l) => l.rest > 0)
+
+    const draft = one<{ id: number }>(`SELECT id FROM purchase_invoices WHERE order_id=? AND status='draft'`, id)
+    if (draft) throw bad(`По заказу уже есть черновик накладной №${draft.id}`, 400)
+
+    const raw = await c.req.text()
+    let partial: { lineId: number; qty: number }[] = []
+    if (raw.trim()) {
+      const parsed = z
+        .object({
+          lines: z
+            .array(z.object({ lineId: z.number().int().positive(), qty: z.number().positive() }))
+            .min(1)
+            .optional(),
+        })
+        .safeParse(JSON.parse(raw))
+      if (!parsed.success) throw bad('Некорректное тело запроса', 400)
+      partial = parsed.data.lines ?? []
+    }
+
+    const ls = all<{ id: number; stock_item_id: number; qty: number; price_kop: number; received_qty: number }>(
+      `SELECT * FROM purchase_order_lines WHERE order_id=? `, id,
+    )
+      .map((l) => ({ ...l, rest: l.qty - l.received_qty }))
+      .filter((l) => l.rest > 1e-9)
     if (!ls.length) throw bad('Заказ уже принят полностью', 400)
+
+    const byLine = new Map(ls.map((l) => [l.id, l]))
+    const take = (lineId: number, qty: number) => {
+      const line = byLine.get(lineId)
+      if (!line) throw bad(`Строка ${lineId} не найдена в заказе или уже принята`, 400)
+      if (qty > line.rest + 1e-9) throw bad(`Количество больше остатка строки ${lineId} (остаток ${line.rest})`, 400)
+      return line
+    }
+    const rows = partial.length ? partial.map((p) => ({ line: take(p.lineId, p.qty), qty: p.qty })) : ls.map((l) => ({ line: l, qty: l.rest }))
+
     const t = now()
     const invId = db.transaction(() => {
-      const total = ls.reduce((s, l) => s + Math.round(l.rest * l.price_kop), 0)
+      const total = rows.reduce((s, r) => s + Math.round(r.qty * r.line.price_kop), 0)
       const info = db.prepare(
-        `INSERT INTO purchase_invoices(supplier_id, store_uuid, number, status, total_kop, paid_kop, notes, created_at, updated_at)
-         VALUES(?,?,?,'draft',?,0,?,?,?)`,
-      ).run(o.supplier_id, o.store_uuid, `ЗК-${id}`, total, `По заказу ЗК-${id}`, t, t)
+        `INSERT INTO purchase_invoices(supplier_id, store_uuid, number, status, total_kop, paid_kop, notes, created_at, updated_at, order_id)
+         VALUES(?,?,?,'draft',?,0,?,?,?,?)`,
+      ).run(o.supplier_id, o.store_uuid, `ЗК-${id}`, total, `По заказу ЗК-${id}`, t, t, id)
       const iid = Number(info.lastInsertRowid)
-      const ins = db.prepare(`INSERT INTO purchase_invoice_lines(invoice_id, stock_item_id, qty, unit_cost_kop) VALUES(?,?,?,?)`)
-      for (const l of ls) ins.run(iid, l.stock_item_id, l.rest, l.price_kop)
-      db.prepare(`UPDATE purchase_order_lines SET received_qty = qty WHERE order_id=?`).run(id)
-      db.prepare(`UPDATE purchase_orders SET status='closed', updated_at=? WHERE id=?`).run(t, id)
+      const ins = db.prepare(
+        `INSERT INTO purchase_invoice_lines(invoice_id, stock_item_id, qty, unit_cost_kop, order_line_id) VALUES(?,?,?,?,?)`,
+      )
+      for (const r of rows) ins.run(iid, r.line.stock_item_id, r.qty, r.line.price_kop, r.line.id)
       return iid
     })()
     return c.json({ invoiceId: invId }, 201)
