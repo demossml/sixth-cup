@@ -100,6 +100,59 @@ describe('QR is identity, backend is state', () => {
     expect(r.data.reservationId).toBeNull()
   })
 
+  // L-00 contract: списание возможно ТОЛЬКО при подписанном QR с резервом.
+  // Никогда не «чинить», разрешая redeem по числовому коду: код подбирается перебором.
+  it('numeric code in extras cannot spend free/cashback even when claimed', async () => {
+    const g = await guest()
+    const user = db.prepare('SELECT id FROM users WHERE card_code=?').get(g.card.cardCode) as { id: number }
+    db.prepare('UPDATE cards SET paid_total=5, free_used=0 WHERE user_id=?').run(user.id)
+    db.prepare('UPDATE users SET cashback_balance=5000 WHERE id=?').run(user.id)
+
+    // Чек заявляет free=1 и cb=3000, но `c` — числовой код без `op`.
+    const sell = handleSell(db as any, 'store-1', doc('code-claim-1', { v: 2, c: g.card.cardCode, free: 1, cb: 3000, ts: 1 }))
+    expect(sell.processed).toBe(true)
+
+    const st = db.prepare('SELECT paid_total, free_used FROM cards WHERE user_id=?').get(user.id) as any
+    expect(st.free_used).toBe(0) // бонус не списан
+    expect(st.paid_total).toBe(6) // начисление за платную чашку прошло
+    const bal = db.prepare('SELECT cashback_balance FROM users WHERE id=?').get(user.id) as any
+    expect(bal.cashback_balance).toBe(5000) // кэшбэк не тронут
+    const op = db.prepare(`SELECT free, cb FROM loyalty_ops WHERE doc_id='code-claim-1'`).get() as any
+    expect(op).toEqual({ free: 0, cb: 0 }) // в ops записан фактический ноль
+  })
+
+  it('till reservation survives a SELL that used the numeric code', async () => {
+    const g = await guest()
+    const user = db.prepare('SELECT id FROM users WHERE card_code=?').get(g.card.cardCode) as { id: number }
+    db.prepare('UPDATE cards SET paid_total=5 WHERE user_id=?').run(user.id)
+
+    const r = await resolve('dev-A', g.card.card)
+    expect(r.data.reservationId).toMatch(/^R-/)
+
+    handleSell(db as any, 'store-1', doc('code-claim-2', { v: 2, c: g.card.cardCode, free: 1, cb: 0, ts: 1 }))
+
+    const res = db.prepare('SELECT status FROM loyalty_reservations WHERE id=?').get(r.data.reservationId) as any
+    expect(res.status).toBe('RESERVED') // бронь не потреблена кодом
+    const st = db.prepare('SELECT free_used FROM cards WHERE user_id=?').get(user.id) as any
+    expect(st.free_used).toBe(0)
+  })
+
+  it('signed token with reservation is the only redeem path', async () => {
+    const g = await guest()
+    const user = db.prepare('SELECT id FROM users WHERE card_code=?').get(g.card.cardCode) as { id: number }
+    db.prepare('UPDATE cards SET paid_total=5 WHERE user_id=?').run(user.id)
+
+    const r = await resolve('dev-A', g.card.card)
+    expect(r.data.freeStatus).toBe('RESERVED')
+
+    handleSell(db as any, 'store-1', doc('token-redeem-1', { v: 2, c: g.card.card, op: r.data.reservationId, free: 1, cb: 0, ts: 1 }))
+
+    const st = db.prepare('SELECT free_used FROM cards WHERE user_id=?').get(user.id) as any
+    expect(st.free_used).toBe(1) // списание состоялось
+    const res = db.prepare('SELECT status, doc_id FROM loyalty_reservations WHERE id=?').get(r.data.reservationId) as any
+    expect(res).toEqual({ status: 'CONSUMED', doc_id: 'token-redeem-1' })
+  })
+
   it('does not leak other customers by code', async () => {
     const g = await guest()
     const r = await app.request(`/api/loyalty/card/${g.card.cardCode}`, { headers: { Authorization: `Bearer ${g.jwt}` } })
