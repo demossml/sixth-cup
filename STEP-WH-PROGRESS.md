@@ -146,3 +146,14 @@ DEFAULT-AD-HOC: нет
 Тесты: `wh-manual-writeoff.test.ts` — 7 passed; полный backend — 316 passed / 56 файлов; typecheck OK
 Изменённые тесты: нет
 DEFAULT-AD-HOC: нет
+
+## STEP-W12 — Ручное списание, UI (Q-11, U-05)
+Статус: DONE
+Коммит: `feat(admin): write-offs tab on the stock screen`
+Что сделано:
+- Новая вкладка «Списания» в экране «Склад» (`Stock.tsx` → `stock/WriteoffsTab.tsx`).
+- Форма: точка (`StorePicker`), причина (Порча / Истёк срок / Персонал / Пробные / Прочее), строки «позиция + количество» с единицей позиции, комментарий, кнопка «Списать». Ошибка 400 показывается тостом с текстом сервера, после успеха перезагружается список.
+- Список последних списаний: дата, точка, причина, позиции с количеством и единицей. Отмены и редактирования нет (D-22).
+Тесты: admin — 24 passed; контрактный `contract-admin-routes.test.ts` — 4 passed (новые `/stock/writeoffs`, `/stock/stores` имеют обработчики); typecheck и build OK
+Изменённые тесты: нет
+DEFAULT-AD-HOC: нет
