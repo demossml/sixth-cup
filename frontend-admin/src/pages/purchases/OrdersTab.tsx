@@ -1,10 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useApi } from '../../api/useApi'
 import { api } from '../../api/client'
 import { Badge, Button, Card, DataTable, EmptyState, ErrorBox, Field, Select, Skeleton, useToast } from '../../ui/kit'
 import type { Column, Tone } from '../../ui/kit'
 import { Check, FileInput, Plus, Trash2, Wand2 } from 'lucide-react'
-import { StorePicker, type StoreOption } from '../shared'
+import { StorePicker, defaultStoreUuid, type StoreOption } from '../shared'
 
 type OrderLine = { lineId: number; stockItemId: number; qty: number; priceKop: number; receivedQty: number }
 type Order = {
@@ -48,6 +48,12 @@ export default function OrdersTab({ suppliers, items, onInvoiceCreated }: {
   // D-19: точка заказа; пусто — «общий склад».
   const [storeUuid, setStoreUuid] = useState('')
   const stores = useApi<{ stores: StoreOption[] }>('/stock/stores')
+  const storeTouched = useRef(false)
+  useEffect(() => {
+    if (storeTouched.current || storeUuid) return
+    const def = defaultStoreUuid(stores.data?.stores ?? [])
+    if (def) setStoreUuid(def)
+  }, [stores.data, storeUuid])
   const [lines, setLines] = useState<Draft[]>([emptyLine()])
   const [del, setDel] = useState<Order | null>(null)
 
@@ -237,7 +243,7 @@ export default function OrdersTab({ suppliers, items, onInvoiceCreated }: {
           <StorePicker
             stores={stores.data?.stores ?? []}
             value={storeUuid}
-            onChange={setStoreUuid}
+            onChange={(v) => { storeTouched.current = true; setStoreUuid(v) }}
             label="Точка поставки"
           />
           <div className="flex items-end gap-2">

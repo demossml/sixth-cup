@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useApi } from '../api/useApi'
 import { api } from '../api/client'
@@ -13,7 +13,7 @@ import BankTab from './purchases/BankTab'
 import ReconTab from './purchases/ReconTab'
 import OrdersTab from './purchases/OrdersTab'
 import { csvName, downloadCsv } from '../lib/csv'
-import { StorePicker, type StoreOption } from './shared'
+import { StorePicker, defaultStoreUuid, type StoreOption } from './shared'
 import { setParams } from '../lib/query'
 import ReturnsTab from './purchases/ReturnsTab'
 
@@ -74,6 +74,13 @@ export default function Purchases() {
   // D-19: точка прихода. Пусто — «общий склад».
   const stores = useApi<{ stores: StoreOption[] }>('/stock/stores')
   const [storeUuid, setStoreUuid] = useState('')
+  const storeTouched = useRef(false)
+  // D-19: единственная точка выбирается сама; выбор «Общий склад» пользователем не перебиваем.
+  useEffect(() => {
+    if (storeTouched.current || storeUuid) return
+    const def = defaultStoreUuid(stores.data?.stores ?? [])
+    if (def) setStoreUuid(def)
+  }, [stores.data, storeUuid])
   // D-14: количество строки накладной — в единице позиции, показываем её в подписи.
   const lineUnit = (stockItemId: string) =>
     (items.data?.items ?? []).find((it) => String(it.id) === stockItemId)?.unit ?? ''
@@ -305,7 +312,7 @@ export default function Purchases() {
             <StorePicker
               stores={stores.data?.stores ?? []}
               value={storeUuid}
-              onChange={setStoreUuid}
+              onChange={(v) => { storeTouched.current = true; setStoreUuid(v) }}
               label="Точка прихода"
             />
           </div>

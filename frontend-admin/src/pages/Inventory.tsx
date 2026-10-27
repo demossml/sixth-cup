@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect, useRef } from 'react'
 import { useApi } from '../api/useApi'
 import { api } from '../api/client'
-import { StorePicker, type StoreOption } from './shared'
+import { StorePicker, defaultStoreUuid, type StoreOption } from './shared'
 import {
   PageHeader, Card, EmptyState, Badge, Button, Select, Field, Input,
   ErrorBox, Skeleton, useToast, cx,
@@ -48,6 +48,12 @@ export default function Inventory() {
   // D-19: точка инвентаризации; пусто — «общий склад».
   const [storeUuid, setStoreUuid] = useState('')
   const stores = useApi<{ stores: StoreOption[] }>('/stock/stores')
+  const storeTouched = useRef(false)
+  useEffect(() => {
+    if (storeTouched.current || storeUuid) return
+    const def = defaultStoreUuid(stores.data?.stores ?? [])
+    if (def) setStoreUuid(def)
+  }, [stores.data, storeUuid])
 
   const createDoc = async () => {
     if (kind === 'partial' && !selectedItems.length) {
@@ -219,7 +225,7 @@ export default function Inventory() {
             <StorePicker
               stores={stores.data?.stores ?? []}
               value={storeUuid}
-              onChange={setStoreUuid}
+              onChange={(v) => { storeTouched.current = true; setStoreUuid(v) }}
               label="Точка"
             />
           </div>

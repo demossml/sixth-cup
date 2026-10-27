@@ -30,6 +30,25 @@ const fakeClient = {
 } as any
 
 let seq = 0
+let cards = 0
+
+/** Карта для «лояльного» документа: короткий код + запись в cards. */
+function withCard(): string {
+  const code = String(500 + ++cards)
+  const t = Date.now()
+  db.prepare(
+    `INSERT INTO users(nickname, phone, invite_code, card_id, card_code, created_at) VALUES(?,?,?,?,?,?)`,
+  ).run(`pb-card-${code}`, `+700000${code}`, `PBCARD${code}`, `CARD-${code}`, code, t)
+  const id = Number((db.prepare('SELECT MAX(id) AS id FROM users').get() as { id: number }).id)
+  db.prepare('INSERT OR IGNORE INTO cards(user_id, updated_at) VALUES(?,?)').run(id, t)
+  return code
+}
+
+const loyalty = (kind: string, docId: string) =>
+  Number(
+    (db.prepare(`SELECT COUNT(*) AS n FROM loyalty_ops WHERE kind=? AND doc_id=?`).get(kind, docId) as { n: number }).n,
+  )
+
 const uniq = (p: string) => `${p}-${++seq}`
 const backs = (item: number) => movements(item).filter((m) => m.kind === 'sale_back')
 
@@ -156,14 +175,31 @@ describe('Q-02: возврат сырья при PAYBACK', () => {
     expect(back[0].batchId).toBeNull()
   })
 
-  it('лояльный PAYBACK по-прежнему обрабатывается лояльностью (склад не ломает)', async () => {
+  it('PAYBACK с картой: лояльность отрабатывает И сырьё возвращается', async () => {
     const { item, commodity } = await fixture('Возврат с картой')
-    const sellUuid = uniq('sell')
-    docs = [sellDoc(sellUuid, [{ commodityUuid: commodity, qty: 1 }], {})]
+    const code = withCard()
+    const extras = { sc: { v: 2, c: code, free: 0, cb: 0, ts: 1 } }
+
+    const sellUuid = 'payback-card-sell'
+    docs = [sellDoc(sellUuid, [{ commodityUuid: commodity, qty: 2 }], extras)]
     await poll()
+    expect(balance(item)).toBe(1000 - 36)
+    expect(loyalty('SELL', sellUuid)).toBe(1)
+
+    const backUuid = 'payback-card-back'
+    docs = [paybackDoc(backUuid, sellUuid, [{ commodityUuid: commodity, qty: 1 }], extras)]
+    await poll()
+
+    // лояльность: возврат записан и указывает на базовый чек
+    expect(loyalty('PAYBACK', backUuid)).toBe(1)
+    const back = db
+      .prepare(`SELECT op_claimed AS base FROM loyalty_ops WHERE doc_id=? AND kind='PAYBACK'`)
+      .get(backUuid) as { base: string }
+    expect(back.base).toBe(sellUuid)
+    // склад: возвращена ровно одна норма
     expect(balance(item)).toBe(1000 - 18)
-    // без карты лояльность не пишет ops — но склад отработал
-    expect(docStatus(STORE, sellUuid)).toBe('PROCESSED')
+    expect(backs(item)).toHaveLength(1)
+    expect(docStatus(STORE, backUuid)).toBe('PROCESSED')
   })
 
   it('прямой вызов restoreByPayback уважает ref_doc_id и позиции', async () => {

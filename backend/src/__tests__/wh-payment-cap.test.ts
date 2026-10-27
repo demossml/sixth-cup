@@ -17,7 +17,7 @@ async function invoice(totalKop: number) {
   const supplierId = await createSupplier(`Пост оплат ${totalKop}-${Math.random().toString(16).slice(2, 8)}`)
   const item = await createItem(`Сырьё оплат ${supplierId}`, 'g')
   const id = await receive(supplierId, [{ stockItemId: item, qty: 1, unitCostKop: totalKop }])
-  return { supplierId, invoiceId: id }
+  return { supplierId, invoiceId: id, item }
 }
 
 const pay = (supplierId: number, invoiceId: number, amountKop: number) =>
@@ -75,12 +75,11 @@ describe('M-01: лимит платежа по долгу накладной', (
 
     const draftInv = await admin('POST', '/purchases/invoices', {
       supplierId: a.supplierId,
-      lines: [{ stockItemId: 1, qty: 1, unitCostKop: 100 }],
+      lines: [{ stockItemId: a.item, qty: 1, unitCostKop: 100 }],
     })
-    if (draftInv.status === 201) {
-      const r = await pay(a.supplierId, draftInv.json.id, 100)
-      expect(r.status).toBe(400)
-      expect(r.json.error ?? r.json.message).toMatch(/проведённым/i)
-    }
+    expect(draftInv.status).toBe(201)
+    const r = await pay(a.supplierId, draftInv.json.id, 100)
+    expect(r.status).toBe(400)
+    expect(r.json.error ?? r.json.message).toMatch(/проведённым/i)
   })
 })
