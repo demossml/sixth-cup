@@ -9,6 +9,9 @@ export default function InvitePage() {
   const nav = useNavigate()
   const [copied, setCopied] = useState(false)
   const pct = dir?.referralCashbackPercent ?? 3
+  // L-14′: «каждый N+1-й» строится из cupsForFree, а не хардкодом
+  const N = Math.max(1, me?.cupsForFree ?? dir?.cupsForFree ?? 5)
+  const cupText = `каждый ${N + 1}-й кофе — бесплатно`
   const link = me ? `${location.origin}/?invite=${encodeURIComponent(me.inviteCode)}` : ''
 
   async function share() {
@@ -16,7 +19,7 @@ export default function InvitePage() {
     if (navigator.share) {
       try { await navigator.share({
         title: '6.7 Coffee',
-        text: `Присоединяйся к 6.7 Coffee. Каждый 6-й кофе бесплатно. По этой ссылке ты в программе лояльности.`,
+        text: `Присоединяйся к 6.7 Coffee. ${cupText.charAt(0).toUpperCase()}${cupText.slice(1)}. По этой ссылке ты в программе лояльности.`,
         url: link,
       }) } catch { /* пользователь закрыл меню «Поделиться» */ }
     } else {
@@ -71,7 +74,7 @@ export default function InvitePage() {
           <ol className="list-decimal pl-4 space-y-1.5">
             <li>Друг сканирует QR или открывает ссылку.</li>
             <li>У него появляется своя карта лояльности (без лишней регистрации).</li>
-            <li>Он копит стаканы: каждый 6-й кофе — бесплатно.</li>
+            <li>Он копит стаканы: {cupText}.</li>
             <li>С каждой его оплаты вам навсегда начисляется <b className="text-ink">{pct}% кэшбэка</b>.</li>
             <li>Кэшбэк можно списать на кассе при следующей покупке.</li>
           </ol>

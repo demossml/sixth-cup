@@ -10,8 +10,12 @@ function setting(key: string, fallback: string): string {
   return fallback
 }
 
+// L-14′: порог берётся из config.cupsForFree, а не «шестой» хардкодом.
+const loyaltyFallback = () =>
+  `Подходящие напитки копят стаканы: ${config.cupsForFree} оплаченных — следующий бесплатно (по правилам программы). Начисления делает сервер после покупки на кассе. Карта выдаётся без номера телефона.`
+
 const fallbacks = {
-  legal_loyalty: 'Каждый шестой подходящий напиток — по правилам программы. Начисления делает сервер после покупки на кассе. Карта выдаётся без номера телефона.',
+  legal_loyalty: loyaltyFallback(),
   legal_privacy: 'Мы храним идентификатор карты, историю покупок по программе и служебные данные синхронизации. Телефон для входа не требуется.',
   seller_info: 'Реквизиты продавца уточняйте в кофейне 6.7 Coffee или у администратора сети.',
   home_banner: '',
@@ -20,7 +24,7 @@ const fallbacks = {
 
 export const publicRoutes = new Hono().get('/content', (c) =>
   c.json({
-    legal_loyalty: setting('legal_loyalty', fallbacks.legal_loyalty),
+    legal_loyalty: setting('legal_loyalty', loyaltyFallback()),
     legal_privacy: setting('legal_privacy', fallbacks.legal_privacy),
     seller_info: setting('seller_info', fallbacks.seller_info),
     home_banner: setting('home_banner', fallbacks.home_banner),

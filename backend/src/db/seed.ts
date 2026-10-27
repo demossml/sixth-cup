@@ -87,7 +87,14 @@ export function seedIfEmpty() {
     const ins = db.prepare(
       'INSERT INTO promos(title,body,icon,sponsor,starts_at,ends_at) VALUES(?,?,?,?,?,?)'
     )
-    ins.run('Каждый 6-й стакан бесплатно', 'Копите стаканы — подарок автоматически.', 'Gift', null, ts, ts + 365 * 86_400)
+    ins.run(
+      `Каждый ${config.cupsForFree + 1}-й стакан бесплатно`,
+      'Копите стаканы — подарок автоматически.',
+      'Gift',
+      null,
+      ts,
+      ts + 365 * 86_400,
+    )
     ins.run('Приведи друга — 3%', 'С покупки друга — 3% кэшбэком.', 'Users', null, ts, ts + 365 * 86_400)
   }
 

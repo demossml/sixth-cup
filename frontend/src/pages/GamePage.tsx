@@ -165,7 +165,7 @@ export default function GamePage() {
           <div className="text-sm text-ink-secondary">{(() => { const next = RUNNER_LEVELS.find((l, i) => i > 0 && !(meta.find(m => m.levelId === l.id)?.unlocked)); if (next) return `Пройди предыдущий уровень и открой «${next.name}».`; const low = RUNNER_LEVELS.map(l => ({ l, stars: meta.find(m => m.levelId === l.id)?.stars ?? 0 })).find(x => x.stars < 3); return low ? `Собери 3★ на уровне «${low.l.name}».` : 'Все уровни открыты — попробуй улучшить рекорд времени!' })()}</div>
           {recentRuns.length > 0 && <><div className="font-semibold text-ink mt-4 mb-2">Последние забеги</div><div className="space-y-2">{recentRuns.slice(0, 4).map((run, i) => <div key={`${run.levelId}-${run.createdAt}-${i}`} className="flex justify-between gap-3 text-sm"><span className="text-ink-secondary">{run.levelName} · {run.completed ? 'финиш' : 'не завершён'}</span><span className="text-ink font-medium whitespace-nowrap">{run.beansCollected} зёрен · {(run.durationMs / 1000).toFixed(1)} с</span></div>)}</div></>}
         </div>
-        <div className="text-xs text-ink-tertiary mt-4">{metaLoaded ? 'Прогресс синхронизируется с сервером.' : 'Загружаем прогресс…'} Зёрна и звёзды — игровые показатели, они не связаны с шестым стаканом, покупками или кэшбэком.</div>
+        <div className="text-xs text-ink-tertiary mt-4">{metaLoaded ? 'Прогресс синхронизируется с сервером.' : 'Загружаем прогресс…'} Зёрна и звёзды — игровые показатели, они не связаны с бесплатным напитком за стаканы, покупками или кэшбэком.</div>
       </div>
     )
   }

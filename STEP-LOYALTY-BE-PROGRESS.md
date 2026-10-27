@@ -73,3 +73,15 @@ DEFAULT-AD-HOC:
 Тесты: `loyalty-welcome.test.ts` — 4 passed (выдача на первом чеке Эвотора, без дубля на втором, идемпотентность хелпера, отсутствие шаблона не ломает продажу). Полный backend — 333 passed / 61 файл.
 DEFAULT-AD-HOC:
 - **B05-1.** Постановка допускала «copy-only», но копирайта с обещанием нет, поэтому умолчание нечего смягчать. Вместо этого реализован безопасный идемпотентный grant — дефект закрыт по существу, а не замаскирован текстом.
+
+## STEP-B06 — L-14′: copy from `cupsForFree`
+Статус: DONE
+Коммит: `fix(copy): loyalty threshold text from cupsForFree (L-14)`
+Что сделано:
+- `frontend/src/pages/InvitePage.tsx`: текст приглашения и пункт «как это работает» строятся как `каждый ${N+1}-й кофе`, где `N = me.cupsForFree ?? dir.cupsForFree ?? 5`.
+- `frontend/src/copy/ru.ts`: фолбэк правил больше не утверждает «каждый шестой» — формулировка без числа («собрав нужное число, следующий напиток бесплатно»), потому что это статический текст без доступа к конфигу.
+- `backend/src/modules/public/routes.ts`: фолбэк `legal_loyalty` собирается из `config.cupsForFree` («N оплаченных — следующий бесплатно»), значение из `app_settings` по-прежнему приоритетнее.
+- `backend/src/db/seed.ts`: демо-промо «Каждый N+1-й стакан бесплатно» из конфига.
+- `frontend/src/pages/GamePage.tsx`: дисклеймер про игровые показатели больше не ссылается на «шестой стакан».
+Тесты: typecheck OK; backend — 333 passed; PWA — 52 passed; `grep "шест"` по PWA/public/seed даёт только комментарий.
+DEFAULT-AD-HOC: нет
