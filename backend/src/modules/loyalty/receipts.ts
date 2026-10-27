@@ -3,7 +3,7 @@ import { db } from '../../db'
 import { peek, verifyWith } from '../../lib/crypto'
 import { ensureCard } from './proof'
 import { cashbackOf, freeEarned } from './rules'
-import { grantVoucher } from '../vouchers/service'
+import { grantVoucherOnce } from '../vouchers/service'
 
 const receiptSchema = z.object({
   t: z.literal('r'),
@@ -52,7 +52,7 @@ function applyOne(r: Receipt) {
   if (r.dp > 0) {
     const beforePaid = (db.prepare('SELECT paid_total FROM cards WHERE user_id=?').get(r.u) as { paid_total: number }).paid_total - r.dp
     if (beforePaid <= 0) {
-      try { grantVoucher(r.u, 'WELCOME') } catch { /* already has or no template */ }
+      try { grantVoucherOnce(r.u, 'WELCOME') } catch { /* шаблона может не быть */ }
     }
   }
 

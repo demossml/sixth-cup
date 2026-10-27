@@ -4,6 +4,7 @@ import { normalizeCardCode } from '../../../modules/loyalty/proof'
 import { cashbackOf, freeEarned } from '../../../modules/loyalty/rules'
 import { consumeReservation } from '../../../modules/loyalty/reservations'
 import { extractScRaw } from '../loyaltyExtras'
+import { grantVoucherOnce } from '../../../modules/vouchers/service'
 
 type Tx = Record<string, unknown>
 
@@ -219,6 +220,11 @@ export function handleSell(db: Database.Database, storeUuid: string, doc: Record
     )
     db.prepare(`UPDATE cards SET paid_total=paid_total+?, free_used=free_used+?, seq=seq+1, updated_at=? WHERE user_id=?`)
       .run(paidCups, appliedFree, now, user.id)
+    // L-09: приветственный ваучер выдаётся на первой платной чашке в ЛЮБОМ канале.
+    // grantVoucherOnce идемпотентен, отсутствие шаблона не должно ронять продажу.
+    if (paidCups > 0 && state.paid_total <= 0) {
+      try { grantVoucherOnce(user.id, 'WELCOME') } catch { /* шаблона может не быть */ }
+    }
     if (appliedCb > 0) {
       db.prepare('UPDATE users SET cashback_balance=cashback_balance-? WHERE id=?').run(appliedCb, user.id)
     }

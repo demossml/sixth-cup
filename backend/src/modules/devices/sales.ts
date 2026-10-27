@@ -3,7 +3,7 @@ import { log } from '../../lib/logBuffer'
 import { bad } from '../../lib/errors'
 import { buildCardProof, ensureCard, verifyCardProof } from '../loyalty/proof'
 import { freeEarned, cashbackOf } from '../loyalty/rules'
-import { grantVoucher } from '../vouchers/service'
+import { grantVoucherOnce } from '../vouchers/service'
 import { config } from '../../config'
 
 export type SaleInput = {
@@ -88,7 +88,7 @@ export function applyOnlineSale(deviceId: number, input: SaleInput): SaleResult 
       }
     }
     if (paidCups > 0 && before.paid_total <= 0) {
-      try { grantVoucher(userId, 'WELCOME') } catch { /* already issued */ }
+      try { grantVoucherOnce(userId, 'WELCOME') } catch { /* шаблона может не быть */ }
     }
     db.prepare(`INSERT INTO receipts(id,device_id,user_id,dp,df,dcb,amount,ts,raw,applied_at) VALUES(?,?,?,?,?,?,?,?,?,?)`)
       .run(fiscalKey, deviceId, userId, paidCups, useFree, cashbackUse, amountKopecks, Math.floor(now / 1000), JSON.stringify({ online: true, items: input.items }), now)
