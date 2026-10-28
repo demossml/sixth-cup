@@ -5,7 +5,8 @@ import PromoMediaField, { mediaUrlError } from './marketing/PromoMediaField'
 import { useApi } from '../api/useApi'
 import type { VoucherTemplate } from '../api/types'
 import { fmtDate, fmtNum } from '../lib/format'
-import { Badge, Banner, Button, Card, ConfirmDialog, Drawer, EmptyState, ErrorBox, Field, Input, PageHeader, Select, Spinner, Tabs, useToast } from '../ui/kit'
+import { createBody, draftError, draftFrom, emptyDraft, patchBody, type TemplateDraft } from '../lib/voucherTemplates'
+import { Badge, Banner, Button, Card, ConfirmDialog, Drawer, EmptyState, ErrorBox, Field, Input, PageHeader, Select, Spinner, Tabs, Toggle, useToast } from '../ui/kit'
 
 type PromoRow = {
   id: number
@@ -278,13 +279,18 @@ function Promos() {
 }
 
 function Vouchers() {
-  const { data, error, loading } = useApi<{ templates: VoucherTemplate[] }>('/voucher-templates')
+  const { data, error, loading, reload } = useApi<{ templates: VoucherTemplate[] }>('/voucher-templates?all=1')
   const toast = useToast()
   const [code, setCode] = useState('')
   const [preview, setPreview] = useState<{ template: VoucherTemplate; users: number } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [draft, setDraft] = useState<TemplateDraft | null>(null)
+  const [saving, setSaving] = useState(false)
   if (loading && !data) return <Spinner />
   if (error) return <ErrorBox message={error} />
+  const activeTpl = (data?.templates ?? []).filter((t) => t.active !== false)
+  const draftMsg = draft ? draftError(draft) : null
+
   const showPreview = async () => {
     try {
       setPreview(await api(`/vouchers/grant-all/preview?code=${encodeURIComponent(code)}`))
@@ -304,18 +310,70 @@ function Vouchers() {
       setBusy(false)
     }
   }
+  const save = async () => {
+    if (!draft || draftMsg) return
+    setSaving(true)
+    try {
+      if (draft.id) await api(`/voucher-templates/${draft.id}`, { method: 'PATCH', body: patchBody(draft) })
+      else await api('/voucher-templates', { method: 'POST', body: createBody(draft) })
+      toast.push(draft.id ? 'Шаблон обновлён' : 'Шаблон создан')
+      setDraft(null)
+      reload()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Не удалось сохранить', 'bad')
+    } finally {
+      setSaving(false)
+    }
+  }
+  const toggleActive = async (t: VoucherTemplate) => {
+    try {
+      await api(`/voucher-templates/${t.id}`, { method: 'PATCH', body: { active: t.active === false } })
+      toast.push(t.active === false ? 'Шаблон включён' : 'Шаблон выключен')
+      reload()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+    }
+  }
+
   return (
     <>
       <Card className="mb-4">
-        <h2 className="mb-2 text-base font-bold">Шаблоны ваучеров</h2>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-base font-bold">Шаблоны ваучеров</h2>
+          <Button size="sm" onClick={() => setDraft(emptyDraft())}>
+            <Plus size={14} /> Новый шаблон
+          </Button>
+        </div>
+        <p className="mb-2 text-sm text-ink-secondary">
+          Ваучер выдаётся из шаблона. Выключенный шаблон не выдаётся и не показывается гостю на кассе.
+        </p>
         {!data?.templates.length ? (
-          <p className="text-sm text-ink-secondary">Шаблонов нет</p>
+          <p className="text-sm text-ink-secondary">Шаблонов нет — создайте первый.</p>
         ) : (
           <ul className="divide-y divide-line text-sm">
             {data.templates.map((t) => (
-              <li key={t.id} className="flex justify-between gap-2 py-2">
-                <span>{t.title}</span>
-                <span className="text-ink-secondary">дней: {t.validDays}</span>
+              <li key={t.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">{t.title}</span>
+                    <Badge tone={t.active === false ? 'neutral' : 'ok'}>{t.active === false ? 'выключен' : 'активен'}</Badge>
+                  </div>
+                  <div className="text-ink-secondary">
+                    {t.code} · {t.kind === 'percent' ? `${t.value}%` : `${fmtNum(t.value / 100)} ₽`} · дней: {t.validDays}
+                    {t.redemptionMode === 'multi' ? ' · многоразовый' : ' · одноразовый'}
+                    {t.maxPerDay ? ` · не более ${t.maxPerDay}/день` : ''}
+                    {t.maxTotal ? ` · всего ${t.maxTotal}` : ''}
+                    {t.stackableWithFreeCup === false ? ' · не с подарком' : ''}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="secondary" onClick={() => setDraft(draftFrom(t))}>
+                    Изменить
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => toggleActive(t)}>
+                    {t.active === false ? 'Включить' : 'Выключить'}
+                  </Button>
+                </div>
               </li>
             ))}
           </ul>
@@ -327,7 +385,7 @@ function Vouchers() {
         <div className="flex flex-wrap gap-2">
           <Select value={code} onChange={(e) => setCode(e.target.value)} className="!w-auto min-w-[200px] flex-1">
             <option value="">Шаблон…</option>
-            {(data?.templates ?? []).map((t) => (
+            {activeTpl.map((t) => (
               <option key={t.code} value={t.code}>
                 {t.title}
               </option>
@@ -338,6 +396,80 @@ function Vouchers() {
           </Button>
         </div>
       </Card>
+      <Drawer open={!!draft} onClose={() => setDraft(null)} title={draft?.id ? 'Изменить шаблон' : 'Новый шаблон ваучера'}>
+        {draft && (
+          <div className="space-y-3">
+            <Field label="Код" hint={draft.id ? 'Код нельзя изменить — на него ссылаются выдачи.' : 'Латинские буквы и цифры, например SUMMER10.'}>
+              <Input
+                value={draft.code}
+                disabled={Boolean(draft.id)}
+                onChange={(e) => setDraft({ ...draft, code: e.target.value })}
+                placeholder="SUMMER10"
+              />
+            </Field>
+            <Field label="Название для гостя">
+              <Input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} placeholder="Скидка 10% на кофе" />
+            </Field>
+            <Field label="Тип скидки">
+              <Select value={draft.kind} onChange={(e) => setDraft({ ...draft, kind: e.target.value as 'percent' | 'fixed' })}>
+                <option value="percent">Процент</option>
+                <option value="fixed">Сумма в копейках</option>
+              </Select>
+            </Field>
+            <Field label={draft.kind === 'percent' ? 'Процент' : 'Сумма, коп.'} hint={draft.kind === 'fixed' ? 'Например 30000 = 300 ₽' : 'Не больше 100'}>
+              <Input
+                type="number"
+                value={draft.value}
+                onChange={(e) => setDraft({ ...draft, value: Number(e.target.value) })}
+              />
+            </Field>
+            <Field label="Срок действия, дней">
+              <Input
+                type="number"
+                value={draft.validDays}
+                onChange={(e) => setDraft({ ...draft, validDays: Number(e.target.value) })}
+              />
+            </Field>
+            <Field label="Картинка" hint="Необязательно. /uploads/… или https://…">
+              <Input value={draft.imageUrl} onChange={(e) => setDraft({ ...draft, imageUrl: e.target.value })} placeholder="https://…" />
+            </Field>
+            <Field label="Режим гашения">
+              <Select
+                value={draft.redemptionMode}
+                onChange={(e) => setDraft({ ...draft, redemptionMode: e.target.value as 'once' | 'multi' })}
+              >
+                <option value="once">Одноразовый</option>
+                <option value="multi">Многоразовый</option>
+              </Select>
+            </Field>
+            {draft.redemptionMode === 'multi' && (
+              <>
+                <Field label="Лимит гашений в сутки" hint="Пусто — без ограничения.">
+                  <Input value={draft.maxPerDay} onChange={(e) => setDraft({ ...draft, maxPerDay: e.target.value })} placeholder="1" />
+                </Field>
+                <Field label="Общий лимит гашений" hint="Пусто — без ограничения.">
+                  <Input value={draft.maxTotal} onChange={(e) => setDraft({ ...draft, maxTotal: e.target.value })} placeholder="10" />
+                </Field>
+              </>
+            )}
+            <Toggle
+              checked={draft.stackableWithFreeCup}
+              onChange={(v) => setDraft({ ...draft, stackableWithFreeCup: v })}
+              label="Можно применить вместе с подарком (6-я чашка)"
+            />
+            <Toggle checked={draft.active} onChange={(v) => setDraft({ ...draft, active: v })} label="Активен — можно выдавать" />
+            {draftMsg && <p className="text-sm text-bad">{draftMsg}</p>}
+            <div className="flex gap-2">
+              <Button onClick={save} loading={saving} disabled={Boolean(draftMsg)}>
+                Сохранить
+              </Button>
+              <Button variant="secondary" onClick={() => setDraft(null)}>
+                Отмена
+              </Button>
+            </div>
+          </div>
+        )}
+      </Drawer>
       <ConfirmDialog
         open={!!preview}
         danger

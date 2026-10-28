@@ -14,7 +14,10 @@ type Detail = {
   invitedBy: { id: number; nickname: string; cardCode: string | null } | null
   ops: { storeUuid: string; storeName: string | null; docId: string; kind: string; cups: number | null; free: number | null; cashbackKopecks: number | null; resultRub: number | null; createdAt: number }[]
   cashback: { id: number; amount: number; receiptId: string | null; createdAt: number; fromUserId: number | null; fromNickname: string | null }[]
-  vouchers: { id: number; title: string; kind: string; value: number; expiresDay: string | number | null; usedAt: number | null }[]
+  vouchers: {
+    id: number; title: string; kind: string; value: number; expiresDay: string | number | null
+    usedAt: number | null; redemptionsCount?: number; redemptionMode?: 'once' | 'multi'
+  }[]
   referrals: { id: number; nickname: string; cardCode: string | null; createdAt: number; paidTotal: number }[]
   receipts: { id: string; amount: number; dp: number; df: number; dcb: number; ts: number }[]
   hints: string[]
@@ -54,7 +57,9 @@ export default function CustomerCard() {
     try { setPhone((await api<{ phone: string | null }>(`/customers/${u.id}/phone`)).phone) }
     catch (e) { toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad') }
   }
-  const selTpl = tpl.data?.templates.find((t) => t.code === code)
+  // Выключенный шаблон сервер выдавать не будет — в списке только активные.
+  const activeTpl = (tpl.data?.templates ?? []).filter((t) => t.active !== false)
+  const selTpl = activeTpl.find((t) => t.code === code)
 
   return (
     <>
@@ -120,7 +125,10 @@ export default function CustomerCard() {
           <ul className="mb-3 divide-y divide-line text-sm">
             {data.vouchers.map((v) => (
               <li key={v.id} className="flex items-center justify-between gap-2 py-2">
-                <span>{v.title}</span>
+                <span>
+                  {v.title}
+                  {v.redemptionMode === 'multi' && <span className="text-ink-secondary"> · многоразовый, гашений: {v.redemptionsCount ?? 0}</span>}
+                </span>
                 {v.usedAt ? <Badge tone="neutral">Использован {fmtDate(v.usedAt)}</Badge> : <Badge tone="ok">Активен</Badge>}
               </li>
             ))}
@@ -129,10 +137,15 @@ export default function CustomerCard() {
         <div className="flex flex-wrap items-center gap-2">
           <Select value={code} onChange={(e) => setCode(e.target.value)} aria-label="Шаблон ваучера" className="!w-auto min-w-[200px] flex-1">
             <option value="">Выберите ваучер…</option>
-            {(tpl.data?.templates ?? []).map((t) => <option key={t.code} value={t.code}>{t.title}</option>)}
+            {activeTpl.map((t) => <option key={t.code} value={t.code}>{t.title}</option>)}
           </Select>
           <Button disabled={!code} onClick={() => setConfirm(true)}>Выдать клиенту</Button>
         </div>
+        {!activeTpl.length && (
+          <p className="mt-2 text-sm text-ink-secondary">
+            Нет активных шаблонов. Создайте их в «Маркетинг → Ваучеры».
+          </p>
+        )}
       </Section>
 
       <Section title="Приглашённые">

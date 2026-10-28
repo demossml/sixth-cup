@@ -176,7 +176,12 @@ export type EvotorStore = {
   sync_enabled?: number
 }
 export type Promo = { id: number; title: string; body: string; icon: string; sponsor: string | null; starts_at: number; ends_at: number }
-export type VoucherTemplate = { id: number; code: string; title: string; kind: string; value: number; validDays: number }
+export type VoucherTemplate = {
+  id: number; code: string; title: string; kind: string; value: number; validDays: number
+  active?: boolean; imageUrl?: string | null
+  redemptionMode?: 'once' | 'multi'; maxPerDay?: number | null; maxTotal?: number | null
+  stackableWithFreeCup?: boolean
+}
 export type AuditEntry = {
   id: number; at: number; actor: string; method: string; path: string; status: number; ok: number
   entity: string | null; entityId: string | null; summary: string | null; before: string | null; after: string | null; ip: string | null
