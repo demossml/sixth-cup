@@ -470,8 +470,11 @@ export const adminConsole = new Hono<Env>()
 
   .get('/vouchers/grant-all/preview', (c) => {
     const code = c.req.query('code') ?? ''
-    const t = db.prepare('SELECT id, code, title, kind, value, valid_days AS validDays FROM voucher_templates WHERE code = ?').get(code)
+    const t = db
+      .prepare('SELECT id, code, title, kind, value, valid_days AS validDays, active FROM voucher_templates WHERE code = ?')
+      .get(code) as { id: number; code: string; title: string; kind: string; value: number; validDays: number; active: number } | undefined
     if (!t) throw bad('Шаблон ваучера не найден', 404)
+    if (t.active === 0) throw bad('Шаблон выключен — включите его перед выдачей', 400)
     const users = (db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }).n
     return c.json({ template: t, users })
   })
@@ -480,8 +483,11 @@ export const adminConsole = new Hono<Env>()
     const id = Number(c.req.param('id'))
     const { code } = c.req.valid('json')
     if (!db.prepare('SELECT id FROM users WHERE id = ?').get(id)) throw bad('Клиент не найден', 404)
-    const t = db.prepare('SELECT title FROM voucher_templates WHERE code = ?').get(code) as { title: string } | undefined
+    const t = db.prepare('SELECT title, active FROM voucher_templates WHERE code = ?').get(code) as
+      | { title: string; active: number }
+      | undefined
     if (!t) throw bad('Шаблон ваучера не найден', 404)
+    if (t.active === 0) throw bad('Шаблон выключен — включите его перед выдачей', 400)
     grantVoucher(id, code)
     c.set('audit', { entity: 'customers', entityId: String(id), summary: `Выдан ваучер «${t.title}»`, after: { code } })
     return c.json({ ok: true })

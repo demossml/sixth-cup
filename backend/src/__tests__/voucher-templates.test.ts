@@ -130,6 +130,23 @@ describe('D4: выдача только активных шаблонов', () =
     expect(() => grantVoucherOnce(uid, off.code)).toThrow(/выключен/i)
   })
 
+  it('админ не выдаёт выключенный шаблон массово и по одному', async () => {
+    const off = createTemplate({ code: 'OFF3', title: 'Выключен', kind: 'fixed', value: 70, validDays: 3, active: false })!
+    const uid = guestUser()
+    const bulk = await app.request('/api/admin/vouchers/grant-all', {
+      method: 'POST', headers: admin, body: JSON.stringify({ code: off.code }),
+    })
+    expect(bulk.status).toBe(400)
+    const single = await app.request(`/api/admin/customers/${uid}/vouchers`, {
+      method: 'POST', headers: admin, body: JSON.stringify({ code: off.code }),
+    })
+    expect(single.status).toBe(400)
+    const preview = await app.request(`/api/admin/vouchers/grant-all/preview?code=${off.code}`, { headers: admin })
+    expect(preview.status).toBe(400)
+    const n = (db.prepare('SELECT COUNT(*) AS n FROM vouchers WHERE template_id=?').get(off.id) as { n: number }).n
+    expect(n).toBe(0)
+  })
+
   it('WELCOME через grantVoucherOnce не дублируется', () => {
     createTemplate({ code: 'WELCOME', title: 'Скидка 10% на первую покупку', kind: 'percent', value: 10, validDays: 30 })
     const uid = guestUser()

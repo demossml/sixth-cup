@@ -1267,8 +1267,12 @@ export const adminRoutes = new Hono()
 
     .post('/vouchers/grant-all', zValidator('json', z.object({ code: z.string().min(1).max(64) })), (c) => {
     const { code } = c.req.valid('json')
-    const t = db.prepare('SELECT title FROM voucher_templates WHERE code = ?').get(code) as { title: string } | undefined
+    const t = db.prepare('SELECT title, active FROM voucher_templates WHERE code = ?').get(code) as
+      | { title: string; active: number }
+      | undefined
     if (!t) throw bad('Шаблон ваучера не найден', 404)
+    // Выключенный шаблон не выдаём массово: иначе транзакция падала бы на первом клиенте.
+    if (t.active === 0) throw bad('Шаблон выключен — включите его перед выдачей', 400)
     const ids = db.prepare('SELECT id FROM users').all() as { id: number }[]
     db.transaction(() => { for (const u of ids) grantVoucher(u.id, code) })()
     ;(c as unknown as { set: (k: string, v: unknown) => void }).set('audit', { entity: 'vouchers', summary: `Ваучер «${t.title}» выдан всем клиентам: ${ids.length}`, after: { code, granted: ids.length } })
