@@ -212,6 +212,15 @@ export function handleSell(db: Database.Database, storeUuid: string, doc: Record
 
   if (!user) return { processed: false, reason: 'card not found' }
 
+  // 3.6: стоп-лист проверяем и здесь — resolve можно обойти прямым запросом к API.
+  if (
+    db.prepare('SELECT 1 FROM card_denylist WHERE card_id=? AND released_at IS NULL').get(user.card_id)
+  ) {
+    db.prepare(`INSERT INTO disputes(kind,details,created_at) VALUES(?,?,?)`)
+      .run('card_blocked', `SELL ${docId}: card ${user.card_id} is blocked`, Date.now())
+    return { processed: false, reason: 'card blocked' }
+  }
+
   const existing = db.prepare('SELECT 1 FROM loyalty_ops WHERE doc_store=? AND doc_id=?').get(storeUuid, docId)
   if (existing) return { processed: true, reason: 'duplicate' }
 

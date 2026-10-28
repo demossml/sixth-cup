@@ -1282,6 +1282,59 @@ export const adminRoutes = new Hono()
     const period = (c.req.query('period') ?? '').slice(0, 10) || undefined
     return c.json({ numbers: listQueueNumbers(store, period) })
   })
+  /* ───── 3.6 Стоп-лист карт (ключ — card_id гостя) ───── */
+
+  .get('/cards/:cardId/block', (c) => {
+    const cardId = (c.req.param('cardId') ?? '').slice(0, 64)
+    const row = db
+      .prepare(`SELECT card_id AS cardId, reason, created_at AS createdAt FROM card_denylist WHERE card_id=? AND released_at IS NULL`)
+      .get(cardId) as { cardId: string; reason: string | null; createdAt: number | null } | undefined
+    return c.json({ blocked: Boolean(row), block: row ?? null })
+  })
+
+  .post(
+    '/cards/:cardId/block',
+    zValidator('json', z.object({ reason: z.string().trim().min(3, 'Укажите причину (минимум 3 символа)').max(300) })),
+    (c) => {
+      const cardId = (c.req.param('cardId') ?? '').slice(0, 64)
+      if (!cardId) throw bad('Некорректный номер карты', 400)
+      const { reason } = c.req.valid('json')
+      const user = db.prepare('SELECT id FROM users WHERE card_id=?').get(cardId) as { id: number } | undefined
+      const t = Date.now()
+      db.prepare(
+        `INSERT INTO card_denylist(card_id, reason, created_at, released_at) VALUES(?,?,?,NULL)
+         ON CONFLICT(card_id) DO UPDATE SET reason=excluded.reason, created_at=excluded.created_at, released_at=NULL`,
+      ).run(cardId, reason, t)
+      log.info('card blocked', { cardId, userId: user?.id ?? null })
+      c.set('audit', {
+        entity: 'cards',
+        entityId: cardId,
+        summary: `Карта заблокирована: ${reason}`,
+        after: { cardId, reason, userId: user?.id ?? null },
+      })
+      return c.json({ ok: true, cardId, blocked: true, reason })
+    },
+  )
+
+  .delete('/cards/:cardId/block', (c) => {
+    const cardId = (c.req.param('cardId') ?? '').slice(0, 64)
+    const cur = db
+      .prepare(`SELECT reason, released_at AS releasedAt FROM card_denylist WHERE card_id=?`)
+      .get(cardId) as { reason: string | null; releasedAt: number | null } | undefined
+    if (!cur || cur.releasedAt) throw bad('Карта не заблокирована', 404)
+    const t = Date.now()
+    db.prepare('UPDATE card_denylist SET released_at=? WHERE card_id=?').run(t, cardId)
+    log.info('card unblocked', { cardId })
+    c.set('audit', {
+      entity: 'cards',
+      entityId: cardId,
+      summary: 'Карта разблокирована',
+      before: { cardId, reason: cur.reason },
+      after: { cardId, releasedAt: t },
+    })
+    return c.json({ ok: true, cardId, blocked: false })
+  })
+
   .get('/disputes', (c) => c.json({
     disputes: db.prepare('SELECT * FROM disputes ORDER BY id DESC LIMIT 100').all(),
   }))
