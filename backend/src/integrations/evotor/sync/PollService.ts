@@ -5,7 +5,7 @@
 import type Database from 'better-sqlite3'
 import { EvotorClient, formatDateWithTime } from '../client/EvotorClient'
 import { evotorConfig } from '../../../config'
-import { handlePayback, handleSell } from '../processing/SellHandler'
+import { handlePayback, handleSell, sellInternals } from '../processing/SellHandler'
 import { applyStockForDocument } from '../processing/StockHandler'
 import { hasLoyaltySc } from '../loyaltyExtras'
 import { log, shortId } from '../../../lib/logBuffer'
@@ -173,14 +173,32 @@ export class PollService {
     }
   }
 
+  /** Есть ли по базовому чеку продажа с начислением лояльности (для возврата без `sc`). */
+  private loyaltyBaseExists(storeUuid: string, doc: Record<string, unknown>): boolean {
+    const baseId = sellInternals.baseDocumentIdOf(doc)
+    if (!baseId) return false
+    return Boolean(
+      this.db.prepare(`SELECT 1 FROM loyalty_ops WHERE doc_store=? AND doc_id=? AND kind='SELL'`).get(storeUuid, baseId),
+    )
+  }
+
   private processLoyalty(storeUuid: string, doc: Record<string, unknown>, type: string) {
     const extras = doc.extras && typeof doc.extras === 'object' ? doc.extras as Record<string, unknown> : {}
     const hasSc = hasLoyaltySc(extras)
     if (!hasSc) {
-      this.db.prepare(`UPDATE evotor_docs SET status='PROCESSED', processed_at=? WHERE store_uuid=? AND doc_id=?`)
-        .run(Date.now(), storeUuid, docIdOf(doc))
-      log.info(`evotor ${type} skip no loyalty extra`, { doc: shortId(docIdOf(doc), 8), store: shortId(storeUuid) })
-      return
+      // 3.2: возврат сторнируется и без `sc`, если по базовому чеку была лояльность.
+      // Иначе гость, потерявший extras при возврате, остаётся с начисленными чашками.
+      if (type === 'PAYBACK' && this.loyaltyBaseExists(storeUuid, doc)) {
+        log.info('evotor PAYBACK without sc — reversing by base document', {
+          doc: shortId(docIdOf(doc), 8),
+          store: shortId(storeUuid),
+        })
+      } else {
+        this.db.prepare(`UPDATE evotor_docs SET status='PROCESSED', processed_at=? WHERE store_uuid=? AND doc_id=?`)
+          .run(Date.now(), storeUuid, docIdOf(doc))
+        log.info(`evotor ${type} skip no loyalty extra`, { doc: shortId(docIdOf(doc), 8), store: shortId(storeUuid) })
+        return
+      }
     }
     try {
       const result = type === 'SELL'

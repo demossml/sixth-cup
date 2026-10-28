@@ -167,6 +167,10 @@ export function handleSell(db: Database.Database, storeUuid: string, doc: Record
   const sc = getSc(doc)
   if (!sc) return { processed: false, reason: 'no loyalty extra' }
 
+  // Номер очереди привязываем до проверки карты: связь чека с номером не должна зависеть
+  // от того, распознана карта или нет (ошибка bind влияет только на лог).
+  bindQueueRef(sc, doc, docId)
+
   const rawCard = sc.c.trim()
   let user: { id: number; card_id: string; card_code: string; cashback_balance: number; invited_by: number | null } | undefined
 
@@ -273,8 +277,6 @@ export function handleSell(db: Database.Database, storeUuid: string, doc: Record
         .run('loyalty_claim_clamped', user.id, docId, JSON.stringify({ claimedFree, appliedFree, claimedCb, appliedCb, sequenceMatches, claimedSeq: sc.q, currentSeq: state.seq }), now)
     }
   })()
-
-  bindQueueRef(sc, doc, docId)
 
   return { processed: true }
 }

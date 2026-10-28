@@ -111,6 +111,27 @@ describe('queue number binding via extras.sc.ord', () => {
     expect(row.status).toBe('BOUND')
   })
 
+  it('binds the number even when the card is not recognized', async () => {
+    // Промпт 3.1: связь чека с номером не должна зависеть от распознавания карты.
+    const issued = issueQueueNumber({ storeUuid: STORE })
+    const res = handleSell(db as any, STORE, doc('doc-nocard-1', { v: 2, c: '000000', ord: issued.orderId }))
+    expect(res.processed).toBe(false) // лояльность не начислилась
+    expect(res.reason).toBe('card code not found')
+
+    const row = db.prepare('SELECT status, evotor_document_uuid FROM queue_numbers WHERE order_id=?')
+      .get(issued.orderId) as any
+    expect(row.status).toBe('BOUND')
+    expect(row.evotor_document_uuid).toBe('doc-nocard-1')
+  })
+
+  it('binds the number even when the signed token is invalid', async () => {
+    const issued = issueQueueNumber({ storeUuid: STORE })
+    const res = handleSell(db as any, STORE, doc('doc-badtoken-1', { v: 2, c: 'broken.token', ord: issued.orderId }))
+    expect(res.processed).toBe(false)
+    const row = db.prepare('SELECT status FROM queue_numbers WHERE order_id=?').get(issued.orderId) as any
+    expect(row.status).toBe('BOUND')
+  })
+
   it('cancelled number is not resurrected by a late SELL', async () => {
     const code = await guest()
     const issued = issueQueueNumber({ storeUuid: STORE })
