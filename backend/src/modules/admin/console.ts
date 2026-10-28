@@ -4,12 +4,14 @@
  * Everything here is additive: existing admin endpoints keep their behaviour.
  * Reads are plain SELECTs. Writes: PATCH /products/:id, POST /products/bulk, POST /customers/:id/vouchers.
  */
+import { randomUUID } from 'node:crypto'
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import { config } from '../../config'
+import { log } from '../../lib/logBuffer'
 import { grantVoucher } from '../vouchers/service'
 import { enqueueProductSync } from './enqueue'
 import { writeAudit } from './audit'
@@ -411,6 +413,101 @@ export const adminConsole = new Hono<Env>()
     c.set('audit', { entity: 'customers', entityId: String(id), summary: `Выдан ваучер «${t.title}»`, after: { code } })
     return c.json({ ok: true })
   })
+
+  /**
+   * 3.3 Ручная корректировка лояльности. Только владелец: это деньги и прогресс гостя.
+   * Пишет строку `loyalty_ledger` с operation='ADJUSTMENT' и аудит с причиной,
+   * старыми и новыми значениями. Отрицательные итоги клампятся в 0, в ledger идёт факт.
+   */
+  .post(
+    '/customers/:id/loyalty-adjust',
+    zValidator(
+      'json',
+      z
+        .object({
+          cupsDelta: z.number().int().min(-1000).max(1000).optional(),
+          freeUsedDelta: z.number().int().min(-1000).max(1000).optional(),
+          cashbackDeltaKop: z.number().int().min(-1_000_000).max(1_000_000).optional(),
+          reason: z.string().trim().min(3, 'Укажите причину (минимум 3 символа)').max(500),
+        })
+        .refine(
+          (v) => Boolean(v.cupsDelta || v.freeUsedDelta || v.cashbackDeltaKop),
+          { message: 'Укажите хотя бы одну корректировку' },
+        ),
+    ),
+    (c) => {
+      const role = c.get('adminRole' as never) as string | undefined
+      if (role !== 'owner') throw bad('Корректировку баланса может делать только владелец', 403)
+
+      const id = Number(c.req.param('id'))
+      if (!Number.isInteger(id) || id <= 0) throw bad('Некорректный клиент', 400)
+      const body = c.req.valid('json')
+      const user = db
+        .prepare('SELECT id, card_id AS cardId, cashback_balance AS cashback FROM users WHERE id=?')
+        .get(id) as { id: number; cardId: string | null; cashback: number } | undefined
+      if (!user) throw bad('Клиент не найден', 404)
+      if (!user.cardId) throw bad('У клиента нет карты лояльности', 400)
+      const cardId = user.cardId
+
+      const applied = db.transaction(() => {
+        const cards = db
+          .prepare('SELECT paid_total AS paidTotal, free_used AS freeUsed FROM cards WHERE user_id=?')
+          .get(id) as { paidTotal: number; freeUsed: number } | undefined
+        const before = {
+          paidTotal: cards?.paidTotal ?? 0,
+          freeUsed: cards?.freeUsed ?? 0,
+          cashback: user.cashback,
+        }
+        const after = {
+          paidTotal: Math.max(0, before.paidTotal + (body.cupsDelta ?? 0)),
+          freeUsed: Math.max(0, before.freeUsed + (body.freeUsedDelta ?? 0)),
+          cashback: Math.max(0, before.cashback + (body.cashbackDeltaKop ?? 0)),
+        }
+        const actual = {
+          cupsDelta: after.paidTotal - before.paidTotal,
+          freeUsedDelta: after.freeUsed - before.freeUsed,
+          cashbackDeltaKop: after.cashback - before.cashback,
+        }
+        // Нечего применять (всё срезано клампом) — отвечаем 400, чтобы не плодить пустые записи.
+        if (!actual.cupsDelta && !actual.freeUsedDelta && !actual.cashbackDeltaKop) {
+          throw bad('Корректировка не применена: итог не может быть отрицательным', 400)
+        }
+
+        const t = Date.now()
+        db.prepare('INSERT OR IGNORE INTO cards(user_id, updated_at) VALUES(?,?)').run(id, t)
+        db.prepare('UPDATE cards SET paid_total=?, free_used=?, updated_at=? WHERE user_id=?').run(
+          after.paidTotal,
+          after.freeUsed,
+          t,
+          id,
+        )
+        db.prepare('UPDATE users SET cashback_balance=? WHERE id=?').run(after.cashback, id)
+        db.prepare(
+          `INSERT INTO loyalty_ledger(card_id, operation, cups_delta, free_delta, cashback_delta, source_type, source_id, created_at)
+           VALUES(?, 'ADJUSTMENT', ?, ?, ?, 'ADMIN_ADJUST', ?, ?)`,
+        ).run(cardId, actual.cupsDelta, actual.freeUsedDelta, actual.cashbackDeltaKop, `adj:${randomUUID()}`, t)
+        log.info('loyalty manual adjust', {
+          user: id,
+          actual,
+          requested: {
+            cupsDelta: body.cupsDelta ?? 0,
+            freeUsedDelta: body.freeUsedDelta ?? 0,
+            cashbackDeltaKop: body.cashbackDeltaKop ?? 0,
+          },
+        })
+        return { before, after, actual }
+      })()
+
+      c.set('audit', {
+        entity: 'customers',
+        entityId: String(id),
+        summary: `Корректировка лояльности: ${body.reason}`,
+        before: applied.before,
+        after: { ...applied.after, reason: body.reason, applied: applied.actual },
+      })
+      return c.json({ ok: true, card: applied.after, applied: applied.actual, reason: body.reason })
+    },
+  )
 
   // ---------- products: partial + bulk edits ----------
   .patch('/products/:id', zValidator('json', patchFields.extend({
