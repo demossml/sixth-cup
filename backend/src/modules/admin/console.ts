@@ -343,8 +343,11 @@ export const adminConsole = new Hono<Env>()
           FROM loyalty_ops o LEFT JOIN evotor_stores s ON s.store_uuid = o.doc_store
           WHERE o.card_id = ? ORDER BY o.created_at DESC LIMIT 50`).all(cardId) as { cups: number | null; kind: string }[]
       : []
+    // C3: построчная детализация начислений — админ видит источник каждой строки.
     const cashback = db.prepare(`
-      SELECT l.id, l.amount, l.receipt_id AS receiptId, l.created_at AS createdAt, l.from_user_id AS fromUserId, f.nickname AS fromNickname
+      SELECT l.id, l.amount, l.receipt_id AS receiptId, l.created_at AS createdAt,
+             l.from_user_id AS fromUserId, f.nickname AS fromNickname,
+             CASE WHEN l.receipt_id LIKE 'game:%' THEN 'game' ELSE 'referral' END AS source
       FROM cashback_ledger l LEFT JOIN users f ON f.id = l.from_user_id
       WHERE l.beneficiary_id = ? ORDER BY l.id DESC LIMIT 50`).all(id)
     const vouchers = db.prepare(`
