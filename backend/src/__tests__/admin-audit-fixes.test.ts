@@ -45,6 +45,9 @@ describe('manager role boundaries', () => {
       '/api/admin/stores', '/api/admin/stores/3', '/api/admin/devices/1/revoke',
       '/api/admin/ai/settings', '/api/admin/vouchers/grant-all', '/api/admin/reset',
       '/stores', '/devices', '/devices/1/revoke', '/ai/settings', '/vouchers/grant-all', '/reset',
+      // шаблоны ваучеров — та же зона, что массовая выдача
+      '/api/admin/voucher-templates', '/api/admin/voucher-templates/3',
+      '/voucher-templates', '/voucher-templates/3',
     ])
       expect(MANAGER_BLOCKED.test(p), p).toBe(true)
     for (const p of [
