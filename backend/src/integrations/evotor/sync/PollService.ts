@@ -207,20 +207,94 @@ export class PollService {
       const meta = { doc: shortId(docIdOf(doc), 8), store: shortId(storeUuid) }
       if (result.processed) {
         this.db
-          .prepare(`UPDATE evotor_docs SET status='PROCESSED', processed_at=?, last_error=NULL, next_retry_at=NULL WHERE store_uuid=? AND doc_id=?`)
+          .prepare(
+            `UPDATE evotor_docs SET status='PROCESSED', processed_at=?, last_error=NULL, next_retry_at=NULL, raw_json=NULL
+             WHERE store_uuid=? AND doc_id=?`,
+          )
           .run(Date.now(), storeUuid, docIdOf(doc))
         log.info(`evotor ${type} processed${result.reason ? ` (${result.reason})` : ''}`, meta)
       } else if (isRetryableReason(result.reason)) {
         // L-07: базовый чек мог ещё не прийти в окно poll — ставим в очередь на повтор.
+        this.saveFailedRaw(storeUuid, docIdOf(doc) ?? '', doc)
         this.scheduleRetry(storeUuid, docIdOf(doc) ?? '', result.reason ?? 'processing failed')
         log.warn(`evotor ${type} deferred for retry: ${result.reason ?? 'processing failed'}`, meta)
       } else {
+        this.saveFailedRaw(storeUuid, docIdOf(doc) ?? '', doc)
         this.failTerminal(storeUuid, docIdOf(doc) ?? '', result.reason ?? 'processing failed')
         log.warn(`evotor ${type} rejected: ${result.reason ?? 'processing failed'}`, meta)
       }
     } catch (e) {
       log.error(`evotor ${type} processing failed: ${String(e).slice(0, 200)}`, { doc: shortId(docIdOf(doc), 8), store: shortId(storeUuid) })
+      this.saveFailedRaw(storeUuid, docIdOf(doc) ?? '', doc)
       this.scheduleRetry(storeUuid, docIdOf(doc) ?? '', String(e))
+    }
+  }
+
+  /**
+   * 3.4: сырой документ храним только пока он сбойный — этого достаточно, чтобы повторить
+   * обработку без обращения к Cloud, и не превращает `evotor_docs` в архив чеков.
+   * Успешная обработка стирает raw (см. ветку PROCESSED).
+   */
+  private saveFailedRaw(storeUuid: string, docId: string, doc: Record<string, unknown>) {
+    if (!docId) return
+    try {
+      this.db
+        .prepare(`UPDATE evotor_docs SET raw_json=? WHERE store_uuid=? AND doc_id=?`)
+        .run(JSON.stringify(doc).slice(0, 200_000), storeUuid, docId)
+    } catch (e) {
+      log.warn('evotor failed raw not saved', { doc: shortId(docId, 8), error: String(e).slice(0, 120) })
+    }
+  }
+
+  /**
+   * Ручной повтор одного документа: сначала пробуем сохранённый raw (3.4), затем окно Cloud
+   * (старые FAILED без raw). Идемпотентность обеспечивает `loyalty_ops`.
+   */
+  async retryDocument(storeUuid: string, docId: string): Promise<{ ok: boolean; status: string; reason?: string }> {
+    const row = this.db
+      .prepare(`SELECT status, raw_json AS raw FROM evotor_docs WHERE store_uuid=? AND doc_id=?`)
+      .get(storeUuid, docId) as { status: string; raw: string | null } | undefined
+    if (!row) return { ok: false, status: 'MISSING', reason: 'document not found' }
+
+    let doc: Record<string, unknown> | null = null
+    if (row.raw) {
+      try {
+        doc = JSON.parse(row.raw) as Record<string, unknown>
+      } catch {
+        doc = null
+      }
+    }
+    if (!doc) doc = await this.fetchFromCloud(storeUuid, docId)
+    if (!doc) return { ok: false, status: row.status, reason: 'document body unavailable' }
+
+    // Ручной повтор снимает ожидание планового ретрая, иначе документ обработается дважды.
+    this.db
+      .prepare(`UPDATE evotor_docs SET next_retry_at=NULL, attempts=0 WHERE store_uuid=? AND doc_id=?`)
+      .run(storeUuid, docId)
+    this.processDocument(storeUuid, doc)
+
+    const after = this.db
+      .prepare(`SELECT status, last_error AS lastError FROM evotor_docs WHERE store_uuid=? AND doc_id=?`)
+      .get(storeUuid, docId) as { status: string; lastError: string | null }
+    return { ok: after.status === 'PROCESSED', status: after.status, reason: after.lastError ?? undefined }
+  }
+
+  /** Поиск тела документа в узком окне Cloud (для старых FAILED без сохранённого raw). */
+  private async fetchFromCloud(storeUuid: string, docId: string): Promise<Record<string, unknown> | null> {
+    const row = this.db
+      .prepare(`SELECT close_date_ms AS closeMs FROM evotor_docs WHERE store_uuid=? AND doc_id=?`)
+      .get(storeUuid, docId) as { closeMs: number } | undefined
+    if (!row) return null
+    try {
+      const client = this.client ?? clientForStore(this.db, storeUuid)
+      const since = formatDateWithTime(new Date(Number(row.closeMs) - 6 * 3600_000), false)
+      const until = formatDateWithTime(new Date(Number(row.closeMs) + 6 * 3600_000), true)
+      const raw = await client.getDocuments(storeUuid, since, until)
+      return (asArray(raw) as Record<string, unknown>[]).find((d) => docIdOf(d) === docId) ?? null
+    } catch (e) {
+      // Нет токена или сеть недоступна — это не 500 для админки, а «тела нет».
+      log.warn('evotor retry: cloud fetch failed', { doc: shortId(docId, 8), error: String(e).slice(0, 160) })
+      return null
     }
   }
 

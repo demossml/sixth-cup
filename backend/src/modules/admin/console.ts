@@ -509,6 +509,41 @@ export const adminConsole = new Hono<Env>()
     },
   )
 
+  /* ---------- 3.4 сбойные документы лояльности ---------- */
+
+  /** Список FAILED-документов с телом, сохранённым для повтора. */
+  .get('/loyalty/failed', (c) => {
+    const limit = Math.min(200, Math.max(1, Number(c.req.query('limit') ?? 50)))
+    const rows = db
+      .prepare(
+        `SELECT d.store_uuid AS storeUuid, s.name AS storeName, d.doc_id AS docId, d.type, d.status,
+                d.attempts, d.last_error AS lastError, d.next_retry_at AS nextRetryAt, d.close_date_ms AS closeDateMs,
+                CASE WHEN d.raw_json IS NULL THEN 0 ELSE 1 END AS hasRaw
+         FROM evotor_docs d LEFT JOIN evotor_stores s ON s.store_uuid = d.store_uuid
+         WHERE d.status='FAILED'
+         ORDER BY d.close_date_ms DESC LIMIT ?`,
+      )
+      .all(limit)
+    return c.json({ docs: rows })
+  })
+
+  /** Повторить обработку одного документа: сначала сохранённый raw, затем окно Cloud. */
+  .post('/loyalty/failed/:docId/retry', async (c) => {
+    const docId = (c.req.param('docId') ?? '').slice(0, 120)
+    const storeUuid = (c.req.query('storeUuid') ?? '').slice(0, 64)
+    if (!docId || !storeUuid) throw bad('Нужны docId и storeUuid', 400)
+    c.set('audit', {
+      entity: 'loyalty_failed',
+      entityId: docId,
+      summary: `Повтор обработки документа ${docId}`,
+    })
+    const { PollService } = await import('../../integrations/evotor/sync/PollService')
+    const result = await new PollService(db).retryDocument(storeUuid, docId)
+    if (result.status === 'MISSING') throw bad('Документ не найден', 404)
+    log.info('loyalty failed doc retry', { docId, storeUuid, ok: result.ok, status: result.status })
+    return c.json({ ok: result.ok, status: result.status, reason: result.reason ?? null })
+  })
+
   // ---------- products: partial + bulk edits ----------
   .patch('/products/:id', zValidator('json', patchFields.extend({
     expectedUpdatedAt: z.number().int().nullable().optional(),
