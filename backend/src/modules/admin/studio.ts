@@ -1157,7 +1157,7 @@ export const adminStudio = new Hono()
     const rows = all<{ fromNick: string | null; fromCard: string | null; toNick: string | null; toCard: string | null; at: number; bought: number; bonusKop: number }>(
       `SELECT u.nickname AS fromNick, u.card_code AS fromCard, f.nickname AS toNick, f.card_code AS toCard, f.created_at AS at,
               EXISTS(SELECT 1 FROM loyalty_ops o WHERE o.card_id=f.card_id AND o.kind='SELL') AS bought,
-              COALESCE((SELECT SUM(amount) FROM cashback_ledger WHERE beneficiary_id=u.id AND from_user_id=f.id),0) AS bonusKop
+              COALESCE((SELECT SUM(amount) FROM cashback_ledger WHERE beneficiary_id=u.id AND from_user_id=f.id AND receipt_id NOT LIKE 'game:%'),0) AS bonusKop
        FROM users f JOIN users u ON u.id=f.invited_by WHERE f.created_at>=? AND f.created_at<? ORDER BY f.created_at DESC LIMIT 200`, since, until)
     const links = one<{ n: number }>(`SELECT COUNT(*) n FROM users WHERE invite_code IS NOT NULL AND invite_code<>''`)?.n ?? 0
     return c.json({

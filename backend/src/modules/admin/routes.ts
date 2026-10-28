@@ -1112,7 +1112,7 @@ export const adminRoutes = new Hono()
              (SELECT COUNT(DISTINCT f.id) FROM users f
                 JOIN loyalty_ops o ON o.card_id=f.card_id AND o.kind='SELL'
                 WHERE f.invited_by=u.id) AS withPurchase,
-             COALESCE((SELECT SUM(amount) FROM cashback_ledger WHERE beneficiary_id=u.id),0) AS cashbackKop
+             COALESCE((SELECT SUM(amount) FROM cashback_ledger WHERE beneficiary_id=u.id AND receipt_id NOT LIKE 'game:%'),0) AS cashbackKop
       FROM users u
       WHERE EXISTS (SELECT 1 FROM users f WHERE f.invited_by=u.id)
       ORDER BY cashbackKop DESC

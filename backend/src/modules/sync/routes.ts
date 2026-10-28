@@ -39,16 +39,23 @@ export const syncRoutes = new Hono<AuthEnv>()
         SELECT created_at AS at, 'cbback:' || doc_store || ':' || doc_id AS id, 'cashback_back' AS kind,
           'Кэшбэк возвращён' AS title, 0 AS cupsDelta, cb AS cashbackDeltaKop, NULL AS resultRub
         FROM loyalty_ops WHERE card_id=? AND kind='PAYBACK' AND COALESCE(cb,0)>0
+        -- 3.5: игра и рефералка — разные источники, их нельзя смешивать в одной подписи
         UNION ALL
         SELECT l.created_at AS at, 'referral:' || l.id AS id, 'referral' AS kind,
           'Кэшбэк от покупок друга' AS title, 0 AS cupsDelta, l.amount AS cashbackDeltaKop, NULL AS resultRub
-        FROM cashback_ledger l WHERE l.beneficiary_id=? AND l.amount>0
+        FROM cashback_ledger l
+        WHERE l.beneficiary_id=? AND l.amount>0 AND l.receipt_id NOT LIKE 'game:%'
         UNION ALL
         SELECT l.created_at AS at, 'referral_rev:' || l.id AS id, 'referral_reversal' AS kind,
           'Возврат кэшбэка за друга' AS title, 0 AS cupsDelta, l.amount AS cashbackDeltaKop, NULL AS resultRub
-        FROM cashback_ledger l WHERE l.beneficiary_id=? AND l.amount<0
+        FROM cashback_ledger l
+        WHERE l.beneficiary_id=? AND l.amount<0 AND l.receipt_id NOT LIKE 'game:%'
+        UNION ALL
+        SELECT l.created_at AS at, 'game:' || l.id AS id, 'game_reward' AS kind,
+          'Награда за игру' AS title, 0 AS cupsDelta, l.amount AS cashbackDeltaKop, NULL AS resultRub
+        FROM cashback_ledger l WHERE l.beneficiary_id=? AND l.receipt_id LIKE 'game:%'
       ) ORDER BY at DESC, id DESC LIMIT ? OFFSET ?
-    `).all(user.card_id, user.card_id, user.card_id, userId, userId, limit + 1, offset) as Array<{
+    `).all(user.card_id, user.card_id, user.card_id, userId, userId, userId, limit + 1, offset) as Array<{
       at:number; id:string; kind:string; title:string; cupsDelta:number; cashbackDeltaKop:number; resultRub:number|null
     }>
     const hasMore = rows.length > limit
