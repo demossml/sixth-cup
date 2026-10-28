@@ -19,7 +19,8 @@ process.env.EVOTOR_PROXY_TOKEN = 'proxy-secret'
 const { app } = await import('../app')
 const { db } = await import('../db')
 const {
-  createTemplate, getTemplate, grantVoucher, grantVoucherOnce, listTemplates, updateTemplate, vouchersForResolve,
+  activeVouchers, createTemplate, getTemplate, grantVoucher, grantVoucherOnce, listTemplates, updateTemplate,
+  vouchersForResolve,
 } = await import('../modules/vouchers/service')
 const { buildCardProof } = await import('../modules/loyalty/proof')
 
@@ -254,6 +255,15 @@ describe('D5: ваучеры в resolve', () => {
     grantVoucher(uid2, 'RES3')
     db.prepare('UPDATE vouchers SET expires_day=? WHERE user_id=?').run(1, uid2)
     expect(vouchersForResolve(uid2)).toHaveLength(0)
+  })
+
+  it('выключенный шаблон скрывает ваучер и в карточке гостя (PWA /sync)', () => {
+    createTemplate({ code: 'RES5', title: 'Показываем', kind: 'fixed', value: 100, validDays: 5 })
+    const uid = guestUser()
+    grantVoucher(uid, 'RES5')
+    expect(activeVouchers(uid)).toHaveLength(1)
+    updateTemplate('RES5', { active: false })
+    expect(activeVouchers(uid)).toHaveLength(0)
   })
 
   it('multi с исчерпанным общим лимитом не предлагается, а выключенный шаблон скрывает ваучер', async () => {

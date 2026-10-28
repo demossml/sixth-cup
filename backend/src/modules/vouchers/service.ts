@@ -37,11 +37,17 @@ export function grantVoucherOnce(userId: number, code: string): boolean {
   return r.changes === 1
 }
 
+/**
+ * Ваучеры для карточки гостя (PWA/`/sync`). Выключенный шаблон скрываем и здесь:
+ * касса такой ваучер всё равно не погасит (см. `vouchersForResolve`), и гостю
+ * незачем видеть то, что на кассе отклонят.
+ */
 export function activeVouchers(userId: number): VoucherTuple[] {
   const rows = db.prepare(`
-    SELECT id, kind, value, expires_day FROM vouchers
-    WHERE user_id=? AND used_at IS NULL AND expires_day>=?
-    ORDER BY expires_day LIMIT ?`)
+    SELECT v.id, v.kind, v.value, v.expires_day FROM vouchers v
+    LEFT JOIN voucher_templates t ON t.id = v.template_id
+    WHERE v.user_id=? AND v.used_at IS NULL AND v.expires_day>=? AND COALESCE(t.active, 1)=1
+    ORDER BY v.expires_day LIMIT ?`)
     .all(userId, todayDay(), config.maxVouchersInCard) as
     { id: number; kind: string; value: number; expires_day: number }[]
   return rows.map((r): VoucherTuple => [r.id, r.kind === 'percent' ? 'p' : 'f', r.value, r.expires_day])
