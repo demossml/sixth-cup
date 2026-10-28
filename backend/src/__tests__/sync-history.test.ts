@@ -33,7 +33,18 @@ async function guest(): Promise<{ jwt: string; userId: number; cardId: string }>
 const history = async (jwt: string) => {
   const r = await app.request('/api/sync/history?limit=30', { headers: { Authorization: `Bearer ${jwt}` } })
   expect(r.status).toBe(200)
-  return (await r.json()) as { items: { kind: string; title: string; cashbackDeltaKop: number; resultRub: number | null }[] }
+  return (await r.json()) as {
+    items: {
+      kind: string
+      title: string
+      cupsDelta: number
+      freeDelta: number
+      cashbackDeltaKop: number
+      resultRub: number | null
+      reason: string | null
+      status: string
+    }[]
+  }
 }
 
 const insertOp = (store: string, docId: string, kind: 'SELL' | 'PAYBACK', cardId: string, o: { cb?: number; cups?: number; rub?: number }) =>
@@ -85,6 +96,46 @@ describe('L-08: прозрачность истории', () => {
     expect(rev).toBeTruthy()
     expect(rev!.cashbackDeltaKop).toBe(-300)
     expect(rev!.title).toMatch(/Возврат кэшбэка/)
+  })
+
+  it('3.7: отдаёт freeDelta и reason, старые поля на месте', async () => {
+    const g = await guest()
+    // продажа с использованной бесплатной чашкой
+    db.prepare(
+      `INSERT INTO loyalty_ops(doc_store,doc_id,kind,card_id,op_claimed,q_claimed,free,cb,disc_claimed,result_rub,cups_counted,created_at)
+       VALUES(?,?,'SELL',?,NULL,NULL,1,0,NULL,300,0,?)`,
+    ).run(STORE, uniq('sell'), g.cardId, Date.now())
+
+    const h = await history(g.jwt)
+    const row = h.items.find((i) => i.kind === 'SELL') as any
+    expect(row).toMatchObject({ cupsDelta: 0, freeDelta: -1, resultRub: 300, status: 'confirmed' })
+    expect(row.reason).toBe('free_applied') // списание бесплатной объяснено
+  })
+
+  it('3.7: причина отсутствия начисления выводится из данных', async () => {
+    const g = await guest()
+    const noCups = uniq('sell')
+    insertOp(STORE, noCups, 'SELL', g.cardId, { cups: 0, rub: 150 })
+
+    const h = await history(g.jwt)
+    const row = h.items.find((i) => i.kind === 'SELL') as any
+    expect(row).toMatchObject({ cupsDelta: 0, freeDelta: 0 })
+    expect(row.reason).toBe('no_cup_positions')
+  })
+
+  it('3.7: кламп бонуса помечается reason', async () => {
+    const g = await guest()
+    const docId = uniq('sell')
+    insertOp(STORE, docId, 'SELL', g.cardId, { cups: 1, rub: 300 })
+    db.prepare(`INSERT INTO disputes(kind,receipt_id,details,created_at) VALUES('loyalty_claim_clamped',?,?,?)`).run(
+      docId,
+      '{}',
+      Date.now(),
+    )
+
+    const h = await history(g.jwt)
+    const row = h.items.find((i) => i.kind === 'SELL') as any
+    expect(row.reason).toBe('bonus_clamped')
   })
 
   it('не дублирует SELL строкой из loyalty_ledger', async () => {
