@@ -5,6 +5,8 @@ import { verifyServerToken } from '../../lib/crypto'
 import { normalizeCardCode } from './proof'
 import { freeEarned } from './rules'
 import { log, shortId } from '../../lib/logBuffer'
+import { vouchersForResolve } from '../vouchers/service'
+import type { ResolveVoucher } from '../vouchers/service'
 
 export type ResolveInput = { code: string; storeUuid?: string; deviceUuid?: string }
 
@@ -24,6 +26,8 @@ export type ResolveResult =
       reservationExpiresAt: number | null
       /** FREE_RESERVED | FREE_ALREADY_RESERVED | NONE */
       freeStatus: 'RESERVED' | 'ALREADY_RESERVED' | 'NONE'
+      /** Ваучеры к предъявлению (только QR: числовой код ничего не гасит и не показывает). */
+      vouchers: ResolveVoucher[]
     }
 
 type UserRow = { id: number; card_id: string; card_code: string; cashback_balance: number }
@@ -72,11 +76,12 @@ export function resolveAndReserve(input: ResolveInput, now = Date.now()): Resolv
     cashback: user.cashback_balance,
   }
   if (kind === 'code') {
-    return { ...base, freeAvailable: 0, cashback: 0, cashbackReserved: 0, reservationId: null, reservationExpiresAt: null, freeStatus: 'NONE' }
+    return { ...base, freeAvailable: 0, cashback: 0, cashbackReserved: 0, reservationId: null, reservationExpiresAt: null, freeStatus: 'NONE', vouchers: [] }
   }
 
   const nowSec = Math.floor(now / 1000)
   const ttl = Math.max(30, config.reservationTtlSec)
+  const vouchers = vouchersForResolve(user.id)
   return db.transaction(() => {
     db.prepare(`UPDATE loyalty_reservations SET status='EXPIRED' WHERE card_id=? AND status='RESERVED' AND expires_at<=?`).run(user.card_id, nowSec)
     const active = db.prepare(`SELECT id, expires_at, benefit_free, benefit_cb FROM loyalty_reservations WHERE card_id=? AND status='RESERVED'`)
@@ -87,16 +92,16 @@ export function resolveAndReserve(input: ResolveInput, now = Date.now()): Resolv
       const same = (input.deviceUuid ?? '') === (mine.device_uuid ?? '') && (input.storeUuid ?? '') === (mine.store_uuid ?? '')
       if (same) {
         db.prepare('UPDATE loyalty_reservations SET expires_at=? WHERE id=?').run(nowSec + ttl, active.id)
-        return { ...base, freeAvailable: active.benefit_free ? 1 : 0, cashbackReserved: active.benefit_cb, reservationId: active.id, reservationExpiresAt: nowSec + ttl, freeStatus: active.benefit_free ? 'RESERVED' as const : 'NONE' as const }
+        return { ...base, freeAvailable: active.benefit_free ? 1 : 0, cashbackReserved: active.benefit_cb, reservationId: active.id, reservationExpiresAt: nowSec + ttl, freeStatus: active.benefit_free ? 'RESERVED' as const : 'NONE' as const, vouchers }
       }
-      return { ...base, freeAvailable: 0, cashback: 0, cashbackReserved: 0, reservationId: null, reservationExpiresAt: null, freeStatus: 'ALREADY_RESERVED' as const }
+      return { ...base, freeAvailable: 0, cashback: 0, cashbackReserved: 0, reservationId: null, reservationExpiresAt: null, freeStatus: 'ALREADY_RESERVED' as const, vouchers }
     }
     const id = newReservationId()
     const free = freeAvailable > 0 ? 1 : 0
     const cb = Math.max(0, user.cashback_balance)
     db.prepare(`INSERT INTO loyalty_reservations(id,card_id,benefit_free,benefit_cb,store_uuid,device_uuid,status,created_at,expires_at) VALUES(?,?,?,?,?,?, 'RESERVED', ?,?)`)
       .run(id, user.card_id, free, cb, input.storeUuid ?? null, input.deviceUuid ?? null, nowSec, nowSec + ttl)
-    return { ...base, freeAvailable: free, cashbackReserved: cb, reservationId: id, reservationExpiresAt: nowSec + ttl, freeStatus: free ? 'RESERVED' as const : 'NONE' as const }
+    return { ...base, freeAvailable: free, cashbackReserved: cb, reservationId: id, reservationExpiresAt: nowSec + ttl, freeStatus: free ? 'RESERVED' as const : 'NONE' as const, vouchers }
   })()
 }
 

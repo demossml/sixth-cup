@@ -74,11 +74,12 @@ export function seedIfEmpty() {
     }
   }
 
-  const vt = (db.prepare('SELECT COUNT(*) AS n FROM voucher_templates').get() as { n: number }).n
-  if (vt === 0) {
+  // WELCOME — системный шаблон для приветственного ваучера: нужен всегда, включён по умолчанию.
+  const welcome = db.prepare('SELECT id FROM voucher_templates WHERE code=?').get('WELCOME')
+  if (!welcome) {
     db.prepare(
-      'INSERT INTO voucher_templates(code,title,kind,value,valid_days) VALUES(?,?,?,?,?)'
-    ).run('WELCOME', 'Скидка 10% на первую покупку', 'percent', 10, 30)
+      'INSERT INTO voucher_templates(code,title,kind,value,valid_days,active,redemption_mode) VALUES(?,?,?,?,?,1,?)'
+    ).run('WELCOME', 'Скидка 10% на первую покупку', 'percent', 10, 30, 'once')
   }
 
   const pm = (db.prepare('SELECT COUNT(*) AS n FROM promos').get() as { n: number }).n

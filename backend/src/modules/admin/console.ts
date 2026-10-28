@@ -12,7 +12,7 @@ import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import { config } from '../../config'
 import { log } from '../../lib/logBuffer'
-import { grantVoucher } from '../vouchers/service'
+import { createTemplate, grantVoucher, listTemplates, updateTemplate } from '../vouchers/service'
 import { enqueueProductSync } from './enqueue'
 import { writeAudit } from './audit'
 import type { AuditInput } from './audit'
@@ -23,6 +23,14 @@ import {
 } from './consoleLib'
 
 type Env = { Variables: { audit?: Partial<AuditInput> } }
+
+// Медиа шаблона: локальный /uploads/… или абсолютный https-URL (как у товаров).
+const imageUrlZ = z
+  .string()
+  .max(500)
+  .refine((v) => v.startsWith('/uploads/') || /^https?:\/\//i.test(v), {
+    message: 'Адрес медиа: /uploads/… или https://…',
+  })
 
 function thresholds() {
   const warn = Number(process.env.EVOTOR_HEALTH_WARN_MIN)
@@ -396,7 +404,69 @@ export const adminConsole = new Hono<Env>()
 
   // ---------- vouchers ----------
   .get('/voucher-templates', (c) =>
-    c.json({ templates: db.prepare('SELECT id, code, title, kind, value, valid_days AS validDays FROM voucher_templates ORDER BY id').all() }))
+    c.json({ templates: listTemplates({ includeInactive: c.req.query('all') === '1' }) }))
+
+  .post(
+    '/voucher-templates',
+    zValidator(
+      'json',
+      z.object({
+        code: z.string().min(1).max(64),
+        title: z.string().min(1).max(120),
+        kind: z.enum(['percent', 'fixed']),
+        value: z.number().positive(),
+        validDays: z.number().int().min(1).max(3650),
+        active: z.boolean().optional(),
+        imageUrl: imageUrlZ.nullable().optional(),
+        redemptionMode: z.enum(['once', 'multi']).optional(),
+        maxPerDay: z.number().int().min(1).nullable().optional(),
+        maxTotal: z.number().int().min(1).nullable().optional(),
+        stackableWithFreeCup: z.boolean().optional(),
+      }),
+    ),
+    (c) => {
+      const body = c.req.valid('json')
+      let created
+      try {
+        created = createTemplate(body)
+      } catch (e) {
+        throw bad((e as Error).message, 400)
+      }
+      c.set('audit', { entity: 'voucher-templates', entityId: String(created!.id), summary: `Создан шаблон ваучера «${created!.title}»`, after: created })
+      return c.json({ template: created }, 201)
+    },
+  )
+
+  .patch(
+    '/voucher-templates/:id',
+    zValidator(
+      'json',
+      z.object({
+        title: z.string().min(1).max(120).optional(),
+        kind: z.enum(['percent', 'fixed']).optional(),
+        value: z.number().positive().optional(),
+        validDays: z.number().int().min(1).max(3650).optional(),
+        active: z.boolean().optional(),
+        imageUrl: imageUrlZ.nullable().optional(),
+        redemptionMode: z.enum(['once', 'multi']).optional(),
+        maxPerDay: z.number().int().min(1).nullable().optional(),
+        maxTotal: z.number().int().min(1).nullable().optional(),
+        stackableWithFreeCup: z.boolean().optional(),
+      }),
+    ),
+    (c) => {
+      const id = Number(c.req.param('id'))
+      if (!Number.isInteger(id)) throw bad('Некорректный id шаблона', 400)
+      let updated
+      try {
+        updated = updateTemplate(id, c.req.valid('json'))
+      } catch (e) {
+        throw bad((e as Error).message, 400)
+      }
+      c.set('audit', { entity: 'voucher-templates', entityId: String(id), summary: `Изменён шаблон ваучера «${updated!.title}»`, after: updated })
+      return c.json({ template: updated })
+    },
+  )
 
   .get('/vouchers/grant-all/preview', (c) => {
     const code = c.req.query('code') ?? ''
