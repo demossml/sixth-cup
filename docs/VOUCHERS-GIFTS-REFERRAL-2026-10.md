@@ -45,11 +45,18 @@
 - `PATCH /api/admin/voucher-templates/:id`.
 
 Права — как у `vouchers/grant-all`: `owner` может всё, `manager` получает 403 на запись,
-`viewer` только читает. Валидация: `kind ∈ {percent, fixed}`, `value > 0`,
-`percent ≤ 100`, `validDays ≥ 1`, уникальный `code`.
+`viewer` только читает. Валидация живёт в одной Zod-схеме (`templateCreateZ` / `templatePatchZ`
+в `modules/vouchers/service.ts`): `kind ∈ {percent, fixed}`, `value > 0`, `percent ≤ 100`,
+`validDays 1…3650`, `imageUrl` = `/uploads/…` или `https://…`, уникальный `code`.
+Сообщения об ошибках — русские и уходят в 400 как есть.
 
 Выдаются только шаблоны с `active = 1`: `grantVoucher`/`grantVoucherOnce` бросают ошибку
-на выключенном шаблоне. Seed гарантирует WELCOME с `active = 1`.
+на выключенном шаблоне, а `POST /vouchers/grant-all`, выдача одному клиенту и
+`grant-all/preview` отвечают 400 «Шаблон выключен». Seed гарантирует WELCOME с `active = 1`
+и не создаёт дубликат при повторном запуске.
+
+Карточка клиента в админке отдаёт по каждому ваучеру `redemptionMode`, `redemptionsCount`,
+`receiptId` и `templateCode` — поддержке видно, сколько раз погашен многоразовый экземпляр.
 
 ## 4. Ваучеры: pre-view на кассе (`resolve`)
 

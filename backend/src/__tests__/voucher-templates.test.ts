@@ -40,6 +40,40 @@ function guestUser(): number {
   return id
 }
 
+describe('D1: миграция и seed', () => {
+  it('на чистой БД есть новые колонки и журнал гашений', () => {
+    const cols = (t: string) =>
+      (db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).map((c) => c.name)
+    expect(cols('voucher_templates')).toEqual(
+      expect.arrayContaining(['active', 'image_url', 'redemption_mode', 'max_per_day', 'max_total', 'stackable_with_free_cup']),
+    )
+    expect(cols('vouchers')).toContain('redemptions_count')
+    expect(
+      db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='voucher_redemptions'").get(),
+    ).toBeTruthy()
+  })
+
+  it('seed создаёт WELCOME активным и повторный запуск его не дублирует', async () => {
+    const { seedIfEmpty } = await import('../db/seed')
+    seedIfEmpty()
+    seedIfEmpty()
+    const rows = db.prepare("SELECT id, title, kind, value, valid_days AS validDays, active, redemption_mode AS mode FROM voucher_templates WHERE code='WELCOME'").all() as {
+      id: number
+      title: string
+      kind: string
+      value: number
+      validDays: number
+      active: number
+      mode: string
+    }[]
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ kind: 'percent', value: 10, validDays: 30, active: 1, mode: 'once' })
+    // активный WELCOME реально выдаётся без ручных правок
+    const uid = guestUser()
+    expect(grantVoucherOnce(uid, 'WELCOME')).toBe(true)
+  })
+})
+
 describe('D2: сервис шаблонов', () => {
   it('создаёт, читает и обновляет шаблон', () => {
     const created = createTemplate({
@@ -55,6 +89,13 @@ describe('D2: сервис шаблонов', () => {
     expect(updated.value).toBe(20)
     expect(updated.redemptionMode).toBe('multi')
     expect(updated.maxPerDay).toBe(2)
+  })
+
+  it('обновляет шаблон и по коду, а не только по id', () => {
+    createTemplate({ code: 'BY-CODE', title: 'По коду', kind: 'fixed', value: 50, validDays: 4 })
+    const updated = updateTemplate('by-code', { title: 'По коду (изм.)' })!
+    expect(updated.title).toBe('По коду (изм.)')
+    expect(updated.code).toBe('BY-CODE')
   })
 
   it('не даёт создать дубликат кода', () => {
@@ -122,6 +163,21 @@ describe('D3: админ-API шаблонов', () => {
   })
 })
 
+describe('D3: карточка клиента показывает состояние ваучера', () => {
+  it('отдаёт режим гашения, счётчик и код шаблона', async () => {
+    createTemplate({
+      code: 'CARD-MULTI', title: 'Многоразовый', kind: 'fixed', value: 150, validDays: 9, redemptionMode: 'multi',
+    })
+    const uid = guestUser()
+    grantVoucher(uid, 'CARD-MULTI')
+    const r = await app.request(`/api/admin/customers/${uid}`, { headers: admin })
+    expect(r.status).toBe(200)
+    const j = (await r.json()) as { vouchers: { title: string; redemptionMode: string; redemptionsCount: number; templateCode: string }[] }
+    const row = j.vouchers.find((v) => v.title === 'Многоразовый')
+    expect(row).toMatchObject({ redemptionMode: 'multi', redemptionsCount: 0, templateCode: 'CARD-MULTI' })
+  })
+})
+
 describe('D4: выдача только активных шаблонов', () => {
   it('grant неактивного шаблона → ошибка', () => {
     const off = createTemplate({ code: 'OFF2', title: 'Выключен', kind: 'fixed', value: 50, validDays: 3, active: false })!
@@ -148,7 +204,8 @@ describe('D4: выдача только активных шаблонов', () =
   })
 
   it('WELCOME через grantVoucherOnce не дублируется', () => {
-    createTemplate({ code: 'WELCOME', title: 'Скидка 10% на первую покупку', kind: 'percent', value: 10, validDays: 30 })
+    // WELCOME уже создан сидом в D1 — берём его, а не создаём заново.
+    expect(getTemplate('WELCOME')).toBeTruthy()
     const uid = guestUser()
     expect(grantVoucherOnce(uid, 'WELCOME')).toBe(true)
     expect(grantVoucherOnce(uid, 'WELCOME')).toBe(false)

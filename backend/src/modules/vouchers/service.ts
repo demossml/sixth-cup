@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import { db } from '../../db'
 import { config } from '../../config'
 
@@ -92,23 +93,50 @@ const templateView = (t: TemplateRow) => ({
   stackableWithFreeCup: Boolean(t.stackable_with_free_cup),
 })
 
-/** Простая и явная валидация: вызывается и из сервиса, и из админ-роутов. */
-export function validateTemplate(input: Partial<TemplateInput>): void {
-  if (input.kind !== undefined && input.kind !== 'percent' && input.kind !== 'fixed') {
-    throw new Error('Тип ваучера: percent или fixed')
+/** Медиа шаблона: локальный /uploads/… или абсолютный https-URL (как у товаров). */
+const imageUrlRule = z
+  .string()
+  .max(500, 'Адрес медиа слишком длинный')
+  .refine((v) => v.startsWith('/uploads/') || /^https?:\/\//i.test(v), {
+    message: 'Адрес медиа: /uploads/… или https://…',
+  })
+
+/**
+ * Одна схема на сервис и на админ-API: правила не расходятся между слоями.
+ * Сообщения — для человека, они уходят в 400 как есть.
+ */
+export const templatePatchZ = z.object({
+  title: z.string().trim().min(1, 'Название обязательно').max(120, 'Название слишком длинное').optional(),
+  kind: z.enum(['percent', 'fixed'], { message: 'Тип ваучера: percent или fixed' }).optional(),
+  value: z.number().positive('Значение должно быть больше нуля').optional(),
+  validDays: z.number().int('Срок действия — целое число дней').min(1, 'Срок действия — минимум 1 день')
+    .max(3650, 'Срок действия — не больше 10 лет').optional(),
+  active: z.boolean().optional(),
+  imageUrl: imageUrlRule.nullable().optional(),
+  redemptionMode: z.enum(['once', 'multi'], { message: 'Режим гашения: once или multi' }).optional(),
+  maxPerDay: z.number().int('Лимит в сутки — целое число').min(1, 'Лимит в сутки — минимум 1').nullable().optional(),
+  maxTotal: z.number().int('Общий лимит — целое число').min(1, 'Общий лимит — минимум 1').nullable().optional(),
+  stackableWithFreeCup: z.boolean().optional(),
+})
+
+export const templateCreateZ = templatePatchZ.extend({
+  code: z.string().trim().min(1, 'Код шаблона обязателен').max(64, 'Код шаблона слишком длинный'),
+  title: z.string().trim().min(1, 'Название обязательно').max(120, 'Название слишком длинное'),
+  kind: z.enum(['percent', 'fixed'], { message: 'Тип ваучера: percent или fixed' }),
+  value: z.number().positive('Значение должно быть больше нуля'),
+  validDays: z.number().int('Срок действия — целое число дней').min(1, 'Срок действия — минимум 1 день')
+    .max(3650, 'Срок действия — не больше 10 лет'),
+})
+
+/** Валидация с понятным текстом ошибки: первое нарушение, без стопки технических деталей. */
+export function validateTemplate(input: Partial<TemplateInput>, schema: z.ZodTypeAny = templatePatchZ): void {
+  const parsed = schema.safeParse(input)
+  if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? 'Некорректные настройки шаблона')
+  // Процент > 100 ловится только вместе с типом, поэтому проверка после схемы.
+  const kind = input.kind
+  if (kind === 'percent' && input.value !== undefined && input.value > 100) {
+    throw new Error('Процент не может быть больше 100')
   }
-  if (input.value !== undefined) {
-    if (!(input.value > 0)) throw new Error('Значение должно быть больше нуля')
-    if (input.kind === 'percent' && input.value > 100) throw new Error('Процент не может быть больше 100')
-  }
-  if (input.validDays !== undefined && !(input.validDays >= 1)) {
-    throw new Error('Срок действия — минимум 1 день')
-  }
-  if (input.redemptionMode !== undefined && input.redemptionMode !== 'once' && input.redemptionMode !== 'multi') {
-    throw new Error('Режим гашения: once или multi')
-  }
-  if (input.maxPerDay != null && input.maxPerDay < 1) throw new Error('Лимит в сутки — минимум 1')
-  if (input.maxTotal != null && input.maxTotal < 1) throw new Error('Общий лимит — минимум 1')
 }
 
 export function listTemplates(opts: { includeInactive?: boolean } = {}) {
@@ -129,10 +157,8 @@ export function getTemplate(codeOrId: string | number) {
 }
 
 export function createTemplate(input: TemplateInput) {
-  validateTemplate(input)
+  validateTemplate(input, templateCreateZ)
   const code = input.code.trim().toUpperCase()
-  if (!code) throw new Error('Код шаблона обязателен')
-  if (!input.title.trim()) throw new Error('Название обязательно')
   if (getTemplate(code)) throw new Error(`Шаблон с кодом ${code} уже существует`)
   const info = db
     .prepare(
@@ -156,8 +182,11 @@ export function createTemplate(input: TemplateInput) {
   return getTemplate(Number(info.lastInsertRowid))
 }
 
-export function updateTemplate(id: number, patch: Partial<TemplateInput>) {
-  const cur = db.prepare('SELECT * FROM voucher_templates WHERE id=?').get(id) as TemplateRow | undefined
+export function updateTemplate(idOrCode: number | string, patch: Partial<TemplateInput>) {
+  const cur =
+    typeof idOrCode === 'number'
+      ? (db.prepare('SELECT * FROM voucher_templates WHERE id=?').get(idOrCode) as TemplateRow | undefined)
+      : (db.prepare('SELECT * FROM voucher_templates WHERE code=?').get(idOrCode.trim().toUpperCase()) as TemplateRow | undefined)
   if (!cur) throw new Error('Шаблон не найден')
   validateTemplate({ ...patch, kind: patch.kind ?? cur.kind })
   const next = {
@@ -190,9 +219,9 @@ export function updateTemplate(id: number, patch: Partial<TemplateInput>) {
     next.maxPerDay,
     next.maxTotal,
     next.stackable,
-    id,
+    cur.id,
   )
-  return getTemplate(id)
+  return getTemplate(cur.id)
 }
 
 export type ResolveVoucher = {
