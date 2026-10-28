@@ -5,7 +5,8 @@ import { cashbackOf, freeEarned } from '../../../modules/loyalty/rules'
 import { consumeReservation } from '../../../modules/loyalty/reservations'
 import { bindQueueNumber } from '../../../modules/queue/numbers'
 import { extractScRaw } from '../loyaltyExtras'
-import { grantVoucherOnce } from '../../../modules/vouchers/service'
+import { grantVoucherOnce, redeemVoucher } from '../../../modules/vouchers/service'
+import type { RedeemResult } from '../../../modules/vouchers/service'
 import { log } from '../../../lib/logBuffer'
 
 type Tx = Record<string, unknown>
@@ -23,6 +24,8 @@ type ScClaim = {
   ord?: string
   /** public_order_number строкой — только для логов, не источник истины. */
   qn?: string
+  /** id ваучера из таблицы vouchers, который касса применяет к чеку. */
+  voucherId?: number
 }
 
 function obj(value: unknown): Record<string, unknown> | null {
@@ -131,6 +134,10 @@ function getSc(doc: Record<string, unknown>): ScClaim | null {
   else delete out.ord
   if (ref.qn) out.qn = ref.qn
   else delete out.qn
+  // Ваучер: только положительный целый id, иначе считаем, что его нет.
+  const vid = Number(sc.voucherId)
+  if (Number.isInteger(vid) && vid > 0) out.voucherId = vid
+  else delete out.voucherId
   return out
 }
 
@@ -247,13 +254,26 @@ export function handleSell(db: Database.Database, storeUuid: string, doc: Record
   const now = Date.now()
   const cardId = user.card_id
   const opClaimed = sc.op ?? null
+  // Ваучер предъявляется только QR-картой: числовой код не гасит льготы.
+  const voucherId = isToken ? sc.voucherId : undefined
+  // Мутируем через бокс: присваивание внутри транзакции TS иначе сужает до never.
+  const voucherBox: { outcome: RedeemResult | null } = { outcome: null }
 
   db.transaction(() => {
-    db.prepare(`INSERT INTO loyalty_ops(doc_store,doc_id,kind,card_id,op_claimed,q_claimed,free,cb,disc_claimed,result_rub,cups_counted,created_at)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+    db.prepare(`INSERT INTO loyalty_ops(doc_store,doc_id,kind,card_id,op_claimed,q_claimed,free,cb,voucher,disc_claimed,result_rub,cups_counted,created_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
       storeUuid, docId, 'SELL', cardId, opClaimed, typeof sc.q === 'number' ? sc.q : null,
-      appliedFree, appliedCb, null, amount / 100, cups, now,
+      appliedFree, appliedCb, voucherId ? `v:${voucherId}` : null, null, amount / 100, cups, now,
     )
+    if (voucherId) {
+      const outcome = redeemVoucher({ voucherId, userId: user.id, docId, storeUuid, appliedFree, now })
+      voucherBox.outcome = outcome
+      if (outcome.ok && !outcome.duplicate) {
+        log.info('voucher redeemed', {
+          voucher: outcome.voucherId, kind: outcome.kind, value: outcome.value, doc: docId.slice(0, 8),
+        })
+      }
+    }
     db.prepare(`UPDATE cards SET paid_total=paid_total+?, free_used=free_used+?, seq=seq+1, updated_at=? WHERE user_id=?`)
       .run(paidCups, appliedFree, now, user.id)
     // L-09: приветственный ваучер выдаётся на первой платной чашке в ЛЮБОМ канале.
@@ -306,6 +326,19 @@ export function handleSell(db: Database.Database, storeUuid: string, doc: Record
     }
   })()
 
+  const voucherOutcome = voucherBox.outcome
+  if (voucherOutcome && !voucherOutcome.ok) {
+    // Ваучер невалиден — это спор, но продажа и остальная лояльность уже применены.
+    db.prepare(`INSERT INTO disputes(kind,user_id,receipt_id,details,created_at) VALUES(?,?,?,?,?)`)
+      .run(
+        'voucher_not_redeemed',
+        user.id,
+        docId,
+        JSON.stringify({ voucherId, reason: voucherOutcome.reason, appliedFree, isToken }),
+        now,
+      )
+    log.warn('voucher not redeemed', { voucher: voucherId, reason: voucherOutcome.reason, doc: docId.slice(0, 8) })
+  }
   return { processed: true }
 }
 

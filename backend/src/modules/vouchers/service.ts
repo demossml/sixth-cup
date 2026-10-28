@@ -252,3 +252,95 @@ export function vouchersForResolve(userId: number): ResolveVoucher[] {
       imageUrl: r.image_url,
     }))
 }
+
+/* ───────── E2: гашение ваучера в потоке Эвотора ───────── */
+
+export type RedeemFailure =
+  | 'voucher_not_found'
+  | 'voucher_foreign'
+  | 'voucher_expired'
+  | 'voucher_used'
+  | 'voucher_limit'
+  | 'voucher_not_stacked_with_free'
+
+export type RedeemResult =
+  | { ok: true; voucherId: number; kind: 'percent' | 'fixed'; value: number; duplicate: boolean }
+  | { ok: false; reason: RedeemFailure }
+
+/**
+ * Гасит ваучер по `sc.voucherId`. Вызывается внутри транзакции продажи:
+ * либо гашение и начисления применяются вместе, либо не применяется ничего.
+ * Повторная обработка того же документа идемпотентна (журнал `voucher_redemptions`).
+ */
+export function redeemVoucher(input: {
+  voucherId: number
+  userId: number
+  docId: string
+  storeUuid?: string | null
+  appliedFree: number
+  now?: number
+}): RedeemResult {
+  const now = input.now ?? Date.now()
+  const day = Math.floor(now / 86_400_000)
+  const row = db
+    .prepare(
+      `SELECT v.id, v.user_id, v.kind, v.value, v.expires_day, v.used_at, v.redemptions_count,
+              COALESCE(t.redemption_mode, 'once') AS redemption_mode,
+              t.max_per_day, t.max_total,
+              COALESCE(t.stackable_with_free_cup, 1) AS stackable,
+              COALESCE(t.active, 1) AS active
+         FROM vouchers v LEFT JOIN voucher_templates t ON t.id = v.template_id
+        WHERE v.id=?`,
+    )
+    .get(input.voucherId) as {
+    id: number
+    user_id: number
+    kind: 'percent' | 'fixed'
+    value: number
+    expires_day: number
+    used_at: number | null
+    redemptions_count: number
+    redemption_mode: 'once' | 'multi'
+    max_per_day: number | null
+    max_total: number | null
+    stackable: number
+    active: number
+  } | undefined
+  if (!row) return { ok: false, reason: 'voucher_not_found' }
+  if (row.user_id !== input.userId) return { ok: false, reason: 'voucher_foreign' }
+  if (row.active !== 1) return { ok: false, reason: 'voucher_not_found' }
+  if (row.expires_day < day) return { ok: false, reason: 'voucher_expired' }
+  if (row.stackable === 0 && input.appliedFree > 0) return { ok: false, reason: 'voucher_not_stacked_with_free' }
+
+  // Журнал гашений: уникальность (voucher_id, receipt_id) делает повторный poll безопасным.
+  const logged = db
+    .prepare('INSERT OR IGNORE INTO voucher_redemptions(voucher_id, receipt_id, store_uuid, day, created_at) VALUES(?,?,?,?,?)')
+    .run(row.id, input.docId, input.storeUuid ?? null, day, now)
+  if (logged.changes === 0) {
+    return { ok: true, voucherId: row.id, kind: row.kind, value: row.value, duplicate: true }
+  }
+
+  if (row.redemption_mode === 'once') {
+    const used = db
+      .prepare('UPDATE vouchers SET used_at=?, receipt_id=? WHERE id=? AND used_at IS NULL')
+      .run(now, input.docId, row.id)
+    if (used.changes !== 1) {
+      db.prepare('DELETE FROM voucher_redemptions WHERE voucher_id=? AND receipt_id=?').run(row.id, input.docId)
+      return { ok: false, reason: 'voucher_used' }
+    }
+  } else {
+    if (row.max_total != null && row.redemptions_count >= row.max_total) {
+      db.prepare('DELETE FROM voucher_redemptions WHERE voucher_id=? AND receipt_id=?').run(row.id, input.docId)
+      return { ok: false, reason: 'voucher_limit' }
+    }
+    if (row.max_per_day != null) {
+      const usedToday = (db.prepare('SELECT COUNT(*) AS n FROM voucher_redemptions WHERE voucher_id=? AND day=?').get(row.id, day) as { n: number }).n
+      if (usedToday > row.max_per_day) {
+        db.prepare('DELETE FROM voucher_redemptions WHERE voucher_id=? AND receipt_id=?').run(row.id, input.docId)
+        return { ok: false, reason: 'voucher_limit' }
+      }
+    }
+    db.prepare('UPDATE vouchers SET redemptions_count=redemptions_count+1 WHERE id=?').run(row.id)
+  }
+  return { ok: true, voucherId: row.id, kind: row.kind, value: row.value, duplicate: false }
+}
