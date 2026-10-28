@@ -107,9 +107,17 @@ export function resolveAndReserve(input: ResolveInput, now = Date.now()): Resolv
  */
 export function consumeReservation(conn: typeof db, opId: string | null | undefined, cardId: string, docStore: string, docId: string, now = Date.now()): { free: number; cb: number } {
   if (!opId) return { free: 0, cb: 0 }
-  const row = conn.prepare(`SELECT status, benefit_free, benefit_cb FROM loyalty_reservations WHERE id=? AND card_id=?`)
-    .get(opId, cardId) as { status: string; benefit_free: number; benefit_cb: number } | undefined
-  if (!row || (row.status !== 'RESERVED' && row.status !== 'EXPIRED')) return { free: 0, cb: 0 }
+  const row = conn.prepare(`SELECT status, benefit_free, benefit_cb, doc_store, doc_id FROM loyalty_reservations WHERE id=? AND card_id=?`)
+    .get(opId, cardId) as
+    | { status: string; benefit_free: number; benefit_cb: number; doc_store: string | null; doc_id: string | null }
+    | undefined
+  if (!row) return { free: 0, cb: 0 }
+  // Повторная обработка того же чека (retry после сбоя транзакции): резерв уже помечен этим
+  // документом — возвращаем те же льготы, иначе гость теряет бесплатную чашку при повторе.
+  if (row.status === 'CONSUMED' && row.doc_store === docStore && row.doc_id === docId) {
+    return { free: row.benefit_free, cb: row.benefit_cb }
+  }
+  if (row.status !== 'RESERVED' && row.status !== 'EXPIRED') return { free: 0, cb: 0 }
   const r = conn.prepare(`UPDATE loyalty_reservations SET status='CONSUMED', consumed_at=?, doc_store=?, doc_id=? WHERE id=? AND status IN ('RESERVED','EXPIRED')`)
     .run(now, docStore, docId, opId)
   if (r.changes !== 1) return { free: 0, cb: 0 }

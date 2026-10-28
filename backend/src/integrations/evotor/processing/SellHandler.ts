@@ -282,8 +282,27 @@ export function handleSell(db: Database.Database, storeUuid: string, doc: Record
       }
     }
     if (appliedFree !== claimedFree || appliedCb !== claimedCb) {
+      // B2: причины урезания должны читаться из спора без похода в код.
       db.prepare(`INSERT INTO disputes(kind,user_id,receipt_id,details,created_at) VALUES(?,?,?,?,?)`)
-        .run('loyalty_claim_clamped', user.id, docId, JSON.stringify({ claimedFree, appliedFree, claimedCb, appliedCb, sequenceMatches, claimedSeq: sc.q, currentSeq: state.seq }), now)
+        .run(
+          'loyalty_claim_clamped',
+          user.id,
+          docId,
+          JSON.stringify({
+            claimedFree,
+            appliedFree,
+            claimedCb,
+            appliedCb,
+            freeAvail,
+            cups,
+            hadReservation: Boolean(reserved.free || reserved.cb),
+            reservationId: sc.op ?? null,
+            sequenceMatches,
+            claimedSeq: sc.q,
+            currentSeq: state.seq,
+          }),
+          now,
+        )
     }
   })()
 
