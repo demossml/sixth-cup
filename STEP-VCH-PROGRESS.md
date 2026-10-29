@@ -34,3 +34,12 @@
 Тесты: backend 419 passed; GUARD 72 passed; frontend-admin 31 passed; frontend 52 passed; typecheck OK
 Изменённые тесты: нет
 DEFAULT-AD-HOC: номер миграции `037` вместо `036` (см. «Отклонения» п.1)
+
+## STEP-V01 — Миграция и флаг конфига
+
+Статус: DONE
+Коммит: см. `git log -1`
+Что сделано: миграция `037_voucher_reservation.sql` (аддитивная, `ADD COLUMN benefit_voucher_ids TEXT`); в `config` добавлены `maxVouchersInResolve: 10` и `vouchersInResolve` (`VOUCHERS_IN_RESOLVE === '1'`, по умолчанию `false`).
+Тесты: `vch-migration.test.ts` 4 passed; GUARD 72 passed; typecheck OK
+Изменённые тесты: нет
+DEFAULT-AD-HOC: номер миграции `037` (036 занят шаблонами ваучеров, см. «Отклонения» п.1)

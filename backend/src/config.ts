@@ -32,6 +32,10 @@ export const config = {
   referralCashbackPercent: 3,
   currency: 'RUB',
   maxVouchersInCard: 5,
+  /** Сколько ваучеров касса получает в resolve (контракт: docs/CONTRACT-VOUCHERS-CASHIER.md). */
+  maxVouchersInResolve: 10,
+  /** Отдавать ваучеры кассе в POST /api/devices/loyalty/resolve. По умолчанию выключено (D-09). */
+  vouchersInResolve: process.env.VOUCHERS_IN_RESOLVE === '1',
   maxUploadBytes: 2 * 1024 * 1024,
 
   /** Shared secret for Evotor cloud proxy (Authorization header). Empty = warn only. */
