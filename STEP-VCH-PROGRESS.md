@@ -70,3 +70,12 @@ DEFAULT-AD-HOC: нет
 Тесты: `vch-reservation-consume.test.ts` 5 passed; `reservations.test.ts` без правок; GUARD 72 passed; typecheck OK
 Изменённые тесты: нет
 DEFAULT-AD-HOC: нет
+
+## STEP-V05 — `resolve` отдаёт ваучеры (за флагом)
+
+Статус: DONE
+Коммит: см. `git log -1`
+Что сделано: `offer = config.vouchersInResolve ? vouchersForResolve(user.id) : []`; id ваучеров пишутся в `loyalty_reservations.benefit_voucher_ids` при создании резерва и при продлении своим сканом; `ALREADY_RESERVED` и числовой код всегда `vouchers: []`; в лог `loyalty resolve ok` добавлено `vouchers: N`.
+Тесты: `vch-resolve.test.ts` 8 passed; полный backend 448 passed; GUARD 72 passed; typecheck OK
+Изменённые тесты: `voucher-templates.test.ts` — блок «D5: ваучеры в resolve» теперь включает флаг (`config.vouchersInResolve = true` в `beforeEach`), иначе resolve по контракту D-09 отдаёт `[]`; `loyalty-gifts-clamp.test.ts` — ожидания `consumeReservation` дополнены полем `voucherIds: []` (смена возвращаемого типа в STEP-V04)
+DEFAULT-AD-HOC: нет

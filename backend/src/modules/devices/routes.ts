@@ -98,7 +98,7 @@ export const deviceRoutes = new Hono<DeviceEnv>()
       if (r.ok) {
         log.info('loyalty resolve ok', {
           card: maskCode(r.cardCode), kind: r.kind, free: r.freeAvailable, cbKop: r.cashbackReserved,
-          freeStatus: r.freeStatus, res: shortId(r.reservationId, 6), ...who,
+          freeStatus: r.freeStatus, res: shortId(r.reservationId, 6), vouchers: r.vouchers.length, ...who,
         })
       } else {
         log.warn(`loyalty resolve fail: ${r.error}`, { card: maskCode(code), ...who })

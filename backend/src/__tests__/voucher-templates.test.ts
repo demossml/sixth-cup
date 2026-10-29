@@ -6,7 +6,7 @@
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 const dir = mkdtempSync(join(tmpdir(), 'sc-vtpl-'))
 process.env.DB_PATH = join(dir, 'test.db')
@@ -23,6 +23,7 @@ const {
   vouchersForResolve,
 } = await import('../modules/vouchers/service')
 const { buildCardProof } = await import('../modules/loyalty/proof')
+const { config } = await import('../config')
 
 const admin = { 'Content-Type': 'application/json', 'X-Admin-Token': 'test-admin' }
 const proxy = (dev: string) => ({
@@ -216,6 +217,10 @@ describe('D4: выдача только активных шаблонов', () =
 })
 
 describe('D5: ваучеры в resolve', () => {
+  // STEP-V05: ваучеры в resolve отдаются только при включённом флаге.
+  beforeEach(() => { config.vouchersInResolve = true })
+  afterEach(() => { config.vouchersInResolve = false })
+
   it('QR отдаёт активные ваучеры, числовой код — нет', async () => {
     createTemplate({ code: 'RES1', title: 'Кофе в подарок', kind: 'fixed', value: 200, validDays: 5 })
     const uid = guestUser()

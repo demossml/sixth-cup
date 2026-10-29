@@ -111,15 +111,15 @@ describe('B: подарки и clamp', () => {
 
     // первая попытка «сгорела»: резерв уже помечен этим документом
     const first = consumeReservation(db as any, op, g.cardId, STORE, 'retry-doc-1')
-    expect(first).toEqual({ free: 1, cb: 0 })
+    expect(first).toEqual({ free: 1, cb: 0, voucherIds: [] })
 
     // повтор того же документа обязан получить те же льготы, а не нули
     const again = consumeReservation(db as any, op, g.cardId, STORE, 'retry-doc-1')
-    expect(again).toEqual({ free: 1, cb: 0 })
+    expect(again).toEqual({ free: 1, cb: 0, voucherIds: [] })
 
     // другой документ с тем же (уже потреблённым) резервом — нули
     const other = consumeReservation(db as any, op, g.cardId, STORE, 'other-doc')
-    expect(other).toEqual({ free: 0, cb: 0 })
+    expect(other).toEqual({ free: 0, cb: 0, voucherIds: [] })
   })
 
   it('успешный SELL с резервом списывает бесплатную чашку', () => {
