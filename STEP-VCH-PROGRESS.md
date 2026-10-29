@@ -79,3 +79,12 @@ DEFAULT-AD-HOC: нет
 Тесты: `vch-resolve.test.ts` 8 passed; полный backend 448 passed; GUARD 72 passed; typecheck OK
 Изменённые тесты: `voucher-templates.test.ts` — блок «D5: ваучеры в resolve» теперь включает флаг (`config.vouchersInResolve = true` в `beforeEach`), иначе resolve по контракту D-09 отдаёт `[]`; `loyalty-gifts-clamp.test.ts` — ожидания `consumeReservation` дополнены полем `voucherIds: []` (смена возвращаемого типа в STEP-V04)
 DEFAULT-AD-HOC: нет
+
+## STEP-V06 — Погашение ваучера в `SellHandler`
+
+Статус: DONE
+Коммит: см. `git log -1`
+Что сделано: `claimedVoucher = number(sc.voucherId)`; внутри транзакции перед `INSERT loyalty_ops` — проверка `reserved.voucherIds.includes(id)` и условный `UPDATE vouchers SET used_at, receipt_id WHERE id AND user_id AND used_at IS NULL AND expires_day>=?`; споры `voucher_invalid` (reasons `numeric_code` / `not_in_reservation` / `missing` / `foreign` / `expired`) и `voucher_double_use`; `loyalty_ops.voucher = String(id)`; удалён прежний путь гашения из предыдущей серии (`redeemVoucher`, `RedeemResult`, `voucher_redemptions`-журнал, спор `voucher_not_redeemed`) — он заменён контрактом D-05/D-11/D-12.
+Тесты: `vch-redeem.test.ts` 9 passed; полный backend 450 passed; GUARD 72 passed; typecheck OK
+Изменённые тесты: удалён `voucher-redeem-sell.test.ts` (7 тестов предыдущей серии) — фиксировал старую модель `once|multi`, `voucher_redemptions` и спор `voucher_not_redeemed`, которая заменена решениями владельца D-05 (только `once`), D-11 (гашение только id из резерва) и D-12 (имена споров); сценарии перенесены и расширены в `vch-redeem.test.ts`
+DEFAULT-AD-HOC: таблица `voucher_redemptions` из миграции `036` осталась в схеме, но кодом больше не используется (удалять таблицу — деструктивная миграция, запрещено правилом 8)

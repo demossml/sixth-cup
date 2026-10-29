@@ -5,8 +5,7 @@ import { cashbackOf, freeEarned } from '../../../modules/loyalty/rules'
 import { consumeReservation } from '../../../modules/loyalty/reservations'
 import { bindQueueNumber } from '../../../modules/queue/numbers'
 import { extractScRaw } from '../loyaltyExtras'
-import { grantVoucherOnce, redeemVoucher } from '../../../modules/vouchers/service'
-import type { RedeemResult } from '../../../modules/vouchers/service'
+import { grantVoucherOnce, todayDay } from '../../../modules/vouchers/service'
 import { log } from '../../../lib/logBuffer'
 
 type Tx = Record<string, unknown>
@@ -254,26 +253,44 @@ export function handleSell(db: Database.Database, storeUuid: string, doc: Record
   const now = Date.now()
   const cardId = user.card_id
   const opClaimed = sc.op ?? null
-  // Ваучер предъявляется только QR-картой: числовой код не гасит льготы.
-  const voucherId = isToken ? sc.voucherId : undefined
-  // Мутируем через бокс: присваивание внутри транзакции TS иначе сужает до never.
-  const voucherBox: { outcome: RedeemResult | null } = { outcome: null }
+  const claimedVoucher = Math.max(0, Math.floor(number(sc.voucherId)))
+
+  const vDispute = (kind: string, details: unknown) =>
+    db.prepare(`INSERT INTO disputes(kind,user_id,receipt_id,details,created_at) VALUES(?,?,?,?,?)`)
+      .run(kind, user.id, docId, JSON.stringify(details), now)
+  let redeemedVoucher: number | null = null
 
   db.transaction(() => {
+    // D-11: ваучер гасится только по подписанному QR и только если его действительно выдавали кассе.
+    if (claimedVoucher > 0) {
+      if (!isToken || !reserved.voucherIds.includes(claimedVoucher)) {
+        vDispute('voucher_invalid', { voucherId: claimedVoucher, reason: isToken ? 'not_in_reservation' : 'numeric_code' })
+      } else {
+        const r = db.prepare(
+          `UPDATE vouchers SET used_at=?, receipt_id=? WHERE id=? AND user_id=? AND used_at IS NULL AND expires_day>=?`,
+        ).run(now, docId, claimedVoucher, user.id, todayDay())
+        if (r.changes === 1) {
+          redeemedVoucher = claimedVoucher
+          log.info('voucher redeemed', { voucher: claimedVoucher, doc: docId.slice(0, 8) })
+        } else {
+          const row = db.prepare('SELECT user_id, used_at FROM vouchers WHERE id=?').get(claimedVoucher) as
+            { user_id: number; used_at: number | null } | undefined
+          if (row && row.user_id === user.id && row.used_at != null) {
+            vDispute('voucher_double_use', { voucherId: claimedVoucher })
+          } else {
+            vDispute('voucher_invalid', {
+              voucherId: claimedVoucher,
+              reason: !row ? 'missing' : row.user_id !== user.id ? 'foreign' : 'expired',
+            })
+          }
+        }
+      }
+    }
     db.prepare(`INSERT INTO loyalty_ops(doc_store,doc_id,kind,card_id,op_claimed,q_claimed,free,cb,voucher,disc_claimed,result_rub,cups_counted,created_at)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
       storeUuid, docId, 'SELL', cardId, opClaimed, typeof sc.q === 'number' ? sc.q : null,
-      appliedFree, appliedCb, voucherId ? `v:${voucherId}` : null, null, amount / 100, cups, now,
+      appliedFree, appliedCb, redeemedVoucher != null ? String(redeemedVoucher) : null, null, amount / 100, cups, now,
     )
-    if (voucherId) {
-      const outcome = redeemVoucher({ voucherId, userId: user.id, docId, storeUuid, appliedFree, now })
-      voucherBox.outcome = outcome
-      if (outcome.ok && !outcome.duplicate) {
-        log.info('voucher redeemed', {
-          voucher: outcome.voucherId, kind: outcome.kind, value: outcome.value, doc: docId.slice(0, 8),
-        })
-      }
-    }
     db.prepare(`UPDATE cards SET paid_total=paid_total+?, free_used=free_used+?, seq=seq+1, updated_at=? WHERE user_id=?`)
       .run(paidCups, appliedFree, now, user.id)
     // L-09: приветственный ваучер выдаётся на первой платной чашке в ЛЮБОМ канале.
@@ -301,6 +318,12 @@ export function handleSell(db: Database.Database, storeUuid: string, doc: Record
         }
       }
     }
+    // D-06: касса прислала ваучер вместе с подарком/кэшбэком. Применяем по резерву, оставляем след.
+    if (claimedVoucher > 0 && (claimedFree > 0 || claimedCb > 0)) {
+      vDispute('benefit_conflict', {
+        voucherId: claimedVoucher, redeemed: redeemedVoucher, claimedFree, appliedFree, claimedCb, appliedCb,
+      })
+    }
     if (appliedFree !== claimedFree || appliedCb !== claimedCb) {
       // B2: причины урезания должны читаться из спора без похода в код.
       db.prepare(`INSERT INTO disputes(kind,user_id,receipt_id,details,created_at) VALUES(?,?,?,?,?)`)
@@ -326,19 +349,6 @@ export function handleSell(db: Database.Database, storeUuid: string, doc: Record
     }
   })()
 
-  const voucherOutcome = voucherBox.outcome
-  if (voucherOutcome && !voucherOutcome.ok) {
-    // Ваучер невалиден — это спор, но продажа и остальная лояльность уже применены.
-    db.prepare(`INSERT INTO disputes(kind,user_id,receipt_id,details,created_at) VALUES(?,?,?,?,?)`)
-      .run(
-        'voucher_not_redeemed',
-        user.id,
-        docId,
-        JSON.stringify({ voucherId, reason: voucherOutcome.reason, appliedFree, isToken }),
-        now,
-      )
-    log.warn('voucher not redeemed', { voucher: voucherId, reason: voucherOutcome.reason, doc: docId.slice(0, 8) })
-  }
   return { processed: true }
 }
 
