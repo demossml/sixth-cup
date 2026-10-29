@@ -1050,10 +1050,20 @@ export const adminRoutes = new Hono()
   .delete('/modifier-schemes/:id', (c) => {
     const id = Number(c.req.param('id'))
     const affected = db.prepare('SELECT id FROM products WHERE modifier_scheme_id=?').all(id) as { id: number }[]
-    db.prepare('UPDATE products SET modifier_scheme_id=NULL, updated_at=? WHERE modifier_scheme_id=?').run(Date.now(), id)
-    try { db.prepare('DELETE FROM modifier_scheme_options WHERE scheme_id=?').run(id) } catch {}
-    db.prepare('DELETE FROM modifier_scheme_items WHERE scheme_id=?').run(id)
-    db.prepare('DELETE FROM modifier_schemes WHERE id=?').run(id)
+    db.transaction(() => {
+      db.prepare('UPDATE products SET modifier_scheme_id=NULL, updated_at=? WHERE modifier_scheme_id=?').run(Date.now(), id)
+      // Группа размеров тоже ссылается на схему: без этого остаётся висячий id и касса получает toppings=[].
+      try {
+        const groups = db.prepare('SELECT id FROM product_groups WHERE modifier_scheme_id=?').all(id) as { id: number }[]
+        for (const g of groups) {
+          for (const row of db.prepare('SELECT id FROM products WHERE group_id=?').all(g.id) as { id: number }[]) affected.push(row)
+        }
+        db.prepare('UPDATE product_groups SET modifier_scheme_id=NULL, updated_at=? WHERE modifier_scheme_id=?').run(Date.now(), id)
+      } catch { /* product_groups may be missing on very old DBs */ }
+      try { db.prepare('DELETE FROM modifier_scheme_options WHERE scheme_id=?').run(id) } catch {}
+      db.prepare('DELETE FROM modifier_scheme_items WHERE scheme_id=?').run(id)
+      db.prepare('DELETE FROM modifier_schemes WHERE id=?').run(id)
+    })()
     enqueueProductSync(affected.map((x) => x.id))
     return c.json({ ok: true })
   })

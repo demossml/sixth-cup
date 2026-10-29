@@ -7,7 +7,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
-import { buildCatalogToppings, listAddonProductIds, ensureAddonSchemeSchema, resolveAddonsCategoryIds, type CatalogTopping } from '../catalog/addonScheme'
+import { buildCatalogToppings, effectiveSchemeId, listAddonProductIds, ensureAddonSchemeSchema, resolveAddonsCategoryIds, type CatalogTopping } from '../catalog/addonScheme'
 import { productArticleNumber } from '../catalog/productIdentity'
 import { hashToken, requireDevice, type DeviceEnv } from '../../middleware/device'
 import { applyReceipts } from '../loyalty/receipts'
@@ -322,7 +322,7 @@ export const deviceRoutes = new Hono<DeviceEnv>()
       let products = db.prepare(`
         SELECT p.id, p.name, p.price, p.icon, p.description,
                p.image_url AS imageUrl, p.sort_order AS sortOrder,
-               COALESCE(p.modifier_scheme_id, g.modifier_scheme_id) AS schemeId,
+               p.modifier_scheme_id AS skuSchemeId, g.modifier_scheme_id AS groupSchemeId,
                p.counts_as_cup AS countsAsCup, p.free_eligible AS freeEligible,
                p.recipe_text AS recipeText, p.available AS globalAvailable,
                p.category_id AS categoryId,
@@ -453,9 +453,17 @@ export const deviceRoutes = new Hono<DeviceEnv>()
 
       // One DB read per scheme instead of one per product (was N+1: full products/modifiers scans).
       const toppingsCache = new Map<number, CatalogTopping[]>()
+      const effectiveCache = new Map<string, number | null>()
       const out = products.map((p) => {
         const id = Number(p.id)
-        const schemeId = p.schemeId != null ? Number(p.schemeId) : null
+        const skuScheme = p.skuSchemeId != null ? Number(p.skuSchemeId) : null
+        const grpScheme = p.groupSchemeId != null ? Number(p.groupSchemeId) : null
+        const effKey = `${skuScheme}:${grpScheme}`
+        let schemeId = effectiveCache.get(effKey)
+        if (schemeId === undefined) {
+          schemeId = effectiveSchemeId(db, skuScheme, grpScheme)
+          effectiveCache.set(effKey, schemeId)
+        }
         const toppings = buildCatalogToppings(db, schemeId, uuidByProduct, toppingsCache)
         const upsell = upsellPool.filter((u) => u.id !== id).slice(0, 6)
         const description = (p.description as string | null) ?? null

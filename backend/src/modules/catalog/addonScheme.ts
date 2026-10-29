@@ -372,6 +372,34 @@ export function schemeHasOptions(db: Database.Database, schemeId: number): boole
   }
 }
 
+/** Есть ли у схемы хоть одна опция: канон (options) или легаси (items). Пустая схема ничего не отдаёт кассе. */
+export function schemeHasContent(db: Database.Database, schemeId: number): boolean {
+  if (schemeHasOptions(db, schemeId)) return true
+  try {
+    const row = db
+      .prepare('SELECT COUNT(*) AS n FROM modifier_scheme_items WHERE scheme_id=?')
+      .get(schemeId) as { n: number } | undefined
+    return Number(row?.n ?? 0) > 0
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Какая схема действует для товара. Схема размера главнее схемы группы, но только если в ней есть опции:
+ * пустая схема размера не должна перекрывать полную схему группы (иначе касса получает toppings=[]).
+ * Обе пустые или не заданы → прежнее поведение `sku ?? grp`.
+ */
+export function effectiveSchemeId(
+  db: Database.Database,
+  skuSchemeId: number | null,
+  groupSchemeId: number | null,
+): number | null {
+  if (skuSchemeId != null && schemeHasContent(db, skuSchemeId)) return skuSchemeId
+  if (groupSchemeId != null && schemeHasContent(db, groupSchemeId)) return groupSchemeId
+  return skuSchemeId ?? groupSchemeId
+}
+
 /** id схем, где используется модификатор: канон (options) + легаси (items). */
 export function schemeIdsUsingModifier(db: Database.Database, modifierId: number): number[] {
   const ids = new Set<number>()
@@ -575,7 +603,10 @@ function buildCatalogToppingsRaw(
         if (!m) continue
         if (!name) name = m.name
         price = m.price
-        groupKey = normKey(m.groupKey || groupKey)
+        // Группа, выбранная в схеме (молоко/сироп/сахар), главнее группы справочника: так админ
+        // исправляет молоко, заведённое в справочнике как «Другое». Иначе — группа модификатора.
+        const optionKey = resolveAddonGroupKey(groupKey)
+        groupKey = optionKey && optionKey !== 'extra' ? optionKey : normKey(m.groupKey || groupKey)
         modAvailable = m.available !== 0
         if (productId == null && m.linkedProductId != null) productId = m.linkedProductId
       } else if (kind === 'zero') {
