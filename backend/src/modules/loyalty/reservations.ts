@@ -106,28 +106,44 @@ export function resolveAndReserve(input: ResolveInput, now = Date.now()): Resolv
 }
 
 /**
+ * Льготы, которые резерв разрешает этому чеку. `voucherIds` — ваучеры, которые кассе
+ * отдавались вместе с резервом (см. `loyalty_reservations.benefit_voucher_ids`).
+ */
+export type ConsumedBenefits = { free: number; cb: number; voucherIds: number[] }
+
+function parseVoucherIds(raw: unknown): number[] {
+  try {
+    const a = JSON.parse(String(raw ?? '[]'))
+    return Array.isArray(a) ? a.filter((x): x is number => Number.isInteger(x) && x > 0) : []
+  } catch { return [] }
+}
+
+/**
  * Called by SellHandler. Returns the benefits the reservation allows for this card.
  * A reservation that expired before the receipt was polled may still be honoured
  * (the till was slow), but never twice: the first consumer wins and the card state clamps the rest.
  */
-export function consumeReservation(conn: typeof db, opId: string | null | undefined, cardId: string, docStore: string, docId: string, now = Date.now()): { free: number; cb: number } {
-  if (!opId) return { free: 0, cb: 0 }
-  const row = conn.prepare(`SELECT status, benefit_free, benefit_cb, doc_store, doc_id FROM loyalty_reservations WHERE id=? AND card_id=?`)
+export function consumeReservation(conn: typeof db, opId: string | null | undefined, cardId: string, docStore: string, docId: string, now = Date.now()): ConsumedBenefits {
+  if (!opId) return { free: 0, cb: 0, voucherIds: [] }
+  const row = conn.prepare(`SELECT status, benefit_free, benefit_cb, benefit_voucher_ids, doc_store, doc_id FROM loyalty_reservations WHERE id=? AND card_id=?`)
     .get(opId, cardId) as
-    | { status: string; benefit_free: number; benefit_cb: number; doc_store: string | null; doc_id: string | null }
+    | {
+        status: string; benefit_free: number; benefit_cb: number; benefit_voucher_ids: string | null
+        doc_store: string | null; doc_id: string | null
+      }
     | undefined
-  if (!row) return { free: 0, cb: 0 }
+  if (!row) return { free: 0, cb: 0, voucherIds: [] }
   // Повторная обработка того же чека (retry после сбоя транзакции): резерв уже помечен этим
   // документом — возвращаем те же льготы, иначе гость теряет бесплатную чашку при повторе.
   if (row.status === 'CONSUMED' && row.doc_store === docStore && row.doc_id === docId) {
-    return { free: row.benefit_free, cb: row.benefit_cb }
+    return { free: row.benefit_free, cb: row.benefit_cb, voucherIds: parseVoucherIds(row.benefit_voucher_ids) }
   }
-  if (row.status !== 'RESERVED' && row.status !== 'EXPIRED') return { free: 0, cb: 0 }
+  if (row.status !== 'RESERVED' && row.status !== 'EXPIRED') return { free: 0, cb: 0, voucherIds: [] }
   const r = conn.prepare(`UPDATE loyalty_reservations SET status='CONSUMED', consumed_at=?, doc_store=?, doc_id=? WHERE id=? AND status IN ('RESERVED','EXPIRED')`)
     .run(now, docStore, docId, opId)
-  if (r.changes !== 1) return { free: 0, cb: 0 }
+  if (r.changes !== 1) return { free: 0, cb: 0, voucherIds: [] }
   log.info('loyalty reservation consumed', { res: shortId(opId, 6), free: row.benefit_free, cbKop: row.benefit_cb, late: row.status === 'EXPIRED' ? 1 : 0 })
-  return { free: row.benefit_free, cb: row.benefit_cb }
+  return { free: row.benefit_free, cb: row.benefit_cb, voucherIds: parseVoucherIds(row.benefit_voucher_ids) }
 }
 
 export function expireStaleReservations(now = Date.now()): number {

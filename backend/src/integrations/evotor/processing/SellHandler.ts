@@ -246,7 +246,7 @@ export function handleSell(db: Database.Database, storeUuid: string, doc: Record
   const claimedFree = Math.max(0, Math.floor(number(sc.free)))
   const claimedCb = Math.max(0, Math.floor(number(sc.cb)))
   // Benefits are only honoured for a signed QR with a server-issued reservation (sc.op).
-  const reserved = isToken ? consumeReservation(db, sc.op, user.card_id, storeUuid, docId) : { free: 0, cb: 0 }
+  const reserved = isToken ? consumeReservation(db, sc.op, user.card_id, storeUuid, docId) : { free: 0, cb: 0, voucherIds: [] as number[] }
   const appliedFree = Math.min(reserved.free, claimedFree, freeAvail, cups)
   const appliedCb = Math.min(reserved.cb, claimedCb, user.cashback_balance, amount)
   const sequenceMatches = true

@@ -61,3 +61,12 @@ DEFAULT-AD-HOC: `vouchersForResolve` уже вызывается из `reservati
 Тесты: `vch-contract.test.ts` (блок V03) 4 passed; полный backend 435 passed; frontend 52 passed; typecheck OK
 Изменённые тесты: нет
 DEFAULT-AD-HOC: нет
+
+## STEP-V04 — Резерв несёт id ваучеров, `consumeReservation` возвращает их
+
+Статус: DONE
+Коммит: см. `git log -1`
+Что сделано: тип `ConsumedBenefits { free, cb, voucherIds }` и `parseVoucherIds` в `reservations.ts`; `consumeReservation` читает `benefit_voucher_ids` и возвращает `voucherIds` во всех ветках; в `SellHandler.ts` изменена ровно одна строка (fallback-объект для не-QR).
+Тесты: `vch-reservation-consume.test.ts` 5 passed; `reservations.test.ts` без правок; GUARD 72 passed; typecheck OK
+Изменённые тесты: нет
+DEFAULT-AD-HOC: нет
