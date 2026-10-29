@@ -88,3 +88,12 @@ DEFAULT-AD-HOC: нет
 Тесты: `vch-redeem.test.ts` 9 passed; полный backend 450 passed; GUARD 72 passed; typecheck OK
 Изменённые тесты: удалён `voucher-redeem-sell.test.ts` (7 тестов предыдущей серии) — фиксировал старую модель `once|multi`, `voucher_redemptions` и спор `voucher_not_redeemed`, которая заменена решениями владельца D-05 (только `once`), D-11 (гашение только id из резерва) и D-12 (имена споров); сценарии перенесены и расширены в `vch-redeem.test.ts`
 DEFAULT-AD-HOC: таблица `voucher_redemptions` из миграции `036` осталась в схеме, но кодом больше не используется (удалять таблицу — деструктивная миграция, запрещено правилом 8)
+
+## STEP-V07 — Конфликт льгот и фиксация поведения PAYBACK
+
+Статус: DONE
+Коммит: см. `git log -1`
+Что сделано: спор `benefit_conflict` пишется в конце транзакции при `claimedVoucher > 0 && (claimedFree > 0 || claimedCb > 0)` (объявление `vDispute` и `redeemedVoucher` вынесено в начало транзакции ещё в STEP-V06, как требует промпт); поведение PAYBACK зафиксировано тестами D-01 (ваучер не возвращается, ни полным, ни частичным возвратом).
+Тесты: `vch-redeem.test.ts` (блок V07) 5 passed, всего в файле 14; GUARD 72 passed; typecheck OK
+Изменённые тесты: нет
+DEFAULT-AD-HOC: нет; `git diff` по `handlePayback` пуст (проверено `git diff 230dfb2 -- SellHandler.ts | grep -c handlePayback` → 0)

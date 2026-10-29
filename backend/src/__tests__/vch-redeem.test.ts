@@ -13,7 +13,7 @@ process.env.EVOTOR_PROXY_TOKEN = 'proxy-secret'
 
 const { app } = await import('../app')
 const { db } = await import('../db')
-const { handleSell } = await import('../integrations/evotor/processing/SellHandler')
+const { handleSell, handlePayback } = await import('../integrations/evotor/processing/SellHandler')
 const { config } = await import('../config')
 const { todayDay } = await import('../modules/vouchers/service')
 
@@ -253,5 +253,75 @@ describe('STEP-V06: погашение ваучера в SellHandler', () => {
       .get(inviterId, docId) as { amount: number } | undefined)?.amount
     // closeSum 20000 копеек, 3 %
     expect(bonus).toBe(Math.floor((20000 * 3) / 100))
+  })
+})
+
+describe('STEP-V07: benefit_conflict и PAYBACK', () => {
+  it('подарок + ваучер: подарок по резерву, ваучер погашен, один benefit_conflict', async () => {
+    const g = await guest()
+    const uid = userIdOf(g.card.cardCode)
+    db.prepare('UPDATE cards SET paid_total=5 WHERE user_id=?').run(uid)
+    const id = give(uid)
+    const r = await resolve('dev-A', g.card.card)
+    expect(r.data.freeAvailable).toBe(1)
+
+    const docId = uniq('sell')
+    handleSell(db as any, STORE, sell(docId, g.card.card, { op: r.data.reservationId, free: 1, voucherId: id }))
+
+    expect(voucherRow(id).usedAt).not.toBeNull()
+    expect(cardState(g.card.cardCode).freeUsed).toBe(1)
+    const conflicts = disputes(docId).filter((d) => d.kind === 'benefit_conflict')
+    expect(conflicts).toHaveLength(1)
+    expect(JSON.parse(conflicts[0].details).redeemed).toBe(id)
+  })
+
+  it('кэшбэк + ваучер: ваучер погашен, benefit_conflict записан', async () => {
+    const g = await guest()
+    const uid = userIdOf(g.card.cardCode)
+    db.prepare('UPDATE users SET cashback_balance=5000 WHERE id=?').run(uid)
+    const id = give(uid)
+    const r = await resolve('dev-A', g.card.card)
+    expect(r.data.cashbackReserved).toBe(5000)
+
+    const docId = uniq('sell')
+    handleSell(db as any, STORE, sell(docId, g.card.card, { op: r.data.reservationId, cb: 5000, voucherId: id }))
+
+    expect(voucherRow(id).usedAt).not.toBeNull()
+    expect(disputes(docId).some((d) => d.kind === 'benefit_conflict')).toBe(true)
+  })
+
+  it('только ваучер → benefit_conflict нет', async () => {
+    const g = await guest()
+    const id = give(userIdOf(g.card.cardCode))
+    const r = await resolve('dev-A', g.card.card)
+    const docId = uniq('sell')
+    handleSell(db as any, STORE, sell(docId, g.card.card, { op: r.data.reservationId, voucherId: id }))
+    expect(disputes(docId).some((d) => d.kind === 'benefit_conflict')).toBe(false)
+  })
+
+  it('полный PAYBACK не возвращает ваучер (D-01)', async () => {
+    const g = await guest()
+    const id = give(userIdOf(g.card.cardCode))
+    const r = await resolve('dev-A', g.card.card)
+    const docId = uniq('sell')
+    handleSell(db as any, STORE, sell(docId, g.card.card, { op: r.data.reservationId, voucherId: id }))
+    const used = voucherRow(id)
+
+    const pb = handlePayback(db as any, STORE, { id: uniq('pb'), baseDocumentUUID: docId, closeSum: 200 })
+    expect(pb.processed).toBe(true)
+    expect(voucherRow(id)).toEqual(used)
+    expect(voucherRow(id).usedAt).not.toBeNull()
+  })
+
+  it('частичный PAYBACK тоже не возвращает ваучер', async () => {
+    const g = await guest()
+    const id = give(userIdOf(g.card.cardCode))
+    const r = await resolve('dev-A', g.card.card)
+    const docId = uniq('sell')
+    handleSell(db as any, STORE, sell(docId, g.card.card, { op: r.data.reservationId, voucherId: id }))
+    const used = voucherRow(id)
+
+    handlePayback(db as any, STORE, { id: uniq('pb'), baseDocumentUUID: docId, closeSum: 100 })
+    expect(voucherRow(id)).toEqual(used)
   })
 })
