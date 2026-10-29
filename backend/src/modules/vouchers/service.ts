@@ -230,62 +230,49 @@ export function updateTemplate(idOrCode: number | string, patch: Partial<Templat
   return getTemplate(cur.id)
 }
 
+/** Контракт кассы (docs/CONTRACT-VOUCHERS-CASHIER.md): fixed = КОПЕЙКИ, percent = 1..100. */
 export type ResolveVoucher = {
   id: number
   title: string
   kind: 'percent' | 'fixed'
   value: number
-  redemptionMode: 'once' | 'multi'
-  stackableWithFreeCup: boolean
-  expiresDay: number
+  redemptionMode: 'once'
+  stackableWithFreeCup: false
+  expiresDay: number | null
   imageUrl: string | null
 }
 
 /**
- * D5: ваучеры, которые касса может предложить гостю на QR-скане.
- * Резерва ваучера на этапе resolve нет (V1): гашение — по `sc.voucherId` в handleSell.
- * Выключенные шаблоны не показываем; для multi учитываем общий лимит гашений.
+ * Активные ваучеры гостя в формате resolve. Некорректные строки молча пропускаются.
+ * Выключенный шаблон скрываем: касса такой ваучер всё равно не погасит.
  */
-export function vouchersForResolve(userId: number): ResolveVoucher[] {
+export function vouchersForResolve(userId: number, max = config.maxVouchersInResolve): ResolveVoucher[] {
   const rows = db
     .prepare(
-      `SELECT v.id, v.title, v.kind, v.value, v.expires_day, v.redemptions_count,
-              COALESCE(t.active, 1) AS active,
-              COALESCE(t.redemption_mode, 'once') AS redemption_mode,
-              COALESCE(t.max_total, NULL) AS max_total,
-              COALESCE(t.stackable_with_free_cup, 1) AS stackable,
-              t.image_url
+      `SELECT v.id, v.title, v.kind, v.value, v.expires_day
          FROM vouchers v LEFT JOIN voucher_templates t ON t.id = v.template_id
-        WHERE v.user_id=? AND v.used_at IS NULL AND v.expires_day>=?
-        ORDER BY v.expires_day, v.id
-        LIMIT ?`,
+        WHERE v.user_id=? AND v.used_at IS NULL AND v.expires_day>=? AND COALESCE(t.active, 1)=1
+        ORDER BY v.expires_day, v.id LIMIT ?`,
     )
-    .all(userId, todayDay(), config.maxVouchersInCard) as {
-    id: number
-    title: string
-    kind: 'percent' | 'fixed'
-    value: number
-    expires_day: number
-    redemptions_count: number
-    active: number
-    redemption_mode: 'once' | 'multi'
-    max_total: number | null
-    stackable: number
-    image_url: string | null
-  }[]
-  return rows
-    .filter((r) => r.active === 1)
-    .filter((r) => r.redemption_mode !== 'multi' || r.max_total == null || r.redemptions_count < r.max_total)
-    .map((r) => ({
+    .all(userId, todayDay(), max) as { id: number; title: string; kind: string; value: number; expires_day: number }[]
+  const out: ResolveVoucher[] = []
+  for (const r of rows) {
+    const kind: 'percent' | 'fixed' = r.kind === 'percent' ? 'percent' : 'fixed'
+    if (kind === 'percent' && (r.value < 1 || r.value > 100)) continue
+    if (kind === 'fixed' && r.value < 1) continue
+    if (!r.title || !r.title.trim()) continue
+    out.push({
       id: r.id,
-      title: r.title,
-      kind: r.kind,
+      title: r.title.trim(),
+      kind,
       value: r.value,
-      redemptionMode: r.redemption_mode,
-      stackableWithFreeCup: r.stackable === 1,
+      redemptionMode: 'once',
+      stackableWithFreeCup: false,
       expiresDay: r.expires_day,
-      imageUrl: r.image_url,
-    }))
+      imageUrl: null,
+    })
+  }
+  return out
 }
 
 /* ───────── E2: гашение ваучера в потоке Эвотора ───────── */

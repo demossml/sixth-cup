@@ -43,3 +43,12 @@ DEFAULT-AD-HOC: номер миграции `037` вместо `036` (см. «О
 Тесты: `vch-migration.test.ts` 4 passed; GUARD 72 passed; typecheck OK
 Изменённые тесты: нет
 DEFAULT-AD-HOC: номер миграции `037` (036 занят шаблонами ваучеров, см. «Отклонения» п.1)
+
+## STEP-V02 — Сборка ваучеров для кассы (чистая функция)
+
+Статус: DONE
+Коммит: см. `git log -1`
+Что сделано: `vouchersForResolve(userId, max = config.maxVouchersInResolve)` приведён к контракту промпта (`redemptionMode: 'once'`, `stackableWithFreeCup: false`, `expiresDay: number | null`, `imageUrl: null`, пропуск некорректных значений, лимит `max`); тип `ResolveVoucher` обновлён; сохранён фильтр выключенных шаблонов (`COALESCE(t.active,1)=1`) — продуктовое поведение предыдущей серии.
+Тесты: `vch-contract.test.ts` (блок V02) 8 passed; полный набор 431 passed; GUARD 72 passed; typecheck OK
+Изменённые тесты: `voucher-templates.test.ts` — (1) ожидание `stackableWithFreeCup: true` → `false` для контракта resolve (D-05/D-06: контракт всегда `once`, без совмещения с подарком); (2) тест «multi с исчерпанным общим лимитом не предлагается…» заменён на проверку скрытия выключенного шаблона (лимиты `max_total` в контракт resolve не входят, D-05/X1)
+DEFAULT-AD-HOC: `vouchersForResolve` уже вызывается из `reservations.ts` (наследие предыдущей серии), флаг `VOUCHERS_IN_RESOLVE` вводится в STEP-V05 — промежуточный коммит отдаёт ваучеры без флага, но только в ветке `vch/n1-n3`

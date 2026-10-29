@@ -231,7 +231,8 @@ describe('D5: ваучеры в resolve', () => {
     const qr = await byQr.json() as any
     expect(qr.kind).toBe('token')
     expect(qr.vouchers).toHaveLength(1)
-    expect(qr.vouchers[0]).toMatchObject({ title: 'Кофе в подарок', redemptionMode: 'once', stackableWithFreeCup: true })
+    // D-05/D-06: контракт кассы всегда once и не совмещается с подарком.
+    expect(qr.vouchers[0]).toMatchObject({ title: 'Кофе в подарок', redemptionMode: 'once', stackableWithFreeCup: false })
 
     const cardCode = (db.prepare('SELECT card_code FROM users WHERE id=?').get(uid) as { card_code: string }).card_code
     const manual = await app.request('/api/devices/loyalty/resolve', {
@@ -266,23 +267,11 @@ describe('D5: ваучеры в resolve', () => {
     expect(activeVouchers(uid)).toHaveLength(0)
   })
 
-  it('multi с исчерпанным общим лимитом не предлагается, а выключенный шаблон скрывает ваучер', async () => {
-    const tpl = createTemplate({
-      code: 'RES4', title: 'Многоразовый', kind: 'fixed', value: 100, validDays: 5, redemptionMode: 'multi', maxTotal: 2,
-    })!
-    const uid = guestUser()
-    grantVoucher(uid, 'RES4')
-    const id = vouchersForResolve(uid)[0].id
-    db.prepare('UPDATE vouchers SET redemptions_count=1 WHERE id=?').run(id)
-    expect(vouchersForResolve(uid)).toHaveLength(1)
-    db.prepare('UPDATE vouchers SET redemptions_count=2 WHERE id=?').run(id)
-    expect(vouchersForResolve(uid)).toHaveLength(0)
-
+  it('выключенный шаблон скрывает ваучер из resolve', async () => {
     const uid2 = guestUser()
     grantVoucher(uid2, 'RES1')
     expect(vouchersForResolve(uid2)).toHaveLength(1)
     updateTemplate(getTemplate('RES1')!.id, { active: false })
     expect(vouchersForResolve(uid2)).toHaveLength(0)
-    updateTemplate(tpl.id, { active: false })
   })
 })
