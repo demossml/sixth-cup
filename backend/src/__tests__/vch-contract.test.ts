@@ -123,3 +123,45 @@ describe('STEP-V02: контракт ваучеров для кассы', () => 
     expect(vouchersForResolve(mine.id)).toEqual([])
   })
 })
+
+describe('STEP-V03: единицы fixed для PWA', () => {
+  it('percent отдаётся как есть', () => {
+    const u = person()
+    const id = give(u.id, { kind: 'percent', value: 10, expiresDay: todayDay() + 4 })
+    expect(activeVouchers(u.id)).toEqual([[id, 'p', 10, todayDay() + 4]])
+  })
+
+  it('fixed переводится в рубли (целые, вниз)', () => {
+    const u = person()
+    const id = give(u.id, { kind: 'fixed', value: 30000, expiresDay: todayDay() + 4 })
+    expect(activeVouchers(u.id)).toEqual([[id, 'f', 300, todayDay() + 4]])
+  })
+
+  it('fixed 15050 → 150 рублей', () => {
+    const u = person()
+    const id = give(u.id, { kind: 'fixed', value: 15050, expiresDay: todayDay() + 4 })
+    expect(activeVouchers(u.id)).toEqual([[id, 'f', 150, todayDay() + 4]])
+  })
+
+  it('/api/sync отдаёт ваучеры в том же виде', async () => {
+    const guest = await app.request('/api/auth/guest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+    const { token } = (await guest.json()) as { token: string }
+    const cardRes = await app.request('/api/loyalty/card', { headers: { Authorization: `Bearer ${token}` } })
+    const card = (await cardRes.json()) as { cardCode: string }
+    const uid = (db.prepare('SELECT id FROM users WHERE card_code=?').get(card.cardCode) as { id: number }).id
+    const id = give(uid, { kind: 'fixed', value: 25000, expiresDay: todayDay() + 5 })
+
+    const r = await app.request('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ receipts: [] }),
+    })
+    expect(r.status).toBe(200)
+    const j = (await r.json()) as { me: { vouchers: [number, string, number, number][] } }
+    expect(j.me.vouchers).toEqual([[id, 'f', 250, todayDay() + 5]])
+  })
+})

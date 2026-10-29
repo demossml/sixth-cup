@@ -52,3 +52,12 @@ DEFAULT-AD-HOC: номер миграции `037` (036 занят шаблона
 Тесты: `vch-contract.test.ts` (блок V02) 8 passed; полный набор 431 passed; GUARD 72 passed; typecheck OK
 Изменённые тесты: `voucher-templates.test.ts` — (1) ожидание `stackableWithFreeCup: true` → `false` для контракта resolve (D-05/D-06: контракт всегда `once`, без совмещения с подарком); (2) тест «multi с исчерпанным общим лимитом не предлагается…» заменён на проверку скрытия выключенного шаблона (лимиты `max_total` в контракт resolve не входят, D-05/X1)
 DEFAULT-AD-HOC: `vouchersForResolve` уже вызывается из `reservations.ts` (наследие предыдущей серии), флаг `VOUCHERS_IN_RESOLVE` вводится в STEP-V05 — промежуточный коммит отдаёт ваучеры без флага, но только в ветке `vch/n1-n3`
+
+## STEP-V03 — Единицы fixed для PWA
+
+Статус: DONE
+Коммит: см. `git log -1`
+Что сделано: `activeVouchers` отдаёт для `fixed` рубли (целые, вниз), для `percent` — значение как есть; кортеж `[id,'p'|'f',value,expiresDay]` не менялся; `frontend/` не тронут (там уже ожидаются рубли).
+Тесты: `vch-contract.test.ts` (блок V03) 4 passed; полный backend 435 passed; frontend 52 passed; typecheck OK
+Изменённые тесты: нет
+DEFAULT-AD-HOC: нет

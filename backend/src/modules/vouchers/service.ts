@@ -50,7 +50,13 @@ export function activeVouchers(userId: number): VoucherTuple[] {
     ORDER BY v.expires_day LIMIT ?`)
     .all(userId, todayDay(), config.maxVouchersInCard) as
     { id: number; kind: string; value: number; expires_day: number }[]
-  return rows.map((r): VoucherTuple => [r.id, r.kind === 'percent' ? 'p' : 'f', r.value, r.expires_day])
+  // D-08: в БД fixed хранится в копейках, PWA показывает рубли.
+  return rows.map((r): VoucherTuple => [
+    r.id,
+    r.kind === 'percent' ? 'p' : 'f',
+    r.kind === 'percent' ? r.value : Math.floor(r.value / 100),
+    r.expires_day,
+  ])
 }
 
 /* ───────── D2: шаблоны ваучеров ───────── */
