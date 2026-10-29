@@ -106,3 +106,12 @@ DEFAULT-AD-HOC: нет; `git diff` по `handlePayback` пуст (провере
 Тесты: `vch-free-eligible.test.ts` 5 passed; `productDefaults.test.ts` 2 passed; админка 33 passed; GUARD 72 passed; доп. набор (`addon-single-entry addons-e2e addons-catalog-regressions device-catalog admin-console admin-audit-fixes product-variants`) 68 passed; typecheck OK
 Изменённые тесты: нет
 DEFAULT-AD-HOC: тест «эвристика для не-напитка» задаёт `icon: 'Box'` — схема админки по умолчанию ставит `icon='Coffee'`, а `looksLikeDrink` считает напитком уже по иконке, поэтому без явной иконки эвристика всегда даёт «чашка»
+
+## STEP-V09 — Документы: контракт и наблюдаемость
+
+Статус: DONE
+Коммит: см. `git log -1`
+Что сделано: `docs/CONTRACT-VOUCHERS-CASHIER.md` (контракт resolve/sc/SellHandler, единицы, откат флагом, ссылка на миграцию `037`); `docs/LOYALTY-OBSERVABILITY.md` (6 SQL-запросов только на чтение, пометки про единицы времени, порядок массового включения подарка).
+Тесты: кода нет; все 6 SQL выполнены на временной БД через `better-sqlite3` — без ошибок; typecheck OK
+Изменённые тесты: нет
+DEFAULT-AD-HOC: нет
