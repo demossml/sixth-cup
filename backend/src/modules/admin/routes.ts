@@ -611,6 +611,9 @@ export const adminRoutes = new Hono()
         p.sizeValue ?? null, p.sizeUnit ?? null, p.calories ?? null, p.id
       )
     } else {
+      const cupFlag = (p.countsAsCup ?? looksLikeDrink(p.name, p.icon)) ? 1 : 0
+      // N3: подарок по умолчанию доступен там, где позиция считается чашкой (явное значение имеет приоритет).
+      const freeFlag = p.freeEligible === undefined ? cupFlag : (p.freeEligible ? 1 : 0)
       db.prepare(`
         INSERT INTO products(name,price,icon,available,description,category_id,image_url,sort_order,created_at,updated_at,
           modifier_scheme_id,recipe_text,recipe_cost_rub,recipe_seconds,counts_as_cup,free_eligible,tax,measure,cost_price_kopecks,season_start_at,season_end_at,evotor_extra_json,catalog_source,size_value,size_unit,calories)
@@ -620,7 +623,7 @@ export const adminRoutes = new Hono()
         p.description ?? null, p.categoryId ?? null, p.imageUrl ?? null,
         p.sortOrder, t, t,
         p.modifierSchemeId ?? null, p.recipeText ?? null, p.recipeCostRub ?? null, p.recipeSeconds ?? null,
-        (p.countsAsCup ?? looksLikeDrink(p.name, p.icon)) ? 1 : 0, p.freeEligible ? 1 : 0, p.tax ?? 'NO_VAT', p.measure ?? 'шт',
+        cupFlag, freeFlag, p.tax ?? 'NO_VAT', p.measure ?? 'шт',
         p.costPriceKopecks ?? 0, p.seasonStartAt ?? null, p.seasonEndAt ?? null, p.evotorExtraJson ?? null,
         p.sizeValue ?? null, p.sizeUnit ?? null, p.calories ?? null
       )

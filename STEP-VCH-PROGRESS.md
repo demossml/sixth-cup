@@ -97,3 +97,12 @@ DEFAULT-AD-HOC: таблица `voucher_redemptions` из миграции `036`
 Тесты: `vch-redeem.test.ts` (блок V07) 5 passed, всего в файле 14; GUARD 72 passed; typecheck OK
 Изменённые тесты: нет
 DEFAULT-AD-HOC: нет; `git diff` по `handlePayback` пуст (проверено `git diff 230dfb2 -- SellHandler.ts | grep -c handlePayback` → 0)
+
+## STEP-V08 — Признак подарка по умолчанию (N3)
+
+Статус: DONE
+Коммит: см. `git log -1`
+Что сделано: в `routes.ts` (ветка создания товара) `cupFlag`/`freeFlag`: `free_eligible` наследует `counts_as_cup`, если админ не задал явно; новый `frontend-admin/src/lib/productDefaults.ts` (`newProductDefaults` → `countsAsCup: 1, freeEligible: 1`), кнопка «Новый товар» использует его; подпись галочки расширена.
+Тесты: `vch-free-eligible.test.ts` 5 passed; `productDefaults.test.ts` 2 passed; админка 33 passed; GUARD 72 passed; доп. набор (`addon-single-entry addons-e2e addons-catalog-regressions device-catalog admin-console admin-audit-fixes product-variants`) 68 passed; typecheck OK
+Изменённые тесты: нет
+DEFAULT-AD-HOC: тест «эвристика для не-напитка» задаёт `icon: 'Box'` — схема админки по умолчанию ставит `icon='Coffee'`, а `looksLikeDrink` считает напитком уже по иконке, поэтому без явной иконки эвристика всегда даёт «чашка»

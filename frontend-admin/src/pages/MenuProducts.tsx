@@ -8,6 +8,7 @@ import { useSyncStores } from '../api/useStores'
 import { FIELD_LABEL, filterProducts, showChangeValue, sortProducts, syncState, tabCounts } from '../lib/menu'
 import type { MenuTab, SortKey } from '../lib/menu'
 import { fmtNum } from '../lib/format'
+import { newProductDefaults } from '../lib/productDefaults'
 import { setParams } from '../lib/query'
 import { Badge, Banner, Button, Card, Check, ConfirmDialog, DataTable, Drawer, ErrorBox, Field, Input, Select, Spinner, Tabs, Toggle, useToast } from '../ui/kit'
 import type { Column } from '../ui/kit'
@@ -332,7 +333,11 @@ if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} /
         )}
 
         <Check checked={!!d.countsAsCup} onChange={(v) => set('countsAsCup', v ? 1 : 0)} label="Считается чашкой (идёт в счётчик лояльности)" />
-        <Check checked={!!d.freeEligible} onChange={(v) => set('freeEligible', v ? 1 : 0)} label="Можно выдать бесплатно по лояльности" />
+        <Check
+          checked={!!d.freeEligible}
+          onChange={(v) => set('freeEligible', v ? 1 : 0)}
+          label="Можно выдать бесплатно по лояльности (иначе касса не предложит подарок на эту позицию)"
+        />
       </div>
       <Field label="На каких точках продаётся" hint={stores.length ? 'Показаны только точки с включённой синхронизацией' : 'Нет точек с включённой синхронизацией — см. раздел «Касса»'}>
         <div className="rounded-xl border border-line px-3">
@@ -647,7 +652,7 @@ export default function MenuProducts() {
   return (
     <>
       <div className="mb-3 flex flex-wrap gap-2">
-        <Button icon={<Plus size={16} />} onClick={() => setEdit({ name: '', price: 0, available: 1, countsAsCup: 1, storeUuids: syncStores.map((s) => s.uuid) })}>Новый товар</Button>
+        <Button icon={<Plus size={16} />} onClick={() => setEdit(newProductDefaults(syncStores.map((s) => s.uuid)))}>Новый товар</Button>
         <Button variant="secondary" icon={<Download size={14} />} onClick={() => download('/products.csv', 'products.csv').catch((e) => toast.push(String(e.message ?? e), 'bad'))}>CSV</Button>
       </div>
       <Tabs
