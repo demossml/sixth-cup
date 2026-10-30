@@ -290,10 +290,49 @@ export const adminEvotorCatalog = new Hono()
     if (!en || en.e !== 1) {
       throw bad('Store not found or sync disabled — enable the checkbox first', 400)
     }
-    const push = new ProductPushService(db)
-    const result = await push.wipeCloudAndResync(storeUuid)
-    const ok = result.deleteErrors.length === 0 && result.pushErrors.length === 0
-    return c.json({ ok, storeUuid, ...result }, ok ? 200 : 502)
+    // Wipe = list Cloud → DELETE our sc-* / linked ids → clear links → full push from 6.7.
+    // Evotor often returns 400 on individual create/replace (measure/tax/name/parent). That is a
+    // per-product validation error, NOT an upstream gateway failure. Returning HTTP 502 for
+    // "59 pushed / 16 failed" made the admin look broken after a mostly successful resync.
+    //
+    // Status policy:
+    // - 200 + ok:true  — deleteErrors empty and pushErrors empty
+    // - 200 + ok:false + partial:true — operation finished; some products failed (see pushErrors)
+    // - 502 — nothing useful happened (list/delete/push all empty with errors) or thrown below
+    try {
+      const push = new ProductPushService(db)
+      const result = await push.wipeCloudAndResync(storeUuid)
+      const deleteOk = result.deleteErrors.length === 0
+      const pushOk = result.pushErrors.length === 0
+      const complete = deleteOk && pushOk
+      const nothingDone =
+        result.listed === 0 &&
+        result.deleted === 0 &&
+        result.pushed === 0 &&
+        result.linksCleared === 0
+      const fatal = nothingDone && (result.deleteErrors.length > 0 || result.pushErrors.length > 0)
+      return c.json(
+        {
+          ok: complete,
+          complete,
+          partial: !complete && !fatal,
+          storeUuid,
+          listed: result.listed,
+          deleted: result.deleted,
+          deleteErrors: result.deleteErrors,
+          linksCleared: result.linksCleared,
+          pushed: result.pushed,
+          pushErrors: result.pushErrors,
+          extrasFailed: result.extrasFailed,
+          hint: complete
+            ? undefined
+            : 'Resync finished with per-product Evotor errors. Inspect pushErrors (usually HTTP 400 validation). Fix those SKUs and run push/sync again — this is not a gateway 502.',
+        },
+        fatal ? 502 : 200,
+      )
+    } catch (e) {
+      throw bad(String(e), 502)
+    }
   })
 
   .post('/evotor/poll', async (c) => {
