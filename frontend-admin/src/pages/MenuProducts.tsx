@@ -166,6 +166,8 @@ if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} /
             modifierSchemeId: d.modifierSchemeId ?? null,
             // null = снять назначение схемы молока (независимо от схемы добавок)
             milkSchemeId: d.milkSchemeId ?? null,
+            volumeSchemeId: d.volumeSchemeId ?? null,
+            volumePrices: volumeSchemeItems.map((it) => ({ itemId: it.id, price: volumePrices[it.id] ?? d.price })),
             countsAsCup: !!d.countsAsCup, freeEligible: !!d.freeEligible,
             tax: d.tax || undefined, measure: d.measure || undefined,
             variants: rows.map((v) => ({

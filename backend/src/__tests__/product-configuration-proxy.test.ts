@@ -454,3 +454,52 @@ describe('сквозной сценарий: админка → схема → �
     expect(c.j.milk.byProductId[String(rows[0].id)].options.find((o: any) => o.sendToReceipt).available).toBe(false)
   })
 })
+
+describe('размеры: назначения схем не теряются при сохранении карточки', () => {
+  it('POST /product-groups сохраняет milkSchemeId и volumeSchemeId у каждого размера', async () => {
+    const oat = await mkProduct('Овсяное-размеры', 60)
+    link(oat, STORE_A, `u-oatgrp-${T}`)
+    const milk = await mkMilkScheme(oat)
+    const vol = await adm('POST', '/volume-schemes', {
+      name: `Объёмы-размеры-${T}`, active: true,
+      items: [{ label: '250 мл', sizeValue: 250, sizeUnit: 'ml', sortOrder: 0, active: true }, { label: '350 мл', sizeValue: 350, sizeUnit: 'ml', sortOrder: 1, active: true }],
+    })
+    const volItems = vol.j.scheme.items as { id: number }[]
+
+    const g = await adm('POST', '/product-groups', {
+      name: `Группа-схем-${T}`, icon: 'Coffee', sortOrder: 0, countsAsCup: true, freeEligible: true,
+      milkSchemeId: milk, volumeSchemeId: vol.j.scheme.id,
+      volumePrices: [{ itemId: volItems[0].id, price: 240 }, { itemId: volItems[1].id, price: 330 }],
+      variants: [{ label: '250 мл', price: 250 }, { label: '350 мл', price: 300 }],
+    })
+    expect(g.s).toBe(200)
+
+    // То, что показывает админка после повторного открытия карточки:
+    const rows = (await adm('GET', '/products')).j.products as any[]
+    const group = rows.filter((p) => p.groupId === g.j.id)
+    expect(group).toHaveLength(2)
+    for (const p of group) {
+      expect(p.milkSchemeId).toBe(milk)
+      expect(p.volumeSchemeId).toBe(vol.j.scheme.id)
+    }
+
+    // И то, что получает касса: объёмы — реальные SKU со своими ценами
+    const cfg = await config_of(group[0].id, STORE_A)
+    expect(cfg.j.milk.byProductId[String(group[0].id)].schemeId).toBe(milk)
+    expect(cfg.j.volumes.map((v: any) => v.priceRub)).toEqual([250, 300])
+
+    // Цены схемы объёмов (шаблон) видны в каталоге: product.config.volumes
+    const cat = (await (await app.request(`/api/devices/catalog?storeUuid=${encodeURIComponent(STORE_A)}`)).json()) as any
+    const one = (cat.products as any[]).find((x) => x.id === group[0].id)
+    expect(one.config.volumes.options.map((o: any) => o.price)).toEqual([240, 330])
+
+    // Повторное сохранение без поля milkSchemeId назначение не обнуляет
+    const again = await adm('POST', '/product-groups', {
+      id: g.j.id, name: `Группа-схем-${T}`, icon: 'Coffee', sortOrder: 0,
+      variants: group.map((p) => ({ id: p.id, label: p.variantLabel, price: p.price })),
+    })
+    expect(again.s).toBe(200)
+    const after = ((await adm('GET', '/products')).j.products as any[]).filter((p) => p.groupId === g.j.id)
+    expect(after.every((p) => p.milkSchemeId === milk)).toBe(true)
+  })
+})

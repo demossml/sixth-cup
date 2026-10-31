@@ -168,6 +168,30 @@ X-Evotor-Store-Uuid: {storeUuid}   # опционально, должен сов
 
 Новая схема добавок с `groupKey: "milk"` отклоняется с 400.
 
+## 5.3. Сохранение карточки с размерами
+
+Карточка с размерами сохраняется через `POST /api/admin/product-groups` (не через `POST /admin/products`).
+Этот эндпоинт принимает те же назначения, что и обычная карточка:
+
+```json
+{ "id": 1, "name": "Капучино", "milkSchemeId": 3, "volumeSchemeId": 2,
+  "modifierSchemeId": 7, "volumePrices": [{ "itemId": 1, "price": 240 }],
+  "variants": [{ "id": 4, "label": "250 мл", "price": 250 }] }
+```
+
+- `milkSchemeId` / `volumeSchemeId` пишутся **каждому** размеру; `undefined` — не трогать, `null` — снять;
+- `volumePrices` — цены схемы объёмов для каждого SKU.
+
+Исторический дефект: схема эндпоинта не содержала этих полей, zod их отбрасывал, и после сохранения
+карточка снова показывала «Без схемы молока». Закрыто тестом
+`product-configuration-proxy → «размеры: назначения схем не теряются»`.
+
+Два источника объёмов (не конфликтуют, но важно не путать):
+| Где | Что | Цена |
+|---|---|---|
+| `GET /products/{id}/configuration` → `volumes[]` | реальные SKU группы | цена SKU |
+| `GET /catalog` → `product.config.volumes` | схема-шаблон объёмов | цена из `product_volume_prices` |
+
 ## 6. API
 
 | Метод | Путь | Назначение |

@@ -888,6 +888,11 @@ export const adminRoutes = new Hono()
     sortOrder: z.number().int().default(0),
     icon: z.string().max(24).default('Coffee'),
     modifierSchemeId: z.number().int().positive().nullable().optional(),
+    /** Схема молока — у каждого размера своё назначение (undefined = не трогать, null = снять). */
+    milkSchemeId: z.number().int().positive().nullable().optional(),
+    /** Схема объёмов — шаблон, общий для карточки. */
+    volumeSchemeId: z.number().int().positive().nullable().optional(),
+    volumePrices: z.array(z.object({ itemId: z.number().int().positive(), price: z.number().int().min(0) })).max(20).optional(),
     countsAsCup: z.boolean().optional(),
     freeEligible: z.boolean().optional(),
     tax: z.string().max(32).optional(),
@@ -962,28 +967,39 @@ export const adminRoutes = new Hono()
             counts_as_cup=COALESCE(?, counts_as_cup), free_eligible=COALESCE(?, free_eligible),
             tax=COALESCE(?, tax), measure=COALESCE(?, measure),
             size_value=?, size_unit=?, calories=?, group_id=?, variant_label=?, variant_sort=?,
+            -- undefined = «не трогать», null = «снять»: как в POST /products
+            milk_scheme_id=CASE WHEN ?=1 THEN ? ELSE milk_scheme_id END,
+            volume_scheme_id=CASE WHEN ?=1 THEN ? ELSE volume_scheme_id END,
             catalog_source='SIXTH_CUP'
           WHERE id=?
         `).run(
           name, v.price, p.icon, available, p.description ?? null, p.categoryId ?? null,
           p.imageUrl ?? null, p.sortOrder, t, p.modifierSchemeId ?? null,
           cup, free, p.tax ?? null, p.measure ?? null,
-          sizeValue, sizeUnit, calories, groupId, label, i, v.id,
+          sizeValue, sizeUnit, calories, groupId, label, i,
+          p.milkSchemeId === undefined ? 0 : 1, p.milkSchemeId ?? null,
+          p.volumeSchemeId === undefined ? 0 : 1, p.volumeSchemeId ?? null,
+          v.id,
         )
+        saveProductVolumePrices(db, Number(v.id), p.volumeSchemeId ?? null, p.volumePrices)
         kept.push(v.id)
       } else {
         db.prepare(`
           INSERT INTO products(name,price,icon,available,description,category_id,image_url,sort_order,
             created_at,updated_at,modifier_scheme_id,counts_as_cup,free_eligible,tax,measure,
-            size_value,size_unit,calories,group_id,variant_label,variant_sort,catalog_source)
-          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'SIXTH_CUP')
+            size_value,size_unit,calories,group_id,variant_label,variant_sort,catalog_source,
+            milk_scheme_id,volume_scheme_id)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'SIXTH_CUP',?,?)
         `).run(
           name, v.price, p.icon, available, p.description ?? null, p.categoryId ?? null,
           p.imageUrl ?? null, p.sortOrder, t, t, p.modifierSchemeId ?? null,
           cup ?? (looksLikeDrink(name, p.icon) ? 1 : 0), free ?? 0, p.tax ?? 'NO_VAT', p.measure ?? 'шт',
           sizeValue, sizeUnit, calories, groupId, label, i,
+          p.milkSchemeId ?? null, p.volumeSchemeId ?? null,
         )
-        kept.push((db.prepare('SELECT last_insert_rowid() AS id').get() as { id: number }).id)
+        const newId = (db.prepare('SELECT last_insert_rowid() AS id').get() as { id: number }).id
+        saveProductVolumePrices(db, Number(newId), p.volumeSchemeId ?? null, p.volumePrices)
+        kept.push(newId)
       }
     })
 
