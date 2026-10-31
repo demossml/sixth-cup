@@ -127,12 +127,18 @@ X-Evotor-Store-Uuid: {storeUuid}   # опционально, должен сов
 ```
 
 - маршрут живёт в существующем пространстве `/api/devices` → маска `https://app\.67coffee\.ru/api/.*` его покрывает;
-- авторизация — существующий `evotorProxyStrict` + обязательный `EVOTOR_PROXY_TOKEN` (иначе `503 proxy_not_configured`);
+- **авторизация как у `/catalog`:** APK 5.2.21 (versionCode 147) отправляет только `Accept`,
+  `X-Evotor-Store-Uuid`, `X-Evotor-Device-UUID` — без `Authorization`. Поэтому маршрут публичный
+  read-only; если `Authorization` всё же передан и не совпал с `EVOTOR_PROXY_TOKEN` → `403 proxy_forbidden`;
+- «товар не найден» → `200 { ok: false, error: "product_not_found" }`: `404` у кассы значит
+  «маршрута нет» и переключает её на офлайн-окно по каталогу;
 - `Cache-Control: no-store`, лимит 240 запросов в минуту на точку;
 - UUID берутся только из `product_store_links` запрошенной точки (fallback на соседнюю точку запрещён);
 - объёмы — все реальные SKU группы (или один SKU, если группы нет);
 - молоко — `null`, если `products.milk_scheme_id` пуст; иначе `required: true`;
 - добавки — `null`, если схема не назначена; `required` в блоке всегда `false`;
+- `byProductId` содержит ключ **каждого** объёма: `{ schemeId: null, options: [] }` = схема не назначена
+  (касса блок не рисует);
 - если схема молока назначена, но вариантов нет — `milk.byProductId[id].error = "empty_scheme"` и
   `configErrors[{ code: "milk_scheme_empty" }]`: обязательный выбор нельзя маскировать под «схемы нет».
 

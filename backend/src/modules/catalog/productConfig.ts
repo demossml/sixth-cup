@@ -42,7 +42,8 @@ export type ConfigMilkOption = {
 }
 
 export type ConfigMilkBlock = {
-  schemeId: number
+  /** null — схема объёму не назначена (`options: []`). */
+  schemeId: number | null
   options: ConfigMilkOption[]
   /** Схема назначена и активна, но вариантов нет — касса не должна обходить обязательный выбор. */
   error?: 'empty_scheme'
@@ -64,7 +65,8 @@ export type ConfigAddonOption = {
 }
 
 export type ConfigAddonsBlock = {
-  schemeId: number
+  /** null — схема объёму не назначена (`options: []`). */
+  schemeId: number | null
   options: ConfigAddonOption[]
 }
 
@@ -156,7 +158,8 @@ export function buildProductConfiguration(
   for (const sku of skus) {
     // Молоко: только собственное назначение SKU (наследования от группы нет по модели БД).
     if (sku.milkSchemeId == null) {
-      milkBySku[String(sku.id)] = null
+      // Ключ присутствует у каждого объёма: пустые options = схемы нет (касса блок не рисует).
+      milkBySku[String(sku.id)] = { schemeId: null, options: [] }
     } else {
       milkRequired = true
       const options = milkForProduct(db, Number(sku.milkSchemeId), uuidByProduct)
@@ -189,11 +192,11 @@ export function buildProductConfiguration(
     // Добавки: схема SKU приоритетнее схемы группы (та же логика, что в каталоге).
     const schemeId = effectiveSchemeId(db, sku.modifierSchemeId, groupSchemeId)
     if (schemeId == null) {
-      addonsBySku[String(sku.id)] = null
+      addonsBySku[String(sku.id)] = { schemeId: null, options: [] }
     } else {
       const toppings = buildCatalogToppings(db, schemeId, uuidByProduct)
       if (!toppings.length) {
-        addonsBySku[String(sku.id)] = null
+        addonsBySku[String(sku.id)] = { schemeId, options: [] }
       } else {
         hasAddons = true
         addonsBySku[String(sku.id)] = {

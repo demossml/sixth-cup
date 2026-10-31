@@ -144,8 +144,13 @@ long token-like strings are redacted server-side as a safety net.
 
 ```http
 GET {base}/api/devices/products/{productId}/configuration?storeUuid={storeUuid}
-Authorization: Bearer {EVOTOR_PROXY_TOKEN}
+Accept: application/json
+X-Evotor-Store-Uuid: {storeUuid}
+X-Evotor-Device-UUID: {deviceUuid}
 ```
+
+Публичный read-only маршрут (как `/catalog`): `Authorization` не требуется и APK его не шлёт.
+Неверный `Authorization`, если он всё же передан, даёт `403`; неизвестный `productId` — `200 { ok:false, error:"product_not_found" }`.
 
 * `volumes[]` — реальные SKU группы с UUID **этой** точки (`available=false`, если связи нет);
 * `milk` — `null`, если схема не назначена; иначе `{ required: true, byProductId }`. Обычное молоко

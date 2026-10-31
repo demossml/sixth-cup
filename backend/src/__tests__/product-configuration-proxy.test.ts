@@ -82,39 +82,33 @@ beforeAll(() => {
   }
 })
 
-describe('авторизация прокси', () => {
-  it('валидный токен — 200', async () => {
+describe('авторизация: APK ходит без токена (как /catalog)', () => {
+  it('без Authorization — 200 (APK 5.2.21 не умеет слать токен)', async () => {
+    const id = await mkProduct('Без-токена')
+    link(id, STORE_A, `u-notoken-${id}`)
+    expect((await config_of(id, STORE_A, {})).s).toBe(200)
+  })
+
+  it('валидный токен — тоже 200', async () => {
     const id = await mkProduct('Авторизация')
     link(id, STORE_A, `u-auth-${id}`)
     expect((await config_of(id, STORE_A)).s).toBe(200)
   })
 
-  it('неверный токен — 403', async () => {
+  it('передан неверный Authorization — 403', async () => {
     const id = await mkProduct('Авторизация-2')
     const r = await config_of(id, STORE_A, { Authorization: 'Bearer wrong' })
     expect(r.s).toBe(403)
   })
 
-  it('без заголовка Authorization — 403', async () => {
-    const id = await mkProduct('Авторизация-3')
-    expect((await config_of(id, STORE_A, {})).s).toBe(403)
-  })
-
-  it('чужой заголовок не заменяет Authorization', async () => {
-    const id = await mkProduct('Авторизация-4')
-    const r = await config_of(id, STORE_A, { 'X-Evotor-Store-Uuid': STORE_A, 'X-Proxy-Token': 'proxy-secret' })
-    expect(r.s).toBe(403)
-  })
-
-  it('без настроенного секрета на сервере — 503 (middleware пропускает, маршрут запрещает)', async () => {
+  it('серверный секрет не настроен — маршрут продолжает работать (200), не 5xx', async () => {
     const id = await mkProduct('Авторизация-5')
     link(id, STORE_A, `u-auth5-${id}`)
     const saved = config.evotorProxyToken
     ;(config as any).evotorProxyToken = ''
     try {
       const r = await config_of(id, STORE_A, {})
-      expect(r.s).toBe(503)
-      expect(r.j.error).toBe('proxy_not_configured')
+      expect(r.s).toBe(200)
     } finally {
       ;(config as any).evotorProxyToken = saved
     }
@@ -148,8 +142,17 @@ describe('валидация запроса', () => {
     expect(r.status).toBe(200)
   })
 
-  it('несуществующий товар — 404', async () => {
-    expect((await config_of(999999, STORE_A)).s).toBe(404)
+  it('несуществующий товар — 200 ok:false (404 зарезервирован за «маршрута нет»)', async () => {
+    const r = await config_of(999999, STORE_A)
+    expect(r.s).toBe(200)
+    expect(r.j).toMatchObject({ ok: false, error: 'product_not_found', productId: 999999, storeUuid: STORE_A })
+  })
+
+  it('storeUuid сравнивается без учёта регистра', async () => {
+    const id = await mkProduct('Регистр')
+    link(id, STORE_A, `u-case-${id}`)
+    const r = await config_of(id, STORE_A.toUpperCase(), { ...PROXY, 'X-Evotor-Store-Uuid': STORE_A })
+    expect(r.s).toBe(200)
   })
 
   it('ответ не кешируется', async () => {
@@ -266,7 +269,8 @@ describe('молоко', () => {
 
     const r = await config_of(rows[0].id, STORE_A)
     expect(r.j.milk.byProductId[String(rows[0].id)].schemeId).toBe(scheme)
-    expect(r.j.milk.byProductId[String(rows[1].id)]).toBeNull()
+    // у второго объёма схема не назначена: ключ есть, options пустые
+    expect(r.j.milk.byProductId[String(rows[1].id)]).toEqual({ schemeId: null, options: [] })
   })
 })
 

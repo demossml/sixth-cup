@@ -2,22 +2,23 @@
 
 ## `GET /api/devices/products/{productId}/configuration?storeUuid=`
 
-Конфигурация **одной карточки**: объёмы + молоко + добавки. Тот же прокси Evotor Cloud
-и тот же секрет `EVOTOR_PROXY_TOKEN`, что у `/loyalty/resolve`:
+Конфигурация **одной карточки**: объёмы + молоко + добавки. Публичный read-only маршрут,
+как `/catalog`: APK 5.2.21 не передаёт `Authorization`.
 
 ```http
 GET /api/devices/products/501/configuration?storeUuid=STORE-UUID
-Authorization: Bearer <EVOTOR_PROXY_TOKEN>
+Accept: application/json
+X-Evotor-Store-Uuid: STORE-UUID
+X-Evotor-Device-UUID: <terminal>
 ```
 
 | Код | Когда |
 |---|---|
 | 200 | конфигурация (заголовок `Cache-Control: no-store`) |
 | 400 | `invalid_product_id`, `store_required`, `store_uuid_mismatch` |
-| 403 | `proxy_forbidden` — нет/неверный `Authorization` |
-| 404 | `product_not_found` |
+| 403 | `proxy_forbidden` — передан неверный `Authorization` при настроенном токене |
+| 200 + `ok:false` | `product_not_found` (404 у кассы = «маршрута нет», поэтому не используем) |
 | 429 | больше 240 запросов в минуту на точку |
-| 503 | `proxy_not_configured` — на сервере не задан `EVOTOR_PROXY_TOKEN` |
 
 Форма ответа (`schemaVersion: 1`) и правила — в [PRODUCT-CONFIGURATION-SCHEMES.md](./PRODUCT-CONFIGURATION-SCHEMES.md).
 Ключевое: `milk` и `additions` могут быть `null`; блок добавок необязателен (`required: false`),
