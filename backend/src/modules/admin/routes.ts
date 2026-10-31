@@ -546,7 +546,22 @@ export const adminRoutes = new Hono()
       list.push(link)
       byProduct.set(id, list)
     }
-    return c.json({ products: products.map((p) => ({ ...p, evotorLinks: byProduct.get(Number(p.id)) ?? [] })) })
+    // Готовность к выгрузке в Эвотор (только API, UI — фаза 2): есть ли uuid хотя бы на одной включённой точке.
+    const readyOf = (links: Record<string, unknown>[]) => {
+      const live = links.filter((l) => Number(l.enabled ?? 1) === 1)
+      if (!live.length) return { ready: false, reason: 'no_store_link' as const }
+      const withUuid = live.filter((l) => String(l.evotorUuid ?? '').trim() !== '')
+      if (!withUuid.length) return { ready: false, reason: 'no_evotor_uuid' as const }
+      if (live.some((l) => String(l.lastError ?? '').trim() !== '')) return { ready: false, reason: 'last_push_failed' as const }
+      return { ready: true, reason: null }
+    }
+    return c.json({
+      products: products.map((p) => {
+        const links = byProduct.get(Number(p.id)) ?? []
+        const r = readyOf(links)
+        return { ...p, evotorLinks: links, evotorReady: r.ready, evotorReadyReason: r.reason }
+      }),
+    })
   })
 
   .post('/products', zValidator('json', z.object({

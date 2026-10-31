@@ -33,6 +33,8 @@ export type CatalogTopping = {
   isDefault: boolean
   zeroOption: boolean
   available: boolean
+  /** Почему опция не продаётся: нет uuid на точке / выключена. zeroOption — всегда null. */
+  notReadyReason?: 'no_evotor_uuid' | 'unavailable' | null
 }
 
 /**
@@ -635,6 +637,7 @@ function buildCatalogToppingsRaw(
         isDefault: it.isDefault === 1,
         zeroOption: zero,
         available,
+        notReadyReason: zero || available ? null : paid && uuid == null ? 'no_evotor_uuid' : 'unavailable',
       })
     }
     return out
@@ -697,6 +700,7 @@ function buildCatalogToppingsRaw(
       isDefault: it.isDefault === 1,
       zeroOption: zero,
       available,
+      notReadyReason: zero || available ? null : paid && uuid == null ? 'no_evotor_uuid' : 'unavailable',
     })
   }
   return out

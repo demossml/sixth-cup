@@ -377,10 +377,16 @@ export const deviceRoutes = new Hono<DeviceEnv>()
       // Multi-store: when storeUuid is set, NEVER fall back to another store's uuid.
       // Missing link for this store ⇒ product/topping evotorUuid stays null (cashier merge skips).
       const uuidByProduct = new Map<number, string>()
+      /** У товара есть строка связи с этой точкой — даже если uuid в ней пуст (после wipe). */
+      const linkedToStore = new Set<number>()
       if (storeUuid) {
         for (const l of linkRows) {
           if (l.storeUuid === storeUuid) uuidByProduct.set(l.productId, l.evotorUuid)
         }
+        // linkRows отфильтрованы по непустому uuid, поэтому «связь без uuid» берём отдельно.
+        const linkedRows = db.prepare('SELECT product_id AS productId FROM product_store_links WHERE store_uuid=?')
+          .all(storeUuid) as { productId: number }[]
+        for (const r of linkedRows) linkedToStore.add(Number(r.productId))
       } else {
         // Legacy APK without storeUuid — first non-empty link (discouraged for multi-store).
         for (const l of linkRows) {
@@ -466,6 +472,23 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         }
         const toppings = buildCatalogToppings(db, schemeId, uuidByProduct, toppingsCache)
         const upsell = upsellPool.filter((u) => u.id !== id).slice(0, 6)
+        const evotorUuid = uuidByProduct.get(id) || null
+        // server-режим кассы: плитка продаётся, только если товар реально есть в номенклатуре точки.
+        // Строку из products не убираем — старым кассам нужен полный список с hideFromMenu.
+        const isModifierProduct = modifierProductIds.has(id)
+        const isGroupProduct = Number(p.isGroup) === 1
+        const hidden = isModifierProduct || isGroupProduct
+        const availableHere = Number(p.available ?? 1) === 1
+        const sellable = !hidden && availableHere && Boolean(evotorUuid)
+        const notReadyReason = sellable
+          ? null
+          : hidden
+            ? 'hidden_modifier'
+            : !availableHere
+              ? 'unavailable'
+              : storeUuid && !linkedToStore.has(id)
+                ? 'no_store_link'
+                : 'no_evotor_uuid'
         const description = (p.description as string | null) ?? null
         const categoryId = p.categoryId != null ? Number(p.categoryId) : null
         const categoryName = categoryId != null ? (catNameById.get(categoryId) || null) : null
@@ -485,7 +508,9 @@ export const deviceRoutes = new Hono<DeviceEnv>()
           freeEligible: !!p.freeEligible && !modifierProductIds.has(id),
           recipeText: p.recipeText ?? null,
           recipe: p.recipeText ?? null,
-          evotorUuid: uuidByProduct.get(id) || null,
+          evotorUuid,
+          sellable,
+          notReadyReason,
           // Стабильная связка с ProductTable.ROW_CODE на терминале (см. productIdentity.ts).
           articleNumber: productArticleNumber(id),
           groupId: p.groupId != null ? Number(p.groupId) : null,
@@ -566,10 +591,23 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         groups = []
       }
 
+      // Флаг для APK: server-режим включается явно (?serverCatalog=1) или по версии кассы ≥ 140.
+      // Пока новая касса не раскатана, по умолчанию false — старые кассы не ждут новых полей.
+      const appVersionCode = Number(c.req.header('X-App-Version-Code') ?? NaN)
+      const serverCatalog = c.req.query('serverCatalog') === '1'
+        || (Number.isFinite(appVersionCode) && appVersionCode >= 140)
+      // Диагностика для админки: чего не хватает до полной витрины (не удаляем позиции из products).
+      const notReadySummary = out
+        .filter((p) => !p.sellable)
+        .slice(0, 50)
+        .map((p) => ({ productId: p.id, name: p.name, reason: p.notReadyReason }))
+
       return c.json({
         ok: true,
         generatedAt: Math.floor(Date.now() / 1000),
         storeUuid: storeUuid || null,
+        features: { serverCatalog },
+        notReadySummary,
         categories,
         menu,
         // Все категории-добавки: APK скрывает товар по categoryId, не по названию.
