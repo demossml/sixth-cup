@@ -18,7 +18,7 @@ import { writeAudit } from './audit'
 import type { AuditInput } from './audit'
 import {
   HEALTH_DEFAULTS, decodeCursor, diffProduct, encodeCursor, likeEscape, periodSince,
-  storeHealth, toCsv, worstLevel, nextPrice,
+  describeEvotorError, storeHealth, toCsv, worstLevel, nextPrice,
   type FieldChange, type ProductPatch,
 } from './consoleLib'
 
@@ -60,7 +60,14 @@ export function queryStoreHealth(now = Date.now()) {
   }[]
   const stores = rows.map((r) => {
     const h = storeHealth({ enabled: r.enabled === 1, status: r.status, lastOkAt: r.lastFastAt }, now, th)
-    return { ...r, enabled: r.enabled === 1, level: h.level, ageMin: h.ageMin, reason: h.reason }
+    return {
+      ...r,
+      lastError: describeEvotorError(r.lastError),
+      enabled: r.enabled === 1,
+      level: h.level,
+      ageMin: h.ageMin,
+      reason: h.reason,
+    }
   })
   return { thresholds: th, level: worstLevel(stores.map((s) => s.level)), stores }
 }

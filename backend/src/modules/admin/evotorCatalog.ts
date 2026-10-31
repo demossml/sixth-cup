@@ -8,12 +8,31 @@ import { ProductPushService } from '../../integrations/evotor/sync/ProductPushSe
 import { evotorConfig } from '../../config'
 import { PollService } from '../../integrations/evotor/sync/PollService'
 import { bad } from '../../lib/errors'
+import { lockKey, lockedBy, tryLock, unlock } from '../../lib/storeLocks'
 import {
   anyTokenConfigured,
   clientForStore,
   listActivePlainTokens,
 } from '../../integrations/evotor/tokenStore'
 
+
+/**
+ * Одна тяжёлая операция на точку за раз. Параллельный wipe/sync/push по одному storeUuid
+ * удаляет и создаёт одни и те же товары одновременно → Эвотор отвечает 400 на отдельные позиции.
+ */
+function acquireStoreLock(kind: string, storeUuid: string) {
+  const key = lockKey(kind, storeUuid)
+  if (!tryLock(key, kind)) {
+    const busy = lockedBy(key)
+    throw bad(
+      busy
+        ? `Операция с точкой уже идёт (${busy.op}). Дождитесь завершения и повторите.`
+        : 'Операция с точкой уже идёт. Дождитесь завершения и повторите.',
+      409,
+    )
+  }
+  return key
+}
 
 function persistEmployees(items: Record<string, unknown>[]) {
   const now = Date.now()
@@ -230,6 +249,7 @@ export const adminEvotorCatalog = new Hono()
 
   .post('/evotor/stores/:storeUuid/sync', async (c) => {
     const storeUuid = c.req.param('storeUuid')
+    const lock = acquireStoreLock('sync', storeUuid)
     try {
       ensureStoresSchema()
       const en = db.prepare(`SELECT COALESCE(sync_enabled,0) AS e FROM evotor_stores WHERE store_uuid=?`).get(storeUuid) as { e: number } | undefined
@@ -241,16 +261,21 @@ export const adminEvotorCatalog = new Hono()
     } catch (e) {
       if (String(e).includes('403') || String((e as any)?.status) === '403') throw e
       throw bad(String(e), 502)
+    } finally {
+      unlock(lock)
     }
   })
 
   .post('/evotor/stores/:storeUuid/push-products', async (c) => {
     const storeUuid = c.req.param('storeUuid')
+    const lock = acquireStoreLock('push', storeUuid)
     try {
       const r = await new ProductPushService(db, clientFor(storeUuid)).pushToStore(storeUuid)
       return c.json({ ok: r.errors.length === 0, ...r, failed: r.errors.length, errors: r.errors.slice(0, 5) })
     } catch (e) {
       throw bad(String(e), 502)
+    } finally {
+      unlock(lock)
     }
   })
 
@@ -290,6 +315,7 @@ export const adminEvotorCatalog = new Hono()
     if (!en || en.e !== 1) {
       throw bad('Store not found or sync disabled — enable the checkbox first', 400)
     }
+    const lock = acquireStoreLock('wipe', storeUuid)
     // Wipe = list Cloud → DELETE our sc-* / linked ids → clear links → full push from 6.7.
     // Evotor often returns 400 on individual create/replace (measure/tax/name/parent). That is a
     // per-product validation error, NOT an upstream gateway failure. Returning HTTP 502 for
@@ -332,6 +358,8 @@ export const adminEvotorCatalog = new Hono()
       )
     } catch (e) {
       throw bad(String(e), 502)
+    } finally {
+      unlock(lock)
     }
   })
 

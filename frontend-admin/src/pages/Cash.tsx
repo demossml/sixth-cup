@@ -73,8 +73,15 @@ function StoreCard({ s, health, now, onChanged }: { s: EvotorStore; health?: Hea
       <CashierMenuPanel storeUuid={s.uuid} storeName={s.name ?? s.uuid.slice(0, 8)} />
 
       <ConfirmDialog open={wipe} title="Пересоздать каталог на точке?"
+        busy={busy === 'wipe'}
         onCancel={() => setWipe(false)}
-        onConfirm={() => { void run('wipe', async () => { const r = await api<{ ok: boolean }>(`/evotor/stores/${s.uuid}/wipe-catalog`, { method: 'POST' }); return r.ok ? 'Каталог пересоздан' : 'Пересоздан с ошибками' }).finally(() => setWipe(false)) }}>
+        onConfirm={() => { void run('wipe', async () => {
+          // Двойной клик по «Пересоздать» запускал два wipe параллельно: удаление и выгрузка
+          // гонялись за одни товары, Эвотор отвечал 400. Сервер тоже отдаёт 409 на второй вызов.
+          const r = await api<{ ok: boolean; partial?: boolean; pushed?: number; pushErrors?: string[] }>(`/evotor/stores/${s.uuid}/wipe-catalog`, { method: 'POST' })
+          if (r.ok) return 'Каталог пересоздан'
+          return `Пересоздан с ошибками: ${r.pushErrors?.length ?? 0} из ${(r.pushErrors?.length ?? 0) + (r.pushed ?? 0)}`
+        }).finally(() => setWipe(false)) }}>
         Товары нашего каталога на точке «{s.name}» будут удалены в Эвотор и выгружены заново.
       </ConfirmDialog>
     </Card>

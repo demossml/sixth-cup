@@ -97,6 +97,13 @@ export class PollService {
   /** Per-run counters so the heartbeat can tell "Cloud returned nothing" from "documents already known". */
   private stats = { seen: 0, sellSeen: 0 }
 
+  /**
+   * 402 `not_installed` от Эвотор не лечится повтором: приложение не установлено/не оплачено
+   * на точке. Держим кулдаун, чтобы не долбить documents каждую минуту и не засорять журнал.
+   */
+  private readonly docCooldown = new Map<string, number>()
+  static readonly NOT_INSTALLED_COOLDOWN_MS = 15 * 60_000
+
   constructor(
     private readonly db: Database.Database,
     /** Injected for tests; production passes nothing and clients are resolved per store token. */
@@ -104,6 +111,24 @@ export class PollService {
     /** Подмена склада в тестах (Q-05); в продакшене — реальная функция. */
     private readonly deps: { applyStock?: typeof applyStockForDocument } = {},
   ) {}
+
+  /** 402/not_installed — «приложение не установлено», повторять бессмысленно. */
+  private static isNotInstalled(e: unknown): boolean {
+    const msg = String((e as { message?: string })?.message ?? e)
+    const status = Number((e as { status?: number })?.status)
+    return status === 402 || msg.includes('not_installed') || msg.includes('status=402')
+  }
+
+  /** Кулдаун активен — точку пропускаем до истечения. */
+  private coolingDown(storeUuid: string, now = Date.now()): boolean {
+    const until = this.docCooldown.get(storeUuid)
+    if (!until) return false
+    if (until <= now) {
+      this.docCooldown.delete(storeUuid)
+      return false
+    }
+    return true
+  }
 
   async ensureStores(): Promise<string[]> {
     const tokens = listActivePlainTokens(this.db)
@@ -441,7 +466,12 @@ export class PollService {
     let inserted = 0
     const errors: { storeUuid: string; error: string }[] = []
     const overlap = evotorConfig.fastOverlapMin * 60 * 1000
+    let skipped = 0
     for (const s of stores) {
+      if (this.coolingDown(s)) {
+        skipped++
+        continue
+      }
       try {
         const row = this.db.prepare(`SELECT last_seen_close_ms FROM evotor_sync_state WHERE store_uuid=?`).get(s) as { last_seen_close_ms: number } | undefined
         const since = Math.max(0, (row?.last_seen_close_ms ?? 0) - overlap)
@@ -449,10 +479,15 @@ export class PollService {
         this.db.prepare(`UPDATE evotor_sync_state SET status='OK',last_error=NULL WHERE store_uuid=?`).run(s)
       } catch (e) {
         const error = String(e)
+        if (PollService.isNotInstalled(e)) {
+          this.docCooldown.set(s, Date.now() + PollService.NOT_INSTALLED_COOLDOWN_MS)
+          log.warn('evotor documents unavailable: not_installed — polling paused for 15 min', { store: shortId(s) })
+        }
         errors.push({ storeUuid: s, error })
         this.db.prepare(`UPDATE evotor_sync_state SET status='ERROR',last_error=? WHERE store_uuid=?`).run(error, s)
       }
     }
+    if (skipped > 0) log.info('evotor poll paused (not_installed cooldown)', { stores: skipped })
     return { stores: stores.length, inserted, seen: this.stats.seen, sellSeen: this.stats.sellSeen, errors }
   }
 
@@ -463,7 +498,16 @@ export class PollService {
     if (stores.length === 0) return { stores: 0, inserted: 0 }
     const since = Date.now() - evotorConfig.hourlyWindowHours * 3_600_000
     let inserted = 0
-    for (const s of stores) inserted += await this.pollStore(s, since)
+    for (const s of stores) {
+      if (this.coolingDown(s)) continue
+      try {
+        inserted += await this.pollStore(s, since)
+      } catch (e) {
+        if (PollService.isNotInstalled(e)) {
+          this.docCooldown.set(s, Date.now() + PollService.NOT_INSTALLED_COOLDOWN_MS)
+        }
+      }
+    }
     this.db.prepare(`UPDATE evotor_sync_state SET last_hourly_at=?`).run(Date.now())
     return { stores: stores.length, inserted }
   }

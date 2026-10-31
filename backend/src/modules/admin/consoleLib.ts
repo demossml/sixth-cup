@@ -13,6 +13,25 @@ export const HEALTH_DEFAULTS = { warnMin: 5, critMin: 30 } as const
  * warn — warnMin…critMin minutes without a successful poll
  * bad  — older than critMin, never polled, or the store is in ERROR
  */
+/**
+ * Человеческий текст ошибки Эвотор для админки. Сырой `EvotorApiError` в интерфейсе бесполезен,
+ * а `code:not_installed` — это не сбой сети, а отсутствие/неоплата приложения на точке.
+ */
+export function describeEvotorError(raw: string | null | undefined): string | null {
+  const s = (raw ?? '').trim()
+  if (!s) return null
+  if (s.includes('not_installed') || s.includes('status=402')) {
+    return 'Приложение Эвотор не установлено или не оплачено на этой точке — установите/продлите его в кабинете Эвотор'
+  }
+  if (s.includes('status=401')) return 'Токен Эвотор отклонён (401) — обновите токен в разделе «Касса» → «Токены»'
+  if (/status=403/.test(s)) return 'Эвотор запретил доступ (403) — проверьте права токена в кабинете'
+  if (/fetch failed|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|socket hang up/i.test(s)) {
+    return 'Нет связи с облаком Эвотор — повторим автоматически'
+  }
+  if (s.includes('EVOTOR_API_TOKEN not set')) return 'Не задан токен Эвотор — добавьте его в разделе «Касса» → «Токены»'
+  return s.length > 300 ? `${s.slice(0, 300)}…` : s
+}
+
 export function storeHealth(
   s: { enabled: boolean; status: string | null; lastOkAt: number | null },
   now: number,
