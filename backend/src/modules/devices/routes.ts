@@ -8,6 +8,7 @@ import { z } from 'zod'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import { buildCatalogToppings, effectiveSchemeId, listAddonProductIds, ensureAddonSchemeSchema, resolveAddonsCategoryIds, type CatalogTopping } from '../catalog/addonScheme'
+import { ensureMilkSchemeSchema, milkForProduct } from '../catalog/milkScheme'
 import { productArticleNumber } from '../catalog/productIdentity'
 import { hashToken, requireDevice, type DeviceEnv } from '../../middleware/device'
 import { applyReceipts } from '../loyalty/receipts'
@@ -329,7 +330,8 @@ export const deviceRoutes = new Hono<DeviceEnv>()
                p.group_id AS groupId, p.variant_label AS variantLabel, p.variant_sort AS variantSort,
                p.size_value AS sizeValue, p.size_unit AS sizeUnit,
                COALESCE(p.is_group, 0) AS isGroup,
-               p.parent_product_id AS parentProductId
+               p.parent_product_id AS parentProductId,
+               p.milk_scheme_id AS milkSchemeId
         FROM products p
         LEFT JOIN product_groups g ON g.id = p.group_id
         WHERE (p.season_start_at IS NULL OR p.season_start_at<=?)
@@ -460,6 +462,9 @@ export const deviceRoutes = new Hono<DeviceEnv>()
       // One DB read per scheme instead of one per product (was N+1: full products/modifiers scans).
       const toppingsCache = new Map<number, CatalogTopping[]>()
       const effectiveCache = new Map<string, number | null>()
+      // Схема молока — отдельная сущность: свой набор вариантов, свой резолв UUID по точке.
+      ensureMilkSchemeSchema(db)
+      const milkCache = new Map<number | null, ReturnType<typeof milkForProduct>>()
       const out = products.map((p) => {
         const id = Number(p.id)
         const skuScheme = p.skuSchemeId != null ? Number(p.skuSchemeId) : null
@@ -472,6 +477,12 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         }
         const toppings = buildCatalogToppings(db, schemeId, uuidByProduct, toppingsCache)
         const upsell = upsellPool.filter((u) => u.id !== id).slice(0, 6)
+        const milkSchemeId = p.milkSchemeId != null ? Number(p.milkSchemeId) : null
+        let milk = milkCache.get(milkSchemeId)
+        if (milk === undefined) {
+          milk = milkForProduct(db, milkSchemeId, uuidByProduct)
+          milkCache.set(milkSchemeId, milk)
+        }
         const evotorUuid = uuidByProduct.get(id) || null
         // server-режим кассы: плитка продаётся, только если товар реально есть в номенклатуре точки.
         // Строку из products не убираем — старым кассам нужен полный список с hideFromMenu.
@@ -511,6 +522,9 @@ export const deviceRoutes = new Hono<DeviceEnv>()
           evotorUuid,
           sellable,
           notReadyReason,
+          milkSchemeId,
+          /** Варианты молока для кассы; пустой массив — схемы нет (это норма). */
+          milk,
           // Стабильная связка с ProductTable.ROW_CODE на терминале (см. productIdentity.ts).
           articleNumber: productArticleNumber(id),
           groupId: p.groupId != null ? Number(p.groupId) : null,

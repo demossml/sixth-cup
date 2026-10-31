@@ -91,6 +91,8 @@ export type Product = {
   sortOrder: number
   updatedAt: number | null
   modifierSchemeId: number | null
+  /** Схема молока — отдельное назначение (null = без схемы). */
+  milkSchemeId?: number | null
   recipeText: string | null
   recipeCostRub: number | null
   recipeSeconds: number | null
@@ -189,3 +191,23 @@ export type AuditEntry = {
   entity: string | null; entityId: string | null; summary: string | null; before: string | null; after: string | null; ip: string | null
 }
 export type BulkPlan = { dryRun: boolean; products: number; changedProducts: number; plan: { id: number; name: string; changes: { field: string; from: unknown; to: unknown }[] }[] }
+
+export type MilkVariant = {
+  id: number
+  productId: number | null
+  label: string
+  isDefault: boolean
+  isFree: boolean
+  sendToReceipt: boolean
+  sortOrder: number
+  active: boolean
+}
+export type MilkScheme = {
+  id: number
+  name: string
+  active: boolean
+  variants: MilkVariant[]
+  usedByProducts: number
+  createdAt: number
+  updatedAt: number
+}

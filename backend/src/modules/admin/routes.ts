@@ -5,6 +5,12 @@ import { auditMiddleware } from './audit'
 import { enqueueProductSync } from './enqueue'
 import { timingSafeEqual } from 'node:crypto'
 import { looksLikeDrink } from '../loyalty/rules'
+import {
+  MilkSchemeError,
+  deleteMilkScheme,
+  listMilkSchemes,
+  saveMilkScheme,
+} from '../catalog/milkScheme'
 import { getCashierMenu, hasStoreMenu, resetStoreMenu, setCashierMenu } from '../../lib/cashierMenu'
 import { randomBytes } from 'node:crypto'
 import { Hono } from 'hono'
@@ -111,7 +117,7 @@ const mediaUrl = z
 
 export const MANAGER_BLOCKED =
   // Full path (/api/admin/...) and Hono-stripped path (/stores, /devices/...) both blocked.
-  /\/(reset|wipe)(\/|$)|\/organizations(\/|$)|(?:^|\/)api\/admin\/(stores|devices)(\/|$)|^\/(stores|devices)(\/|$)|\/ai\/settings(\/|$)|\/vouchers\/grant-all(\/|$)|\/voucher-templates(\/|$)/
+  /\/(reset|wipe)(\/|$)|\/organizations(\/|$)|(?:^|\/)api\/admin\/(stores|devices)(\/|$)|^\/(stores|devices)(\/|$)|\/ai\/settings(\/|$)|\/vouchers\/grant-all(\/|$)|\/voucher-templates(\/|$)|\/milk-schemes(\/|$)/
 
 const adminAuth = createMiddleware(async (c, next) => {
   const role = resolveAdminRole(c.req.header('X-Admin-Token'))
@@ -512,6 +518,67 @@ export const adminRoutes = new Hono()
     return c.json({ ok: true })
   })
 
+  // —— Схемы молока: отдельная сущность, независимая от схем добавок ——
+  .get('/milk-schemes', (c) => c.json({ schemes: listMilkSchemes(db, { includeInactive: true }) }))
+
+  .post(
+    '/milk-schemes',
+    zValidator(
+      'json',
+      z.object({
+        id: z.number().int().positive().optional(),
+        name: z.string().min(1).max(80),
+        active: z.boolean().default(true),
+        variants: z
+          .array(
+            z.object({
+              id: z.number().int().positive().optional(),
+              productId: z.number().int().positive().nullable().optional(),
+              label: z.string().min(1).max(60),
+              isDefault: z.boolean().default(false),
+              isFree: z.boolean().default(false),
+              sendToReceipt: z.boolean().default(true),
+              sortOrder: z.number().int().default(0),
+              active: z.boolean().default(true),
+            }),
+          )
+          .max(50),
+      }),
+    ),
+    (c) => {
+      const body = c.req.valid('json')
+      try {
+        const saved = saveMilkScheme(
+          { ...body, variants: body.variants.map((v) => ({ ...v, productId: v.productId ?? null })) },
+          db,
+        )
+        c.set('audit', {
+          entity: 'milk-schemes',
+          entityId: String(saved?.id ?? ''),
+          summary: `Схема молока «${saved?.name}»: вариантов ${saved?.variants.length ?? 0}`,
+          after: { name: saved?.name, active: saved?.active, variants: saved?.variants.length },
+        })
+        return c.json({ scheme: saved })
+      } catch (e) {
+        if (e instanceof MilkSchemeError) throw bad(e.message, 400)
+        throw e
+      }
+    },
+  )
+
+  .delete('/milk-schemes/:id', (c) => {
+    const id = Number(c.req.param('id'))
+    if (!Number.isInteger(id) || id <= 0) throw bad('Некорректный id схемы', 400)
+    try {
+      deleteMilkScheme(id, db)
+      c.set('audit', { entity: 'milk-schemes', entityId: String(id), summary: `Удалена схема молока #${id}` })
+      return c.json({ ok: true })
+    } catch (e) {
+      if (e instanceof MilkSchemeError) throw bad(e.message, 409)
+      throw e
+    }
+  })
+
   // —— Products (extended, backward compatible) ——
   .get('/products', (c) => {
     const products = db.prepare(`
@@ -529,7 +596,8 @@ export const adminRoutes = new Hono()
              p.season_start_at AS seasonStartAt, p.season_end_at AS seasonEndAt,
              p.evotor_extra_json AS evotorExtraJson,
              p.catalog_source AS catalogSource, p.evotor_uuid AS evotorUuid,
-             p.group_id AS groupId, p.variant_label AS variantLabel, p.variant_sort AS variantSort
+             p.group_id AS groupId, p.variant_label AS variantLabel, p.variant_sort AS variantSort,
+             p.milk_scheme_id AS milkSchemeId
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
       ORDER BY p.sort_order, p.id
@@ -580,6 +648,8 @@ export const adminRoutes = new Hono()
     recipeSeconds: z.number().int().min(0).optional().nullable(),
     countsAsCup: z.boolean().optional(),
     freeEligible: z.boolean().optional(),
+    /** Схема молока — отдельное назначение, не связанное со схемой добавок. */
+    milkSchemeId: z.number().int().positive().nullable().optional(),
     sizeValue: z.number().int().min(1).max(100000).optional().nullable(),
     sizeUnit: z.enum(['g', 'ml']).optional().nullable(),
     calories: z.number().int().min(0).max(10000).optional().nullable(),
@@ -612,7 +682,9 @@ export const adminRoutes = new Hono()
           counts_as_cup=COALESCE(?, counts_as_cup), free_eligible=COALESCE(?, free_eligible),
           tax=COALESCE(?, tax), measure=COALESCE(?, measure), cost_price_kopecks=COALESCE(?, cost_price_kopecks),
           season_start_at=?, season_end_at=?, evotor_extra_json=?, catalog_source='SIXTH_CUP',
-          size_value=?, size_unit=?, calories=?
+          size_value=?, size_unit=?, calories=?,
+          -- undefined = «не трогать», null = «снять назначение схемы молока»
+          milk_scheme_id=CASE WHEN ?=1 THEN ? ELSE milk_scheme_id END
         WHERE id=?
       `).run(
         p.name, p.price, p.icon, p.available ? 1 : 0,
@@ -623,7 +695,10 @@ export const adminRoutes = new Hono()
         p.freeEligible === undefined ? null : (p.freeEligible ? 1 : 0),
         p.tax ?? null, p.measure ?? null, p.costPriceKopecks ?? null,
         p.seasonStartAt ?? null, p.seasonEndAt ?? null, p.evotorExtraJson ?? null,
-        p.sizeValue ?? null, p.sizeUnit ?? null, p.calories ?? null, p.id
+        p.sizeValue ?? null, p.sizeUnit ?? null, p.calories ?? null,
+        p.milkSchemeId === undefined ? 0 : 1,
+        p.milkSchemeId ?? null,
+        p.id
       )
     } else {
       const cupFlag = (p.countsAsCup ?? looksLikeDrink(p.name, p.icon)) ? 1 : 0
@@ -631,8 +706,8 @@ export const adminRoutes = new Hono()
       const freeFlag = p.freeEligible === undefined ? cupFlag : (p.freeEligible ? 1 : 0)
       db.prepare(`
         INSERT INTO products(name,price,icon,available,description,category_id,image_url,sort_order,created_at,updated_at,
-          modifier_scheme_id,recipe_text,recipe_cost_rub,recipe_seconds,counts_as_cup,free_eligible,tax,measure,cost_price_kopecks,season_start_at,season_end_at,evotor_extra_json,catalog_source,size_value,size_unit,calories)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'SIXTH_CUP',?,?,?)
+          modifier_scheme_id,recipe_text,recipe_cost_rub,recipe_seconds,counts_as_cup,free_eligible,tax,measure,cost_price_kopecks,season_start_at,season_end_at,evotor_extra_json,catalog_source,size_value,size_unit,calories,milk_scheme_id)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'SIXTH_CUP',?,?,?,?)
       `).run(
         p.name, p.price, p.icon, p.available ? 1 : 0,
         p.description ?? null, p.categoryId ?? null, p.imageUrl ?? null,
@@ -640,7 +715,8 @@ export const adminRoutes = new Hono()
         p.modifierSchemeId ?? null, p.recipeText ?? null, p.recipeCostRub ?? null, p.recipeSeconds ?? null,
         cupFlag, freeFlag, p.tax ?? 'NO_VAT', p.measure ?? 'шт',
         p.costPriceKopecks ?? 0, p.seasonStartAt ?? null, p.seasonEndAt ?? null, p.evotorExtraJson ?? null,
-        p.sizeValue ?? null, p.sizeUnit ?? null, p.calories ?? null
+        p.sizeValue ?? null, p.sizeUnit ?? null, p.calories ?? null,
+        p.milkSchemeId ?? null
       )
     }
     const productId = p.id ?? (db.prepare('SELECT last_insert_rowid() AS id').get() as { id: number }).id
