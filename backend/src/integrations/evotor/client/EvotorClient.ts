@@ -120,6 +120,19 @@ export class EvotorClient {
     return this.requestJson(evotorPaths.v2Products(storeId), 'POST', product, 'create')
   }
 
+  /** Группы товаров: отдельный ресурс, товары на них ссылаются через parent_id. */
+  async getCloudProductGroups(storeId: string): Promise<unknown> {
+    return this.requestJson(evotorPaths.v2ProductGroups(storeId), 'GET', undefined, 'list')
+  }
+
+  async createCloudProductGroup(storeId: string, group: Record<string, unknown>): Promise<unknown> {
+    return this.requestJson(evotorPaths.v2ProductGroups(storeId), 'POST', group, 'create')
+  }
+
+  async replaceCloudProductGroup(storeId: string, groupId: string, group: Record<string, unknown>): Promise<unknown> {
+    return this.requestJson(evotorPaths.v2ProductGroup(storeId, groupId), 'PUT', group, 'replace')
+  }
+
   /** Cloud Catalog API: replace/update an already identified product. */
   async replaceCloudProduct(storeId: string, productId: string, product: Record<string, unknown>): Promise<unknown> {
     return this.requestJson(evotorPaths.v2Product(storeId, productId), 'PUT', product, 'replace')

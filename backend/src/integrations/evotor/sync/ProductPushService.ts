@@ -78,21 +78,9 @@ export function toEvotorProduct(
 ): Record<string, unknown> {
   const isGroup = Number(p.is_group) === 1
   if (isGroup) {
-    const body: Record<string, unknown> = {
-      name: p.name,
-      // Cloud product-groups API uses different shape; inventories v1 uses group:true on products list.
-      // We push groups as catalog folders via the same products endpoint with group flag where supported.
-      type: 'NORMAL',
-      measure_name: 'шт',
-      tax: 'NO_VAT',
-      allow_to_sell: false,
-      price: 0,
-      cost_price: 0,
-      description: '',
-      article_number: groupArticleNumber(p.id),
-    }
-    if (parentUuid) body.parent_id = parentUuid
-    return body
+    // Группа — это НЕ товар: у Cloud API отдельный ресурс продукт-групп, а products принимает
+    // только parent_id на группу. См. toEvotorGroup; сюда попадать не должны.
+    throw new Error(`toEvotorProduct got a group product ${p.id}; groups go through product-groups API`)
   }
   const body: Record<string, unknown> = {
     name: p.name,
@@ -107,6 +95,17 @@ export function toEvotorProduct(
     article_number: productArticleNumber(p.id),
   }
   if (parentUuid) body.parent_id = parentUuid
+  return body
+}
+
+/**
+ * Тело группы товаров (POST/PUT /stores/{id}/product-groups).
+ * Допустимые поля по доке Cloud API: name (required), parent_id (для вложенности), barcodes, attributes.
+ * Никаких tax/price/type — группа не торгуется.
+ */
+export function toEvotorGroup(p: LocalProduct, parentGroupUuid: string | null = null): Record<string, unknown> {
+  const body: Record<string, unknown> = { name: p.name }
+  if (parentGroupUuid) body.parent_id = parentGroupUuid
   return body
 }
 
@@ -295,8 +294,10 @@ export class ProductPushService {
       this.db.prepare(`UPDATE evotor_outbox SET payload_hash=?,last_error=NULL WHERE id=?`).run(payloadHash, pending.id)
       return true
     }
+    // Группы выгружаем раньше детей: им нужен parent_id на уже существующую группу.
+    const priority = Number(product.is_group) === 1 ? 1 : 5
     this.db.prepare(`INSERT INTO evotor_outbox(store_uuid,entity,entity_key,op,payload_hash,priority,status,attempts,next_at)
-      VALUES(?,?,?,?,?,?, 'PENDING',0,?)`).run(storeUuid, 'PRODUCT', entityKey, 'UPSERT', payloadHash, 5, Date.now())
+      VALUES(?,?,?,?,?,?, 'PENDING',0,?)`).run(storeUuid, 'PRODUCT', entityKey, 'UPSERT', payloadHash, priority, Date.now())
     return true
   }
 
@@ -327,8 +328,9 @@ export class ProductPushService {
   }
 
   private syncHash(product: LocalProduct): string {
-    const payload = toEvotorProduct(product, '', null)
-    const extra = this.buildExtra(product, 'PENDING')
+    // Группа уходит в другой ресурс (product-groups) — хэш считаем по её собственному телу.
+    const payload = Number(product.is_group) === 1 ? toEvotorGroup(product) : toEvotorProduct(product, '', null)
+    const extra = Number(product.is_group) === 1 ? null : this.buildExtra(product, 'PENDING')
     return hashPayload({ payload, extra })
   }
 
@@ -347,6 +349,45 @@ export class ProductPushService {
 
   private async remoteProducts(storeUuid: string): Promise<Record<string, unknown>[]> {
     return asArray(await this.api(storeUuid).getProducts(storeUuid))
+  }
+
+  private async remoteGroups(storeUuid: string): Promise<Record<string, unknown>[]> {
+    return asArray(await this.api(storeUuid).getCloudProductGroups(storeUuid))
+  }
+
+  /**
+   * Группа в Эвотор — отдельная сущность: ищем по сохранённой связи, затем по имени среди групп
+   * (articleNumber у групп нет), создаём через product-groups. Возвращает id группы для parent_id детей.
+   */
+  private async ensureRemoteGroupId(
+    storeUuid: string,
+    product: LocalProduct,
+    remoteGroups: Record<string, unknown>[],
+  ): Promise<string> {
+    const saved = this.db.prepare(`SELECT evotor_uuid FROM product_store_links WHERE product_id=? AND store_uuid=? AND evotor_uuid IS NOT NULL`)
+      .get(product.id, storeUuid) as { evotor_uuid: string } | undefined
+    if (saved?.evotor_uuid) {
+      if (remoteGroups.some((g) => remoteId(g) === saved.evotor_uuid)) return saved.evotor_uuid
+      this.db.prepare(`UPDATE product_store_links SET evotor_uuid=NULL,last_error='Stale Evotor group UUID; recreating' WHERE product_id=? AND store_uuid=?`)
+        .run(product.id, storeUuid)
+    }
+    const sameName = remoteGroups.filter((g) => String(g.name ?? '').trim() === String(product.name).trim())
+    if (sameName.length === 1) {
+      const found = remoteId(sameName[0])
+      if (found) {
+        this.link(storeUuid, product, found)
+        return found
+      }
+    }
+    const response = await this.api(storeUuid).createCloudProductGroup(
+      storeUuid,
+      toEvotorGroup(product, parentUuidFor(this.db, product, storeUuid)),
+    )
+    const id = remoteId((response ?? {}) as Record<string, unknown>) ?? parseCreatedProductId(response)
+    if (!id) throw new Error('Evotor Cloud GROUP CREATE returned no group id')
+    this.link(storeUuid, product, id)
+    remoteGroups.push({ id, name: product.name })
+    return id
   }
 
   private link(storeUuid: string, product: LocalProduct, evotorUuid: string, now = Date.now()) {
@@ -431,6 +472,13 @@ export class ProductPushService {
     if (!ready.length) return { pushed: 0, linked: 0, errors: [], extrasFailed: 0 }
 
     const remote = await this.remoteProducts(storeUuid)
+    // Группы товаров — отдельный ресурс Cloud API; нужен до первой группы в очереди.
+    let remoteGroups: Record<string, unknown>[] = []
+    try {
+      remoteGroups = await this.remoteGroups(storeUuid)
+    } catch (e) {
+      log.warn('evotor group list failed', { store: shortId(storeUuid), error: String(e).slice(0, 160) })
+    }
     const byId = new Map(products.map((p) => [p.id, p]))
     let pushed = 0
     let linked = 0
@@ -440,7 +488,29 @@ export class ProductPushService {
     for (const item of ready) {
       const p = byId.get(Number(item.entity_key))
       if (!p) continue
+      const isGroup = Number(p.is_group) === 1
       try {
+        if (isGroup) {
+          // Группы идут первыми (listLocal ORDER BY is_group DESC) и живут в отдельном ресурсе.
+          const knownGroup = remoteGroups.some((g) => remoteId(g) === (this.db.prepare(`SELECT evotor_uuid FROM product_store_links WHERE product_id=? AND store_uuid=?`).get(p.id, storeUuid) as { evotor_uuid: string | null } | undefined)?.evotor_uuid)
+          const groupUuid = await this.ensureRemoteGroupId(storeUuid, p, remoteGroups)
+          if (knownGroup) {
+            await this.api(storeUuid).replaceCloudProductGroup(storeUuid, groupUuid, toEvotorGroup(p, parentUuidFor(this.db, p, storeUuid)))
+          }
+          const nowGroup = Date.now()
+          this.db.transaction(() => {
+            this.db.prepare(`UPDATE evotor_outbox SET status='DONE',attempts=attempts+1,last_error=NULL,next_at=? WHERE id=?`).run(nowGroup, item.id)
+            this.db.prepare(`INSERT INTO evotor_products(product_id,variant,store_uuid,evotor_uuid,last_hash,last_synced_at,status,last_error,raw_json)
+              VALUES(?,'',?,?,?,?,? ,NULL,NULL)
+              ON CONFLICT(product_id,variant,store_uuid) DO UPDATE SET evotor_uuid=excluded.evotor_uuid,last_hash=excluded.last_hash,last_synced_at=excluded.last_synced_at,status='SYNCED',last_error=NULL`)
+              .run(p.id, storeUuid, groupUuid, this.syncHash(p), nowGroup, 'SYNCED')
+            this.db.prepare(`UPDATE product_store_links SET evotor_uuid=?,last_pushed_at=?,last_error=NULL WHERE product_id=? AND store_uuid=?`)
+              .run(groupUuid, nowGroup, p.id, storeUuid)
+          })()
+          pushed++
+          if (!knownGroup) linked++
+          continue
+        }
         const knownBefore = remote.some((r) => remoteId(r) === (this.db.prepare(`SELECT evotor_uuid FROM product_store_links WHERE product_id=? AND store_uuid=?`).get(p.id, storeUuid) as { evotor_uuid: string | null } | undefined)?.evotor_uuid)
         const productUuid = await this.ensureRemoteId(storeUuid, p, remote)
         const payload = toEvotorProduct(p, storeUuid, parentUuidFor(this.db, p, storeUuid))
@@ -731,12 +801,22 @@ export class ProductPushService {
     const raw = await this.remoteProducts(storeUuid)
     const actual = new Map(raw.map((x) => [remoteId(x) ?? '', x]))
     const drift: { productId: number; evotorUuid: string; issue: string }[] = []
+    let groupIds = new Set<string>()
+    try {
+      groupIds = new Set((await this.remoteGroups(storeUuid)).map((g) => remoteId(g) ?? '').filter(Boolean))
+    } catch { /* группы недоступны — не считаем расхождением */ }
     const links = this.db.prepare(`SELECT p.id AS productId, l.evotor_uuid AS evotorUuid
       FROM product_store_links l JOIN products p ON p.id=l.product_id
       WHERE l.store_uuid=? AND l.evotor_uuid IS NOT NULL`).all(storeUuid) as { productId: number; evotorUuid: string }[]
     for (const link of links) {
       const p = this.db.prepare(`SELECT * FROM products WHERE id=?`).get(link.productId) as LocalProduct | undefined
       if (!p) continue
+      if (Number(p.is_group) === 1) {
+        if (groupIds.size && !groupIds.has(link.evotorUuid)) {
+          drift.push({ productId: p.id, evotorUuid: link.evotorUuid, issue: 'MISSING_IN_EVOTOR' })
+        }
+        continue
+      }
       const remote = actual.get(link.evotorUuid)
       if (!remote) drift.push({ productId: p.id, evotorUuid: link.evotorUuid, issue: 'MISSING_IN_EVOTOR' })
       else if (!this.remoteEquivalent(p, remote)) drift.push({ productId: p.id, evotorUuid: link.evotorUuid, issue: 'FIELDS_DIFFER' })

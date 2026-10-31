@@ -16,4 +16,7 @@ export const evotorPaths = {
   v2Documents: (storeId: string) => `/stores/${storeId}/documents`,
   v2Products: (storeId: string) => `/stores/${storeId}/products`,
   v2Product: (storeId: string, productId: string) => `/stores/${storeId}/products/${productId}`,
+  /** Группы товаров — отдельный ресурс Cloud API (products их не создаёт). */
+  v2ProductGroups: (storeId: string) => `/stores/${storeId}/product-groups`,
+  v2ProductGroup: (storeId: string, groupId: string) => `/stores/${storeId}/product-groups/${groupId}`,
 } as const
