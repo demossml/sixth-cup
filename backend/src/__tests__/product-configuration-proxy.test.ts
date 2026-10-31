@@ -147,6 +147,23 @@ describe('валидация запроса', () => {
     expect(r.j.volumes[0].available).toBe(false)
   })
 
+  it('короткий номер магазина вместо uuid (прод-кейс query=2026/header=2026…) — 200 и правильные UUID', async () => {
+    // Касса присылает номер магазина; в product_store_links лежит полный uuid.
+    const short = `9${String(Date.now()).slice(-5)}`
+    const full = `${short}1017-AD69-40F0-80D2-3C027B1A4BF8`
+    db.prepare('INSERT OR IGNORE INTO evotor_stores(store_uuid,name,sync_enabled) VALUES(?,?,1)').run(full, 'Номерная точка')
+    const id = await mkProduct('Номер-магазина')
+    link(id, full, `u-short-${id}`)
+
+    const r = await config_of(id, short, { ...PROXY, 'X-Evotor-Store-Uuid': short })
+    expect(r.s).toBe(200)
+    // клиенту возвращаем то, что он прислал…
+    expect(r.j.storeUuid).toBe(short)
+    // …но UUID взяты по настоящей точке
+    expect(r.j.volumes[0].evotorUuid).toBe(`u-short-${id}`)
+    expect(r.j.storeUuidResolved).toBe(full)
+  })
+
   it('storeUuid можно передать только заголовком', async () => {
     const id = await mkProduct('Только-заголовок')
     link(id, STORE_A, `u-hdr-${id}`)

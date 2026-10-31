@@ -311,14 +311,18 @@ export const deviceRoutes = new Hono<DeviceEnv>()
     // у которой реально есть связи товара, и пишем предупреждение.
     const picked = pickStoreUuid(db, productId, [queryStore, headerStore])
     if (!picked) throw bad('store_required', 400)
-    const storeUuid = picked.storeUuid
+    // Клиенту возвращаем то, что он прислал (он сверяет ответ со своим магазином),
+    // а UUID берём по реальной точке из product_store_links.
+    const storeUuid = picked.echo
+    const dbStore = picked.dbStore ?? picked.echo
     if (queryStore && headerStore && queryStore.toLowerCase() !== headerStore.toLowerCase()) {
+      // Полные значения (это идентификатор магазина, не секрет): по ним видно, что именно шлёт касса.
       log.warn('configuration store mismatch', {
-        query: shortId(queryStore), header: shortId(headerStore), used: shortId(storeUuid), reason: picked.reason,
+        query: queryStore, header: headerStore, used: dbStore, echo: storeUuid, reason: picked.reason,
       })
     }
 
-    const key = `pconfig:${storeUuid.toLowerCase()}`
+    const key = `pconfig:${dbStore.toLowerCase()}`
     const now = Date.now()
     const row = db.prepare('SELECT count, window_start FROM rate_limits WHERE key=?').get(key) as
       | { count: number; window_start: number }
@@ -334,15 +338,16 @@ export const deviceRoutes = new Hono<DeviceEnv>()
     // Индивидуальная конфигурация не кешируется: назначения схем меняются из админки.
     c.header('Cache-Control', 'no-store')
 
-    const cfg = buildProductConfiguration(db, productId, storeUuid, now)
+    const cfg = buildProductConfiguration(db, productId, dbStore, now)
     if (!cfg) {
       // 404 касса трактует как «маршрута нет». Для неизвестного товара — явный ok:false.
       return c.json({ ok: false, schemaVersion: PRODUCT_CONFIG_SCHEMA_VERSION, error: 'product_not_found', storeUuid, productId })
     }
-    if (queryStore && storeUuid.toLowerCase() !== queryStore.toLowerCase()) {
-      // Отвечаем точкой, где есть данные, но показываем клиенту, что он просил другую.
-      return c.json({ ...cfg, requestedStoreUuid: queryStore })
-    }
+    // storeUuid в ответе — значение клиента; storeUuidResolved показывает, по какой точке
+    // реально считались UUID (появляется только если номера магазина и uuid не совпали буквально).
+    const sameStore = cfg.storeUuid.toLowerCase() === storeUuid.toLowerCase()
+    if (!sameStore) return c.json({ ...cfg, storeUuid, storeUuidResolved: cfg.storeUuid })
+
     if (cfg.configErrors.length) {
       log.warn('product configuration incomplete', {
         product: productId, store: shortId(storeUuid), errors: cfg.configErrors.map((e) => e.code).join(','),

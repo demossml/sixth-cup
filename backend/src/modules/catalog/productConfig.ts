@@ -118,26 +118,47 @@ function uuidMapForStore(db: Database.Database, storeUuid: string) {
 }
 
 /**
- * Какую точку считать точкой запроса, если APK прислал разные значения
- * в `?storeUuid=` и `X-Evotor-Store-Uuid`.
+ * Приведение идентификатора точки, который присылает касса, к `store_uuid` в БД.
  *
- * Касса (APK 5.2.21) собирает query из кэша каталога, а заголовок — из своей
- * конфигурации, и они расходятся (например, после переноса терминала).
- * Берём ту, где у объёмов товара реально есть связи `product_store_links`:
- * так ответ не окажется пустым из-за устаревшего query.
+ * APK может положить в `?storeUuid=`/`X-Evotor-Store-Uuid` как полный uuid
+ * (`20261017-AD69-40F0-80D2-3C027B1A4BF8`), так и короткий номер магазина (`2026`).
+ * Матчим: точное совпадение (без регистра) → уникальный префикс → ничего.
+ */
+export function resolveStoreUuid(db: Database.Database, raw: string): string | null {
+  const value = String(raw ?? '').trim()
+  if (!value) return null
+  const exact = db
+    .prepare('SELECT store_uuid AS s FROM product_store_links WHERE LOWER(store_uuid)=LOWER(?) LIMIT 1')
+    .get(value) as { s: string } | undefined
+  if (exact) return String(exact.s)
+  // Короткий идентификатор (номер магазина): только уникальный префикс, иначе — неоднозначно.
+  const byPrefix = db
+    .prepare('SELECT DISTINCT store_uuid AS s FROM product_store_links WHERE LOWER(store_uuid) LIKE LOWER(?) || \'%\'')
+    .all(value) as { s: string }[]
+  return byPrefix.length === 1 ? String(byPrefix[0].s) : null
+}
+
+/**
+ * Какую точку считать точкой запроса, если APK прислал разные значения
+ * в `?storeUuid=` и `X-Evotor-Store-Uuid` (кэш каталога против конфигурации терминала).
+ *
+ * `echo` — то, что вернём клиенту в `storeUuid` (он сверяет ответ со своим магазином),
+ * `dbStore` — реальный `store_uuid` из `product_store_links`, по которому берём UUID.
  */
 export function pickStoreUuid(
   db: Database.Database,
   productId: number,
   candidates: string[],
-): { storeUuid: string; reason: 'only' | 'links' | 'fallback' } | null {
-  const unique: string[] = []
+): { echo: string; dbStore: string | null; reason: 'only' | 'links' | 'fallback' } | null {
+  const raw: string[] = []
   for (const c of candidates) {
     const v = String(c ?? '').trim()
-    if (v && !unique.some((u) => u.toLowerCase() === v.toLowerCase())) unique.push(v)
+    if (v && !raw.some((u) => u.toLowerCase() === v.toLowerCase())) raw.push(v)
   }
-  if (!unique.length) return null
-  if (unique.length === 1) return { storeUuid: unique[0], reason: 'only' }
+  if (!raw.length) return null
+  if (raw.length === 1) {
+    return { echo: raw[0], dbStore: resolveStoreUuid(db, raw[0]), reason: 'only' }
+  }
 
   const product = db.prepare('SELECT group_id AS groupId FROM products WHERE id=?').get(productId) as
     | { groupId: number | null }
@@ -155,13 +176,16 @@ export function pickStoreUuid(
      WHERE product_id IN (${ids.map(() => '?').join(',')})
        AND LOWER(store_uuid) = LOWER(?) AND evotor_uuid IS NOT NULL AND TRIM(evotor_uuid) <> ''`,
   )
-  let best: { storeUuid: string; n: number } | null = null
-  for (const c of unique) {
-    const n = Number((countLinks.get(...ids, c) as { n: number }).n)
-    if (!best || n > best.n) best = { storeUuid: c, n }
+  let best: { echo: string; dbStore: string | null; n: number } | null = null
+  for (const c of raw) {
+    const dbStore = resolveStoreUuid(db, c)
+    const n = dbStore ? Number((countLinks.get(...ids, dbStore) as { n: number }).n) : 0
+    if (!best || n > best.n) best = { echo: c, dbStore, n }
   }
-  // Ни у одной точки связей нет — отдаём первую (query): клиент её и спрашивал.
-  return best && best.n > 0 ? { storeUuid: best.storeUuid, reason: 'links' } : { storeUuid: unique[0], reason: 'fallback' }
+  // Ни у одной точки связей нет — отвечаем query-значением, как просил клиент.
+  return best && best.n > 0
+    ? { echo: best.echo, dbStore: best.dbStore, reason: 'links' }
+    : { echo: raw[0], dbStore: resolveStoreUuid(db, raw[0]), reason: 'fallback' }
 }
 
 /**
