@@ -4,7 +4,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   Activity, BarChart3, Bot, Box, LineChart, CalendarClock, Coffee, Gift, HelpCircle, 
   LayoutDashboard, LogOut, ClipboardList, Package, Search, Settings, Menu,
-  Share2, Store, Users, X, MoreHorizontal,
+  Share2, Store, Users, X, MoreHorizontal, Milk, Ruler, Layers,
 } from 'lucide-react'
 import { useApi } from '../api/useApi'
 import type { Health } from '../api/types'
@@ -17,6 +17,13 @@ const SHIFT: NavItem[] = [
   { to: '/operations', label: 'Операции', icon: <Activity size={17} /> },
   { to: '/customers', label: 'Клиенты', icon: <Users size={17} /> },
   { to: '/menu', label: 'Меню', icon: <Coffee size={17} /> },
+]
+
+/** Три независимые системы конфигурации товара — отдельные разделы, не вкладки «Меню». */
+const CONFIG: NavItem[] = [
+  { to: '/volume-schemes', label: 'Схемы объёмов', icon: <Ruler size={17} /> },
+  { to: '/milk-schemes', label: 'Схемы молока', icon: <Milk size={17} /> },
+  { to: '/addon-schemes', label: 'Схемы добавок', icon: <Layers size={17} /> },
 ]
 
 const MANAGE: NavItem[] = [
@@ -55,6 +62,7 @@ const MOBILE_PRIMARY_PATHS = ['/', '/cash', '/purchases']
 
 const MOBILE_GROUPS: { title: string; items: NavItem[] }[] = [
   { title: 'Смена', items: SHIFT.filter((i) => !MOBILE_PRIMARY_PATHS.includes(i.to)) },
+  { title: 'Конфигурация', items: CONFIG },
   { title: 'Управление', items: MANAGE.filter((i) => !MOBILE_PRIMARY_PATHS.includes(i.to)) },
   { title: 'Аналитика', items: ANALYTICS },
   { title: 'Система', items: SYSTEM },
@@ -65,6 +73,9 @@ const TITLES: Record<string, string> = {
   '/operations': 'Операции',
   '/customers': 'Клиенты',
   '/menu': 'Меню',
+  '/volume-schemes': 'Схемы объёмов',
+  '/milk-schemes': 'Схемы молока',
+  '/addon-schemes': 'Схемы добавок',
   '/cash': 'Касса',
   '/stock': 'Склад',
   '/purchases': 'Закупки',
@@ -184,6 +195,7 @@ export default function Shell({ onLogout }: { onLogout?: () => void }) {
 
         <nav className="nav" aria-label="Разделы">
           <NavGroup title="Смена" items={SHIFT} onNavigate={closeSide} />
+          <NavGroup title="Конфигурация" items={CONFIG} onNavigate={closeSide} />
           <NavGroup title="Управление" items={MANAGE} onNavigate={closeSide} />
           <NavGroup title="Аналитика" items={ANALYTICS} onNavigate={closeSide} />
         </nav>

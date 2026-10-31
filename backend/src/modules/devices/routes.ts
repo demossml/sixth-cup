@@ -9,6 +9,7 @@ import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import { buildCatalogToppings, effectiveSchemeId, listAddonProductIds, ensureAddonSchemeSchema, resolveAddonsCategoryIds, type CatalogTopping } from '../catalog/addonScheme'
 import { ensureMilkSchemeSchema, milkForProduct } from '../catalog/milkScheme'
+import { ensureVolumeSchemeSchema, volumesForProduct } from '../catalog/volumeScheme'
 import { productArticleNumber } from '../catalog/productIdentity'
 import { hashToken, requireDevice, type DeviceEnv } from '../../middleware/device'
 import { applyReceipts } from '../loyalty/receipts'
@@ -331,7 +332,9 @@ export const deviceRoutes = new Hono<DeviceEnv>()
                p.size_value AS sizeValue, p.size_unit AS sizeUnit,
                COALESCE(p.is_group, 0) AS isGroup,
                p.parent_product_id AS parentProductId,
-               p.milk_scheme_id AS milkSchemeId
+               p.milk_scheme_id AS milkSchemeId,
+               p.volume_scheme_id AS volumeSchemeId,
+               p.modifier_scheme_id AS modifierSchemeId
         FROM products p
         LEFT JOIN product_groups g ON g.id = p.group_id
         WHERE (p.season_start_at IS NULL OR p.season_start_at<=?)
@@ -465,6 +468,8 @@ export const deviceRoutes = new Hono<DeviceEnv>()
       // Схема молока — отдельная сущность: свой набор вариантов, свой резолв UUID по точке.
       ensureMilkSchemeSchema(db)
       const milkCache = new Map<number | null, ReturnType<typeof milkForProduct>>()
+      // Схема объёмов — третий независимый тип конфигурации: шаблон объёмов, цены — на товаре.
+      ensureVolumeSchemeSchema(db)
       const out = products.map((p) => {
         const id = Number(p.id)
         const skuScheme = p.skuSchemeId != null ? Number(p.skuSchemeId) : null
@@ -484,6 +489,27 @@ export const deviceRoutes = new Hono<DeviceEnv>()
           milkCache.set(milkSchemeId, milk)
         }
         const evotorUuid = uuidByProduct.get(id) || null
+        const volumeSchemeId = p.volumeSchemeId != null ? Number(p.volumeSchemeId) : null
+        const volumes = volumesForProduct(db, volumeSchemeId, id, Number(p.price) || 0)
+        /**
+         * Три независимые группы конфигурации. `null` — схема товару не назначена,
+         * секция на кассе не показывается. `selectionRequired` — выбор внутри группы обязателен
+         * (объём и молоко), либо необязателен (добавки: можно взять ноль).
+         */
+        const config = {
+          volumes:
+            volumeSchemeId != null && volumes.length
+              ? { schemeId: volumeSchemeId, selectionRequired: true, options: volumes }
+              : null,
+          milk:
+            milkSchemeId != null && milk.length
+              ? { schemeId: milkSchemeId, selectionRequired: true, options: milk }
+              : null,
+          addons:
+            schemeId != null && toppings.length
+              ? { schemeId, selectionRequired: false, options: toppings }
+              : null,
+        }
         // server-режим кассы: плитка продаётся, только если товар реально есть в номенклатуре точки.
         // Строку из products не убираем — старым кассам нужен полный список с hideFromMenu.
         const isModifierProduct = modifierProductIds.has(id)
@@ -525,6 +551,11 @@ export const deviceRoutes = new Hono<DeviceEnv>()
           milkSchemeId,
           /** Варианты молока для кассы; пустой массив — схемы нет (это норма). */
           milk,
+          volumeSchemeId,
+          /** Объёмы из схемы с ценами этого товара; пустой массив — схемы нет. */
+          volumes,
+          /** Единый контракт трёх групп: volumes / milk / addons (+ признак обязательности выбора). */
+          config,
           // Стабильная связка с ProductTable.ROW_CODE на терминале (см. productIdentity.ts).
           articleNumber: productArticleNumber(id),
           groupId: p.groupId != null ? Number(p.groupId) : null,

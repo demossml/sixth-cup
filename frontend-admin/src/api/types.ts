@@ -93,6 +93,10 @@ export type Product = {
   modifierSchemeId: number | null
   /** Схема молока — отдельное назначение (null = без схемы). */
   milkSchemeId?: number | null
+  /** Схема объёмов — отдельное назначение (null = без схемы). */
+  volumeSchemeId?: number | null
+  /** Цены объёмов этой карточки: itemId → цена в рублях. */
+  volumePrices?: { itemId: number; price: number }[]
   recipeText: string | null
   recipeCostRub: number | null
   recipeSeconds: number | null
@@ -201,6 +205,23 @@ export type MilkVariant = {
   sendToReceipt: boolean
   sortOrder: number
   active: boolean
+}
+export type VolumeItem = {
+  id: number
+  label: string
+  sizeValue: number | null
+  sizeUnit: 'ml' | 'g' | null
+  sortOrder: number
+  active: boolean
+}
+export type VolumeScheme = {
+  id: number
+  name: string
+  active: boolean
+  items: VolumeItem[]
+  usedByProducts: number
+  createdAt: number
+  updatedAt: number
 }
 export type MilkScheme = {
   id: number

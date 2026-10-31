@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { Archive, Download, Plus, Pencil } from 'lucide-react'
 import { api, download, uploadFile } from '../api/client'
 import { useApi } from '../api/useApi'
-import type { BulkPlan, Category, EvotorStore, MilkScheme, Product, Scheme } from '../api/types'
+import type { BulkPlan, Category, EvotorStore, MilkScheme, Product, Scheme, VolumeScheme } from '../api/types'
 import { useSyncStores } from '../api/useStores'
 import { FIELD_LABEL, filterProducts, showChangeValue, sortProducts, syncState, tabCounts } from '../lib/menu'
 import type { MenuTab, SortKey } from '../lib/menu'
@@ -26,14 +26,20 @@ type Draft = Partial<Product> & { name: string; price: number; storeUuids: strin
 type VariantDraft = { id?: number; label: string; price: number; sizeValue: number | null; sizeUnit: 'g' | 'ml'; available: boolean }
 
 /* ───────── single product drawer ───────── */
-function ProductDrawer({ draft, onClose, onSaved, categories, schemes, milkSchemes, stores, products }: {
+function ProductDrawer({ draft, onClose, onSaved, categories, schemes, milkSchemes, volumeSchemes, stores, products }: {
   draft: Draft | null; onClose: () => void; onSaved: () => void; categories: Category[]; schemes: Scheme[]
-  milkSchemes: MilkScheme[]; stores: EvotorStore[]; products: Product[]
+  milkSchemes: MilkScheme[]; volumeSchemes: VolumeScheme[]; stores: EvotorStore[]; products: Product[]
 }) {
   const [d, setD] = useState<Draft | null>(draft)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [groupId, setGroupId] = useState<number | null>(draft?.groupId ?? null)
+  // Цены объёмов: схема — шаблон, цена каждого объёма живёт в карточке товара.
+  const [volumePrices, setVolumePrices] = useState<Record<number, number>>(
+    Object.fromEntries((draft?.volumePrices ?? []).map((p) => [p.itemId, p.price])),
+  )
+  const activeVolumeScheme = d?.volumeSchemeId != null ? volumeSchemes.find((s) => s.id === d.volumeSchemeId) ?? null : null
+  const volumeSchemeItems = (activeVolumeScheme?.items ?? []).filter((it) => it.active)
   const [variants, setVariants] = useState<VariantDraft[] | null>(null)
   const toast = useToast()
   // re-seed when a different product is opened
@@ -49,6 +55,7 @@ function ProductDrawer({ draft, onClose, onSaved, categories, schemes, milkSchem
     setD(draft && groupName && groupName !== draft.name ? { ...draft, name: groupName } : draft)
     setErr('')
     setGroupId(draft?.groupId ?? null)
+    setVolumePrices(Object.fromEntries((draft?.volumePrices ?? []).map((p) => [p.itemId, p.price])))
     // Размеры берём из уже загруженного списка: они обычные товары этой же группы.
     setVariants(
       draft?.groupId
@@ -186,6 +193,7 @@ if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} /
           id: d.id, expectedUpdatedAt: d.id ? (d.updatedAt ?? null) : undefined, name: d.name.trim(), price: d.price, icon: d.icon || 'Coffee', available: !!d.available,
           description: d.description || null, categoryId: d.categoryId ?? null, imageUrl: d.imageUrl ?? null,
           sortOrder: d.sortOrder ?? 0, modifierSchemeId: d.modifierSchemeId ?? null, milkSchemeId: d.milkSchemeId ?? null,
+          volumeSchemeId: d.volumeSchemeId ?? null, volumePrices: volumeSchemeItems.map((it) => ({ itemId: it.id, price: volumePrices[it.id] ?? d.price })),
           recipeText: d.recipeText ?? null, recipeCostRub: d.recipeCostRub ?? null, recipeSeconds: d.recipeSeconds ?? null,
           countsAsCup: !!d.countsAsCup, freeEligible: !!d.freeEligible,
           sizeValue: d.sizeValue ?? null, sizeUnit: d.sizeValue ? (d.sizeUnit ?? 'g') : null, calories: d.calories ?? null,
@@ -351,6 +359,38 @@ if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} /
           {!stores.length && <p className="py-3 text-sm text-ink-secondary">—</p>}
         </div>
       </Field>
+      <Field
+        label="Схема объёмов"
+        hint={
+          volumeSchemes.length
+            ? 'Шаблон объёмов (например 200/300/400 мл). Цена каждого объёма — ниже, своя для этого товара.'
+            : 'Схем объёмов ещё нет — создайте их в разделе «Схемы объёмов».'
+        }
+      >
+        <Select value={d.volumeSchemeId ?? ''} onChange={(e) => set('volumeSchemeId', e.target.value ? Number(e.target.value) : null)}>
+          <option value="">Без схемы объёмов</option>
+          {volumeSchemes.map((s) => <option key={s.id} value={s.id}>{s.name}{s.active ? '' : ' (выключена)'}</option>)}
+        </Select>
+      </Field>
+      {activeVolumeScheme && (
+        <Field label="Цены объёмов, ₽" hint="Пустое поле — берётся базовая цена товара.">
+          <div className="space-y-2">
+            {volumeSchemeItems.map((it) => (
+              <div key={it.id} className="flex items-center gap-2">
+                <span className="w-24 text-sm text-ink-secondary">{it.label}</span>
+                <Input
+                  type="number" inputMode="numeric" min={0} className="flex-1"
+                  aria-label={`Цена объёма ${it.label}`}
+                  value={volumePrices[it.id] ?? ''}
+                  placeholder={String(d.price)}
+                  onChange={(e) => setVolumePrices({ ...volumePrices, [it.id]: e.target.value === '' ? d.price : Number(e.target.value) })}
+                />
+              </div>
+            ))}
+            {!volumeSchemeItems.length && <p className="text-sm text-ink-secondary">В схеме нет активных объёмов</p>}
+          </div>
+        </Field>
+      )}
       <Field label="Схема добавок" hint="Добавки: сиропы, топпинги. Молоко настраивается отдельным полем ниже.">
         <Select value={d.modifierSchemeId ?? ''} onChange={(e) => set('modifierSchemeId', e.target.value ? Number(e.target.value) : null)}>
           <option value="">Без добавок</option>
@@ -362,7 +402,7 @@ if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} /
         hint={
           milkSchemes.length
             ? 'Отдельная схема: обычное молоко — бесплатно и без чека, платное пробивается отдельным товаром. Схемы добавок не касается.'
-            : 'Схем молока ещё нет — создайте их в меню «Меню → Схемы молока».'
+            : 'Схем молока ещё нет — создайте их в разделе «Схемы молока».'
         }
       >
         <Select value={d.milkSchemeId ?? ''} onChange={(e) => set('milkSchemeId', e.target.value ? Number(e.target.value) : null)}>
@@ -595,6 +635,7 @@ export default function MenuProducts() {
   const cats = useApi<{ categories: Category[] }>('/categories')
   const schemes = useApi<{ schemes: Scheme[] }>('/modifier-schemes')
   const milkSchemes = useApi<{ schemes: MilkScheme[] }>('/milk-schemes')
+  const volumeSchemes = useApi<{ schemes: VolumeScheme[] }>('/volume-schemes')
   const { stores: syncStores } = useSyncStores()
   const tab = (sp.get('tab') ?? 'all') as MenuTab
   const q = sp.get('q') ?? ''
@@ -713,7 +754,8 @@ export default function MenuProducts() {
       <p className="mt-3 text-xs text-ink-secondary">Показано {fmtNum(rows.length)} из {fmtNum(all.length)}. «Убрать из продажи» скрывает товар, а не удаляет: история чеков остаётся целой.</p>
 
       <ProductDrawer draft={edit} onClose={() => setEdit(null)} onSaved={products.reload} categories={categories}
-        schemes={schemes.data?.schemes ?? []} milkSchemes={milkSchemes.data?.schemes ?? []} stores={syncStores} products={all} />
+        schemes={schemes.data?.schemes ?? []} milkSchemes={milkSchemes.data?.schemes ?? []}
+        volumeSchemes={volumeSchemes.data?.schemes ?? []} stores={syncStores} products={all} />
       {bulk && <BulkDrawer ids={selIds} onClose={() => setBulk(false)} onDone={() => { setSel(new Set()); products.reload() }} categories={categories} stores={syncStores} />}
       <ConfirmDialog open={!!archive} title="Убрать из продажи?" confirmLabel="Убрать" danger onConfirm={doArchive} onCancel={() => setArchive(null)}>
         «{archive?.name}» исчезнет из приложения и с кассы на включённых точках. Вернуть можно переключателем «В продаже».

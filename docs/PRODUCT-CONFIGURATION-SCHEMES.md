@@ -4,22 +4,29 @@
 
 Три **независимых** набора настроек товара, которые касса получает вместе с каталогом:
 
-| Схема | Что задаёт | Где хранится |
-|---|---|---|
-| Объёмы | варианты объёма как отдельные SKU Эвотор | `product_groups` + `products` (variant-строки) |
-| **Молоко** | варианты молока, обычное (бесплатно, без чека) и платные (товар Эвотор) | `milk_schemes` + `milk_scheme_variants` |
-| Добавки | сиропы/топпинги, лимиты, обязательность | `modifier_schemes` + `modifier_scheme_options` (без изменений) |
+| Схема | Что задаёт | Обязателен ли выбор | Где хранится |
+|---|---|---|---|
+| Объёмы | шаблон набора объёмов (200/300/400 мл); цены — в карточке товара | **да** (`selectionRequired: true`) | `volume_schemes` + `volume_scheme_items` + `product_volume_prices` |
+| **Молоко** | обычное (бесплатно, без чека) и платные варианты (товар Эвотор) | **да** (`selectionRequired: true`) | `milk_schemes` + `milk_scheme_variants` |
+| Добавки | сиропы/топпинги, лимиты, обязательность по группам | нет (`selectionRequired: false`) | `modifier_schemes` + `modifier_scheme_options` (без изменений) |
 
-Молоко — **отдельная сущность**, а не часть схемы добавок: у него свои признаки (`isFree`, `isDefault`, `sendToReceipt`) и другое правило чека.
+Три сущности **независимы**: у каждой свои таблицы, свой CRUD-раздел в админке и своё поле в карточке товара
+(«Схема объёмов», «Схема молока», «Схема добавок»). Ни одно назначение не обязательно; обязательность
+возникает только **внутри** назначенной схемы.
+
+Кассы старого образца продолжают работать: объёмы по-прежнему есть в `product_groups` (variant-строки),
+новая схема объёмов — дополнительный слой, который не меняет существующую модель.
 
 ## 2. Архитектура
 
 ```mermaid
 flowchart LR
-  Admin[Админка · Меню] -->|POST /api/admin/milk-schemes| B[(SQLite)]
-  Admin -->|POST /api/admin/products: milkSchemeId| B
+  V[Админка · Схемы объёмов] -->|POST /api/admin/volume-schemes| B[(SQLite)]
+  M[Админка · Схемы молока] -->|POST /api/admin/milk-schemes| B
+  A[Админка · Схемы добавок] -->|POST /api/admin/modifier-schemes| B
+  Admin[Карточка товара] -->|volumeSchemeId / milkSchemeId / modifierSchemeId| B
   PWA[Касса APK] -->|GET /api/devices/catalog?storeUuid| B
-  B -->|products[].milk| PWA
+  B -->|products[].config = volumes / milk / addons| PWA
 ```
 
 ## 3. Схема БД
@@ -28,6 +35,11 @@ flowchart LR
 erDiagram
   milk_schemes ||--o{ milk_scheme_variants : "варианты"
   milk_schemes ||--o{ products : "назначена"
+  volume_schemes ||--o{ volume_scheme_items : "объёмы"
+  volume_schemes ||--o{ products : "назначена"
+  products ||--o{ product_volume_prices : "цены объёмов"
+  volume_scheme_items ||--o{ product_volume_prices : "по товару"
+  modifier_schemes ||--o{ modifier_scheme_options : "добавки"
   products ||--o{ milk_scheme_variants : "товар Эвотор"
   products ||--o{ product_store_links : "uuid по точке"
 ```
@@ -46,15 +58,44 @@ erDiagram
 | `milk_scheme_variants.sort_order`, `active` | INTEGER | порядок и видимость |
 | `products.milk_scheme_id` | INTEGER NULL | назначенная схема |
 
+| Таблица / колонка (объёмы) | Тип | Смысл |
+|---|---|---|
+| `volume_schemes.id`, `name`, `active` | INTEGER/TEXT | шаблон объёмов, выключенный не отдаётся кассе |
+| `volume_scheme_items.scheme_id` | FK → `volume_schemes.id` (CASCADE) | принадлежность |
+| `volume_scheme_items.label` | TEXT | «200 мл» — то, что видит бариста |
+| `volume_scheme_items.size_value`, `size_unit` | INTEGER/TEXT | 200 / `ml` (nullable: можно без числа) |
+| `volume_scheme_items.sort_order`, `active` | INTEGER | порядок; первый активный — предвыбранный |
+| `product_volume_prices.product_id` + `item_id` | PK, FK | цена объёма у конкретного товара |
+| `products.volume_scheme_id` | INTEGER NULL | назначенная схема объёмов |
+
+**Цена живёт на товаре, а не в схеме**: один шаблон «Стандарт 200/300/400 мл» обслуживает и капучино,
+и латте, у каждого свои цены. Нет строки в `product_volume_prices` → берётся `products.price`.
+
 **UUID не хранится в схеме**: у товара Эвотор нет одного UUID на все магазины — он резолвится через `product_store_links (product_id, store_uuid, evotor_uuid)` для точки из запроса.
 
 ## 4. Миграция и откат
 
-- Миграция: `backend/src/db/migrations/039_milk_schemes.sql` — аддитивная (`CREATE TABLE IF NOT EXISTS`, `ALTER TABLE … ADD COLUMN milk_scheme_id`).
-- Откат: `backend/src/db/rollback/039_milk_schemes_rollback.sql` (вручную, не автоматически; `DROP COLUMN` требует SQLite ≥ 3.35 — better-sqlite3 13 подходит).
-- Повторный запуск безопасен: `ensureMilkSchemeSchema()` в модуле идемпотентен для старых БД.
+| Миграция | Что делает | Откат |
+|---|---|---|
+| `039_milk_schemes.sql` | `milk_schemes`, `milk_scheme_variants`, `products.milk_scheme_id` | `rollback/039_milk_schemes_rollback.sql` |
+| `040_volume_schemes.sql` | `volume_schemes`, `volume_scheme_items`, `product_volume_prices`, `products.volume_scheme_id` | `rollback/040_volume_schemes_rollback.sql` |
+
+Обе миграции аддитивные (`CREATE TABLE IF NOT EXISTS`, `ALTER TABLE … ADD COLUMN`), применяются раннером
+`db/migrate.ts` по алфавиту. Откат — вручную, файлы лежат **вне** `migrations/`, иначе раннер применил бы их как миграции.
+Повторный запуск безопасен: `ensureMilkSchemeSchema()` / `ensureVolumeSchemeSchema()` идемпотентны для старых БД.
 
 ## 5. Правила
+
+### Обязательность выбора (главное различие схем)
+
+| Ситуация | Касса |
+|---|---|
+| Схема объёмов не назначена | секции объёма нет, продаётся базовая цена |
+| Схема объёмов назначена | объём **обязателен**; первый активный предвыбран |
+| Схема молока не назначена | секции молока нет |
+| Схема молока назначена | выбор молока **обязателен**, подтверждение без выбора запрещено; обычное молоко предвыбрано автоматически |
+| Схема добавок не назначена | секции добавок нет |
+| Схема добавок назначена | выбор **необязателен**: ноль, одна или несколько добавок |
 
 ### Обычное молоко
 - `isFree = true`, `sendToReceipt = false`, обычно `isDefault = true`;
@@ -84,8 +125,11 @@ P_{\text{чека}} = P_{\text{основного товара}} + P_{\text{пл
 | GET | `/api/admin/milk-schemes` | список схем с вариантами и `usedByProducts` |
 | POST | `/api/admin/milk-schemes` | создать/обновить (`{ id?, name, active, variants[] }`), варианты заменяются целиком |
 | DELETE | `/api/admin/milk-schemes/:id` | удалить (409, если назначена товарам) |
-| POST | `/api/admin/products` | `milkSchemeId` (число — назначить, `null` — снять, отсутствует — не менять) |
-| GET | `/api/devices/catalog?storeUuid=` | `products[].milkSchemeId`, `products[].milk[]` |
+| GET | `/api/admin/volume-schemes` | список схем объёмов с `items` и `usedByProducts` |
+| POST | `/api/admin/volume-schemes` | создать/обновить (`{ id?, name, active, items[] }`), объёмы заменяются целиком |
+| DELETE | `/api/admin/volume-schemes/:id` | удалить (409, если назначена товарам) |
+| POST | `/api/admin/products` | `volumeSchemeId`, `milkSchemeId`, `modifierSchemeId` (число — назначить, `null` — снять, отсутствует — не менять); `volumePrices: [{ itemId, price }]` |
+| GET | `/api/devices/catalog?storeUuid=` | `products[].config = { volumes, milk, addons }` + плоские `volumes[]`, `milk[]`, `toppings[]` |
 
 ### Пример ответа каталога (фрагмент)
 
@@ -93,20 +137,37 @@ P_{\text{чека}} = P_{\text{основного товара}} + P_{\text{пл
 {
   "id": 42,
   "name": "Капучино",
+  "volumeSchemeId": 2,
   "milkSchemeId": 3,
-  "milk": [
-    { "id": 11, "productId": null, "label": "Обычное молоко", "evotorUuid": null,
-      "isDefault": true, "isFree": true, "sendToReceipt": false, "sortOrder": 0,
-      "active": true, "available": true, "notReadyReason": null },
-    { "id": 12, "productId": 57, "label": "Кокосовое молоко", "evotorUuid": "8f1c…",
-      "isDefault": false, "isFree": false, "sendToReceipt": true, "sortOrder": 1,
-      "active": true, "available": true, "notReadyReason": null }
-  ],
-  "toppings": []
+  "config": {
+    "volumes": {
+      "schemeId": 2,
+      "selectionRequired": true,
+      "options": [
+        { "itemId": 1, "label": "200 мл", "sizeValue": 200, "sizeUnit": "ml", "price": 250, "isDefault": true, "sortOrder": 0 },
+        { "itemId": 2, "label": "300 мл", "sizeValue": 300, "sizeUnit": "ml", "price": 320, "isDefault": false, "sortOrder": 1 }
+      ]
+    },
+    "milk": {
+      "schemeId": 3,
+      "selectionRequired": true,
+      "options": [
+        { "id": 11, "productId": null, "label": "Обычное молоко", "evotorUuid": null,
+          "isDefault": true, "isFree": true, "sendToReceipt": false, "sortOrder": 0,
+          "active": true, "available": true, "notReadyReason": null },
+        { "id": 12, "productId": 57, "label": "Кокосовое молоко", "evotorUuid": "8f1c…",
+          "isDefault": false, "isFree": false, "sendToReceipt": true, "sortOrder": 1,
+          "active": true, "available": true, "notReadyReason": null }
+      ]
+    },
+    "addons": { "schemeId": 7, "selectionRequired": false, "options": [ … ] }
+  },
+  "volumes": [ … ], "milk": [ … ], "toppings": [ … ]
 }
 ```
 
-Пустая схема / отсутствие схемы → `milk: []` (не ошибка). Неактивные схемы и варианты не отдаются.
+Схема не назначена → соответствующая группа `config.* = null` (секция на кассе не показывается) и плоский массив `[]`.
+Неактивные схемы и варианты не отдаются. Поля `volumes`/`milk`/`toppings` верхнего уровня сохранены для старых сборок APK.
 
 ## 7. Обработка ошибок
 
@@ -119,25 +180,31 @@ P_{\text{чека}} = P_{\text{основного товара}} + P_{\text{пл
 
 ## 8. Совместимость с APK
 
-- Поля `milkSchemeId` и `milk` — аддитивные; старый APK их игнорирует (как и `sellable`).
+- Поля `volumeSchemeId`, `volumes`, `milkSchemeId`, `milk`, `config` — аддитивные; старый APK их игнорирует (как и `sellable`).
 - Отсутствие `milk`/пустой массив = «схемы нет», ошибок не вызывает.
 - Контракт схем согласуется с APK-агентом; имена полей стабильны: `label`, `evotorUuid`, `isDefault`, `isFree`, `sendToReceipt`, `sortOrder`, `active`, `available`.
 - Порядок обновления: backend → проверка JSON на тестовой карте → APK.
 
 ## 9. Инструкция администратора
 
-1. «Меню → Схемы молока» → «Новая схема молока».
-2. Заполнить название; у вариантов задать признаки:
+В сайдбаре — группа **«Конфигурация»** с тремя разделами: «Схемы объёмов», «Схемы молока», «Схемы добавок».
+
+1. **Схема объёмов**: раздел «Схемы объёмов» → «Новая схема объёмов» → название и объёмы
+   («200 мл / 200 / мл»), порядок стрелками ↑↓, галочка «Активен». Сохранить.
+2. **Схема молока**: раздел «Схемы молока» → «Новая схема молока» → название; у вариантов:
    - **Обычное молоко**: «По умолчанию» + «Бесплатный (не в чек)»;
    - **Платное**: снять «Бесплатный», оставить «Передавать в чек», выбрать товар Эвотор.
-3. Сохранить.
-4. В карточке товара поле **«Схема молока»** → выбрать схему (независимо от «Схема добавок»).
-5. Снять назначение — выбрать «Без схемы молока».
+   Порядок — стрелками ↑↓ (первый вариант показывается первым, «по умолчанию» предвыбран).
+3. **Схема добавок**: раздел «Схемы добавок» — как раньше (группы, лимиты, zero-option).
+4. В карточке товара три независимых поля: **«Схема объёмов»** (+ цены каждого объёма),
+   **«Схема молока»**, **«Схема добавок»**. Любое можно оставить пустым.
+5. Снять назначение — выбрать «Без схемы объёмов» / «Без схемы молока» / «Без добавок».
 
 ## 10. Инструкция тестирования
 
-- backend: `cd backend && DB_PATH=/tmp/milk.db npx vitest run milk-scheme` (17 тестов).
-- админка: `cd frontend-admin && npx vitest run milkScheme`.
+- backend, молоко: `cd backend && DB_PATH=/tmp/milk.db npx vitest run milk-scheme` (17 тестов).
+- backend, три группы контракта (§6 ТЗ, 11 сценариев): `DB_PATH=/tmp/cfg.db npx vitest run product-config-groups` (13 тестов).
+- админка: `cd frontend-admin && npx vitest run milkScheme volumeScheme`.
 - каталог: `curl -s 'http://localhost:3000/api/devices/catalog?storeUuid=<uuid>' | jq '.products[] | select(.milkSchemeId) | {name, milk}'`.
 - ожидаемо: обычное молоко `isDefault:true, isFree:true, sendToReceipt:false, evotorUuid:null`; платное — `evotorUuid` точки.
 
@@ -151,14 +218,23 @@ P_{\text{чека}} = P_{\text{основного товара}} + P_{\text{пл
 | `backend/src/modules/admin/routes.ts` | API схем, `milkSchemeId` в товаре, права |
 | `backend/src/modules/devices/routes.ts` | `milkSchemeId` + `milk[]` в каталоге |
 | `backend/src/__tests__/milk-scheme.test.ts` | 17 тестов |
-| `frontend-admin/src/pages/MenuGroups.tsx` | вкладка «Схемы молока» |
+| `backend/src/db/migrations/040_volume_schemes.sql` | схемы объёмов + цены |
+| `backend/src/db/rollback/040_volume_schemes_rollback.sql` | откат |
+| `backend/src/modules/catalog/volumeScheme.ts` | модель, валидация, CRUD, резолв объёмов |
+| `backend/src/__tests__/product-config-groups.test.ts` | 13 тестов контракта трёх групп |
+| `frontend-admin/src/pages/VolumeSchemes.tsx` | раздел «Схемы объёмов» |
+| `frontend-admin/src/pages/MilkSchemes.tsx` | раздел «Схемы молока» (вынесен из `MenuGroups`) |
+| `frontend-admin/src/pages/AddonSchemes.tsx` | раздел «Схемы добавок» (вынесен из `MenuGroups`) |
+| `frontend-admin/src/layout/Shell.tsx`, `App.tsx` | пункты навигации «Конфигурация» и маршруты |
+| `frontend-admin/src/lib/volumeScheme.ts` (+ `.test.ts`) | черновик и валидация схемы объёмов |
 | `frontend-admin/src/lib/milkScheme.ts` (+ `.test.ts`) | черновик и валидация |
-| `frontend-admin/src/pages/MenuProducts.tsx` | поле «Схема молока» |
-| `frontend-admin/src/pages/Menu.tsx`, `api/types.ts` | вкладка и типы |
+| `frontend-admin/src/pages/MenuProducts.tsx` | три поля схем в карточке + цены объёмов |
+| `frontend-admin/src/pages/Menu.tsx`, `api/types.ts` | вкладки «Меню» (без схем) и типы |
 
 ## 12. Известные ограничения
 
-- Объёмы по-прежнему живут в `product_groups` (отдельной «схемы объёмов» не создавали — существующая модель сохраняется целиком).
+- Схема объёмов — дополнительный слой: старые «группы вариантов» (`product_groups`) не удалены и продолжают работать наравне.
+- Массового назначения схем объёмов/молока группе товаров нет (только по одному товару).
 - UUID варианта молока не кешируется в схеме: при смене привязки товара к точке каталог отдаёт актуальный.
 - Платный вариант без UUID не скрывается, а помечается `available:false` — касса решает, показывать ли его с пометкой.
 - Массового назначения схемы молока группе товаров нет (только по одному товару).
@@ -167,6 +243,7 @@ P_{\text{чека}} = P_{\text{основного товара}} + P_{\text{пл
 
 | Решение | Почему принято | Альтернативы | Риски |
 |---|---|---|---|
+| Объёмы — отдельная схема-шаблон, а не поле в товаре | один шаблон на много напитков; цены остаются на товаре, дублирования нет | JSON-массив объёмов в `products`; отдельная таблица цен | +3 таблицы |
 | Молоко — отдельные таблицы, а не `modifier_scheme_options` | разные признаки (`isFree`, `sendToReceipt`) и правило «обычное не в чек»; смешение сломало бы лимиты и группы добавок | JSON в `products`; поле в схеме добавок | +2 таблицы и второй CRUD |
 | UUID не хранить в варианте | UUID различается по магазинам (`product_store_links`) | хранить uuid в варианте | при копировании схемы между точками нужен ручной резолв (решается запросом) |
 | Назначение — `products.milk_scheme_id` | минимальная связь 1:N без join-таблицы; «снять» = NULL | отдельная `product_milk_schemes` | нет истории переиспользования схемы между товарами (не требуется) |

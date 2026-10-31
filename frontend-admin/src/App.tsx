@@ -11,6 +11,9 @@ const Operations = lazy(() => import('./pages/Operations'))
 const Customers = lazy(() => import('./pages/Customers'))
 const CustomerCard = lazy(() => import('./pages/CustomerCard'))
 const Menu = lazy(() => import('./pages/Menu'))
+const VolumeSchemes = lazy(() => import('./pages/VolumeSchemes'))
+const MilkSchemes = lazy(() => import('./pages/MilkSchemes'))
+const AddonSchemes = lazy(() => import('./pages/AddonSchemes'))
 const Cash = lazy(() => import('./pages/Cash'))
 const Marketing = lazy(() => import('./pages/Marketing'))
 const Referrals = lazy(() => import('./pages/Referrals'))
@@ -91,6 +94,9 @@ export default function App() {
             <Route path="customers" element={<Customers />} />
             <Route path="customers/:id" element={<CustomerCard />} />
             <Route path="menu" element={<Menu />} />
+            <Route path="volume-schemes" element={<VolumeSchemes />} />
+            <Route path="milk-schemes" element={<MilkSchemes />} />
+            <Route path="addon-schemes" element={<AddonSchemes />} />
             <Route path="cash" element={<Cash />} />
             <Route path="marketing" element={<Marketing />} />
             <Route path="referrals" element={<Referrals />} />

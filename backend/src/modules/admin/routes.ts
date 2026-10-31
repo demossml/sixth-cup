@@ -11,6 +11,14 @@ import {
   listMilkSchemes,
   saveMilkScheme,
 } from '../catalog/milkScheme'
+import {
+  VolumeSchemeError,
+  deleteVolumeScheme,
+  listVolumeSchemes,
+  productVolumePrices,
+  saveProductVolumePrices,
+  saveVolumeScheme,
+} from '../catalog/volumeScheme'
 import { getCashierMenu, hasStoreMenu, resetStoreMenu, setCashierMenu } from '../../lib/cashierMenu'
 import { randomBytes } from 'node:crypto'
 import { Hono } from 'hono'
@@ -117,7 +125,7 @@ const mediaUrl = z
 
 export const MANAGER_BLOCKED =
   // Full path (/api/admin/...) and Hono-stripped path (/stores, /devices/...) both blocked.
-  /\/(reset|wipe)(\/|$)|\/organizations(\/|$)|(?:^|\/)api\/admin\/(stores|devices)(\/|$)|^\/(stores|devices)(\/|$)|\/ai\/settings(\/|$)|\/vouchers\/grant-all(\/|$)|\/voucher-templates(\/|$)|\/milk-schemes(\/|$)/
+  /\/(reset|wipe)(\/|$)|\/organizations(\/|$)|(?:^|\/)api\/admin\/(stores|devices)(\/|$)|^\/(stores|devices)(\/|$)|\/ai\/settings(\/|$)|\/vouchers\/grant-all(\/|$)|\/voucher-templates(\/|$)|\/milk-schemes(\/|$)|\/volume-schemes(\/|$)/
 
 const adminAuth = createMiddleware(async (c, next) => {
   const role = resolveAdminRole(c.req.header('X-Admin-Token'))
@@ -579,6 +587,68 @@ export const adminRoutes = new Hono()
     }
   })
 
+  // —— Схемы объёмов: отдельная сущность; цена каждого объёма — в карточке товара ——
+  .get('/volume-schemes', (c) => c.json({ schemes: listVolumeSchemes(db, { includeInactive: true }) }))
+
+  .post(
+    '/volume-schemes',
+    zValidator(
+      'json',
+      z.object({
+        id: z.number().int().positive().optional(),
+        name: z.string().min(1).max(80),
+        active: z.boolean().default(true),
+        items: z
+          .array(
+            z.object({
+              id: z.number().int().positive().optional(),
+              label: z.string().min(1).max(24),
+              sizeValue: z.number().int().min(1).max(100000).nullable().optional(),
+              sizeUnit: z.enum(['ml', 'g']).nullable().optional(),
+              sortOrder: z.number().int().default(0),
+              active: z.boolean().default(true),
+            }),
+          )
+          .max(20),
+      }),
+    ),
+    (c) => {
+      const body = c.req.valid('json')
+      try {
+        const saved = saveVolumeScheme(
+          {
+            ...body,
+            items: body.items.map((it) => ({ ...it, sizeValue: it.sizeValue ?? null, sizeUnit: it.sizeUnit ?? null })),
+          },
+          db,
+        )
+        c.set('audit', {
+          entity: 'volume-schemes',
+          entityId: String(saved?.id ?? ''),
+          summary: `Схема объёмов «${saved?.name}»: объёмов ${saved?.items.length ?? 0}`,
+          after: { name: saved?.name, active: saved?.active, items: saved?.items.length },
+        })
+        return c.json({ scheme: saved })
+      } catch (e) {
+        if (e instanceof VolumeSchemeError) throw bad(e.message, 400)
+        throw e
+      }
+    },
+  )
+
+  .delete('/volume-schemes/:id', (c) => {
+    const id = Number(c.req.param('id'))
+    if (!Number.isInteger(id) || id <= 0) throw bad('Некорректный id схемы', 400)
+    try {
+      deleteVolumeScheme(id, db)
+      c.set('audit', { entity: 'volume-schemes', entityId: String(id), summary: `Удалена схема объёмов #${id}` })
+      return c.json({ ok: true })
+    } catch (e) {
+      if (e instanceof VolumeSchemeError) throw bad(e.message, 409)
+      throw e
+    }
+  })
+
   // —— Products (extended, backward compatible) ——
   .get('/products', (c) => {
     const products = db.prepare(`
@@ -597,7 +667,8 @@ export const adminRoutes = new Hono()
              p.evotor_extra_json AS evotorExtraJson,
              p.catalog_source AS catalogSource, p.evotor_uuid AS evotorUuid,
              p.group_id AS groupId, p.variant_label AS variantLabel, p.variant_sort AS variantSort,
-             p.milk_scheme_id AS milkSchemeId
+             p.milk_scheme_id AS milkSchemeId,
+             p.volume_scheme_id AS volumeSchemeId
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
       ORDER BY p.sort_order, p.id
@@ -627,7 +698,9 @@ export const adminRoutes = new Hono()
       products: products.map((p) => {
         const links = byProduct.get(Number(p.id)) ?? []
         const r = readyOf(links)
-        return { ...p, evotorLinks: links, evotorReady: r.ready, evotorReadyReason: r.reason }
+        // Цены объёмов из карточки товара: схема объёмов — шаблон, цена — на товаре.
+        const volumePrices = p.volumeSchemeId != null ? productVolumePrices(db, Number(p.id)) : []
+        return { ...p, volumePrices, evotorLinks: links, evotorReady: r.ready, evotorReadyReason: r.reason }
       }),
     })
   })
@@ -650,6 +723,13 @@ export const adminRoutes = new Hono()
     freeEligible: z.boolean().optional(),
     /** Схема молока — отдельное назначение, не связанное со схемой добавок. */
     milkSchemeId: z.number().int().positive().nullable().optional(),
+    /** Схема объёмов — третье независимое назначение (шаблон объёмов). */
+    volumeSchemeId: z.number().int().positive().nullable().optional(),
+    /** Цены объёмов для этого товара: itemId — объём из назначенной схемы. */
+    volumePrices: z
+      .array(z.object({ itemId: z.number().int().positive(), price: z.number().int().min(0) }))
+      .max(20)
+      .optional(),
     sizeValue: z.number().int().min(1).max(100000).optional().nullable(),
     sizeUnit: z.enum(['g', 'ml']).optional().nullable(),
     calories: z.number().int().min(0).max(10000).optional().nullable(),
@@ -684,7 +764,9 @@ export const adminRoutes = new Hono()
           season_start_at=?, season_end_at=?, evotor_extra_json=?, catalog_source='SIXTH_CUP',
           size_value=?, size_unit=?, calories=?,
           -- undefined = «не трогать», null = «снять назначение схемы молока»
-          milk_scheme_id=CASE WHEN ?=1 THEN ? ELSE milk_scheme_id END
+          milk_scheme_id=CASE WHEN ?=1 THEN ? ELSE milk_scheme_id END,
+          -- то же правило для схемы объёмов
+          volume_scheme_id=CASE WHEN ?=1 THEN ? ELSE volume_scheme_id END
         WHERE id=?
       `).run(
         p.name, p.price, p.icon, p.available ? 1 : 0,
@@ -698,6 +780,8 @@ export const adminRoutes = new Hono()
         p.sizeValue ?? null, p.sizeUnit ?? null, p.calories ?? null,
         p.milkSchemeId === undefined ? 0 : 1,
         p.milkSchemeId ?? null,
+        p.volumeSchemeId === undefined ? 0 : 1,
+        p.volumeSchemeId ?? null,
         p.id
       )
     } else {
@@ -706,8 +790,8 @@ export const adminRoutes = new Hono()
       const freeFlag = p.freeEligible === undefined ? cupFlag : (p.freeEligible ? 1 : 0)
       db.prepare(`
         INSERT INTO products(name,price,icon,available,description,category_id,image_url,sort_order,created_at,updated_at,
-          modifier_scheme_id,recipe_text,recipe_cost_rub,recipe_seconds,counts_as_cup,free_eligible,tax,measure,cost_price_kopecks,season_start_at,season_end_at,evotor_extra_json,catalog_source,size_value,size_unit,calories,milk_scheme_id)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'SIXTH_CUP',?,?,?,?)
+          modifier_scheme_id,recipe_text,recipe_cost_rub,recipe_seconds,counts_as_cup,free_eligible,tax,measure,cost_price_kopecks,season_start_at,season_end_at,evotor_extra_json,catalog_source,size_value,size_unit,calories,milk_scheme_id,volume_scheme_id)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'SIXTH_CUP',?,?,?,?,?)
       `).run(
         p.name, p.price, p.icon, p.available ? 1 : 0,
         p.description ?? null, p.categoryId ?? null, p.imageUrl ?? null,
@@ -716,10 +800,17 @@ export const adminRoutes = new Hono()
         cupFlag, freeFlag, p.tax ?? 'NO_VAT', p.measure ?? 'шт',
         p.costPriceKopecks ?? 0, p.seasonStartAt ?? null, p.seasonEndAt ?? null, p.evotorExtraJson ?? null,
         p.sizeValue ?? null, p.sizeUnit ?? null, p.calories ?? null,
-        p.milkSchemeId ?? null
+        p.milkSchemeId ?? null,
+        p.volumeSchemeId ?? null
       )
     }
     const productId = p.id ?? (db.prepare('SELECT last_insert_rowid() AS id').get() as { id: number }).id
+    // Эффективная схема объёмов: undefined в теле = «не трогать» (цены всё равно применяем).
+    const volumeSchemeId =
+      p.volumeSchemeId !== undefined
+        ? p.volumeSchemeId
+        : ((db.prepare('SELECT volume_scheme_id AS id FROM products WHERE id=?').get(productId) as { id: number | null } | undefined)?.id ?? null)
+    saveProductVolumePrices(db, productId, volumeSchemeId, p.volumePrices)
     enqueueProductSync([productId])
     return c.json({ ok: true, id: productId })
   })
