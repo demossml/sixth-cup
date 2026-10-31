@@ -487,6 +487,7 @@ export class ProductPushService {
     }
     ProductPushService.runningStores.add(storeUuid)
     try {
+      this.resumeCatalog(storeUuid)
       return await this.pushToStoreInternal(storeUuid)
     } finally {
       ProductPushService.runningStores.delete(storeUuid)
@@ -651,6 +652,78 @@ export class ProductPushService {
       pushErrors: push.errors.slice(0, 20),
       extrasFailed: push.extrasFailed,
     }
+  }
+
+  /**
+   * Полное удаление прайса точки: в облаке Эвотор удаляются ВСЕ товары и группы,
+   * локальные связи и трекинг чистятся, автовыгрузка каталога ставится на паузу
+   * (опрос чеков при этом продолжается). Повторная выгрузка — только вручную.
+   */
+  async purgeCloudCatalog(storeUuid: string): Promise<{
+    listed: number
+    deleted: number
+    groups: number
+    deleteErrors: string[]
+  }> {
+    this.ensureSchema()
+    if (!this.api(storeUuid).isConfigured) {
+      return { listed: 0, deleted: 0, groups: 0, deleteErrors: ['[list] GET products status=0 EVOTOR_API_TOKEN not set'] }
+    }
+    let remote: Record<string, unknown>[] = []
+    try {
+      remote = await this.remoteProducts(storeUuid)
+    } catch (e) {
+      return { listed: 0, deleted: 0, groups: 0, deleteErrors: [`list: ${String(e).slice(0, 200)}`] }
+    }
+    const ids = remote.map((r) => remoteId(r)).filter((id): id is string => Boolean(id))
+    const groups = remote.filter((r) => r.group === true || r.is_group === true || r.isGroup === true).length
+    const deleteErrors: string[] = []
+    let deleted = 0
+    if (ids.length) {
+      try {
+        await this.api(storeUuid).deleteCloudProducts(storeUuid, ids)
+        deleted = ids.length
+      } catch (e) {
+        // По одному: одна «занятая» позиция не должна блокировать остальные
+        for (const id of ids) {
+          try {
+            await this.api(storeUuid).deleteCloudProducts(storeUuid, [id])
+            deleted++
+          } catch (e2) {
+            deleteErrors.push(`${id.slice(0, 8)}: ${String(e2).slice(0, 160)}`)
+          }
+        }
+      }
+    }
+    this.db.transaction(() => {
+      this.db.prepare('DELETE FROM product_store_links WHERE store_uuid=?').run(storeUuid)
+      this.db.prepare(`DELETE FROM evotor_products WHERE store_uuid=? AND (variant='' OR variant IS NULL)`).run(storeUuid)
+      this.db.prepare(`DELETE FROM evotor_outbox WHERE store_uuid=? AND entity='PRODUCT' AND status IN ('PENDING','DONE')`).run(storeUuid)
+      // Чеки продолжают опрашиваться, но каталог сам не вернётся: пауза снимается только явной выгрузкой.
+      this.db.prepare('UPDATE evotor_stores SET catalog_paused=1 WHERE store_uuid=?').run(storeUuid)
+    })()
+    log.warn('evotor catalog purged', {
+      store: shortId(storeUuid), listed: remote.length, deleted, groups, errors: deleteErrors.length,
+    })
+    return { listed: remote.length, deleted, groups, deleteErrors: deleteErrors.slice(0, 20) }
+  }
+
+  /** Точка на паузе автовыгрузки каталога (прайс удалён вручную). */
+  catalogPaused(storeUuid: string): boolean {
+    try {
+      const row = this.db.prepare('SELECT COALESCE(catalog_paused,0) AS p FROM evotor_stores WHERE store_uuid=?')
+        .get(storeUuid) as { p: number } | undefined
+      return row?.p === 1
+    } catch {
+      return false
+    }
+  }
+
+  /** Снять паузу: явная выгрузка/синхронизация возвращает автовыгрузку. */
+  resumeCatalog(storeUuid: string): void {
+    try {
+      this.db.prepare('UPDATE evotor_stores SET catalog_paused=0 WHERE store_uuid=?').run(storeUuid)
+    } catch { /* old DB */ }
   }
 
   async verifyStore(storeUuid: string): Promise<{ drift: { productId: number; evotorUuid: string; issue: string }[]; count: number }> {

@@ -47,6 +47,7 @@ export function queryStoreHealth(now = Date.now()) {
   const rows = db.prepare(`
     SELECT s.store_uuid AS uuid, s.name, COALESCE(s.sync_enabled,0) AS enabled,
            st.status, st.last_error AS lastError, st.last_fast_at AS lastFastAt,
+           COALESCE(s.catalog_paused,0) AS catalogPaused,
            st.last_hourly_at AS lastHourlyAt, st.last_daily_at AS lastDailyAt,
            (SELECT COUNT(*) FROM evotor_outbox o WHERE o.store_uuid=s.store_uuid AND o.status='PENDING') AS outboxPending,
            (SELECT COUNT(*) FROM evotor_outbox o WHERE o.store_uuid=s.store_uuid AND o.status='PENDING' AND o.last_error IS NOT NULL) AS outboxWithError,
@@ -55,6 +56,7 @@ export function queryStoreHealth(now = Date.now()) {
     ORDER BY s.name, s.store_uuid
   `).all() as {
     uuid: string; name: string | null; enabled: number; status: string | null; lastError: string | null
+    catalogPaused: number
     lastFastAt: number | null; lastHourlyAt: number | null; lastDailyAt: number | null
     outboxPending: number; outboxWithError: number; failedDocs: number
   }[]
@@ -64,6 +66,7 @@ export function queryStoreHealth(now = Date.now()) {
       ...r,
       lastError: describeEvotorError(r.lastError),
       enabled: r.enabled === 1,
+      catalogPaused: r.catalogPaused === 1,
       level: h.level,
       ageMin: h.ageMin,
       reason: h.reason,

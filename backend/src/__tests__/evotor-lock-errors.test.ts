@@ -35,7 +35,7 @@ beforeEach(() => {
 
 describe('single-flight по точке', () => {
   it('tryLock занимает ключ до unlock', () => {
-    const key = lockKey('wipe', STORE)
+    const key = lockKey(STORE)
     expect(tryLock(key, 'wipe')).toBe(true)
     expect(tryLock(key, 'sync')).toBe(false)
     expect(lockedBy(key)?.op).toBe('wipe')
@@ -45,7 +45,7 @@ describe('single-flight по точке', () => {
 
   it('второй wipe по той же точке получает 409 с понятным текстом', async () => {
     storeRow(STORE)
-    const key = lockKey('wipe', STORE)
+    const key = lockKey(STORE)
     expect(tryLock(key, 'wipe')).toBe(true)
     const r = await app.request(`/api/admin/evotor/stores/${STORE}/wipe-catalog`, { method: 'POST', headers: H })
     expect(r.status).toBe(409)
@@ -56,13 +56,13 @@ describe('single-flight по точке', () => {
 
   it('sync и push по занятой точке тоже 409', async () => {
     storeRow(STORE)
-    expect(tryLock(lockKey('sync', STORE), 'sync')).toBe(true)
+    expect(tryLock(lockKey(STORE), 'sync')).toBe(true)
     expect((await app.request(`/api/admin/evotor/stores/${STORE}/sync`, { method: 'POST', headers: H })).status).toBe(409)
-    unlock(lockKey('sync', STORE))
+    unlock(lockKey(STORE))
 
-    expect(tryLock(lockKey('push', STORE), 'push')).toBe(true)
+    expect(tryLock(lockKey(STORE), 'push')).toBe(true)
     expect((await app.request(`/api/admin/evotor/stores/${STORE}/push-products`, { method: 'POST', headers: H })).status).toBe(409)
-    unlock(lockKey('push', STORE))
+    unlock(lockKey(STORE))
   })
 })
 

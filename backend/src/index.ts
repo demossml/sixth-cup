@@ -49,7 +49,8 @@ if (evotorConfig.enabled || anyTokenConfigured(db)) {
         lastIdleLogAt = Date.now()
         log.info('evotor poll idle (no new docs)', { stores: r.stores, seen: r.seen, sell: r.sellSeen, errors: r.errors.length })
       }
-      const stores = db.prepare('SELECT store_uuid FROM evotor_stores WHERE COALESCE(sync_enabled,0)=1').all() as { store_uuid: string }[]
+      // catalog_paused=1 — прайс удалён вручную: чеки опрашиваем, товары сами не выгружаем.
+      const stores = db.prepare('SELECT store_uuid FROM evotor_stores WHERE COALESCE(sync_enabled,0)=1 AND COALESCE(catalog_paused,0)=0').all() as { store_uuid: string }[]
       for (const store of stores) {
         if (!catalogBootstrapped) {
           const sync = await catalog.syncStore(store.store_uuid)
@@ -70,7 +71,8 @@ if (evotorConfig.enabled || anyTokenConfigured(db)) {
     try {
       const r = await poll.runHourly()
       await refreshStores()
-      const stores = db.prepare('SELECT store_uuid FROM evotor_stores WHERE COALESCE(sync_enabled,0)=1').all() as { store_uuid: string }[]
+      // catalog_paused=1 — прайс удалён вручную: чеки опрашиваем, товары сами не выгружаем.
+      const stores = db.prepare('SELECT store_uuid FROM evotor_stores WHERE COALESCE(sync_enabled,0)=1 AND COALESCE(catalog_paused,0)=0').all() as { store_uuid: string }[]
       for (const store of stores) {
         const sync = await catalog.syncStore(store.store_uuid)
         if (sync.pulled.imported || sync.pulled.updated || sync.pushed.pushed) log.info('evotor catalog sync', { store: shortId(store.store_uuid), pulled: sync.pulled.imported, updated: sync.pulled.updated, pushed: sync.pushed.pushed })

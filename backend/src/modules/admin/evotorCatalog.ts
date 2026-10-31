@@ -1,5 +1,6 @@
 /** Admin view + synchronization for Evotor Cloud catalog. */
 import { Hono } from 'hono'
+import { HTTPException } from 'hono/http-exception'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { db } from '../../db'
@@ -21,7 +22,7 @@ import {
  * удаляет и создаёт одни и те же товары одновременно → Эвотор отвечает 400 на отдельные позиции.
  */
 function acquireStoreLock(kind: string, storeUuid: string) {
-  const key = lockKey(kind, storeUuid)
+  const key = lockKey(storeUuid)
   if (!tryLock(key, kind)) {
     const busy = lockedBy(key)
     throw bad(
@@ -255,6 +256,7 @@ export const adminEvotorCatalog = new Hono()
       const en = db.prepare(`SELECT COALESCE(sync_enabled,0) AS e FROM evotor_stores WHERE store_uuid=?`).get(storeUuid) as { e: number } | undefined
       if (!en || en.e !== 1) throw bad('Магазин не включён для sync (поставьте галочку в Точки)', 403)
       const svc = new ProductPushService(db, clientFor(storeUuid))
+      svc.resumeCatalog(storeUuid)
       const r = await svc.syncStore(storeUuid)
       const failed = r.pushed.errors.length
       return c.json({ ok: failed === 0, storeUuid, pulled: r.pulled, pushed: r.pushed.pushed, linked: r.pushed.linked, failed, extrasFailed: r.pushed.extrasFailed, errors: r.pushed.errors.slice(0, 5) })
@@ -357,6 +359,64 @@ export const adminEvotorCatalog = new Hono()
         fatal ? 502 : 200,
       )
     } catch (e) {
+      throw bad(String(e), 502)
+    } finally {
+      unlock(lock)
+    }
+  })
+
+  /**
+   * Полное удаление прайса точки: в Эвотор удаляются ВСЕ товары и группы, локальные связи
+   * и трекинг чистятся, автовыгрузка каталога ставится на паузу (чеки опрашиваются дальше).
+   * Только владелец: операция необратима без повторной выгрузки.
+   */
+  .post('/evotor/stores/:storeUuid/purge-catalog', async (c) => {
+    const storeUuid = c.req.param('storeUuid')
+    const role = (c as unknown as { get: (k: string) => string | undefined }).get('adminRole') || 'owner'
+    if (role !== 'owner') throw bad('Удаление прайс-листа может делать только владелец', 403)
+    const body = await c.req.json().catch(() => ({})) as { confirm?: string }
+    if (String(body?.confirm ?? '').trim().toLowerCase() !== 'удалить') {
+      throw bad('Подтвердите удаление словом «удалить»', 400)
+    }
+    const store = db.prepare('SELECT name FROM evotor_stores WHERE store_uuid=?').get(storeUuid) as
+      | { name: string | null }
+      | undefined
+    if (!store) throw bad('Точка не найдена — обновите список точек Эвотор', 404)
+
+    const lock = acquireStoreLock('purge', storeUuid)
+    try {
+      const svc = new ProductPushService(db, clientFor(storeUuid))
+      const result = await svc.purgeCloudCatalog(storeUuid)
+      const ok = result.deleteErrors.length === 0
+      ;(c as unknown as { set: (k: string, v: unknown) => void }).set('audit', {
+        entity: 'evotor-store',
+        entityId: storeUuid,
+        summary: `Удалён прайс-лист точки «${store.name ?? storeUuid.slice(0, 8)}»: удалено ${result.deleted} из ${result.listed}, ошибок ${result.deleteErrors.length}`,
+        after: { deleted: result.deleted, listed: result.listed, groups: result.groups, errors: result.deleteErrors.slice(0, 5), catalogPaused: true },
+      })
+      // 502 только если не удалось даже получить список: это уже не «частично».
+      const listFailed = result.listed === 0 && result.deleteErrors.some((e) => e.startsWith('list:'))
+      if (listFailed) {
+        return c.json({ ok: false, storeUuid, ...result, hint: 'Не удалось получить список товаров Эвотор — повторите позже.' }, 502)
+      }
+      return c.json(
+        {
+          ok,
+          storeUuid,
+          listed: result.listed,
+          deleted: result.deleted,
+          groups: result.groups,
+          errors: result.deleteErrors,
+          catalogPaused: true,
+          hint: ok
+            ? 'Касса пуста. Чеки продолжают синхронизироваться, товары сами не вернутся — выгрузите их кнопкой «Выгрузить товары», когда понадобится.'
+            : 'Часть позиций Эвотор не удалил — повторите удаление или проверьте ошибки.',
+        },
+        200,
+      )
+    } catch (e) {
+      // 503 «нет токена» и прочие HTTPException должны дойти до клиента как есть.
+      if (e instanceof HTTPException) throw e
       throw bad(String(e), 502)
     } finally {
       unlock(lock)

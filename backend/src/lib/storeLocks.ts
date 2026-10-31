@@ -7,8 +7,12 @@
  */
 const active = new Map<string, { op: string; since: number }>()
 
-export function lockKey(kind: string, storeUuid: string): string {
-  return `${kind}:${storeUuid}`
+/**
+ * Один ключ на точку: wipe, sync, push и purge не должны идти одновременно —
+ * иначе удаление и выгрузка гоняются за одни и те же товары в облаке.
+ */
+export function lockKey(storeUuid: string): string {
+  return `store:${storeUuid}`
 }
 
 /** Занять блокировку. false — ключ уже занят другой операцией. */

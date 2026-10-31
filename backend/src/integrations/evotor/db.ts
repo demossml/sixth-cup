@@ -136,4 +136,8 @@ CREATE TABLE IF NOT EXISTS card_denylist (
   if (!storeCols.includes('sync_enabled')) {
     db.exec('ALTER TABLE evotor_stores ADD COLUMN sync_enabled INTEGER NOT NULL DEFAULT 0')
   }
+  // «Прайс удалён вручную»: фон не выгружает товары, пока админ не нажмёт «Выгрузить».
+  if (!storeCols.includes('catalog_paused')) {
+    db.exec('ALTER TABLE evotor_stores ADD COLUMN catalog_paused INTEGER NOT NULL DEFAULT 0')
+  }
 }

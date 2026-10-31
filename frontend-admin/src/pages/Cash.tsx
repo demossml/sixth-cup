@@ -20,6 +20,7 @@ function StoreCard({ s, health, now, onChanged }: { s: EvotorStore; health?: Hea
   const [busy, setBusy] = useState('')
   const [drift, setDrift] = useState<Drift | null>(null)
   const [wipe, setWipe] = useState(false)
+  const [purge, setPurge] = useState(false)
   const run = async (key: string, fn: () => Promise<string>) => {
     setBusy(key)
     try { toast.push(await fn()); onChanged() } catch (e) { toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad') } finally { setBusy('') }
@@ -49,6 +50,11 @@ function StoreCard({ s, health, now, onChanged }: { s: EvotorStore; health?: Hea
               опрос: {health.lastFastAt ? `${ago(health.lastFastAt, now)}` : 'не было'}
             </span>
           </div>
+          {health.catalogPaused && (
+            <div className="rounded-lg border border-warn/40 bg-warn-soft/60 px-2 py-1 text-[12px] text-ink">
+              Прайс удалён на точке: товары не выгружаются автоматически. Верните кнопкой «Выгрузить товары».
+            </div>
+          )}
           {health.lastError && <div className="break-words text-[12px] text-bad">{health.lastError}</div>}
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-ink-tertiary">
             <span>ошибки чеков: <b className={health.failedDocs ? 'text-bad' : ''}>{health.failedDocs ?? 0}</b></span>
@@ -63,6 +69,13 @@ function StoreCard({ s, health, now, onChanged }: { s: EvotorStore; health?: Hea
           <Button size="sm" variant="secondary" loading={busy === 'push'} onClick={() => run('push', async () => { const r = await api<{ ok: boolean; failed: number }>(`/evotor/stores/${s.uuid}/push-products`, { method: 'POST' }); return r.ok ? 'Товары выгружены' : `Выгружено с ошибками: ${r.failed}` })}>Выгрузить товары</Button>
           <Button size="sm" variant="secondary" loading={busy === 'drift'} onClick={() => run('drift', async () => { const r = await api<Drift>(`/evotor/stores/${s.uuid}/products/drift`); setDrift(r); return r.drift.length ? `Расхождений: ${r.drift.length}` : 'Расхождений нет' })}>Проверить расхождения</Button>
           <Button size="sm" variant="secondary" onClick={() => setWipe(true)}>Пересоздать каталог…</Button>
+          <Button
+            size="sm"
+            variant="danger"
+            onClick={() => setPurge(true)}
+          >
+            Удалить прайс-лист…
+          </Button>
         </div>
       )}
       {drift && drift.count > 0 && (
@@ -72,6 +85,29 @@ function StoreCard({ s, health, now, onChanged }: { s: EvotorStore; health?: Hea
       )}
       <CashierMenuPanel storeUuid={s.uuid} storeName={s.name ?? s.uuid.slice(0, 8)} />
 
+      <ConfirmDialog
+        open={purge}
+        danger
+        typed="удалить"
+        confirmLabel="Удалить прайс-лист"
+        busy={busy === 'purge'}
+        title="Удалить весь прайс-лист на точке?"
+        onCancel={() => setPurge(false)}
+        onConfirm={() => { void run('purge', async () => {
+          const r = await api<{ ok: boolean; deleted: number; listed: number; groups: number; errors: string[] }>(
+            `/evotor/stores/${s.uuid}/purge-catalog`,
+            { method: 'POST', body: { confirm: 'удалить' } },
+          )
+          return r.ok
+            ? `Удалено: ${r.deleted} из ${r.listed}${r.groups ? ` (групп: ${r.groups})` : ''}`
+            : `Удалено ${r.deleted} из ${r.listed}, ошибок: ${r.errors.length}`
+        }).finally(() => setPurge(false)) }}
+      >
+        В Эвотор будут удалены <b>все товары и группы</b> этой точки — касса останется без товаров.
+        Наш каталог в 6.7 не пострадает. Синхронизация чеков продолжится, но товары сами не вернутся:
+        автовыгрузка ставится на паузу до нажатия «Выгрузить товары».
+        Для подтверждения введите слово <b>удалить</b>.
+      </ConfirmDialog>
       <ConfirmDialog open={wipe} title="Пересоздать каталог на точке?"
         busy={busy === 'wipe'}
         onCancel={() => setWipe(false)}

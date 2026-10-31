@@ -10,6 +10,8 @@ export type StoreHealth = {
   outboxPending: number
   outboxWithError: number
   failedDocs: number
+  /** Прайс удалён вручную: фон не выгружает товары (чеки опрашиваются). */
+  catalogPaused?: boolean
   level: Level
   ageMin: number | null
   reason: string

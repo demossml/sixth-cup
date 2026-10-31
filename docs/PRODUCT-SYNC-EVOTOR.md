@@ -63,3 +63,17 @@ Evotor Store UUID + Evotor product UUID -> at most one local mapping
 ```
 
 For a new 6.7 product the first CREATE request contains no Evotor product UUID. The response UUID is written to `product_store_links` and `evotor_products`. Every later sync for that `(store_uuid, product_id)` uses PUT with the saved UUID. If a CREATE response is lost, the next retry searches the remote catalog for `article_number=sc-<local_product_id>` before creating anything. Incoming catalog pulls upsert by `(store_uuid, evotor_uuid)`.
+
+## Удаление прайса точки («касса по нулям»)
+
+`POST /api/admin/evotor/stores/:storeUuid/purge-catalog` (только владелец, тело `{ "confirm": "удалить" }`)
+
+- перечисляет **все** товары и группы точки в облаке Эвотор и удаляет их (пачками по 1000, при отказе — по одному);
+- чистит локальный трекинг: `product_store_links`, `evotor_products` (variant=''), `evotor_outbox` PRODUCT;
+- локальный каталог 6.7 (`products`) **не трогает** — товары можно выгрузить заново;
+- ставит `evotor_stores.catalog_paused = 1`: опрос чеков продолжается, но фоновая автовыгрузка каталога
+  остановлена, иначе тик вернул бы товары в течение минуты;
+- 200 + `ok:false` при частичных ошибках (как у wipe), 502 — только если список не удалось получить;
+- снимает паузу любая явная операция: «Выгрузить товары», «Синхронизировать каталог», «Пересоздать каталог».
+
+Флаг `catalog_paused` добавляется автоматически в `migrateEvotorSchema` (как `sync_enabled`), отдельной SQL-миграции нет.
