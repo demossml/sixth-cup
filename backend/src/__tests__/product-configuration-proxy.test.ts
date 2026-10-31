@@ -127,10 +127,24 @@ describe('валидация запроса', () => {
     expect(r.status).toBe(400)
   })
 
-  it('storeUuid из query и заголовка расходятся — 400', async () => {
+  it('storeUuid из query и заголовка расходятся — берём точку со связями товара (200, не 400)', async () => {
+    // APK собирает query из кэша каталога, заголовок — из своей конфигурации;
+    // жёсткий 400 ломал продажу, поэтому выбираем точку по фактическим связям.
     const id = await mkProduct('Разные-точки')
+    link(id, STORE_A, `u-mismatch-${id}`)
+    const r = await config_of(id, STORE_B, { ...PROXY, 'X-Evotor-Store-Uuid': STORE_A })
+    expect(r.s).toBe(200)
+    // связи есть только у STORE_A → ответ по ней, несмотря на query=STORE_B
+    expect(r.j.storeUuid).toBe(STORE_A)
+    expect(r.j.volumes[0].evotorUuid).toBe(`u-mismatch-${id}`)
+  })
+
+  it('расхождение без связей у обеих точек — 200 и точка из query', async () => {
+    const id = await mkProduct('Разные-точки-2')
     const r = await config_of(id, STORE_A, { ...PROXY, 'X-Evotor-Store-Uuid': STORE_B })
-    expect(r.s).toBe(400)
+    expect(r.s).toBe(200)
+    expect(r.j.storeUuid).toBe(STORE_A)
+    expect(r.j.volumes[0].available).toBe(false)
   })
 
   it('storeUuid можно передать только заголовком', async () => {

@@ -118,6 +118,53 @@ function uuidMapForStore(db: Database.Database, storeUuid: string) {
 }
 
 /**
+ * Какую точку считать точкой запроса, если APK прислал разные значения
+ * в `?storeUuid=` и `X-Evotor-Store-Uuid`.
+ *
+ * Касса (APK 5.2.21) собирает query из кэша каталога, а заголовок — из своей
+ * конфигурации, и они расходятся (например, после переноса терминала).
+ * Берём ту, где у объёмов товара реально есть связи `product_store_links`:
+ * так ответ не окажется пустым из-за устаревшего query.
+ */
+export function pickStoreUuid(
+  db: Database.Database,
+  productId: number,
+  candidates: string[],
+): { storeUuid: string; reason: 'only' | 'links' | 'fallback' } | null {
+  const unique: string[] = []
+  for (const c of candidates) {
+    const v = String(c ?? '').trim()
+    if (v && !unique.some((u) => u.toLowerCase() === v.toLowerCase())) unique.push(v)
+  }
+  if (!unique.length) return null
+  if (unique.length === 1) return { storeUuid: unique[0], reason: 'only' }
+
+  const product = db.prepare('SELECT group_id AS groupId FROM products WHERE id=?').get(productId) as
+    | { groupId: number | null }
+    | undefined
+  const ids: number[] = product
+    ? product.groupId != null
+      ? (db
+          .prepare('SELECT id FROM products WHERE group_id=? AND COALESCE(is_group, 0) = 0')
+          .all(product.groupId) as { id: number }[]).map((r) => r.id)
+      : [productId]
+    : [productId]
+
+  const countLinks = db.prepare(
+    `SELECT COUNT(*) AS n FROM product_store_links
+     WHERE product_id IN (${ids.map(() => '?').join(',')})
+       AND LOWER(store_uuid) = LOWER(?) AND evotor_uuid IS NOT NULL AND TRIM(evotor_uuid) <> ''`,
+  )
+  let best: { storeUuid: string; n: number } | null = null
+  for (const c of unique) {
+    const n = Number((countLinks.get(...ids, c) as { n: number }).n)
+    if (!best || n > best.n) best = { storeUuid: c, n }
+  }
+  // Ни у одной точки связей нет — отдаём первую (query): клиент её и спрашивал.
+  return best && best.n > 0 ? { storeUuid: best.storeUuid, reason: 'links' } : { storeUuid: unique[0], reason: 'fallback' }
+}
+
+/**
  * Возвращает `null`, если товара нет. Не бросает исключений: маршрут сам решает, что отдать.
  */
 export function buildProductConfiguration(

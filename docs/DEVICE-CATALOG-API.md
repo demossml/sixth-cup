@@ -15,7 +15,7 @@ X-Evotor-Device-UUID: <terminal>
 | Код | Когда |
 |---|---|
 | 200 | конфигурация (заголовок `Cache-Control: no-store`) |
-| 400 | `invalid_product_id`, `store_required`, `store_uuid_mismatch` |
+| 400 | `invalid_product_id`, `store_required` (расхождение query/header больше не 400) |
 | 403 | `proxy_forbidden` — передан неверный `Authorization` при настроенном токене |
 | 200 + `ok:false` | `product_not_found` (404 у кассы = «маршрута нет», поэтому не используем) |
 | 429 | больше 240 запросов в минуту на точку |

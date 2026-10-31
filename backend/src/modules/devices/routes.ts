@@ -9,7 +9,7 @@ import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import { buildCatalogToppings, effectiveSchemeId, listAddonProductIds, ensureAddonSchemeSchema, resolveAddonsCategoryIds, type CatalogTopping } from '../catalog/addonScheme'
 import { ensureMilkSchemeSchema, milkForProduct } from '../catalog/milkScheme'
-import { PRODUCT_CONFIG_SCHEMA_VERSION, buildProductConfiguration } from '../catalog/productConfig'
+import { PRODUCT_CONFIG_SCHEMA_VERSION, buildProductConfiguration, pickStoreUuid } from '../catalog/productConfig'
 import { ensureVolumeSchemeSchema, volumesForProduct } from '../catalog/volumeScheme'
 import { productArticleNumber } from '../catalog/productIdentity'
 import { hashToken, requireDevice, type DeviceEnv } from '../../middleware/device'
@@ -304,14 +304,19 @@ export const deviceRoutes = new Hono<DeviceEnv>()
     const productId = Number(c.req.param('productId'))
     if (!Number.isInteger(productId) || productId <= 0) throw bad('invalid_product_id', 400)
 
-    const queryStore = (c.req.query('storeUuid') ?? '').trim()
-    const headerStore = (c.req.header('X-Evotor-Store-Uuid') ?? '').trim()
-    // Сравнение регистронезависимое: касса может прислать uuid в другом регистре.
+    const queryStore = (c.req.query('storeUuid') ?? '').trim().slice(0, 80)
+    const headerStore = (c.req.header('X-Evotor-Store-Uuid') ?? '').trim().slice(0, 80)
+    // APK собирает query из кэша каталога, а заголовок — из своей конфигурации; они
+    // расходятся (перенос терминала, старый кэш). Не роняем запрос: берём точку,
+    // у которой реально есть связи товара, и пишем предупреждение.
+    const picked = pickStoreUuid(db, productId, [queryStore, headerStore])
+    if (!picked) throw bad('store_required', 400)
+    const storeUuid = picked.storeUuid
     if (queryStore && headerStore && queryStore.toLowerCase() !== headerStore.toLowerCase()) {
-      throw bad('store_uuid_mismatch', 400)
+      log.warn('configuration store mismatch', {
+        query: shortId(queryStore), header: shortId(headerStore), used: shortId(storeUuid), reason: picked.reason,
+      })
     }
-    const storeUuid = (queryStore || headerStore).slice(0, 80)
-    if (!storeUuid) throw bad('store_required', 400)
 
     const key = `pconfig:${storeUuid.toLowerCase()}`
     const now = Date.now()
@@ -333,6 +338,10 @@ export const deviceRoutes = new Hono<DeviceEnv>()
     if (!cfg) {
       // 404 касса трактует как «маршрута нет». Для неизвестного товара — явный ok:false.
       return c.json({ ok: false, schemaVersion: PRODUCT_CONFIG_SCHEMA_VERSION, error: 'product_not_found', storeUuid, productId })
+    }
+    if (queryStore && storeUuid.toLowerCase() !== queryStore.toLowerCase()) {
+      // Отвечаем точкой, где есть данные, но показываем клиенту, что он просил другую.
+      return c.json({ ...cfg, requestedStoreUuid: queryStore })
     }
     if (cfg.configErrors.length) {
       log.warn('product configuration incomplete', {
