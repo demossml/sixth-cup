@@ -304,21 +304,30 @@ export const deviceRoutes = new Hono<DeviceEnv>()
     const productId = Number(c.req.param('productId'))
     if (!Number.isInteger(productId) || productId <= 0) throw bad('invalid_product_id', 400)
 
-    const queryStore = (c.req.query('storeUuid') ?? '').trim().slice(0, 80)
-    const headerStore = (c.req.header('X-Evotor-Store-Uuid') ?? '').trim().slice(0, 80)
-    // APK собирает query из кэша каталога, а заголовок — из своей конфигурации; они
-    // расходятся (перенос терминала, старый кэш). Не роняем запрос: берём точку,
-    // у которой реально есть связи товара, и пишем предупреждение.
-    const picked = pickStoreUuid(db, productId, [queryStore, headerStore])
+    // Терминал может быть привязан к нескольким магазинам: Evotor присылает их списком
+    // через запятую («uuid1, uuid2»). Разбираем оба источника в наборы.
+    const parseStores = (raw: string | undefined) =>
+      String(raw ?? '')
+        .split(',')
+        .map((s) => s.trim().slice(0, 80))
+        .filter(Boolean)
+    const queryStores = parseStores(c.req.query('storeUuid'))
+    const headerStores = parseStores(c.req.header('X-Evotor-Store-Uuid'))
+
+    // Точка запроса = та, у которой реально есть связи товара; query приоритетнее.
+    const picked = pickStoreUuid(db, productId, [...queryStores, ...headerStores])
     if (!picked) throw bad('store_required', 400)
-    // Клиенту возвращаем то, что он прислал (он сверяет ответ со своим магазином),
+    // Клиенту возвращаем то, что он прислал в query (он сверяет ответ со своим магазином),
     // а UUID берём по реальной точке из product_store_links.
-    const storeUuid = picked.echo
+    const storeUuid = queryStores[0] ?? picked.echo
     const dbStore = picked.dbStore ?? picked.echo
-    if (queryStore && headerStore && queryStore.toLowerCase() !== headerStore.toLowerCase()) {
-      // Полные значения (это идентификатор магазина, не секрет): по ним видно, что именно шлёт касса.
+    const sameSet = (a: string[], b: string[]) =>
+      a.length > 0 && b.length > 0 && a.some((x) => b.some((y) => y.toLowerCase() === x.toLowerCase()))
+    if (queryStores.length && headerStores.length && !sameSet(queryStores, headerStores)) {
+      // Предупреждаем только когда источники действительно про разные магазины,
+      // а не когда терминал просто прислал несколько точек в заголовке.
       log.warn('configuration store mismatch', {
-        query: queryStore, header: headerStore, used: dbStore, echo: storeUuid, reason: picked.reason,
+        query: queryStores.join(','), header: headerStores.join(','), used: dbStore, echo: storeUuid, reason: picked.reason,
       })
     }
 

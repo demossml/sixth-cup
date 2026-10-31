@@ -127,24 +127,53 @@ describe('валидация запроса', () => {
     expect(r.status).toBe(400)
   })
 
-  it('storeUuid из query и заголовка расходятся — берём точку со связями товара (200, не 400)', async () => {
-    // APK собирает query из кэша каталога, заголовок — из своей конфигурации;
-    // жёсткий 400 ломал продажу, поэтому выбираем точку по фактическим связям.
+  it('storeUuid из query и заголовка расходятся — 200 и данные точки из query', async () => {
+    // Жёсткий 400 ломал продажу. Клиент сверяет ответ со своим магазином,
+    // поэтому echo = query, а UUID берём по этой же точке.
     const id = await mkProduct('Разные-точки')
-    link(id, STORE_A, `u-mismatch-${id}`)
+    link(id, STORE_A, `u-mismatchA-${id}`)
+    link(id, STORE_B, `u-mismatchB-${id}`)
     const r = await config_of(id, STORE_B, { ...PROXY, 'X-Evotor-Store-Uuid': STORE_A })
     expect(r.s).toBe(200)
-    // связи есть только у STORE_A → ответ по ней, несмотря на query=STORE_B
-    expect(r.j.storeUuid).toBe(STORE_A)
-    expect(r.j.volumes[0].evotorUuid).toBe(`u-mismatch-${id}`)
+    expect(r.j.storeUuid).toBe(STORE_B)
+    expect(r.j.volumes[0].evotorUuid).toBe(`u-mismatchB-${id}`)
   })
 
-  it('расхождение без связей у обеих точек — 200 и точка из query', async () => {
+  it('query-точки нет в связях — берём известную из заголовка и показываем storeUuidResolved', async () => {
+    const id = await mkProduct('Разные-точки-3')
+    link(id, STORE_A, `u-fallback-${id}`)
+    const r = await config_of(id, 'unknown-store-x', { ...PROXY, 'X-Evotor-Store-Uuid': STORE_A })
+    expect(r.s).toBe(200)
+    expect(r.j.storeUuid).toBe('unknown-store-x')
+    expect(r.j.storeUuidResolved).toBe(STORE_A)
+    expect(r.j.volumes[0].evotorUuid).toBe(`u-fallback-${id}`)
+  })
+
+  it('расхождение без связей у обеих точек — 200, echo из query, объёмы недоступны', async () => {
     const id = await mkProduct('Разные-точки-2')
     const r = await config_of(id, STORE_A, { ...PROXY, 'X-Evotor-Store-Uuid': STORE_B })
     expect(r.s).toBe(200)
     expect(r.j.storeUuid).toBe(STORE_A)
     expect(r.j.volumes[0].available).toBe(false)
+  })
+
+  it('терминал привязан к двум магазинам: X-Evotor-Store-Uuid списком через запятую', async () => {
+    // Прод-кейс: header = «uuidA, uuidA», query = «uuidA» — это не расхождение,
+    // а список точек терминала. Ответ должен строиться по query и без 400.
+    const id = await mkProduct('Два-магазина')
+    link(id, STORE_A, `u-multi-${id}`)
+    const r = await config_of(id, STORE_A, { ...PROXY, 'X-Evotor-Store-Uuid': `${STORE_A}, ${STORE_A}` })
+    expect(r.s).toBe(200)
+    expect(r.j.storeUuid).toBe(STORE_A)
+    expect(r.j.volumes[0].evotorUuid).toBe(`u-multi-${id}`)
+
+    // Список из двух разных точек, в query — вторая: берём её данные
+    const id2 = await mkProduct('Два-магазина-2')
+    link(id2, STORE_B, `u-multi2-${id2}`)
+    const r2 = await config_of(id2, STORE_B, { ...PROXY, 'X-Evotor-Store-Uuid': `${STORE_A}, ${STORE_B}` })
+    expect(r2.s).toBe(200)
+    expect(r2.j.storeUuid).toBe(STORE_B)
+    expect(r2.j.volumes[0].evotorUuid).toBe(`u-multi2-${id2}`)
   })
 
   it('короткий номер магазина вместо uuid (прод-кейс query=2026/header=2026…) — 200 и правильные UUID', async () => {

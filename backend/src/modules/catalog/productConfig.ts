@@ -139,53 +139,33 @@ export function resolveStoreUuid(db: Database.Database, raw: string): string | n
 }
 
 /**
- * Какую точку считать точкой запроса, если APK прислал разные значения
- * в `?storeUuid=` и `X-Evotor-Store-Uuid` (кэш каталога против конфигурации терминала).
+ * Какую точку считать точкой запроса.
  *
- * `echo` — то, что вернём клиенту в `storeUuid` (он сверяет ответ со своим магазином),
+ * `echo` — значение, которое вернём клиенту в `storeUuid` (APK сверяет ответ со своим магазином),
  * `dbStore` — реальный `store_uuid` из `product_store_links`, по которому берём UUID.
+ *
+ * Приоритет: первая точка из `?storeUuid=` (запрос клиента), если она известна базе; иначе —
+ * первая известная из заголовка (терминал присылает список своих магазинов через запятую).
  */
 export function pickStoreUuid(
   db: Database.Database,
   productId: number,
   candidates: string[],
-): { echo: string; dbStore: string | null; reason: 'only' | 'links' | 'fallback' } | null {
+): { echo: string; dbStore: string | null; reason: 'query' | 'header' | 'unknown' } | null {
   const raw: string[] = []
   for (const c of candidates) {
     const v = String(c ?? '').trim()
     if (v && !raw.some((u) => u.toLowerCase() === v.toLowerCase())) raw.push(v)
   }
   if (!raw.length) return null
-  if (raw.length === 1) {
-    return { echo: raw[0], dbStore: resolveStoreUuid(db, raw[0]), reason: 'only' }
+  const echo = raw[0]
+  for (let i = 0; i < raw.length; i += 1) {
+    const resolved = resolveStoreUuid(db, raw[i])
+    if (resolved) return { echo, dbStore: resolved, reason: i === 0 ? 'query' : 'header' }
   }
-
-  const product = db.prepare('SELECT group_id AS groupId FROM products WHERE id=?').get(productId) as
-    | { groupId: number | null }
-    | undefined
-  const ids: number[] = product
-    ? product.groupId != null
-      ? (db
-          .prepare('SELECT id FROM products WHERE group_id=? AND COALESCE(is_group, 0) = 0')
-          .all(product.groupId) as { id: number }[]).map((r) => r.id)
-      : [productId]
-    : [productId]
-
-  const countLinks = db.prepare(
-    `SELECT COUNT(*) AS n FROM product_store_links
-     WHERE product_id IN (${ids.map(() => '?').join(',')})
-       AND LOWER(store_uuid) = LOWER(?) AND evotor_uuid IS NOT NULL AND TRIM(evotor_uuid) <> ''`,
-  )
-  let best: { echo: string; dbStore: string | null; n: number } | null = null
-  for (const c of raw) {
-    const dbStore = resolveStoreUuid(db, c)
-    const n = dbStore ? Number((countLinks.get(...ids, dbStore) as { n: number }).n) : 0
-    if (!best || n > best.n) best = { echo: c, dbStore, n }
-  }
-  // Ни у одной точки связей нет — отвечаем query-значением, как просил клиент.
-  return best && best.n > 0
-    ? { echo: best.echo, dbStore: best.dbStore, reason: 'links' }
-    : { echo: raw[0], dbStore: resolveStoreUuid(db, raw[0]), reason: 'fallback' }
+  // Ни одно значение не найдено в связях — отдаём как есть, объёмы будут unavailable.
+  void productId
+  return { echo, dbStore: null, reason: 'unknown' }
 }
 
 /**
