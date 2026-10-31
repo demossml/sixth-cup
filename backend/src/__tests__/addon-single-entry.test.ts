@@ -28,7 +28,7 @@ describe('один вход: админ вводит добавки → касс
   let oat = 0, lav = 0, cin = 0, caramel = 0, scheme = 0, raf = 0, oatProd = 0, lavProd = 0, cinProd = 0, karProd = 0
 
   it('добавка в справочнике сама создаёт товар в категории «Добавки» (категория создаётся сама)', async () => {
-    expect((await adm('POST', '/modifiers', { name: 'Овсяное-' + T, price: 40, groupKey: 'milk' })).s).toBe(200)
+    expect((await adm('POST', '/modifiers', { name: 'Овсяное-' + T, price: 40, groupKey: 'extra' })).s).toBe(200)
     expect((await adm('POST', '/modifiers', { name: 'Лаванда-' + T, price: 30, groupKey: 'syrup' })).s).toBe(200)
     expect((await adm('POST', '/modifiers', { name: 'Корица-' + T, price: 20, groupKey: 'topping' })).s).toBe(200)
     const mods = (await adm('GET', '/modifiers')).j.modifiers as any[]
@@ -117,7 +117,8 @@ describe('один вход: админ вводит добавки → касс
     expect(paid.length).toBe(3)
     expect(paid.every((t) => t.evotorUuid === null && t.available === false)).toBe(true) // ещё не выгружено в Эвотор
     const zeros = tops.filter((t) => t.zeroOption)
-    expect(zeros.map((z) => [z.groupKey, z.name, z.isDefault]).sort()).toEqual([['milk', 'Обычное', true], ['syrup', 'Без сиропа', true]])
+    // Молока в схеме добавок больше нет: единственный zero — «Без сиропа».
+    expect(zeros.map((z) => [z.groupKey, z.name, z.isDefault]).sort()).toEqual([['syrup', 'Без сиропа', true]])
   })
 
   it('после выгрузки на точку (появилась связь) опции продаются, добавки скрыты, лояльность цела', async () => {
@@ -126,7 +127,7 @@ describe('один вход: админ вводит добавки → касс
     const j = await catalog()
     const p = j.products.find((x: any) => x.id === raf)
     const by = (n: string) => p.toppings.find((t: any) => t.name === n + '-' + T)
-    expect(by('Овсяное')).toMatchObject({ evotorUuid: 'u-oat-' + T, available: true, groupKey: 'milk', price: 40 })
+    expect(by('Овсяное')).toMatchObject({ evotorUuid: 'u-oat-' + T, available: true, groupKey: 'extra', price: 40 })
     expect(by('Лаванда')).toMatchObject({ evotorUuid: 'u-lav-' + T, available: true, groupKey: 'syrup' })
     expect(by('Корица')).toMatchObject({ evotorUuid: 'u-cin-' + T, available: true, groupKey: 'extra' })
     for (const id of [oatProd, lavProd, cinProd, karProd]) {
@@ -145,7 +146,7 @@ describe('один вход: админ вводит добавки → касс
   })
 
   it('изменение цены добавки уходит в товар (одно место правки)', async () => {
-    await adm('POST', '/modifiers', { id: oat, name: 'Овсяное-' + T, price: 55, groupKey: 'milk' })
+    await adm('POST', '/modifiers', { id: oat, name: 'Овсяное-' + T, price: 55, groupKey: 'extra' })
     expect((db.prepare('SELECT price FROM products WHERE id=?').get(oatProd) as any).price).toBe(55)
     const p = (await catalog()).products.find((x: any) => x.id === raf)
     expect(p.toppings.find((t: any) => t.name === 'Овсяное-' + T).price).toBe(55)
@@ -153,15 +154,15 @@ describe('один вход: админ вводит добавки → касс
 
   it('Studio-сохранение схемы поверх явных options не теряется (каталог читает options)', async () => {
     await adm('POST', '/modifier-schemes', { id: scheme, name: 'Кофе-' + T, options: [
-      { kind: 'zero', name: 'Обычное', groupKey: 'milk', isDefault: true },
-      { kind: 'modifier', modifierId: oat, groupKey: 'milk' }] })
+      { kind: 'zero', name: 'Без сиропа', groupKey: 'syrup', isDefault: true },
+      { kind: 'modifier', modifierId: oat, groupKey: 'syrup' }] })
     // Studio снимает «Овсяное» и добавляет «Лаванда»: шлёт только modifierIds
     await adm('POST', '/modifier-schemes', { id: scheme, name: 'Кофе-' + T, modifierIds: [lav] })
     const p = (await catalog()).products.find((x: any) => x.id === raf)
     const names = p.toppings.map((t: any) => t.name)
     expect(names).toContain('Лаванда-' + T)
     expect(names).not.toContain('Овсяное-' + T)
-    expect(names).toContain('Обычное') // явный zero сохранён
+    expect(names).toContain('Без сиропа') // явный zero сохранён
   })
 
   it('PWA-меню клиента не показывает «Добавки»', async () => {

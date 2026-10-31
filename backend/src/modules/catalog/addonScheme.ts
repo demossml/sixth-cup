@@ -41,19 +41,22 @@ export type CatalogTopping = {
  * Канонический словарь групп добавок — единственный источник для админки, каталога и валидации.
  * Платная «Топпинг»/«Другое» в UI сохраняются как `extra`: касса трактует их одной группой.
  */
-export const ADDON_GROUP_KEYS = ['milk', 'syrup', 'sugar', 'extra'] as const
+export const ADDON_GROUP_KEYS = ['syrup', 'sugar', 'extra'] as const
 export type AddonGroupKey = (typeof ADDON_GROUP_KEYS)[number]
 
+/**
+ * Молоко живёт только в `milk_schemes`. Ключ `milk` в схемах добавок — легаси:
+ * такие строки миграция переносит в схемы молока, а каталог их больше не отдаёт.
+ */
+export const LEGACY_MILK_GROUP_KEY = 'milk'
+
 export const ADDON_GROUPS: ReadonlyArray<{ key: AddonGroupKey; label: string }> = [
-  { key: 'milk', label: 'Молоко' },
   { key: 'syrup', label: 'Сироп' },
   { key: 'sugar', label: 'Сахар' },
   { key: 'extra', label: 'Дополнительно' },
 ]
 
 const ADDON_GROUP_ALIASES: Record<string, AddonGroupKey> = {
-  milk: 'milk',
-  'молоко': 'milk',
   syrup: 'syrup',
   'сироп': 'syrup',
   sugar: 'sugar',
@@ -66,6 +69,12 @@ const ADDON_GROUP_ALIASES: Record<string, AddonGroupKey> = {
   'добавки': 'extra',
   'добавка': 'extra',
   'дополнительно': 'extra',
+}
+
+/** Легаси-строки «молоко» внутри схем добавок: только для миграции, в каталог не попадают. */
+export function isLegacyMilkGroup(value: unknown): boolean {
+  const key = normName(value)
+  return key === 'milk' || key === 'молоко'
 }
 
 /** Синоним/кириллица → канонический ключ; неизвестное → null (мусор не проходит). */
@@ -500,7 +509,8 @@ export function convertLegacyItemsToOptions(db: Database.Database, schemeId: num
 }
 
 function withZeroDefaults(schemeId: number, list: CatalogTopping[]): CatalogTopping[] {
-  const spec: [string, string, number][] = [['milk', 'Обычное', 1], ['syrup', 'Без сиропа', 2]]
+  // Только добавки. Молоко приходит из milk_schemes и в схему добавок не подмешивается.
+  const spec: [AddonGroupKey, string, number][] = [['syrup', 'Без сиропа', 2]]
   for (const [key, label, n] of spec) {
     const inGroup = list.filter((x) => x.groupKey === key)
     if (!inGroup.length || inGroup.some((x) => x.zeroOption)) continue
@@ -586,6 +596,7 @@ function buildCatalogToppingsRaw(
 
   if (optionRows.length) {
     for (const it of optionRows) {
+      if (isLegacyMilkGroup(it.groupKey)) continue
       const kind = it.kind
       let name = (it.name || '').trim()
       let price = 0
@@ -612,7 +623,7 @@ function buildCatalogToppingsRaw(
         modAvailable = m.available !== 0
         if (productId == null && m.linkedProductId != null) productId = m.linkedProductId
       } else if (kind === 'zero') {
-        if (!name) name = groupKey === 'milk' ? 'Обычное' : groupKey === 'syrup' ? 'Без сиропа' : 'Без добавки'
+        if (!name) name = groupKey === 'syrup' ? 'Без сиропа' : 'Без добавки'
         price = 0
         productId = null
       } else {
@@ -646,6 +657,7 @@ function buildCatalogToppingsRaw(
   // Legacy: modifier_scheme_items (+ product_id / zero_option из 025)
   const items = loadSchemeItems(db, schemeId)
   for (const it of items) {
+    if (isLegacyMilkGroup(it.groupKey)) continue
     const zero = it.zeroOption === 1
     let productId: number | null = it.productId
     let name = (it.nameOverride || '').trim()

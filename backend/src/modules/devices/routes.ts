@@ -9,6 +9,7 @@ import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import { buildCatalogToppings, effectiveSchemeId, listAddonProductIds, ensureAddonSchemeSchema, resolveAddonsCategoryIds, type CatalogTopping } from '../catalog/addonScheme'
 import { ensureMilkSchemeSchema, milkForProduct } from '../catalog/milkScheme'
+import { buildProductConfiguration } from '../catalog/productConfig'
 import { ensureVolumeSchemeSchema, volumesForProduct } from '../catalog/volumeScheme'
 import { productArticleNumber } from '../catalog/productIdentity'
 import { hashToken, requireDevice, type DeviceEnv } from '../../middleware/device'
@@ -283,6 +284,55 @@ export const deviceRoutes = new Hono<DeviceEnv>()
       source,
     })
   })
+
+
+  /**
+   * GET /api/devices/products/:productId/configuration?storeUuid=
+   * Конфигурация одной карточки для кассы: объёмы, молоко, добавки.
+   * Идёт через тот же прокси Evotor Cloud и тот же секрет, что и /loyalty/resolve.
+   */
+  .get(
+    '/products/:productId/configuration',
+    evotorProxyStrict,
+    (c) => {
+      // Без настроенного секрета strict-режим пропускает запрос — здесь это недопустимо.
+      if (!config.evotorProxyToken) throw bad('proxy_not_configured', 503)
+
+      const rawId = c.req.param('productId')
+      const productId = Number(rawId)
+      if (!Number.isInteger(productId) || productId <= 0) throw bad('invalid_product_id', 400)
+
+      const queryStore = (c.req.query('storeUuid') ?? '').trim()
+      const headerStore = (c.req.header('X-Evotor-Store-Uuid') ?? '').trim()
+      if (queryStore && headerStore && queryStore !== headerStore) throw bad('store_uuid_mismatch', 400)
+      const storeUuid = (queryStore || headerStore).slice(0, 80)
+      if (!storeUuid) throw bad('store_required', 400)
+
+      const key = `pconfig:${storeUuid}`
+      const now = Date.now()
+      const row = db.prepare('SELECT count, window_start FROM rate_limits WHERE key=?').get(key) as
+        | { count: number; window_start: number }
+        | undefined
+      if (!row || now - row.window_start > 60_000) {
+        db.prepare('INSERT OR REPLACE INTO rate_limits(key,count,window_start) VALUES(?,?,?)').run(key, 1, now)
+      } else if (row.count >= 240) {
+        throw bad('Too many requests', 429)
+      } else {
+        db.prepare('UPDATE rate_limits SET count=count+1 WHERE key=?').run(key)
+      }
+
+      const cfg = buildProductConfiguration(db, productId, storeUuid, now)
+      if (!cfg) throw bad('product_not_found', 404)
+      // Индивидуальная конфигурация не кешируется: назначения схем меняются из админки.
+      c.header('Cache-Control', 'no-store')
+      if (cfg.configErrors.length) {
+        log.warn('product configuration incomplete', {
+          product: productId, store: shortId(storeUuid), errors: cfg.configErrors.map((e) => e.code).join(','),
+        })
+      }
+      return c.json(cfg)
+    },
+  )
 
   .get('/catalog',
     (c) => {

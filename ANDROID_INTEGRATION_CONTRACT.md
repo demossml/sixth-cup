@@ -138,6 +138,27 @@ long token-like strings are redacted server-side as a safety net.
 `GET /api/devices/catalog` → `products[].toppings[].evotorUuid` (nullable, ключ есть всегда), `toppings[].available`, `toppings[].groupKey`; `products[].isModifier`, `products[].hideFromMenu`. Товары-добавки не попадают в `upsell`. Подробнее: `docs/DEVICE-CATALOG-API.md`.
 
 
+## Конфигурация карточки (объёмы · молоко · добавки)
+
+Актуальный способ получить настройки одного товара:
+
+```http
+GET {base}/api/devices/products/{productId}/configuration?storeUuid={storeUuid}
+Authorization: Bearer {EVOTOR_PROXY_TOKEN}
+```
+
+* `volumes[]` — реальные SKU группы с UUID **этой** точки (`available=false`, если связи нет);
+* `milk` — `null`, если схема не назначена; иначе `{ required: true, byProductId }`. Обычное молоко
+  (`isFree: true`, `sendToReceipt: false`) предвыбрано (`isDefault`), платное пробивается отдельной позицией;
+* `additions` — `null`, если схема не назначена; иначе `{ required: false, byProductId }`. Кассир может
+  не выбрать ни одной добавки;
+* `configErrors[]` — `milk_scheme_empty`, если схема молока назначена, но вариантов нет: обязательный
+  выбор нельзя обходить;
+* заголовок `Cache-Control: no-store`, лимит 240 запросов/мин на точку.
+
+Молоко и добавки **не смешиваются**: в `additions` не бывает `groupKey='milk'`, в `milk` не бывает добавок.
+Полный JSON и фикстура — `docs/PRODUCT-CONFIGURATION-SCHEMES.md`, `backend/src/__tests__/fixtures/product-configuration-fixture.json`.
+
 ## Multi-store UUID
 
 Cashier must send the Evotor **store** UUID of the current terminal on every catalog request (`storeUuid` query + `X-Evotor-Store-Uuid`). Product and topping `evotorUuid` values are scoped to that store only. Optional: `GET /api/devices/whoami` to resolve store when local resolver returns null.

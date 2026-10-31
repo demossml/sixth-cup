@@ -136,12 +136,13 @@ describe('STEP-B4: готовность к выгрузке в админ-API', 
 
 describe('STEP-B2: uuid добавок строго по точке из запроса', () => {
   it('две точки — разные uuid; точка без связи получает null и available=false у платной', async () => {
-    const milk = await mkModifier('МолокоSrv', 'milk', 50)
-    link(milk.linkedProductId, STORE_A, 'milk-A')
-    link(milk.linkedProductId, STORE_B, 'milk-B')
+    // Молоко живёт в milk_schemes; uuid по точке проверяем на платной добавке (сироп).
+    const syrup = await mkModifier('СиропSrv', 'syrup', 50)
+    link(syrup.linkedProductId, STORE_A, 'milk-A')
+    link(syrup.linkedProductId, STORE_B, 'milk-B')
     const scheme = await mkScheme('SrvScheme', [
-      { kind: 'modifier', modifierId: milk.modifierId, groupKey: 'milk' },
-      { kind: 'zero', name: 'Обычное', groupKey: 'milk' },
+      { kind: 'modifier', modifierId: syrup.modifierId, groupKey: 'syrup' },
+      { kind: 'zero', name: 'Без сиропа', groupKey: 'syrup' },
     ])
     const drink = await mkProduct('SrvA-капучино')
     link(drink, STORE_A, `u-capp-${T}`)
@@ -151,14 +152,14 @@ describe('STEP-B2: uuid добавок строго по точке из зап�
 
     const a = find(await catalog(STORE_A), 'SrvA-капучино')
     const b = find(await catalog(STORE_B), 'SrvA-капучино')
-    const milkA = (a.toppings as any[]).find((t) => t.groupKey === 'milk' && !t.zeroOption)
-    const milkB = (b.toppings as any[]).find((t) => t.groupKey === 'milk' && !t.zeroOption)
+    const milkA = (a.toppings as any[]).find((t) => t.groupKey === 'syrup' && !t.zeroOption)
+    const milkB = (b.toppings as any[]).find((t) => t.groupKey === 'syrup' && !t.zeroOption)
 
     expect(milkA).toMatchObject({ evotorUuid: 'milk-A', available: true })
     expect(milkB).toMatchObject({ evotorUuid: 'milk-B', available: true })
 
     const c = find(await catalog(STORE_EMPTY), 'SrvA-капучино')
-    const milkC = (c.toppings as any[]).find((t) => t.groupKey === 'milk' && !t.zeroOption)
+    const milkC = (c.toppings as any[]).find((t) => t.groupKey === 'syrup' && !t.zeroOption)
     expect(milkC.evotorUuid).toBeNull()
     expect(milkC.available).toBe(false)
     expect(milkC.notReadyReason).toBe('no_evotor_uuid')

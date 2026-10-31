@@ -13,12 +13,12 @@ describe('addon scheme editor: payload is the source of truth', () => {
     const fromApi = {
       options: [
         {
-          id: 11, schemeId: 1, kind: 'zero' as const, productId: null, modifierId: null, name: 'Обычное',
-          groupKey: 'milk', isDefault: true, required: true, maxCount: 1, priceOverride: null, sortOrder: 0,
+          id: 11, schemeId: 1, kind: 'zero' as const, productId: null, modifierId: null, name: 'Без сиропа',
+          groupKey: 'syrup', isDefault: true, required: true, maxCount: 1, priceOverride: null, sortOrder: 0,
         },
         {
           id: 12, schemeId: 1, kind: 'product' as const, productId: 7, modifierId: null, name: null,
-          groupKey: 'milk', isDefault: false, required: false, maxCount: 1, priceOverride: null, sortOrder: 1,
+          groupKey: 'syrup', isDefault: false, required: false, maxCount: 1, priceOverride: null, sortOrder: 1,
         },
       ],
     }
@@ -36,15 +36,24 @@ describe('addon scheme editor: payload is the source of truth', () => {
       options: [],
       items: [
         { modifierId: 5, groupKey: 'topping', required: true, maxCount: 2 },
-        { zeroOption: true, groupKey: 'milk', nameOverride: 'Обычное', isDefault: true },
+        { zeroOption: true, groupKey: 'sugar', nameOverride: 'Без сахара', isDefault: true },
       ],
     }))
     expect(options[0]).toMatchObject({ kind: 'modifier', modifierId: 5, groupKey: 'extra', required: true })
-    expect(options[1]).toMatchObject({ kind: 'zero', name: 'Обычное', groupKey: 'milk', maxCount: 1 })
+    expect(options[1]).toMatchObject({ kind: 'zero', name: 'Без сахара', groupKey: 'sugar', maxCount: 1 })
+
+    // Легаси-«молоко» в схеме добавок больше не отдельная группа
+    const legacyMilk = draftToOptions(schemeToDraft({
+      options: [],
+      items: [{ zeroOption: true, groupKey: 'milk', nameOverride: 'Обычное', isDefault: true }],
+    }))
+    expect(legacyMilk[0]).toMatchObject({ name: 'Обычное', groupKey: 'extra' })
   })
 
   it('canonical group dictionary has sugar and folds topping/other into extra (R3)', () => {
-    expect(ADDON_GROUPS_FALLBACK.map((g) => g.key)).toEqual(['milk', 'syrup', 'sugar', 'extra'])
+    expect(ADDON_GROUPS_FALLBACK.map((g) => g.key)).toEqual(['syrup', 'sugar', 'extra'])
+    // молоко настраивается отдельным разделом, в словаре добавок его нет
+    expect(normalizeGroupKey('milk')).toBe('extra')
     expect(normalizeGroupKey('sugar')).toBe('sugar')
     expect(normalizeGroupKey('сахар')).toBe('sugar')
     expect(normalizeGroupKey('topping')).toBe('extra')
@@ -55,9 +64,9 @@ describe('addon scheme editor: payload is the source of truth', () => {
 
   it('badge lists only groups marked required', () => {
     expect(requiredGroups([
-      { groupKey: 'milk', required: true },
+      { groupKey: 'sugar', required: true },
       { groupKey: 'syrup', required: false },
       { groupKey: 'extra', required: 1 },
-    ])).toEqual(['milk', 'extra'])
+    ])).toEqual(['sugar', 'extra'])
   })
 })

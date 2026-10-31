@@ -1,8 +1,33 @@
 # Device catalog API (касса Эвотор)
 
+## `GET /api/devices/products/{productId}/configuration?storeUuid=`
+
+Конфигурация **одной карточки**: объёмы + молоко + добавки. Тот же прокси Evotor Cloud
+и тот же секрет `EVOTOR_PROXY_TOKEN`, что у `/loyalty/resolve`:
+
+```http
+GET /api/devices/products/501/configuration?storeUuid=STORE-UUID
+Authorization: Bearer <EVOTOR_PROXY_TOKEN>
+```
+
+| Код | Когда |
+|---|---|
+| 200 | конфигурация (заголовок `Cache-Control: no-store`) |
+| 400 | `invalid_product_id`, `store_required`, `store_uuid_mismatch` |
+| 403 | `proxy_forbidden` — нет/неверный `Authorization` |
+| 404 | `product_not_found` |
+| 429 | больше 240 запросов в минуту на точку |
+| 503 | `proxy_not_configured` — на сервере не задан `EVOTOR_PROXY_TOKEN` |
+
+Форма ответа (`schemaVersion: 1`) и правила — в [PRODUCT-CONFIGURATION-SCHEMES.md](./PRODUCT-CONFIGURATION-SCHEMES.md).
+Ключевое: `milk` и `additions` могут быть `null`; блок добавок необязателен (`required: false`),
+блок молока при назначенной активной схеме обязателен (`required: true`); UUID — только своей точки.
+
 ## `GET /api/devices/catalog`
 
-Обогащённое меню для APK: товары 6.7 + `evotorUuid`, фото, топинги, upsell, **категории**, **featured**.
+Обогащённое меню для APK: товары 6.7 + `evotorUuid`, фото, топинги, upsell, **категории**, **featured**,
+а также `config = { volumes, milk, addons }` с `selectionRequired` (та же информация, что в индивидуальном
+маршруте, но плоско и одним запросом — для старых сборок APK).
 
 **Auth:** `Authorization: Bearer <EVOTOR_PROXY_TOKEN>` (как resolve).  
 **Query/header:** `storeUuid` или `X-Evotor-Store-Uuid` — фильтр availability.

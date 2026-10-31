@@ -100,8 +100,8 @@ beforeAll(async () => {
       { kind: 'zero', groupKey: 'syrup', name: 'Без сиропа', isDefault: true, maxCount: 1 },
       { kind: 'product', groupKey: 'syrup', productId: syrupCaramel, maxCount: 1 },
       { kind: 'product', groupKey: 'syrup', productId: syrupVanilla, maxCount: 1 },
-      { kind: 'zero', groupKey: 'milk', name: 'Обычное', isDefault: true, required: true, maxCount: 1 },
-      { kind: 'product', groupKey: 'milk', productId: milkOat, maxCount: 1 },
+      // Молоко в схемах добавок больше не хранится — только syrup/extra.
+      { kind: 'product', groupKey: 'syrup', productId: milkOat, maxCount: 1 },
       { kind: 'product', groupKey: 'extra', productId: cinnamon, maxCount: 2 },
     ],
   })
@@ -159,13 +159,13 @@ describe('3.3 каталог отдаёт все опции и совпадае�
     const j = await catalog()
     const drinkTop = (id: number) => j.products.find((p: any) => p.id === id).toppings as any[]
     const tops = drinkTop(ids.cap200)
-    expect(tops).toHaveLength(6)
-    expect(tops.map((t) => t.groupKey)).toEqual(['syrup', 'syrup', 'syrup', 'milk', 'milk', 'extra'])
-    expect(tops.filter((t) => t.zeroOption).map((t) => t.name)).toEqual(['Без сиропа', 'Обычное'])
-    const milkZero = tops.find((t) => t.groupKey === 'milk' && t.zeroOption)
-    expect(milkZero).toMatchObject({ required: true, isDefault: true, available: true, evotorUuid: null, maxCount: 1 })
-    const milkPaid = tops.find((t) => t.groupKey === 'milk' && !t.zeroOption)
-    expect(milkPaid).toMatchObject({ required: false, evotorUuid: 'uuid-oat', available: true, priceRub: 60 })
+    expect(tops).toHaveLength(5)
+    expect(tops.map((t) => t.groupKey)).toEqual(['syrup', 'syrup', 'syrup', 'syrup', 'extra'])
+    expect(tops.filter((t) => t.zeroOption).map((t) => t.name)).toEqual(['Без сиропа'])
+    const zero = tops.find((t) => t.zeroOption)
+    expect(zero).toMatchObject({ isDefault: true, available: true, evotorUuid: null, maxCount: 1 })
+    const oat = tops.find((t) => t.productId === ids.milkOat)
+    expect(oat).toMatchObject({ required: false, evotorUuid: 'uuid-oat', available: true, priceRub: 60 })
     const extra = tops.find((t) => t.groupKey === 'extra')
     expect(extra).toMatchObject({ maxCount: 2, evotorUuid: 'uuid-cinnamon', available: true })
     // та же схема доезжает до товара с собственной схемой и до второго варианта группы
@@ -208,7 +208,8 @@ describe('3.6 повторное сохранение схемы из админ
 
     const saved = (await (await admin('GET', '/modifier-schemes')).json()) as any
     const opts = saved.schemes.find((s: any) => s.id === ids.scheme).options
-    expect(opts.filter((o: any) => o.required).map((o: any) => o.groupKey)).toEqual(['milk'])
+    // Молоко больше не группа добавок: обязательных группа-ключей milk быть не может.
+    expect(opts.filter((o: any) => o.groupKey === 'milk')).toEqual([])
   })
 })
 
@@ -246,15 +247,15 @@ describe('R3: словарь групп — один источник', () => {
     const r = await admin('GET', '/addon-groups')
     expect(r.status).toBe(200)
     const j = (await r.json()) as any
-    expect(j.groups.map((g: any) => g.key)).toEqual(['milk', 'syrup', 'sugar', 'extra'])
-    expect(j.groups.map((g: any) => g.label)).toEqual(['Молоко', 'Сироп', 'Сахар', 'Дополнительно'])
+    expect(j.groups.map((g: any) => g.key)).toEqual(['syrup', 'sugar', 'extra'])
+    expect(j.groups.map((g: any) => g.label)).toEqual(['Сироп', 'Сахар', 'Дополнительно'])
   })
 
   it('синонимы нормализуются, мусорный ключ — 400', async () => {
     const ok = await admin('POST', '/modifier-schemes', {
       name: 'Схема групп',
       options: [
-        { kind: 'product', groupKey: 'молоко', productId: ids.milkOat, maxCount: 1 },
+        { kind: 'product', groupKey: 'сироп', productId: ids.milkOat, maxCount: 1 },
         { kind: 'product', groupKey: 'topping', productId: ids.cinnamon, maxCount: 2 },
         { kind: 'product', groupKey: 'сахар', productId: ids.syrupVanilla, maxCount: 1 },
       ],
@@ -263,7 +264,14 @@ describe('R3: словарь групп — один источник', () => {
     const scheme = Number(((await ok.json()) as any).id)
     const keys = (db.prepare('SELECT group_key AS k FROM modifier_scheme_options WHERE scheme_id=? ORDER BY sort_order, id')
       .all(scheme) as { k: string }[]).map((r) => r.k)
-    expect(keys).toEqual(['milk', 'extra', 'sugar'])
+    expect(keys).toEqual(['syrup', 'extra', 'sugar'])
+
+    const milkRejected = await admin('POST', '/modifier-schemes', {
+      name: 'Схема с молоком',
+      options: [{ kind: 'product', groupKey: 'milk', productId: ids.milkOat }],
+    })
+    expect(milkRejected.status).toBe(400)
+    expect(JSON.stringify(await milkRejected.json())).toMatch(/молок/i)
 
     const badRes = await admin('POST', '/modifier-schemes', {
       name: 'Схема мусора',

@@ -30,7 +30,6 @@ function maxCounts(id: number): { group_key: string; max_count: number }[] {
 describe('addon maxCount default', () => {
   it('keeps a single default per group: extra two, everything else one', () => {
     expect(defaultAddonMaxCount('extra')).toBe(2)
-    expect(defaultAddonMaxCount('milk')).toBe(1)
     expect(defaultAddonMaxCount('syrup')).toBe(1)
     expect(defaultAddonMaxCount('sugar')).toBe(1)
   })

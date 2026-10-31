@@ -35,6 +35,7 @@ import {
   syncModifierProduct,
   ensureAddonsCategory,
   ADDON_GROUPS,
+  isLegacyMilkGroup,
   resolveAddonGroupKey,
   normalizeAddonGroupKey,
   defaultAddonMaxCount,
@@ -85,6 +86,10 @@ const addonGroupKeySchema = z
   .nullish()
   .superRefine((v, ctx) => {
     if (v == null || !v.trim()) return
+    if (isLegacyMilkGroup(v)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Молоко настраивается отдельной схемой молока, а не схемой добавок' })
+      return
+    }
     if (resolveAddonGroupKey(v) == null) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Неизвестная группа добавки: ${v}` })
     }
@@ -758,7 +763,8 @@ export const adminRoutes = new Hono()
       db.prepare(`
         UPDATE products SET name=?, price=?, icon=?, available=?, description=?,
           category_id=?, image_url=?, sort_order=?, updated_at=?,
-          modifier_scheme_id=?, recipe_text=?, recipe_cost_rub=?, recipe_seconds=?,
+          -- undefined = «не трогать» — как у схем молока и объёмов
+          modifier_scheme_id=CASE WHEN ?=1 THEN ? ELSE modifier_scheme_id END, recipe_text=?, recipe_cost_rub=?, recipe_seconds=?,
           counts_as_cup=COALESCE(?, counts_as_cup), free_eligible=COALESCE(?, free_eligible),
           tax=COALESCE(?, tax), measure=COALESCE(?, measure), cost_price_kopecks=COALESCE(?, cost_price_kopecks),
           season_start_at=?, season_end_at=?, evotor_extra_json=?, catalog_source='SIXTH_CUP',
@@ -772,7 +778,9 @@ export const adminRoutes = new Hono()
         p.name, p.price, p.icon, p.available ? 1 : 0,
         p.description ?? null, p.categoryId ?? null, p.imageUrl ?? null,
         p.sortOrder, t,
-        p.modifierSchemeId ?? null, p.recipeText ?? null, p.recipeCostRub ?? null, p.recipeSeconds ?? null,
+        p.modifierSchemeId === undefined ? 0 : 1,
+        p.modifierSchemeId ?? null,
+        p.recipeText ?? null, p.recipeCostRub ?? null, p.recipeSeconds ?? null,
         p.countsAsCup === undefined ? null : (p.countsAsCup ? 1 : 0),
         p.freeEligible === undefined ? null : (p.freeEligible ? 1 : 0),
         p.tax ?? null, p.measure ?? null, p.costPriceKopecks ?? null,
@@ -1040,7 +1048,7 @@ export const adminRoutes = new Hono()
     id: z.number().int().optional(),
     name: z.string().min(1).max(60),
     price: z.number().int().min(0),
-    groupKey: z.enum(['syrup', 'topping', 'milk', 'other', 'extra']).default('other'),
+    groupKey: z.enum(['syrup', 'topping', 'other', 'extra']).default('other'),
     available: z.boolean().default(true),
     sortOrder: z.number().int().default(0),
     linkedProductId: z.number().int().positive().nullable().optional(),

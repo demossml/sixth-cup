@@ -7,8 +7,8 @@ import type { SchemeItem } from '../api/types'
 export type AddonGroup = { key: string; label: string }
 
 /** Fallback до ответа `/admin/addon-groups`: те же ключи, что отдаёт backend. */
+/** Молока здесь нет: оно настраивается отдельным разделом «Схемы молока». */
 export const ADDON_GROUPS_FALLBACK: AddonGroup[] = [
-  { key: 'milk', label: 'Молоко' },
   { key: 'syrup', label: 'Сироп' },
   { key: 'sugar', label: 'Сахар' },
   { key: 'extra', label: 'Дополнительно' },
@@ -46,13 +46,14 @@ export type SchemeOptionDraft = {
 
 export function normalizeGroupKey(key: string | null | undefined): string {
   const k = String(key ?? '').trim().toLowerCase()
-  if (k === 'milk' || k === 'молоко') return 'milk'
+  // Легаси «молоко» в схеме добавок показываем как «Дополнительно»: такие строки
+  // переносит миграция backend, новых молочных групп в схемах добавок нет.
   if (k === 'syrup' || k === 'сироп') return 'syrup'
   if (k === 'sugar' || k === 'сахар') return 'sugar'
   return 'extra'
 }
 
-/** Лимит по умолчанию: extra — 2 разные опции, milk/syrup/sugar — одна. */
+/** Лимит по умолчанию: extra — 2 разные опции, syrup/sugar — одна. */
 export function defaultMaxCount(groupKey: string): number {
   return normalizeGroupKey(groupKey) === 'extra' ? 2 : 1
 }

@@ -2,6 +2,7 @@ import { serve } from '@hono/node-server'
 import { app } from './app'
 import { config } from './config'
 import { seedIfEmpty } from './db/seed'
+import { migrateMilkFromAddonSchemes } from './modules/catalog/milkFromAddons'
 import { PollService } from './integrations/evotor/sync/PollService'
 import { db } from './db'
 import { evotorConfig } from './config'
@@ -10,6 +11,21 @@ import { anyTokenConfigured } from './integrations/evotor/tokenStore'
 import { installProcessErrorHooks, log, shortId } from './lib/logBuffer'
 
 installProcessErrorHooks()
+
+// Молоко уезжает из схем добавок в собственные схемы молока (идемпотентно).
+try {
+  const milk = migrateMilkFromAddonSchemes(db)
+  if (milk.migratedOptions || milk.ambiguous.length) {
+    log.info('milk migrated from addon schemes', {
+      options: milk.migratedOptions,
+      schemes: milk.schemesCreated,
+      products: milk.productsAssigned,
+      ambiguous: milk.ambiguous.length,
+    })
+  }
+} catch (e) {
+  log.error(`milk migration failed: ${(e as Error).message}`)
+}
 
 seedIfEmpty()
 

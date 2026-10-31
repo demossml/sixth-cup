@@ -118,6 +118,43 @@ P_{\text{чека}} = P_{\text{основного товара}} + P_{\text{пл
 \qquad P_{\text{обычного молока}} = 0,\quad \text{sendToReceipt}_{\text{обычного}} = false
 \]
 
+## 5.1. Индивидуальная конфигурация карточки (прокси Evotor Cloud)
+
+```http
+GET /api/devices/products/{productId}/configuration?storeUuid={storeUuid}
+Authorization: Bearer <EVOTOR_PROXY_TOKEN>
+X-Evotor-Store-Uuid: {storeUuid}   # опционально, должен совпадать с query
+```
+
+- маршрут живёт в существующем пространстве `/api/devices` → маска `https://app\.67coffee\.ru/api/.*` его покрывает;
+- авторизация — существующий `evotorProxyStrict` + обязательный `EVOTOR_PROXY_TOKEN` (иначе `503 proxy_not_configured`);
+- `Cache-Control: no-store`, лимит 240 запросов в минуту на точку;
+- UUID берутся только из `product_store_links` запрошенной точки (fallback на соседнюю точку запрещён);
+- объёмы — все реальные SKU группы (или один SKU, если группы нет);
+- молоко — `null`, если `products.milk_scheme_id` пуст; иначе `required: true`;
+- добавки — `null`, если схема не назначена; `required` в блоке всегда `false`;
+- если схема молока назначена, но вариантов нет — `milk.byProductId[id].error = "empty_scheme"` и
+  `configErrors[{ code: "milk_scheme_empty" }]`: обязательный выбор нельзя маскировать под «схемы нет».
+
+Типы: `ProductConfiguration` в `backend/src/modules/catalog/productConfig.ts`;
+фикстура контракта — `backend/src/__tests__/fixtures/product-configuration-fixture.json`.
+
+## 5.2. Молоко уходит из схем добавок
+
+Ключ `milk` удалён из словаря групп добавок (`ADDON_GROUP_KEYS = ['syrup','sugar','extra']`),
+`withZeroDefaults()` больше не подставляет «Обычное» в схемы добавок. Легаси-строки переносит
+идемпотентная функция `migrateMilkFromAddonSchemes()` (`backend/src/modules/catalog/milkFromAddons.ts`)
+при старте API:
+
+1. находит `modifier_scheme_options`/`modifier_scheme_items` c `group_key in ('milk','молоко')`;
+2. создаёт (или находит по имени `Молоко: <схема добавок>`) схему молока;
+3. zero-вариант → бесплатное молоко, вариант с товаром → платное (`sendToReceipt=1`);
+4. назначает схему товарам этой схемы добавок, у которых `milk_scheme_id IS NULL`;
+5. удаляет перенесённые строки;
+6. строки без товара/с несуществующим товаром **не удаляет** — попадают в `report.ambiguous`.
+
+Новая схема добавок с `groupKey: "milk"` отклоняется с 400.
+
 ## 6. API
 
 | Метод | Путь | Назначение |
@@ -129,6 +166,7 @@ P_{\text{чека}} = P_{\text{основного товара}} + P_{\text{пл
 | POST | `/api/admin/volume-schemes` | создать/обновить (`{ id?, name, active, items[] }`), объёмы заменяются целиком |
 | DELETE | `/api/admin/volume-schemes/:id` | удалить (409, если назначена товарам) |
 | POST | `/api/admin/products` | `volumeSchemeId`, `milkSchemeId`, `modifierSchemeId` (число — назначить, `null` — снять, отсутствует — не менять); `volumePrices: [{ itemId, price }]` |
+| GET | `/api/devices/products/:productId/configuration` | конфигурация карточки через прокси: объёмы, молоко, добавки |
 | GET | `/api/devices/catalog?storeUuid=` | `products[].config = { volumes, milk, addons }` + плоские `volumes[]`, `milk[]`, `toppings[]` |
 
 ### Пример ответа каталога (фрагмент)
@@ -204,6 +242,9 @@ P_{\text{чека}} = P_{\text{основного товара}} + P_{\text{пл
 
 - backend, молоко: `cd backend && DB_PATH=/tmp/milk.db npx vitest run milk-scheme` (17 тестов).
 - backend, три группы контракта (§6 ТЗ, 11 сценариев): `DB_PATH=/tmp/cfg.db npx vitest run product-config-groups` (13 тестов).
+- backend, проксированный endpoint: `DB_PATH=/tmp/pc.db npx vitest run product-configuration-proxy` (28 тестов).
+- backend, фикстура контракта: `DB_PATH=/tmp/fx.db npx vitest run product-configuration-fixture`.
+- перегенерация фикстуры: `WRITE_FIXTURE=1 DB_PATH=$(mktemp -u /tmp/fx.db) npx vitest run product-configuration-fixture`.
 - админка: `cd frontend-admin && npx vitest run milkScheme volumeScheme`.
 - каталог: `curl -s 'http://localhost:3000/api/devices/catalog?storeUuid=<uuid>' | jq '.products[] | select(.milkSchemeId) | {name, milk}'`.
 - ожидаемо: обычное молоко `isDefault:true, isFree:true, sendToReceipt:false, evotorUuid:null`; платное — `evotorUuid` точки.
@@ -227,6 +268,10 @@ P_{\text{чека}} = P_{\text{основного товара}} + P_{\text{пл
 | `frontend-admin/src/pages/AddonSchemes.tsx` | раздел «Схемы добавок» (вынесен из `MenuGroups`) |
 | `frontend-admin/src/layout/Shell.tsx`, `App.tsx` | пункты навигации «Конфигурация» и маршруты |
 | `frontend-admin/src/lib/volumeScheme.ts` (+ `.test.ts`) | черновик и валидация схемы объёмов |
+| `backend/src/modules/catalog/productConfig.ts` | построение конфигурации карточки (тип `ProductConfiguration`) |
+| `backend/src/modules/catalog/milkFromAddons.ts` | идемпотентный перенос молока из схем добавок |
+| `backend/src/__tests__/product-configuration-proxy.test.ts` | 28 тестов endpoint-а и независимости схем |
+| `backend/src/__tests__/product-configuration-fixture.test.ts` + `fixtures/product-configuration-fixture.json` | контракт JSON |
 | `frontend-admin/src/lib/milkScheme.ts` (+ `.test.ts`) | черновик и валидация |
 | `frontend-admin/src/pages/MenuProducts.tsx` | три поля схем в карточке + цены объёмов |
 | `frontend-admin/src/pages/Menu.tsx`, `api/types.ts` | вкладки «Меню» (без схем) и типы |
@@ -235,6 +280,8 @@ P_{\text{чека}} = P_{\text{основного товара}} + P_{\text{пл
 
 - Схема объёмов — дополнительный слой: старые «группы вариантов» (`product_groups`) не удалены и продолжают работать наравне.
 - Массового назначения схем объёмов/молока группе товаров нет (только по одному товару).
+- `sizeValue`/`sizeUnit` у объёмов заполняются только если они заданы у товара; из подписи «250 мл» backend их не выдумывает.
+- Старые сборки APK продолжают жить на плоских полях каталога до перехода на маршрут конфигурации.
 - UUID варианта молока не кешируется в схеме: при смене привязки товара к точке каталог отдаёт актуальный.
 - Платный вариант без UUID не скрывается, а помечается `available:false` — касса решает, показывать ли его с пометкой.
 - Массового назначения схемы молока группе товаров нет (только по одному товару).
