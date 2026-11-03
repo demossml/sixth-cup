@@ -70,6 +70,9 @@ export type ConfigAddonsBlock = {
   options: ConfigAddonOption[]
 }
 
+/** Коды `configErrors`; см. `docs/DEVICES-PRODUCT-CONFIGURATION.md`. */
+export type ProductConfigErrorCode = 'links' | 'milk_scheme_empty'
+
 export type ProductConfiguration = {
   ok: true
   schemaVersion: number
@@ -79,7 +82,13 @@ export type ProductConfiguration = {
   volumes: ConfigVolume[]
   milk: { required: boolean; byProductId: Record<string, ConfigMilkBlock | null> } | null
   additions: { required: false; byProductId: Record<string, ConfigAddonsBlock | null> } | null
-  configErrors: { productId: number; code: 'milk_scheme_empty'; message: string }[]
+  /**
+   * Коды проблем контракта — массив строк, как парсит APK 151 (`List<String>`):
+   *  • `links` — есть объём или платная опция без `product_store_links.evotor_uuid` на этой точке;
+   *  • `milk_scheme_empty` — схема молока назначена и активна, но вариантов для выбора нет.
+   * Пустой массив — конфигурация полная.
+   */
+  configErrors: ProductConfigErrorCode[]
 }
 
 type SkuRow = {
@@ -200,7 +209,7 @@ export function buildProductConfiguration(
     ? ((db.prepare('SELECT modifier_scheme_id AS s FROM product_groups WHERE id=?').get(product.groupId) as { s: number | null } | undefined)?.s ?? null)
     : null
 
-  const configErrors: ProductConfiguration['configErrors'] = []
+  const errorCodes = new Set<ProductConfigErrorCode>()
   const milkBySku: Record<string, ConfigMilkBlock | null> = {}
   const addonsBySku: Record<string, ConfigAddonsBlock | null> = {}
   let milkRequired = false
@@ -216,12 +225,10 @@ export function buildProductConfiguration(
       const options = milkForProduct(db, Number(sku.milkSchemeId), uuidByProduct)
       if (!options.length) {
         milkBySku[String(sku.id)] = { schemeId: Number(sku.milkSchemeId), options: [], error: 'empty_scheme' }
-        configErrors.push({
-          productId: sku.id,
-          code: 'milk_scheme_empty',
-          message: 'Схема молока назначена и активна, но в ней нет доступных вариантов',
-        })
+        errorCodes.add('milk_scheme_empty')
       } else {
+        // Платное молоко без UUID этой точки касса пробить не сможет.
+        if (options.some((o) => o.sendToReceipt && !o.evotorUuid)) errorCodes.add('links')
         milkBySku[String(sku.id)] = {
           schemeId: Number(sku.milkSchemeId),
           options: options.map((o) => ({
@@ -272,6 +279,9 @@ export function buildProductConfiguration(
     }
   }
 
+  // Объём без UUID на этой точке касса не пробьёт: это проблема данных, а не схем.
+  if (skus.some((s) => !uuidByProduct.get(s.id))) errorCodes.add('links')
+
   return {
     ok: true,
     schemaVersion: PRODUCT_CONFIG_SCHEMA_VERSION,
@@ -293,6 +303,6 @@ export function buildProductConfiguration(
     }),
     milk: milkRequired ? { required: true, byProductId: milkBySku } : null,
     additions: hasAddons ? { required: false, byProductId: addonsBySku } : null,
-    configErrors,
+    configErrors: [...errorCodes],
   }
 }

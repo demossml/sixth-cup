@@ -4,8 +4,9 @@ import { HelpLink } from '../components/HelpLink'
 import { setParams } from '../lib/query'
 import MenuProducts from './MenuProducts'
 import MenuGroups from './MenuGroups'
+import CatalogReadiness from './CatalogReadiness'
 
-type Section = 'products' | 'groups' | 'modifiers'
+type Section = 'products' | 'groups' | 'modifiers' | 'readiness'
 
 export default function Menu() {
   const [sp, setSp] = useSearchParams()
@@ -18,11 +19,12 @@ export default function Menu() {
           { key: 'products', label: 'Товары' },
           { key: 'groups', label: 'Группы' },
           { key: 'modifiers', label: 'Добавки' },
+          { key: 'readiness', label: 'Готовность кассы' },
         ]}
         value={section}
         onChange={(k) => setSp(setParams(sp, { section: k === 'products' ? null : k, q: null, tab: null }), { replace: true })}
       />
-      {section === 'products' ? <MenuProducts /> : <MenuGroups section={section} />}
+      {section === 'products' ? <MenuProducts /> : section === 'readiness' ? <CatalogReadiness /> : <MenuGroups section={section} />}
     </>
   )
 }

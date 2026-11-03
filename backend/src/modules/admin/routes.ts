@@ -11,6 +11,7 @@ import {
   listMilkSchemes,
   saveMilkScheme,
 } from '../catalog/milkScheme'
+import { catalogReadiness, cardReadiness } from '../catalog/readiness'
 import {
   VolumeSchemeError,
   deleteVolumeScheme,
@@ -1276,6 +1277,21 @@ export const adminRoutes = new Hono()
 
 
   // —— Catalog quality ——
+  // —— Готовность кассы: что касса не сможет продать и почему ——
+  .get('/catalog/readiness', (c) => {
+    const storeUuid = (c.req.query('storeUuid') || '').slice(0, 80) || null
+    return c.json({ ok: true, ...catalogReadiness(db, storeUuid) })
+  })
+
+  .get('/catalog/product/:id/card', (c) => {
+    const id = Number(c.req.param('id'))
+    if (!Number.isInteger(id) || id <= 0) throw bad('Некорректный id товара', 400)
+    const storeUuid = (c.req.query('storeUuid') || '').slice(0, 80) || null
+    const card = cardReadiness(db, id, storeUuid)
+    if (!card) throw bad('Товар не найден или не продаётся', 404)
+    return c.json(card)
+  })
+
   .get('/catalog/quality', (c) => {
     const total = (db.prepare(`SELECT COUNT(*) AS n FROM products WHERE available=1`).get() as { n: number }).n
     const noPhoto = (db.prepare(`SELECT COUNT(*) AS n FROM products WHERE available=1 AND (image_url IS NULL OR TRIM(image_url)='')`).get() as { n: number }).n

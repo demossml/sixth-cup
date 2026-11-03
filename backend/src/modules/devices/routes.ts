@@ -359,7 +359,7 @@ export const deviceRoutes = new Hono<DeviceEnv>()
 
     if (cfg.configErrors.length) {
       log.warn('product configuration incomplete', {
-        product: productId, store: shortId(storeUuid), errors: cfg.configErrors.map((e) => e.code).join(','),
+        product: productId, store: shortId(storeUuid), errors: cfg.configErrors.join(','),
       })
     }
     return c.json(cfg)

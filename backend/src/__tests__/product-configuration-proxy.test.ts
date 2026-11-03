@@ -313,7 +313,9 @@ describe('молоко', () => {
     // Схема назначена, но вариантов нет: это ошибка конфигурации, а не «молока нет».
     expect(r.j.milk.required).toBe(true)
     expect(r.j.milk.byProductId[String(id)].error).toBe('empty_scheme')
-    expect(r.j.configErrors.map((e: any) => e.code)).toContain('milk_scheme_empty')
+    // APK 151 парсит configErrors как List<String>
+    expect(Array.isArray(r.j.configErrors)).toBe(true)
+    expect(r.j.configErrors).toContain('milk_scheme_empty')
   })
 
   it('у разных объёмов разные назначения схемы молока', async () => {
