@@ -1,4 +1,4 @@
-/** Наш логотип: public/logo-mark.png + «6.7 Coffee». Без mix-blend. */
+/** Наш логотип: public/logo-mark.png (синий маскот с сердцем) + «6.7 Coffee». */
 type Props = {
   tone?: 'onDark' | 'onLight'
   size?: 'sm' | 'md'
@@ -16,7 +16,7 @@ export default function AppLogo({ tone = 'onDark', size = 'sm', className = '' }
         alt=""
         width={size === 'md' ? 36 : 32}
         height={size === 'md' ? 36 : 32}
-        className={`${mark} rounded-xl object-contain shrink-0 ${tone === 'onDark' ? 'bg-brand' : 'bg-brand-tint'}`}
+        className={`${mark} rounded-xl object-contain shrink-0 bg-white ring-1 ring-black/5`}
       />
       <span className={`font-display font-semibold ${text} leading-5 truncate ${color}`}>6.7 Coffee</span>
     </div>

@@ -18,14 +18,17 @@ export default defineConfig({
         background_color: '#FFFFFF',
         theme_color: '#0B4A8D',
         icons: [
-          { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
+          { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+          { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+          // maskable: тот же маскот с безопасным отступом (80% вписан в квадрат)
           { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,png,svg,ico,woff2}'],
         globIgnores: ['**/GamePage*.js', '**/phaser*.js', '**/alpaca/**/*.js'],
+        // Новые иконки/лого: старые записи precache удаляем при обновлении SW.
+        cleanupOutdatedCaches: true,
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api\//],
       },

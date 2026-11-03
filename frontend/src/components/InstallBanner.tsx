@@ -16,7 +16,7 @@ export default function InstallBanner({ variant = 'fixed' }: { variant?: 'inline
 
   const body = (
     <div className="bg-white border border-line text-ink rounded-2xl p-3 flex gap-3 items-start shadow-card">
-      <img src="/logo-mark.png" alt="" className="w-12 h-12 rounded-xl shrink-0 object-cover" />
+      <img src="/logo-mark.png" alt="" className="w-12 h-12 rounded-xl shrink-0 object-contain bg-white ring-1 ring-black/5" />
       <div className="min-w-0 flex-1">
         <p className="text-[15px] font-semibold leading-snug">Добавьте 6.7 Coffee на экран</p>
         <p className="text-ink-secondary text-[13px] leading-[18px] mt-1">

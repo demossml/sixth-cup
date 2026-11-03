@@ -48,8 +48,8 @@ function RequireSession() {
   if (fail) {
     return (
       <div className="max-w-[480px] mx-auto min-h-screen bg-page p-6 flex flex-col justify-center items-center text-center">
-        <div className="w-28 h-28 rounded-3xl bg-brand flex items-center justify-center mb-4">
-          <img src="/logo-alpaca.png" alt="" className="w-20 h-20 object-contain" />
+        <div className="w-28 h-28 rounded-3xl bg-white ring-1 ring-black/5 flex items-center justify-center mb-4">
+          <img src="/logo-mark.png" alt="" className="w-24 h-24 object-contain" />
         </div>
         <h1 className="text-[22px] leading-7 font-semibold text-ink mb-2">Нужен интернет один раз</h1>
         <p className="text-ink-secondary text-sm mb-4">

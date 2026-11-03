@@ -12,7 +12,7 @@ type Slide = {
 /**
  * Онбординг по стильборду: 3 слайда, логотип 6.7 (наш PNG), тексты с API.
  * Фото: public/onboarding/1.jpg … 3.jpg — если есть; иначе иллюстрация.
- * Лого: /logo-mark.png без mix-blend (lighten прятал mark).
+ * Лого: /logo-mark.png на белой подложке (маскот цветной, светлый фон читается на тёмной шапке).
  */
 export default function OnboardingPage() {
   const { dir, me } = useApp()
@@ -82,7 +82,7 @@ export default function OnboardingPage() {
             alt=""
             width={36}
             height={36}
-            className="w-9 h-9 rounded-xl bg-brand object-contain p-0.5 shrink-0"
+            className="w-9 h-9 rounded-xl bg-white ring-1 ring-black/5 object-contain p-0.5 shrink-0"
           />
           <span className="font-display text-[16px] font-semibold leading-5 tracking-tight">6.7 Coffee</span>
         </div>

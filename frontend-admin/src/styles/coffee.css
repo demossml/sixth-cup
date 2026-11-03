@@ -85,7 +85,7 @@ svg { display: block; }
 }
 .side::-webkit-scrollbar { display: none; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 2px 8px 18px; }
-.brand img { width: 36px; height: 36px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.09); flex: none; }
+.brand img { width: 36px; height: 36px; border-radius: 10px; background: #fff; border: 1px solid rgba(255, 255, 255, 0.09); flex: none; }
 .brand-name { font-size: 16px; font-weight: 800; letter-spacing: -0.025em; line-height: 1.1; }
 .brand-sub {
   font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.13em; text-transform: uppercase;
