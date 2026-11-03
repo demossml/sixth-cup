@@ -188,7 +188,7 @@ export default function Shell({ onLogout }: { onLogout?: () => void }) {
         <div className="brand">
           <img src="/67coffee-mark.png" alt="67 Coffee" />
           <div className="brand-text">
-            <div className="brand-name">6<span className="brand-dot" aria-hidden />7 Coffee</div>
+            <div className="brand-name">6<span className="brand-dot" aria-hidden /><span className="sr-only">.</span>7 Coffee</div>
             <div className="brand-sub">админка</div>
           </div>
         </div>

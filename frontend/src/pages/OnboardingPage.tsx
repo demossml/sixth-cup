@@ -84,7 +84,7 @@ export default function OnboardingPage() {
             height={36}
             className="w-9 h-9 rounded-xl bg-white ring-1 ring-black/5 object-contain p-0.5 shrink-0"
           />
-          <span className="font-display text-[16px] font-semibold leading-5 tracking-tight">6.7 Coffee</span>
+          <span className="font-display text-[16px] font-semibold leading-5 tracking-tight">6<span className="brand-dot" aria-hidden /><span className="sr-only">.</span>7 Coffee</span>
         </div>
 
         <div className="flex-1 flex items-center justify-center py-5 min-h-[40vh]">

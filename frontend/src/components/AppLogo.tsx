@@ -18,7 +18,7 @@ export default function AppLogo({ tone = 'onDark', size = 'sm', className = '' }
         height={size === 'md' ? 36 : 32}
         className={`${mark} rounded-xl object-contain shrink-0 bg-white ring-1 ring-black/5`}
       />
-      <span className={`font-display font-semibold ${text} leading-5 truncate ${color}`}>6.7 Coffee</span>
+      <span className={`font-display font-semibold ${text} leading-5 truncate ${color}`}>6<span className="brand-dot" aria-hidden /><span className="sr-only">.</span>7 Coffee</span>
     </div>
   )
 }

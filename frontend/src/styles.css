@@ -191,3 +191,15 @@ html, body, #root {
     will-change: transform;
   }
 }
+
+/* Бренд: между 6 и 7 — квадратная точка (■), а не круглая «.» шрифта.
+   Тот же приём, что в сайдбаре админки (.brand-dot). */
+.brand-dot {
+  display: inline-block;
+  width: 0.16em;
+  height: 0.16em;
+  background: currentColor;
+  vertical-align: baseline;
+  margin: 0 0.06em;
+  transform: translateY(-0.02em);
+}

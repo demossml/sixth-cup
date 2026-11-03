@@ -53,7 +53,7 @@ function Login({ onOk }: { onOk: (m: Meta) => void }) {
         <div className="mb-4 flex items-center gap-3">
           <img src="/67coffee-mark.png" alt="" className="h-10 w-10 rounded-[10px]" />
           <div>
-            <h1 className="text-lg font-extrabold text-ink">6.7 Coffee</h1>
+            <h1 className="text-lg font-extrabold text-ink">6<span className="brand-dot" aria-hidden /><span className="sr-only">.</span>7 Coffee</h1>
             <p className="font-mono text-[10px] uppercase tracking-wider text-ink-tertiary">Админка</p>
           </div>
         </div>
