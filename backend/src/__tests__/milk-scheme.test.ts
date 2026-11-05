@@ -232,3 +232,51 @@ describe('валидация бизнес-правил', () => {
     expect(r.status).toBe(403)
   })
 })
+
+describe('сверка названия варианта и товара', () => {
+  it('не предупреждает, когда вариант привязан к своему товару', async () => {
+    const own = await mkProduct('Молоко кокосовое', 80)
+    const r = await adm('POST', '/milk-schemes', {
+      name: `Ок-${T}-a`, active: true,
+      variants: [
+        { label: 'Обычное молоко', isDefault: true, isFree: true, sendToReceipt: false, sortOrder: 0, active: true },
+        { label: 'Кокосовое молоко', isDefault: false, isFree: false, sendToReceipt: true, productId: own, sortOrder: 1, active: true },
+      ],
+    })
+    expect(r.s).toBe(200)
+    expect(r.j.warnings).toEqual([])
+  })
+
+  it('предупреждает, когда «Кокосовое» привязано к овсяному (кейс 63/66)', async () => {
+    const oat = await mkProduct('Молоко овсяное', 70)
+    const r = await adm('POST', '/milk-schemes', {
+      name: `Ошибка-${T}-b`, active: true,
+      variants: [
+        { label: 'Обычное молоко', isDefault: true, isFree: true, sendToReceipt: false, sortOrder: 0, active: true },
+        { label: 'Кокосовое молоко', isDefault: false, isFree: false, sendToReceipt: true, productId: oat, sortOrder: 1, active: true },
+      ],
+    })
+    expect(r.s).toBe(200)                       // сохранение не блокируется
+    expect(r.j.warnings).toHaveLength(1)
+    expect(r.j.warnings[0]).toMatchObject({ label: 'Кокосовое молоко', productId: oat })
+    const audit = await adm('GET', '/milk-schemes/audit')
+    expect(audit.s).toBe(200)
+    expect((audit.j.warnings as any[]).some((w) => w.productId === oat)).toBe(true)
+  })
+
+  it('формат configuration не изменился: id молока — id варианта, поля прежние', async () => {
+    const paid = await mkProduct('Молоко кокосовое-cfg', 80)
+    const scheme = await mkScheme(paid)
+    const drink = await mkProduct('Капучино-cfg', 250)
+    await adm('POST', '/products', { id: drink, name: `Капучино-cfg-${T}`, price: 250, icon: 'Coffee', available: true, milkSchemeId: scheme.id })
+    link(drink, STORE, 'u-drink-cfg')
+    link(paid, STORE, 'u-coconut-cfg')
+    const j = (await (await app.request(`/api/devices/products/${drink}/configuration?storeUuid=${STORE}`)).json()) as any
+    expect(j.ok).toBe(true)
+    const opts = j.milk.byProductId[String(drink)].options as any[]
+    const coconut = opts.find((o) => o.label === 'Кокосовое молоко')
+    expect(coconut.id).toBe(scheme.variants.find((v: any) => v.label === 'Кокосовое молоко').id)
+    expect(coconut.evotorUuid).toBe('u-coconut-cfg')
+    expect(coconut.sendToReceipt).toBe(true)
+  })
+})

@@ -259,3 +259,50 @@ export function milkForProduct(
     }
   })
 }
+
+// —— Сверка названия варианта с товаром Эвотор (защита от «Кокосовое → Молоко овсяное») ——
+
+const MILK_STOP = new Set(['молоко', 'молочко', 'milk'])
+const milkNorm = (s: string) =>
+  String(s ?? '').toLowerCase().replace(/ё/g, 'е').replace(/[^a-zа-я0-9]+/g, ' ').trim()
+/** Значимые слова (без слова «молоко» и коротких), сведённые к основе из 4 букв. */
+const milkStems = (s: string) =>
+  milkNorm(s).split(' ').filter((t) => t.length >= 3 && !MILK_STOP.has(t)).map((t) => t.slice(0, 4))
+
+/** true — название варианта и товара про одно и то же молоко (или сравнивать нечего). */
+export function milkLabelMatches(label: string, productName: string): boolean {
+  const a = milkStems(label)
+  const b = milkStems(productName)
+  if (!a.length || !b.length) return true
+  return a.some((x) => b.includes(x))
+}
+
+export type MilkLabelWarning = {
+  schemeId: number
+  schemeName: string
+  variantId: number
+  label: string
+  productId: number
+  productName: string
+}
+
+/** Платные активные варианты, у которых название не совпадает с привязанным товаром. */
+export function milkLabelWarnings(
+  conn: Database.Database = defaultDb,
+  opts: { schemeId?: number } = {},
+): MilkLabelWarning[] {
+  ensureMilkSchemeSchema(conn)
+  const byScheme = opts.schemeId != null
+  const rows = conn
+    .prepare(
+      `SELECT v.id AS variantId, v.scheme_id AS schemeId, s.name AS schemeName, v.label AS label,
+              v.product_id AS productId, p.name AS productName
+         FROM milk_scheme_variants v
+         JOIN milk_schemes s ON s.id = v.scheme_id
+         JOIN products p ON p.id = v.product_id
+        WHERE v.active = 1 AND v.send_to_receipt = 1 ${byScheme ? 'AND v.scheme_id = ?' : ''}
+        ORDER BY v.scheme_id, v.sort_order, v.id`,
+    )
+    .all(...(byScheme ? [opts.schemeId] : [])) as MilkLabelWarning[]
+  return rows.filter((r) => !milkLabelMatches(r.label, r.productName))
+}

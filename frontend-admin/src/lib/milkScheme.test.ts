@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { milkDraftError, type MilkDraft } from './milkScheme'
+import { milkDraftError, milkDraftWarnings, milkLabelMatches, type MilkDraft } from './milkScheme'
 
 const nameOf = (id: number | null) => (id == null ? undefined : { 1: 'Кокосовое молоко' }[id])
 
@@ -48,5 +48,31 @@ describe('milkDraftError', () => {
     const d = draft()
     d.variants.push({ productId: 1, label: 'Второе', isDefault: false, isFree: false, sendToReceipt: true, sortOrder: 2, active: true })
     expect(milkDraftError(d, nameOf)).toMatch(/двум вариантам/)
+  })
+})
+
+describe('milkLabelMatches / milkDraftWarnings', () => {
+  it('совпадающие названия не дают предупреждений', () => {
+    expect(milkLabelMatches('Кокосовое молоко', 'Молоко кокосовое')).toBe(true)
+    expect(milkLabelMatches('Овсяное', 'Молоко овсяное 1л')).toBe(true)
+  })
+  it('кокосовое ↔ овсяное — расхождение', () => {
+    expect(milkLabelMatches('Кокосовое молоко', 'Молоко овсяное')).toBe(false)
+  })
+  it('нечего сравнивать — не предупреждаем', () => {
+    expect(milkLabelMatches('Молоко', 'Молоко овсяное')).toBe(true)
+  })
+  it('черновик: предупреждение только для платного варианта с чужим товаром', () => {
+    const names: Record<number, string> = { 63: 'Молоко овсяное', 66: 'Молоко кокосовое' }
+    const nameOf = (id: number | null) => (id == null ? undefined : names[id])
+    const d = (pid: number): MilkDraft => ({
+      name: 'M', active: true,
+      variants: [
+        { productId: null, label: 'Обычное молоко', isDefault: true, isFree: true, sendToReceipt: false, sortOrder: 0, active: true },
+        { productId: pid, label: 'Кокосовое молоко', isDefault: false, isFree: false, sendToReceipt: true, sortOrder: 1, active: true },
+      ],
+    })
+    expect(milkDraftWarnings(d(63), nameOf)).toHaveLength(1)
+    expect(milkDraftWarnings(d(66), nameOf)).toHaveLength(0)
   })
 })

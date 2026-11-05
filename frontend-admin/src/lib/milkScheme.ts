@@ -63,3 +63,26 @@ export function milkDraftError(d: MilkDraft, nameOf: (id: number | null) => stri
   if (new Set(used).size !== used.length) return 'Один товар не может быть привязан к двум вариантам'
   return null
 }
+
+const MILK_STOP = new Set(['молоко', 'молочко', 'milk'])
+const norm = (s: string) => String(s ?? '').toLowerCase().replace(/ё/g, 'е').replace(/[^a-zа-я0-9]+/g, ' ').trim()
+const stems = (s: string) => norm(s).split(' ').filter((t) => t.length >= 3 && !MILK_STOP.has(t)).map((t) => t.slice(0, 4))
+
+/** Та же сверка, что на сервере (`milkLabelMatches`): название варианта и товара про одно молоко. */
+export function milkLabelMatches(label: string, productName: string): boolean {
+  const a = stems(label)
+  const b = stems(productName)
+  if (!a.length || !b.length) return true
+  return a.some((x) => b.includes(x))
+}
+
+/** Предупреждения (не блокируют сохранение): платный вариант привязан к товару с другим названием. */
+export function milkDraftWarnings(d: MilkDraft, nameOf: (id: number | null) => string | undefined): string[] {
+  const out: string[] = []
+  for (const v of d.variants) {
+    if (!v.active || !v.sendToReceipt || v.productId == null) continue
+    const name = nameOf(v.productId)
+    if (name && !milkLabelMatches(v.label, name)) out.push(`«${v.label}» привязан к товару «${name}» — проверьте, тот ли это товар`)
+  }
+  return out
+}

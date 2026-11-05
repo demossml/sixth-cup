@@ -10,6 +10,7 @@ import {
   deleteMilkScheme,
   listMilkSchemes,
   saveMilkScheme,
+  milkLabelWarnings,
 } from '../catalog/milkScheme'
 import { catalogReadiness, cardReadiness } from '../catalog/readiness'
 import {
@@ -534,6 +535,7 @@ export const adminRoutes = new Hono()
 
   // —— Схемы молока: отдельная сущность, независимая от схем добавок ——
   .get('/milk-schemes', (c) => c.json({ schemes: listMilkSchemes(db, { includeInactive: true }) }))
+  .get('/milk-schemes/audit', (c) => c.json({ warnings: milkLabelWarnings(db) }))
 
   .post(
     '/milk-schemes',
@@ -572,7 +574,7 @@ export const adminRoutes = new Hono()
           summary: `Схема молока «${saved?.name}»: вариантов ${saved?.variants.length ?? 0}`,
           after: { name: saved?.name, active: saved?.active, variants: saved?.variants.length },
         })
-        return c.json({ scheme: saved })
+        return c.json({ scheme: saved, warnings: saved ? milkLabelWarnings(db, { schemeId: saved.id }) : [] })
       } catch (e) {
         if (e instanceof MilkSchemeError) throw bad(e.message, 400)
         throw e

@@ -4,7 +4,7 @@ import { api } from '../api/client'
 import { useApi } from '../api/useApi'
 import type { MilkScheme, Product } from '../api/types'
 import { fmtNum } from '../lib/format'
-import { milkDraftError, milkDraftFrom, type MilkDraft } from '../lib/milkScheme'
+import { milkDraftError, milkDraftFrom, milkDraftWarnings, type MilkDraft } from '../lib/milkScheme'
 import { Button, Check, ConfirmDialog, DataTable, Drawer, EmptyState, ErrorBox, Field, Input, PageHeader, Select, Spinner, Toggle, useToast } from '../ui/kit'
 import type { Column } from '../ui/kit'
 
@@ -23,6 +23,8 @@ function MilkSchemesInner({ products }: { products: Product[] }) {
   const [del, setDel] = useState<MilkScheme | null>(null)
   const nameOf = (id: number | null) => (id == null ? undefined : products.find((p) => p.id === id)?.name)
   const draftMsg = edit ? milkDraftError(edit, nameOf) : null
+  // Предупреждения не блокируют сохранение: это сверка «название варианта ↔ товар Эвотор».
+  const draftWarn = edit ? milkDraftWarnings(edit, nameOf) : []
   if (loading && !data) return <Spinner />
   if (error) return <ErrorBox message={error} onRetry={reload} />
 
@@ -121,6 +123,9 @@ function MilkSchemesInner({ products }: { products: Product[] }) {
                 </div>
               ))}
             </div>
+            {draftWarn.map((w) => (
+              <p key={w} className="text-[13px] leading-[18px] text-warn">⚠ {w}</p>
+            ))}
             {draftMsg && <p className="text-sm text-bad">{draftMsg}</p>}
           </div>
         )}
