@@ -128,16 +128,25 @@ export default function CardPage() {
         <div className="relative z-10">
           <div className="flex items-center justify-between gap-2 min-h-11">
             <AppLogo tone="onDark" size="sm" />
-            {!online ? (
-              <span
-                role="status"
-                title="Карта и QR доступны из кэша. Начисления — после подключения"
-                className="inline-flex items-center gap-1.5 text-[12px] leading-4 font-semibold px-3 py-1 rounded-full bg-white/15 text-white"
-              >
-                <WifiOff size={14} strokeWidth={1.75} />
-                Офлайн
-              </span>
-            ) : null}
+            <div className="flex items-center gap-1.5 flex-none">
+              {/* Подарок — компактный чип справа, только когда он реально доступен. */}
+              {hasGift ? (
+                <span className="gift-chip" role="status" aria-label="Подарок доступен. Скажите бариста">
+                  <Gift size={14} strokeWidth={1.7} />
+                  Подарок
+                </span>
+              ) : null}
+              {!online ? (
+                <span
+                  role="status"
+                  title="Карта и QR доступны из кэша. Начисления — после подключения"
+                  className="inline-flex items-center gap-1.5 text-[10px] leading-[14px] font-semibold px-2.5 h-8 rounded-full bg-white/15 text-white"
+                >
+                  <WifiOff size={14} strokeWidth={1.8} />
+                  Офлайн
+                </span>
+              ) : null}
+            </div>
           </div>
 
           <p className="mt-3.5 font-display font-semibold text-[19px] leading-[26px] tracking-[-0.01em] max-w-[250px]">

@@ -205,30 +205,32 @@ html, body, #root {
 }
 
 /* ── Прогресс-стикеры (PROGRESS-STICKERS-SPEC) ───────────────────────────
-   Пустые слоты не рисуются: полоса всегда 36 px, чтобы карта не прыгала. */
+   Пустых слотов нет: полоса всегда 40 px, чтобы карта не прыгала.
+   Арт марки — только sticker-scratch (ассет владельца), без своих кружков. */
 .stamps {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 36px;
+  height: 40px;
   margin-top: 12px;
 }
 .stamp {
-  width: 34px;
-  height: 34px;
+  width: 38px;
+  height: 38px;
   flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #0b4a8d;
-  background: #fff;
-  /* бумажная наклейка: слегка неровный die-cut край, без 3D и градиентов */
-  border: 1px solid rgba(255, 255, 255, 0.78);
-  border-radius: 50% 48% 51% 49% / 49% 51% 49% 51%;
-  box-shadow: 0 1px 2px rgba(7, 53, 97, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  display: block;
+  /* только мягкая тень: без glow, без рамки-обводки вокруг круга */
+  filter: drop-shadow(0 1px 1px rgba(7, 53, 97, 0.28));
+}
+.stamp img {
+  width: 38px;
+  height: 38px;
+  display: block;
+  object-fit: contain;
 }
 @media (max-width: 340px) {
-  .stamp { width: 30px; height: 30px; }
+  .stamp,
+  .stamp img { width: 32px; height: 32px; }
 }
 /* Появление новой марки: 160 мс, только она. */
 @keyframes stamp-fresh-in {
@@ -238,23 +240,28 @@ html, body, #root {
 .stamp-fresh {
   animation: stamp-fresh-in 160ms ease-out both;
 }
-
-/* Подарок: отдельная строка, без glow и пульсации. */
-.gift-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 10px;
-  padding: 9px 12px;
-  max-width: 290px;
-  background: #fff;
-  color: #0b4a8d;
-  border-radius: 14px;
-  box-shadow: 0 1px 2px rgba(7, 53, 97, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+@media (prefers-reduced-motion: reduce) {
+  .stamp-fresh { animation: none; }
 }
-.gift-icon { display: flex; flex: none; }
-.gift-title { display: block; font-size: 13px; line-height: 16px; font-weight: 700; }
-.gift-sub { display: block; font-size: 11px; line-height: 14px; color: #3b5f8a; }
+
+/* Подарок: компактный чип справа в шапке, не отдельная плоскость. */
+.gift-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 9px;
+  flex: none;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #0b4a8d;
+  font-size: 10px;
+  line-height: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(7, 53, 97, 0.2);
+}
 
 /* ── Expanded QR: слой внутри экрана, без крестика ──────────────────────── */
 @keyframes qr-layer-in { from { opacity: 0.7; } to { opacity: 1; } }
