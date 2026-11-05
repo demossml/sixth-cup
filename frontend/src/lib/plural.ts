@@ -12,10 +12,18 @@ export const cupsWord = (n: number) => pluralRu(n, 'стакан', 'стакан
 export const drinksWord = (n: number) => pluralRu(n, 'напиток', 'напитка', 'напитков')
 export const friendsWord = (n: number) => pluralRu(n, 'друг', 'друга', 'друзей')
 
-/** Главная фраза под кружками: что делать дальше. */
-export function progressPhrase(opts: { n: number; left: number; freeAvailable: number }): string {
-  const { n, left, freeAvailable } = opts
-  if (freeAvailable > 0) return `Подарок: ${freeAvailable} ${drinksWord(freeAvailable)} — скажите бариста`
-  if (left > 0) return `Ещё ${left} ${cupsWord(left)} до бесплатного`
-  return `Купите ${n} ${cupsWord(n)} — следующий в подарок`
+/**
+ * Фраза прогресса по PROGRESS-STICKERS-SPEC.
+ * Только «стаканы», без смешения с «чашками».
+ *  • подарок доступен → «Все 5 стаканов собраны»;
+ *  • ни одной марки → «6-й стакан — в подарок»;
+ *  • иначе → «Ещё N стакана/стаканов до подарка».
+ */
+export function progressPhrase(opts: { n: number; marks: number; freeAvailable: number }): string {
+  const { n, marks, freeAvailable } = opts
+  if (freeAvailable > 0) return `Все ${n} ${cupsWord(n)} собраны`
+  if (marks <= 0) return `${n + 1}-й стакан — в подарок`
+  const left = Math.max(0, n - marks)
+  if (left <= 0) return `Все ${n} ${cupsWord(n)} собраны`
+  return `Ещё ${left} ${cupsWord(left)} до подарка`
 }

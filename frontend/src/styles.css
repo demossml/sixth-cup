@@ -203,3 +203,104 @@ html, body, #root {
   margin: 0 0.06em;
   transform: translateY(-0.02em);
 }
+
+/* ── Прогресс-стикеры (PROGRESS-STICKERS-SPEC) ───────────────────────────
+   Пустые слоты не рисуются: полоса всегда 36 px, чтобы карта не прыгала. */
+.stamps {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  margin-top: 12px;
+}
+.stamp {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #0b4a8d;
+  background: #fff;
+  /* бумажная наклейка: слегка неровный die-cut край, без 3D и градиентов */
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  border-radius: 50% 48% 51% 49% / 49% 51% 49% 51%;
+  box-shadow: 0 1px 2px rgba(7, 53, 97, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+@media (max-width: 340px) {
+  .stamp { width: 30px; height: 30px; }
+}
+/* Появление новой марки: 160 мс, только она. */
+@keyframes stamp-fresh-in {
+  from { opacity: 0; transform: scale(0.92); }
+  to { opacity: 1; transform: scale(1); }
+}
+.stamp-fresh {
+  animation: stamp-fresh-in 160ms ease-out both;
+}
+
+/* Подарок: отдельная строка, без glow и пульсации. */
+.gift-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 9px 12px;
+  max-width: 290px;
+  background: #fff;
+  color: #0b4a8d;
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(7, 53, 97, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+.gift-icon { display: flex; flex: none; }
+.gift-title { display: block; font-size: 13px; line-height: 16px; font-weight: 700; }
+.gift-sub { display: block; font-size: 11px; line-height: 14px; color: #3b5f8a; }
+
+/* ── Expanded QR: слой внутри экрана, без крестика ──────────────────────── */
+@keyframes qr-layer-in { from { opacity: 0.7; } to { opacity: 1; } }
+.qr-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: max(18px, env(safe-area-inset-top)) 20px max(18px, env(safe-area-inset-bottom));
+  background: #073561;
+  color: #fff;
+  cursor: pointer;
+  animation: qr-layer-in 180ms ease-out both;
+}
+.qr-layer-card {
+  width: min(82vw, 320px);
+  aspect-ratio: 1;
+  padding: 14px;
+  border-radius: 20px;
+  background: #fff;
+}
+.qr-layer-number {
+  margin: 18px 0 0;
+  font-family: 'Unbounded', system-ui, sans-serif;
+  font-size: 34px;
+  line-height: 42px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  font-variant-numeric: tabular-nums;
+}
+.qr-layer-caption {
+  margin: 8px 0 0;
+  max-width: 250px;
+  text-align: center;
+  font-size: 11px;
+  line-height: 16px;
+  color: rgba(255, 255, 255, 0.72);
+}
+.qr-layer-hint {
+  position: absolute;
+  bottom: max(18px, env(safe-area-inset-bottom));
+  margin: 0;
+  font-size: 10px;
+  line-height: 14px;
+  color: rgba(255, 255, 255, 0.48);
+}

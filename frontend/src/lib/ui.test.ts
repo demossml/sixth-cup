@@ -18,17 +18,21 @@ describe('pluralRu', () => {
 })
 
 describe('progressPhrase', () => {
-  it('подарок важнее прогресса', () => {
-    expect(progressPhrase({ n: 5, left: 3, freeAvailable: 1 })).toBe('Подарок: 1 напиток — скажите бариста')
-    expect(progressPhrase({ n: 5, left: 3, freeAvailable: 2 })).toBe('Подарок: 2 напитка — скажите бариста')
+  it('подарок собран — все стаканы на месте', () => {
+    expect(progressPhrase({ n: 5, marks: 5, freeAvailable: 1 })).toBe('Все 5 стаканов собраны')
+    expect(progressPhrase({ n: 5, marks: 5, freeAvailable: 2 })).toBe('Все 5 стаканов собраны')
   })
-  it('ещё N стаканов', () => {
-    expect(progressPhrase({ n: 5, left: 4, freeAvailable: 0 })).toBe('Ещё 4 стакана до бесплатного')
-    expect(progressPhrase({ n: 5, left: 1, freeAvailable: 0 })).toBe('Ещё 1 стакан до бесплатного')
-    expect(progressPhrase({ n: 6, left: 5, freeAvailable: 0 })).toBe('Ещё 5 стаканов до бесплатного')
+  it('ещё N стаканов до подарка', () => {
+    expect(progressPhrase({ n: 5, marks: 1, freeAvailable: 0 })).toBe('Ещё 4 стакана до подарка')
+    expect(progressPhrase({ n: 5, marks: 4, freeAvailable: 0 })).toBe('Ещё 1 стакан до подарка')
+    expect(progressPhrase({ n: 6, marks: 1, freeAvailable: 0 })).toBe('Ещё 5 стаканов до подарка')
+    expect(progressPhrase({ n: 5, marks: 3, freeAvailable: 0 })).toBe('Ещё 2 стакана до подарка')
   })
-  it('нулевой остаток', () => {
-    expect(progressPhrase({ n: 5, left: 0, freeAvailable: 0 })).toBe('Купите 5 стаканов — следующий в подарок')
+  it('нулевой прогресс — фраза про следующий стакан', () => {
+    expect(progressPhrase({ n: 5, marks: 0, freeAvailable: 0 })).toBe('6-й стакан — в подарок')
+  })
+  it('без подхода к подарку не обещает больше N', () => {
+    expect(progressPhrase({ n: 5, marks: 0, freeAvailable: 0 })).not.toContain('до подарка')
   })
 })
 

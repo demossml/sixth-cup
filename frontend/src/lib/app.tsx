@@ -11,6 +11,8 @@ type Ctx = {
   best: Best | null
   syncing: boolean
   lastSync: number
+  /** Данные обновляются: сеть есть И последний sync не вернул offline. */
+  online: boolean
   sync: () => Promise<string>
   reload: () => Promise<void>
 }
@@ -42,6 +44,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null)
   const [best, setBest] = useState<Best | null>(null)
   const [syncing, setSyncing] = useState(false)
+  // Офлайн — это не только navigator.onLine: если запросы не проходят, данные устарели.
+  const [netOk, setNetOk] = useState(true)
+  const [navOnline, setNavOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine)
   const syncFlight = useRef<Promise<string> | null>(null)
   const [lastSync, setLastSync] = useState(Number(localStorage.getItem('sc-last-sync') ?? 0))
   const dirAt = useRef<number | null>(null)
@@ -82,14 +87,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (syncFlight.current) return syncFlight.current
     const task = (async () => {
       try {
-        if (!getJwt()) { await refreshDirectory(); await reload(); return 'noauth' }
+        if (!getJwt()) {
+          const d = await refreshDirectory()
+          await reload()
+          setNetOk(Boolean(d))
+          return d ? 'noauth' : 'offline'
+        }
         setSyncing(true)
-        const r = await syncCustomer(); await reload(); return r
+        const r = await syncCustomer()
+        await reload()
+        setNetOk(r !== 'offline')
+        return r
       } finally { setSyncing(false); syncFlight.current = null }
     })()
     syncFlight.current = task
     return task
   }, [reload])
+
+  useEffect(() => {
+    const onUp = () => setNavOnline(true)
+    const onDown = () => setNavOnline(false)
+    window.addEventListener('online', onUp)
+    window.addEventListener('offline', onDown)
+    return () => { window.removeEventListener('online', onUp); window.removeEventListener('offline', onDown) }
+  }, [])
 
   useEffect(() => {
     reload().then(() => sync())
@@ -105,5 +126,5 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [reload, sync])
 
-  return <AppCtx.Provider value={{ dir, me, best, syncing, lastSync, sync, reload }}>{children}</AppCtx.Provider>
+  return <AppCtx.Provider value={{ dir, me, best, syncing, lastSync, online: navOnline && netOk, sync, reload }}>{children}</AppCtx.Provider>
 }
