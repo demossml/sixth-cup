@@ -19,11 +19,16 @@ export const api = hc<AppType>('/', {
 })
 
 
-export async function unwrap<T>(p: Promise<{ ok: boolean; json: () => Promise<T> }>): Promise<T> {
+/** Ошибка API с HTTP-статусом: по нему UI отличает кривой код (400) от лимита (429). */
+export type ApiError = Error & { status?: number }
+
+export async function unwrap<T>(p: Promise<{ ok: boolean; json: () => Promise<T>; status?: number }>): Promise<T> {
   const res = await p
   if (!res.ok) {
-    const body = (await res.json()) as unknown as { error?: string }
-    throw new Error(body.error ?? 'Ошибка запроса')
+    const body = (await res.json().catch(() => ({}))) as unknown as { error?: string }
+    const err = new Error(body.error ?? 'Ошибка запроса') as ApiError
+    err.status = res.status
+    throw err
   }
   return res.json()
 }

@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Qr from '../components/Qr'
 import { useApp } from '../lib/app'
+import { formatRub } from '../lib/money'
+import { friendsWord } from '../lib/plural'
 import { Share2, Users } from '../lib/icons'
 
 export default function InvitePage() {
@@ -13,6 +15,8 @@ export default function InvitePage() {
   const N = Math.max(1, me?.cupsForFree ?? dir?.cupsForFree ?? 5)
   const cupText = `каждый ${N + 1}-й кофе — бесплатно`
   const link = me ? `${location.origin}/?invite=${encodeURIComponent(me.inviteCode)}` : ''
+  const friends = me?.friendsCount ?? 0
+  const fromFriends = me?.fromFriendsKopecks ?? (me?.fromFriendsRub ?? 0) * 100
 
   async function share() {
     if (!link) return
@@ -53,6 +57,25 @@ export default function InvitePage() {
       </div>
 
       <div className="px-4 pt-4 space-y-4">
+        {/* Статус приглашений: пригласивший должен видеть, что связка есть, даже до первой оплаты друга. */}
+        <div className="bg-white border border-line rounded-2xl shadow-card px-4 py-3">
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-[13px] leading-[18px] text-ink-secondary">Приглашено</span>
+            <span className="font-display font-semibold text-[20px] leading-6 num text-ink">{friends}</span>
+          </div>
+          <div className="mt-1 flex items-baseline justify-between gap-3">
+            <span className="text-[13px] leading-[18px] text-ink-secondary">Начислено от друзей</span>
+            <span className="font-display font-semibold text-[20px] leading-6 num text-ink">{formatRub(fromFriends)} ₽</span>
+          </div>
+          <p className="mt-2 text-[12px] leading-4 text-ink-secondary">
+            {friends === 0
+              ? 'Пока никто не присоединился. Отправьте ссылку — друг получит свою карту автоматически.'
+              : fromFriends > 0
+                ? `Кэшбэк приходит с каждой оплаты друга — уже начислено ${formatRub(fromFriends)} ₽. ${friends} ${friendsWord(friends)} в программе.`
+                : 'Друг уже в программе. Кэшбэк 3 % придёт, когда он оплатит заказ на кассе и покажет свою карту.'}
+          </p>
+        </div>
+
         {/* Приглашение выглядит как билет с кремовой рамкой — не спутать с картой (белый квадрат с QR). */}
         <div className="bg-white rounded-2xl p-4 text-center border-2 border-dashed border-brand-mid shadow-card">
           <p className="inline-block text-[12px] leading-4 font-semibold tracking-wide text-warn bg-warn-bg rounded-full px-3 py-1.5 mb-2">
@@ -75,7 +98,7 @@ export default function InvitePage() {
             <li>Друг сканирует QR или открывает ссылку.</li>
             <li>У него появляется своя карта лояльности (без лишней регистрации).</li>
             <li>Он копит стаканы: {cupText}.</li>
-            <li>С каждой его оплаты вам навсегда начисляется <b className="text-ink">{pct}% кэшбэка</b>.</li>
+            <li>Кэшбэк <b className="text-ink">{pct}%</b> начисляется с каждой оплаты друга — когда он <b className="text-ink">оплачивает на кассе и показывает свою карту</b>.</li>
             <li>Кэшбэк можно списать на кассе при следующей покупке.</li>
           </ol>
         </div>

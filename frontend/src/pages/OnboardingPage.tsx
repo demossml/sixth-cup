@@ -2,6 +2,9 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { IllCard, IllScan, IllStamps } from '../components/Illustrations'
 import { useApp } from '../lib/app'
+import { isValidInviteCode, parseInviteInput } from '../lib/invite'
+import { applyInvite } from '../lib/ensureGuest'
+import { Gift, RefreshCw } from '../lib/icons'
 
 type Slide = {
   Ill: () => JSX.Element
@@ -53,6 +56,30 @@ export default function OnboardingPage() {
   }
 
   const [photoOk, setPhotoOk] = useState<Record<number, boolean>>({ 0: true, 1: true, 2: true })
+
+  // Код друга можно ввести до создания карты: после регистрации привязка уже невозможна.
+  const [codeOpen, setCodeOpen] = useState(false)
+  const [code, setCode] = useState('')
+  const [codeBusy, setCodeBusy] = useState(false)
+  const [codeResult, setCodeResult] = useState<'ok' | 'invalid' | 'offline' | 'rate_limited' | null>(null)
+
+  async function applyCode() {
+    const value = parseInviteInput(code)
+    setCodeResult(null)
+    if (!isValidInviteCode(value)) { setCodeResult('invalid'); return }
+    setCodeBusy(true)
+    const r = await applyInvite(value)
+    setCodeBusy(false)
+    setCodeResult(r === 'ok' ? 'ok' : r === 'invalid_invite' ? 'invalid' : r)
+    if (r === 'ok') setCode(value)
+  }
+
+  const codeMessage =
+    codeResult === 'invalid' ? 'Код не найден. Проверьте ссылку друга — код состоит из 4–40 символов: буквы, цифры, «-» и «_».'
+      : codeResult === 'offline' ? 'Нет сети. Код сохранён и применится, когда появится интернет.' 
+        : codeResult === 'rate_limited' ? 'Слишком много попыток с этого адреса. Подождите пару минут.'
+          : codeResult === 'ok' ? 'Код принят: карта создастся уже с приглашением друга.' 
+            : null
 
   return (
     <div className="max-w-[480px] mx-auto min-h-screen bg-[#0E0E0F] text-white flex flex-col relative overflow-hidden">
@@ -107,7 +134,57 @@ export default function OnboardingPage() {
           ))}
         </div>
 
-        <div className="mt-6 space-y-1">
+        {/* Ручной ввод кода друга — до создания карты. */}
+        <div className="mt-5">
+          {!codeOpen ? (
+            <button
+              type="button"
+              className="w-full min-h-10 text-[13px] font-semibold text-white/80 inline-flex items-center justify-center gap-1.5"
+              onClick={() => setCodeOpen(true)}
+            >
+              <Gift size={14} strokeWidth={1.75} /> У меня есть код друга
+            </button>
+          ) : (
+            <div className="rounded-2xl bg-white/10 border border-white/20 p-3">
+              <label htmlFor="invite-code" className="block text-[12px] leading-4 text-white/75 mb-1.5">
+                Код или ссылка друга
+              </label>
+              <div className="flex gap-2">
+                <input
+                  id="invite-code"
+                  value={code}
+                  onChange={(e) => { setCode(e.target.value); setCodeResult(null) }}
+                  readOnly={codeResult === 'ok'}
+                  inputMode="text"
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  placeholder="ABCD1234EF"
+                  className="min-w-0 flex-1 rounded-xl bg-white text-ink px-3 min-h-11 text-[15px] num"
+                />
+                {codeResult === 'ok' ? (
+                  <span className="min-h-11 px-4 shrink-0 inline-flex items-center text-[15px] font-semibold text-white" aria-hidden="true">✓</span>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={codeBusy || !code.trim()}
+                    className="btn min-h-11 px-4 shrink-0 disabled:opacity-60"
+                    onClick={() => void applyCode()}
+                  >
+                    {codeBusy ? <RefreshCw size={16} className="animate-spin motion-reduce:animate-none" /> : 'Применить'}
+                  </button>
+                )}
+              </div>
+              {codeMessage && (
+                <p className={`mt-1.5 text-[12px] leading-4 ${codeResult === 'ok' ? 'text-white' : 'text-white/85'}`}>
+                  {codeMessage}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="mt-4 space-y-1">
           <button
             type="button"
             className="btn min-h-12"

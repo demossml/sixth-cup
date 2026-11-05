@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import InstallBanner from '../components/InstallBanner'
+import InviteNotice from '../components/InviteNotice'
 import ProgressStamps from '../components/ProgressStamps'
 import Qr from '../components/Qr'
 import QrLayer from '../components/QrLayer'
@@ -158,6 +159,9 @@ export default function CardPage() {
       </div>
 
       <div className="px-4 -mt-3 space-y-3">
+        {/* Приглашение, которое не применилось (существующая карта / неверный код). */}
+        <InviteNotice />
+
         {/* Карта-пропуск: одна tap-зона, QR 112 px. Малый QR — якорь, а не код для сканера. */}
         {!me && !proof ? (
           <div className="bg-white rounded-3xl shadow-lift px-4 py-5 text-center space-y-3">
@@ -219,12 +223,17 @@ export default function CardPage() {
               </span>
               <ChevronRight size={18} strokeWidth={1.75} className="text-ink-tertiary shrink-0" />
             </button>
-            {(me?.friendsCount ?? 0) > 0 || fromFriendsKop > 0 ? (
+            {(me?.friendsCount ?? 0) > 0 ? (
               <div className="flex items-center gap-3 px-3.5 py-2 min-h-14">
                 <Gift size={20} strokeWidth={1.75} className="text-brand shrink-0" />
                 <div className="min-w-0">
-                  <div className="text-[15px] leading-5 font-semibold text-ink num">От друзей +{formatRub(fromFriendsKop)} ₽</div>
-                  <div className="text-[12px] leading-4 text-ink-secondary">{me?.friendsCount ?? 0} {friendsWord(me?.friendsCount ?? 0)}</div>
+                  <div className="text-[15px] leading-5 font-semibold text-ink num">
+                    {fromFriendsKop > 0 ? `От друзей +${formatRub(fromFriendsKop)} ₽` : 'От друзей'}
+                  </div>
+                  <div className="text-[12px] leading-4 text-ink-secondary num">
+                    {me?.friendsCount ?? 0} {friendsWord(me?.friendsCount ?? 0)}
+                    {fromFriendsKop > 0 ? '' : ' · пока без начислений'}
+                  </div>
                 </div>
               </div>
             ) : null}

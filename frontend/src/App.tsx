@@ -24,7 +24,10 @@ import { CreditCard, BookOpen, MoreHorizontal } from './lib/icons'
 function RequireSession() {
   const { sync } = useApp()
   const [ready, setReady] = useState(!!getJwt())
-  const [fail, setFail] = useState(false)
+  const [fail, setFail] = useState<null | 'offline' | 'rate_limited'>(null)
+  // Онбординг показываем ДО создания карты: гость успевает ввести код приглашения,
+  // а «брошенные» аккаунты не появляются у тех, кто закрыл приложение на первом экране.
+  const onboarded = (() => { try { return !!localStorage.getItem('sc-onboarded') } catch { return true } })()
 
   // Новая карта: сразу синхронизируемся, чтобы QR появился без тапа «Получить карту».
   const onGuestReady = () => {
@@ -34,35 +37,45 @@ function RequireSession() {
   }
 
   useEffect(() => {
+    if (!onboarded) return
     if (getJwt()) {
       setReady(true)
       return
     }
     void ensureGuest().then((s) => {
-      if (s === 'ok') onGuestReady()
-      else setFail(true)
+      // Карта создана и при неизвестном коде — гость просто остаётся без реферера (плашка на титуле).
+      if (s === 'ok' || s === 'invalid_invite') onGuestReady()
+      else setFail(s === 'rate_limited' ? 'rate_limited' : 'offline')
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Сначала онбординг: карта создаётся уже после него, чтобы код друга можно было ввести.
+  if (!onboarded) return <Navigate to="/onboarding" replace />
+
   if (fail) {
+    const limited = fail === 'rate_limited'
     return (
       <div className="max-w-[480px] mx-auto min-h-screen bg-page p-6 flex flex-col justify-center items-center text-center">
         <div className="w-28 h-28 rounded-3xl bg-white ring-1 ring-black/5 flex items-center justify-center mb-4">
           <img src="/logo-mark.png" alt="" className="w-24 h-24 object-contain" />
         </div>
-        <h1 className="text-[22px] leading-7 font-semibold text-ink mb-2">Нужен интернет один раз</h1>
+        <h1 className="text-[22px] leading-7 font-semibold text-ink mb-2">
+          {limited ? 'Слишком много попыток' : 'Нужен интернет один раз'}
+        </h1>
         <p className="text-ink-secondary text-sm mb-4">
-          Чтобы выдать карту лояльности, подключитесь к сети. Телефон и SMS не требуются.
+          {limited
+            ? 'С этого адреса за последний час создано слишком много карт. Подождите несколько минут и нажмите «Повторить» — прогресс и приглашение не потеряются.'
+            : 'Чтобы выдать карту лояльности, подключитесь к сети. Телефон и SMS не требуются.'}
         </p>
         <button
           type="button"
           className="btn max-w-[320px]"
           onClick={() => {
-            setFail(false)
+            setFail(null)
             void ensureGuest().then((s) => {
-              if (s === 'ok') onGuestReady()
-              else setFail(true)
+              if (s === 'ok' || s === 'invalid_invite') onGuestReady()
+              else setFail(s === 'rate_limited' ? 'rate_limited' : 'offline')
             })
           }}
         >
@@ -80,10 +93,6 @@ function RequireSession() {
         <p className="text-[13px] text-ink-secondary">Это займёт несколько секунд</p>
       </div>
     )
-  }
-
-  if (!localStorage.getItem('sc-onboarded')) {
-    return <Navigate to="/onboarding" replace />
   }
 
   return <Outlet />

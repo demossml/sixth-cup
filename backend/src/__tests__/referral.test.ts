@@ -34,16 +34,47 @@ const DAY = 24 * 3600 * 1000
 describe('client invite store', () => {
   it('remembers a link only for a browser without an account, and always asks to strip the URL', () => {
     const s = memStore()
-    expect(inv.captureInvite('?invite=ABCD1234EF', false, s, 1000)).toEqual({ strip: true, stored: true })
+    expect(inv.captureInvite('?invite=ABCD1234EF', false, s, 1000)).toEqual({ strip: true, stored: true, ignored: null })
     expect(inv.getInvite(s, 2000)).toBe('ABCD1234EF')
 
-    const existing = memStore()
-    // existing account (JWT present): somebody's link must not be remembered for a later card
-    expect(inv.captureInvite('?invite=ABCD1234EF', true, existing, 1000)).toEqual({ strip: true, stored: false })
-    expect(inv.getInvite(existing, 2000)).toBeUndefined()
+    expect(inv.captureInvite('?x=1', false, memStore())).toEqual({ strip: false, stored: false, ignored: null })
+    expect(inv.captureInvite('?invite=<script>', false, memStore())).toEqual({ strip: true, stored: false, ignored: null })
+  })
 
-    expect(inv.captureInvite('?x=1', false, memStore())).toEqual({ strip: false, stored: false })
-    expect(inv.captureInvite('?invite=<script>', false, memStore())).toEqual({ strip: true, stored: false })
+  it('не теряет код молча: при существующей карте возвращает ignored и ничего не привязывает', () => {
+    const existing = memStore()
+    // существующая карта: чужую ссылку к ней не привязываем, но и не выбрасываем без следа
+    expect(inv.captureInvite('?invite=ABCD1234EF', true, existing, 1000)).toEqual({ strip: true, stored: false, ignored: 'ABCD1234EF' })
+    expect(inv.getInvite(existing, 2000)).toBeUndefined()
+    expect(existing.data.has(inv.INVITE_KEY)).toBe(false)
+
+    // без хранилища (приватный режим) код тоже не должен исчезнуть бесследно
+    expect(inv.captureInvite('?invite=ABCD1234EF', true, null)).toEqual({ strip: true, stored: false, ignored: 'ABCD1234EF' })
+  })
+
+  it('нормализует ручной ввод: код или целая ссылка', () => {
+    const s = memStore()
+    expect(inv.storeInvite('  abcd1234ef ', s, 1000)).toBe(true)
+    expect(inv.getInvite(s, 2000)).toBe('ABCD1234EF')
+    expect(inv.storeInvite('<script>', memStore())).toBe(false)
+    expect(inv.parseInviteInput('https://67coffee.ru/?invite=abcd1234ef')).toBe('ABCD1234EF')
+    expect(inv.parseInviteInput('  abcd1234ef ')).toBe('ABCD1234EF')
+    expect(inv.isValidInviteCode('ABCD1234EF')).toBe(true)
+    expect(inv.isValidInviteCode('a b')).toBe(false)
+  })
+
+  it('сообщение о неприменённом приглашении живёт 7 дней и снимается вручную', () => {
+    const s = memStore()
+    inv.setInviteNotice({ kind: 'ignored', code: 'ABCD1234EF' }, s, 0)
+    expect(inv.getInviteNotice(s, 5 * DAY)).toMatchObject({ kind: 'ignored', code: 'ABCD1234EF' })
+    expect(inv.getInviteNotice(s, 8 * DAY)).toBeNull()
+    expect(s.data.has(inv.NOTICE_KEY)).toBe(false)
+
+    inv.setInviteNotice({ kind: 'rejected', code: 'ABCD1234EF' }, s, 10)
+    expect(inv.getInviteNotice(s, 11)?.kind).toBe('rejected')
+    inv.clearInviteNotice(s)
+    expect(inv.getInviteNotice(s, 12)).toBeNull()
+    expect(inv.getInviteNotice(null)).toBeNull()
   })
 
   it('expires, drops legacy bare strings, and is cleared after use', () => {
@@ -63,7 +94,8 @@ describe('client invite store', () => {
   })
 
   it('works without storage', () => {
-    expect(inv.captureInvite('?invite=ABCD1234EF', false, null)).toEqual({ strip: true, stored: false })
+    // без хранилища код некуда положить — но он не теряется: вернём его как ignored для плашки
+    expect(inv.captureInvite('?invite=ABCD1234EF', false, null)).toEqual({ strip: true, stored: false, ignored: 'ABCD1234EF' })
     expect(inv.getInvite(null)).toBeUndefined()
     expect(() => inv.clearInvite(null)).not.toThrow()
   })
