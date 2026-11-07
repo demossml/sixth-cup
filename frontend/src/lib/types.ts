@@ -26,6 +26,11 @@ export type Directory = {
     lng?: number | null
     /** Часы по дням: 7 элементов (0 = Пн), null — выходной. */
     hours?: ({ open: string; close: string } | null)[] | null
+    /** Витрина точки: фото 480 (список) и 960 (карточка), ориентир и телефон. */
+    photoUrl?: string | null
+    photoFullUrl?: string | null
+    entranceHint?: string | null
+    phone?: string | null
   }[]
   organizations?: {
     id: number; name: string; legalName: string; taxRegime: string; vatRate: number

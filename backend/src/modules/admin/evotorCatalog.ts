@@ -15,6 +15,7 @@ import {
   clientForStore,
   listActivePlainTokens,
 } from '../../integrations/evotor/tokenStore'
+import { ensureShowcaseForEvotorStore, refreshEvotorSnapshot } from './storeShowcase'
 
 
 /**
@@ -119,6 +120,8 @@ export const adminEvotorCatalog = new Hono()
         const uuid = String(o.uuid ?? o.id ?? '').trim()
         if (!uuid) continue
         upsert.run(uuid, o.name ?? null, o.address ?? null, o.code ?? null, JSON.stringify(o), now)
+        // Название/адрес в витрине не перезаписываем — только снимок «как в Эвоторе».
+        refreshEvotorSnapshot(db as never, uuid)
         db.prepare(`INSERT OR IGNORE INTO evotor_sync_state(store_uuid,last_seen_close_ms) VALUES(?,0)`).run(uuid)
       }
       const flags = new Map(
@@ -157,6 +160,20 @@ export const adminEvotorCatalog = new Hono()
         throw bad(String(e), 502)
       }
     }
+  })
+
+  /**
+   * Витрина гостя для облачной точки: создаёт локальную точку (`stores`) и привязывает её,
+   * если привязки ещё нет. Повторный вызов возвращает существующую.
+   */
+  .post('/evotor/stores/:storeUuid/showcase', async (c) => {
+    ensureStoresSchema()
+    const storeUuid = c.req.param('storeUuid')
+    const row = db.prepare('SELECT store_uuid FROM evotor_stores WHERE store_uuid=?').get(storeUuid)
+    if (!row) throw bad('Store not found — сначала обновите список точек', 404)
+    const made = ensureShowcaseForEvotorStore(db as never, storeUuid, null)
+    if (!made) throw bad('Сначала создайте организацию в разделе «Система»', 409)
+    return c.json({ ok: true, storeId: made.storeId, created: made.created })
   })
 
   .patch('/evotor/stores/:storeUuid', zValidator('json', z.object({

@@ -1,7 +1,8 @@
 import { memo } from 'react'
 import { schematicPoints, type MapTarget } from '../../lib/mapLinks'
+import { mediaUrl } from '../../lib/media'
 
-type Store = MapTarget & { id: number; name: string; address: string }
+type Store = MapTarget & { id: number; name: string; address: string; photoUrl?: string | null }
 
 type Props = {
   stores: Store[]
@@ -61,6 +62,16 @@ function StoreMap({ stores, selectedId, onSelect }: Props) {
           )
         })}
       </svg>
+      {(() => {
+        const chosen = stores.find((s) => s.id === selectedId)
+        if (!chosen?.photoUrl) return null
+        return (
+          <span className="absolute left-2 top-2 flex items-center gap-1.5 rounded-xl bg-white/95 px-1.5 py-1 shadow-card">
+            <img src={mediaUrl(chosen.photoUrl) ?? ''} alt="" className="w-7 h-7 rounded-lg object-cover bg-pale" />
+            <span className="max-w-[140px] truncate text-[11px] leading-4 font-semibold text-ink">{chosen.name}</span>
+          </span>
+        )
+      })()}
       {rough ? (
         <span className="absolute right-2 bottom-2 rounded-full bg-white/90 px-2 py-0.5 text-[11px] leading-4 text-ink-secondary">
           Схема · точное место в карте

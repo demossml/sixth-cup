@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, MapPin, Navigation } from 'lucide-react'
+import { ArrowLeft, MapPin, Navigation, X } from 'lucide-react'
 import { useApp } from '../lib/app'
 import { hoursLabel, storeHours, type MenuDirectory } from '../lib/menuModel'
 import {
@@ -13,6 +13,7 @@ import {
   type MapProvider,
 } from '../lib/mapLinks'
 import StoreMap from '../components/map/StoreMap'
+import { mediaUrl } from '../lib/media'
 
 type GeoState = 'idle' | 'asking' | 'denied' | 'ready'
 
@@ -44,6 +45,7 @@ export default function StorePickerPage() {
   )
   const [geo, setGeo] = useState<GeoState>('idle')
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null)
+  const [findOpen, setFindOpen] = useState(false)
 
   const stores = useMemo(() => {
     const list = [...(dir?.stores ?? [])]
@@ -150,13 +152,28 @@ export default function StorePickerPage() {
                     active ? 'border-brand bg-brand-tint/40' : 'border-line bg-white'
                   } disabled:opacity-50`}
                 >
-                  <MapPin size={18} strokeWidth={1.75} className="text-brand shrink-0 mt-0.5" aria-hidden="true" />
+                  {s.photoUrl ? (
+                    <img
+                      src={mediaUrl(s.photoUrl) ?? ''}
+                      alt={s.name}
+                      loading="lazy"
+                      decoding="async"
+                      className="w-16 h-16 rounded-xl object-cover bg-pale shrink-0"
+                    />
+                  ) : (
+                    <span className="w-16 h-16 rounded-xl bg-pale flex items-center justify-center shrink-0">
+                      <MapPin size={18} strokeWidth={1.75} className="text-brand" aria-hidden="true" />
+                    </span>
+                  )}
                   <span className="min-w-0 flex-1">
                     <span className="block text-[15px] leading-5 font-semibold text-ink truncate">{s.name}</span>
                     <span className="block text-[13px] leading-[18px] text-ink-secondary truncate">{s.address}</span>
                     <span className={`mt-0.5 block text-[12px] leading-4 ${hours.open ? 'text-ok' : 'text-bad'}`}>
                       {hoursLabel(hours)}
                     </span>
+                    {s.entranceHint ? (
+                      <span className="mt-0.5 block text-[12px] leading-4 text-ink-tertiary truncate">{s.entranceHint}</span>
+                    ) : null}
                   </span>
                   {active && <span className="text-brand text-[18px] leading-5 shrink-0">✓</span>}
                 </button>
@@ -185,6 +202,13 @@ export default function StorePickerPage() {
               >
                 На карте
               </a>
+              <button
+                type="button"
+                onClick={() => setFindOpen(true)}
+                className="min-h-11 px-3 rounded-xl border border-line bg-white flex items-center justify-center text-[14px] text-ink-secondary"
+              >
+                Как найти
+              </button>
             </div>
           )
         })()}
@@ -195,6 +219,47 @@ export default function StorePickerPage() {
           </div>
         )}
       </div>
+
+      {findOpen && (() => {
+        const chosen = stores.find((s) => s.id === selected) ?? null
+        if (!chosen) return null
+        const big = mediaUrl(chosen.photoFullUrl ?? chosen.photoUrl)
+        return (
+          <div className="fixed inset-0 z-50 bg-black/40 flex items-end" role="dialog" aria-modal="true" aria-label="Как найти кофейню">
+            <div className="w-full max-w-[480px] mx-auto bg-white rounded-t-3xl p-4 pb-8 max-h-[85vh] overflow-y-auto" style={{ paddingBottom: 'calc(2rem + env(safe-area-inset-bottom, 0px))' }}>
+              <div className="flex items-start justify-between gap-3">
+                <h2 className="text-[18px] leading-6 font-semibold text-ink">Как найти</h2>
+                <button type="button" onClick={() => setFindOpen(false)} aria-label="Закрыть" className="w-9 h-9 rounded-full bg-pale flex items-center justify-center text-ink">
+                  <X size={16} strokeWidth={2} />
+                </button>
+              </div>
+              {big ? (
+                <img src={big} alt={chosen.name} className="mt-3 w-full rounded-2xl object-cover bg-pale" />
+              ) : (
+                <p className="mt-3 text-[13px] leading-[18px] text-ink-secondary">Фото точки пока нет — ориентируйтесь на адрес.</p>
+              )}
+              <p className="mt-3 text-[16px] leading-6 font-semibold text-ink">{chosen.name}</p>
+              <p className="text-[14px] leading-5 text-ink-secondary">{chosen.address}</p>
+              {chosen.entranceHint ? (
+                <p className="mt-1 text-[14px] leading-5 text-ink">{chosen.entranceHint}</p>
+              ) : null}
+              {chosen.phone ? (
+                <a href={`tel:${String(chosen.phone).replace(/[^+\d]/g, '')}`} className="mt-2 inline-flex min-h-11 items-center text-[14px] font-semibold text-brand underline">
+                  Позвонить: {chosen.phone}
+                </a>
+              ) : null}
+              <a
+                href={routeUrl(provider, chosen)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn mt-3 min-h-12 w-full flex items-center justify-center"
+              >
+                Маршрут · {MAP_PROVIDERS.find((p) => p.id === provider)?.short}
+              </a>
+            </div>
+          </div>
+        )
+      })()}
 
       <div className="fixed left-0 right-0 max-w-[480px] mx-auto px-4 z-40" style={{ bottom: 'calc(4rem + env(safe-area-inset-bottom, 0px))' }}>
         <button type="button" onClick={confirm} disabled={selected == null} className="btn min-h-14 w-full disabled:opacity-50">

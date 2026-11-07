@@ -10,6 +10,7 @@ import { applyStockForDocument } from '../processing/StockHandler'
 import { hasLoyaltySc } from '../loyaltyExtras'
 import { log, shortId } from '../../../lib/logBuffer'
 import { anyTokenConfigured, clientForStore, listActivePlainTokens } from '../tokenStore'
+import { refreshEvotorSnapshot } from '../../../modules/admin/storeShowcase'
 
 
 /** Only stores the owner marked for sync in admin (sync_enabled=1). */
@@ -149,6 +150,8 @@ export class PollService {
           if (!id) continue
           if (!ids.includes(id)) ids.push(id)
           upsert.run(id, typeof o.name === 'string' ? o.name : null, now)
+          // Витрина гостя не перезаписывается: обновляем только снимок «как в Эвоторе».
+          refreshEvotorSnapshot(this.db as never, id)
           this.db.prepare(`INSERT OR IGNORE INTO evotor_sync_state(store_uuid,last_seen_close_ms) VALUES(?,0)`).run(id)
         }
       } catch (e) {

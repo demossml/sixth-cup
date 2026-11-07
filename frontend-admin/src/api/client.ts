@@ -80,7 +80,8 @@ export async function download(path: string, filename: string) {
 }
 
 /** Upload a photo/video to /api/admin/upload with the same error handling as every other call. */
-export async function uploadFile(file: File): Promise<{ url: string }> {
+/** Изображение отдаётся в двух размерах: `url` (480) для списков и `urlFull` (960) для карточки. */
+export async function uploadFile(file: File): Promise<{ url: string; urlFull?: string }> {
   const fd = new FormData()
   fd.append('file', file)
   const res = await fetch(`${API}/api/admin/upload`, {
@@ -94,7 +95,7 @@ export async function uploadFile(file: File): Promise<{ url: string }> {
     if (res.status === 403 && message === 'Forbidden') onUnauthorized?.()
     throw new ApiError(message, res.status)
   }
-  const j = (await res.json()) as { url?: string }
+  const j = (await res.json()) as { url?: string; urlFull?: string }
   if (!j.url) throw new ApiError('Нет url в ответе', 502)
-  return { url: j.url }
+  return { url: j.url, urlFull: j.urlFull }
 }

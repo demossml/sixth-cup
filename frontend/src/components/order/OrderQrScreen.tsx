@@ -5,6 +5,8 @@ import { cancelPreorder, getPreorder, markReceived, type OrderOut } from '../../
 import { etaLeftSec } from '../../lib/orderBanner'
 import { clearOrderRef } from '../../lib/preorderApi'
 import { X } from '../../lib/icons'
+import { useApp } from '../../lib/app'
+import { mediaUrl } from '../../lib/media'
 
 const STEPS = [
   { key: 'draft', label: 'Отправлен' },
@@ -45,6 +47,9 @@ type Props = {
  */
 export function OrderQrScreen({ orderId, qrPayload, initial, onClose, onOpenLoyalty, onStatusChange }: Props) {
   const [order, setOrder] = useState<OrderOut | null>(initial ?? null)
+  const { dir } = useApp()
+  // Точка выдачи с фото и ориентиром: гость ищет глазами, а не по координатам.
+  const store = (dir?.stores ?? []).find((x) => x.id === order?.storeId) ?? null
   const [now, setNow] = useState(Date.now())
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | null>(null)
@@ -116,6 +121,21 @@ export function OrderQrScreen({ orderId, qrPayload, initial, onClose, onOpenLoya
               ? 'Заказ готов — покажите номер на кассе.'
               : 'Покажите кассиру. Это не карта лояльности.'}
         </p>
+
+        {store ? (
+          <div className="mt-3 flex items-center gap-2.5 rounded-2xl border border-line bg-white px-2.5 py-2">
+            {store.photoUrl ? (
+              <img src={mediaUrl(store.photoUrl) ?? ''} alt="" loading="lazy" className="w-12 h-12 rounded-xl object-cover bg-pale" />
+            ) : null}
+            <span className="min-w-0">
+              <span className="block text-[13px] leading-[18px] font-semibold text-ink truncate">Забрать: {store.name}</span>
+              <span className="block text-[12px] leading-4 text-ink-secondary truncate">
+                {store.address}
+                {store.entranceHint ? ` · ${store.entranceHint}` : ''}
+              </span>
+            </span>
+          </div>
+        ) : null}
 
         <div className="mt-4 bg-white border border-line rounded-3xl p-4 flex flex-col items-center shadow-card">
           {qrPayload ? (

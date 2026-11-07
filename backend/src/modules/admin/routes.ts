@@ -69,6 +69,7 @@ import { grantVoucher } from '../vouchers/service'
 import { listQueueNumbers } from '../queue/numbers'
 import { resetLoyaltyData, resetCatalogData } from '../../db/seed'
 import { adminEvotorCatalog } from './evotorCatalog'
+import { evotorStoreById, linkStore, unlinkStore } from './storeShowcase'
 import { adminEvotorTokens } from './evotorTokens'
 import { queryLogs, log, LOG_SOURCES, LOG_LEVELS, type LogLevel, type LogSource } from '../../lib/logBuffer'
 import { ProductPushService } from '../../integrations/evotor/sync/ProductPushService'
@@ -341,9 +342,14 @@ export const adminRoutes = new Hono()
       SELECT s.id, s.name, s.address, s.organization_id AS organizationId,
              s.open_time AS openTime, s.close_time AS closeTime, s.lat AS lat, s.lng AS lng,
              s.hours_json AS hoursJson,
+             s.photo_url AS photoUrl, s.photo_full_url AS photoFullUrl,
+             s.entrance_hint AS entranceHint, s.phone AS phone,
+             s.evotor_name AS evotorName, s.evotor_address AS evotorAddress,
+             e.store_uuid AS evotorUuid, e.code AS evotorCode, e.sync_enabled AS evotorSyncEnabled,
              o.name AS organizationName
       FROM stores s
       LEFT JOIN organizations o ON o.id = s.organization_id
+      LEFT JOIN evotor_stores e ON e.local_store_id = s.id
       ORDER BY s.id
     `).all()
     return c.json({ stores })
@@ -355,9 +361,14 @@ export const adminRoutes = new Hono()
       SELECT s.id, s.name, s.address, s.organization_id AS organizationId,
              s.open_time AS openTime, s.close_time AS closeTime, s.lat AS lat, s.lng AS lng,
              s.hours_json AS hoursJson,
+             s.photo_url AS photoUrl, s.photo_full_url AS photoFullUrl,
+             s.entrance_hint AS entranceHint, s.phone AS phone,
+             s.evotor_name AS evotorName, s.evotor_address AS evotorAddress,
+             e.store_uuid AS evotorUuid, e.code AS evotorCode,
              o.name AS organizationName, o.tax_regime AS taxRegime, o.vat_rate AS vatRate
       FROM stores s
       LEFT JOIN organizations o ON o.id = s.organization_id
+      LEFT JOIN evotor_stores e ON e.local_store_id = s.id
       WHERE s.id=?
     `).get(id)
     if (!store) throw bad('Store not found', 404)
@@ -374,13 +385,19 @@ export const adminRoutes = new Hono()
     lat: z.number().min(-90).max(90).optional().nullable(),
     lng: z.number().min(-180).max(180).optional().nullable(),
     hoursJson: storeHoursJsonSchema.optional().nullable(),
+    photoUrl: mediaUrl,
+    photoFullUrl: mediaUrl,
+    entranceHint: z.string().max(160).optional().nullable(),
+    phone: z.string().max(32).optional().nullable(),
   })), (c) => {
     const p = c.req.valid('json')
     const org = db.prepare('SELECT id FROM organizations WHERE id=?').get(p.organizationId)
     if (!org) throw bad('Organization not found', 404)
-    const r = db.prepare('INSERT INTO stores(name, address, organization_id, open_time, close_time, lat, lng, hours_json) VALUES(?,?,?,?,?,?,?,?)')
+    const r = db.prepare(`INSERT INTO stores(name, address, organization_id, open_time, close_time, lat, lng, hours_json,
+        photo_url, photo_full_url, entrance_hint, phone) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(p.name, p.address, p.organizationId, p.openTime ?? null, p.closeTime ?? null, p.lat ?? null, p.lng ?? null,
-        p.hoursJson ? JSON.stringify(p.hoursJson) : null)
+        p.hoursJson ? JSON.stringify(p.hoursJson) : null,
+        p.photoUrl ?? null, p.photoFullUrl ?? null, p.entranceHint ?? null, p.phone ?? null)
     return c.json({ id: Number(r.lastInsertRowid) })
   })
 
@@ -394,10 +411,15 @@ export const adminRoutes = new Hono()
     lat: z.number().min(-90).max(90).optional().nullable(),
     lng: z.number().min(-180).max(180).optional().nullable(),
     hoursJson: storeHoursJsonSchema.optional().nullable(),
+    /** Фото точки: 480 для списка и 960 для карточки (из /api/admin/upload). */
+    photoUrl: mediaUrl,
+    photoFullUrl: mediaUrl,
+    entranceHint: z.string().max(160).optional().nullable(),
+    phone: z.string().max(32).optional().nullable(),
   })), (c) => {
     const id = Number(c.req.param('id'))
     const cur = db.prepare('SELECT * FROM stores WHERE id=?').get(id) as
-      | { name: string; address: string; organization_id: number | null; open_time: string | null; close_time: string | null; lat: number | null; lng: number | null; hours_json: string | null }
+      | { name: string; address: string; organization_id: number | null; open_time: string | null; close_time: string | null; lat: number | null; lng: number | null; hours_json: string | null; photo_url: string | null; photo_full_url: string | null; entrance_hint: string | null; phone: string | null }
       | undefined
     if (!cur) throw bad('Store not found', 404)
     const p = c.req.valid('json')
@@ -405,7 +427,8 @@ export const adminRoutes = new Hono()
       const org = db.prepare('SELECT id FROM organizations WHERE id=?').get(p.organizationId)
       if (!org) throw bad('Organization not found', 404)
     }
-    db.prepare('UPDATE stores SET name=?, address=?, organization_id=?, open_time=?, close_time=?, lat=?, lng=?, hours_json=? WHERE id=?').run(
+    db.prepare(`UPDATE stores SET name=?, address=?, organization_id=?, open_time=?, close_time=?,
+        lat=?, lng=?, hours_json=?, photo_url=?, photo_full_url=?, entrance_hint=?, phone=? WHERE id=?`).run(
       p.name ?? cur.name,
       p.address ?? cur.address,
       p.organizationId ?? cur.organization_id,
@@ -414,8 +437,34 @@ export const adminRoutes = new Hono()
       p.lat === undefined ? cur.lat : p.lat,
       p.lng === undefined ? cur.lng : p.lng,
       p.hoursJson === undefined ? cur.hours_json : p.hoursJson ? JSON.stringify(p.hoursJson) : null,
+      p.photoUrl === undefined ? cur.photo_url : p.photoUrl,
+      p.photoFullUrl === undefined ? cur.photo_full_url : p.photoFullUrl,
+      p.entranceHint === undefined ? cur.entrance_hint : p.entranceHint,
+      p.phone === undefined ? cur.phone : p.phone,
       id
     )
+    return c.json({ ok: true })
+  })
+
+  /**
+   * Привязка витрины к облачной точке: по ней касса узнаёт точку заказа, а позиции получают
+   * `evotorProductUuid`. Название и адрес витрины не меняются — только снимок «как в Эвоторе».
+   */
+  .post('/stores/:id/link', zValidator('json', z.object({ storeUuid: z.string().min(1).max(80) })), (c) => {
+    const id = Number(c.req.param('id'))
+    const store = db.prepare('SELECT id FROM stores WHERE id=?').get(id)
+    if (!store) throw bad('Store not found', 404)
+    const { storeUuid } = c.req.valid('json')
+    if (!evotorStoreById(db as never, storeUuid)) throw bad('Точка Эвотра не найдена — обновите список точек', 404)
+    linkStore(db as never, id, storeUuid)
+    return c.json({ ok: true })
+  })
+
+  .delete('/stores/:id/link', (c) => {
+    const id = Number(c.req.param('id'))
+    const store = db.prepare('SELECT id FROM stores WHERE id=?').get(id)
+    if (!store) throw bad('Store not found', 404)
+    unlinkStore(db as never, id)
     return c.json({ ok: true })
   })
 

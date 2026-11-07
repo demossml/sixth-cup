@@ -36,12 +36,14 @@ export function publicDirectory(storeUuid?: string | null) {
   const stores = db.prepare(`
     SELECT s.id, s.name, s.address, s.organization_id AS organizationId,
            s.open_time AS openTime, s.close_time AS closeTime, s.lat AS lat, s.lng AS lng,
-           s.hours_json AS hoursJson
+           s.hours_json AS hoursJson, s.photo_url AS photoUrl, s.photo_full_url AS photoFullUrl,
+           s.entrance_hint AS entranceHint, s.phone AS phone
     FROM stores s
   `).all() as {
     id: number; name: string; address: string; organizationId: number | null
     openTime: string | null; closeTime: string | null; lat: number | null; lng: number | null
-    hoursJson: string | null
+    hoursJson: string | null; photoUrl: string | null; photoFullUrl: string | null
+    entranceHint: string | null; phone: string | null
   }[]
 
   const organizations = db.prepare(`
@@ -191,6 +193,11 @@ export function publicDirectory(storeUuid?: string | null) {
       openTime: s.openTime ?? null, closeTime: s.closeTime ?? null,
       lat: s.lat ?? null, lng: s.lng ?? null,
       hours: parseHours(s.hoursJson),
+      // Витрина точки: фото и ориентир помогают найти её визуально.
+      photoUrl: s.photoUrl ?? null,
+      photoFullUrl: s.photoFullUrl ?? null,
+      entranceHint: s.entranceHint ?? null,
+      phone: s.phone ?? null,
     })),
     organizations: organizations.map((o) => ({
       id: o.id, name: o.name, legalName: o.legalName, taxRegime: o.taxRegime, vatRate: o.vatRate,
@@ -259,11 +266,12 @@ export const directoryRoutes = new Hono()
   .get('/geo', (c) => {
     const rows = db.prepare(`
       SELECT id, name, address, open_time AS openTime, close_time AS closeTime,
-             lat, lng, hours_json AS hoursJson
+             lat, lng, hours_json AS hoursJson, photo_url AS photoUrl, entrance_hint AS entranceHint
       FROM stores ORDER BY id
     `).all() as Array<{
       id: number; name: string; address: string; openTime: string | null; closeTime: string | null
       lat: number | null; lng: number | null; hoursJson: string | null
+      photoUrl: string | null; entranceHint: string | null
     }>
     return c.json({
       ok: true,
@@ -276,6 +284,8 @@ export const directoryRoutes = new Hono()
         hours: parseHours(s.hoursJson),
         lat: s.lat,
         lng: s.lng,
+        photoUrl: s.photoUrl ?? null,
+        entranceHint: s.entranceHint ?? null,
       })),
     })
   })

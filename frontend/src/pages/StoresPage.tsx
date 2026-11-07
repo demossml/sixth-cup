@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { mediaUrl } from '../lib/media'
 import { useApp } from '../lib/app'
 import { ArrowLeft, Store } from '../lib/icons'
 
@@ -21,10 +22,21 @@ export default function StoresPage() {
         )}
         {stores.map((s) => (
           <article key={s.id} className="card !mb-0 flex items-start gap-3">
-            <span className="w-11 h-11 rounded-xl bg-brand-soft text-brand flex items-center justify-center shrink-0"><Store size={21} /></span>
+            {s.photoUrl ? (
+              <img
+                src={mediaUrl(s.photoUrl) ?? ''}
+                alt={s.name}
+                loading="lazy"
+                decoding="async"
+                className="w-16 h-16 rounded-xl object-cover bg-pale shrink-0"
+              />
+            ) : (
+              <span className="w-16 h-16 rounded-xl bg-brand-soft text-brand flex items-center justify-center shrink-0"><Store size={21} /></span>
+            )}
             <span className="min-w-0">
               <b className="block text-ink text-base">{s.name}</b>
               {s.address && <span className="block text-ink-secondary text-sm mt-0.5">{s.address}</span>}
+              {s.entranceHint && <span className="block text-ink-tertiary text-[13px] mt-0.5">{s.entranceHint}</span>}
             </span>
           </article>
         ))}

@@ -6,7 +6,7 @@ import { ago, fmtDateTime } from '../lib/format'
 import { Badge, Banner, Button, Card, ConfirmDialog, EmptyState, ErrorBox, Field, Input, PageHeader, Select, Spinner, StatusDot, Toggle, useToast } from '../ui/kit'
 import { HelpLink } from '../components/HelpLink'
 import CashierMenuPanel from './cash/CashierMenuPanel'
-import { fmtCoord, parseCoords } from '../lib/coords'
+import StoreProfile, { type LocalStore } from '../components/StoreProfile'
 import type { Tone } from '../ui/kit'
 
 const LEVEL: Record<string, { tone: Tone; label: string }> = {
@@ -16,7 +16,15 @@ type Drift = { drift: { productId: number; evotorUuid: string; issue: string }[]
 type Employee = { uuid: string; name: string | null; role: string | null; storeUuid: string | null }
 type TokenRow = { id: number; label: string; tokenHint: string; active: boolean; storeUuids: string[]; createdAt: number; updatedAt: number }
 
-function StoreCard({ s, health, now, onChanged }: { s: EvotorStore; health?: Health['stores'][number]; now: number; onChanged: () => void }) {
+function StoreCard({ s, health, now, local, linkOptions, onChanged }: {
+  s: EvotorStore
+  health?: Health['stores'][number]
+  now: number
+  /** Витрина точки для гостя (если уже создана). */
+  local?: LocalStore
+  linkOptions: { uuid: string; name: string | null }[]
+  onChanged: () => void
+}) {
   const toast = useToast()
   const [busy, setBusy] = useState('')
   const [drift, setDrift] = useState<Drift | null>(null)
@@ -43,6 +51,35 @@ function StoreCard({ s, health, now, onChanged }: { s: EvotorStore; health?: Hea
           <Toggle checked={!!s.syncEnabled} label={`Синхронизация: ${s.name ?? ''}`} onChange={(v) => run('toggle', async () => { await api(`/evotor/stores/${s.uuid}`, { method: 'PATCH', body: { syncEnabled: v } }); return v ? 'Точка включена' : 'Точка выключена' })} />
         </div>
       </div>
+      <div className="mt-3 rounded-xl border border-line bg-surface-2/40 p-3">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-sm font-semibold">Как видит гость</div>
+          {local ? (
+            <span className="text-[11px] text-ink-tertiary">витрина #{local.id}</span>
+          ) : null}
+        </div>
+        {local ? (
+          <StoreProfile store={local} showLink linkOptions={linkOptions} onSaved={onChanged} />
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              loading={busy === 'showcase'}
+              onClick={() => run('showcase', async () => {
+                await api(`/evotor/stores/${s.uuid}/showcase`, { method: 'POST' })
+                return 'Витрина точки создана — заполните адрес, фото и часы'
+              })}
+            >
+              Создать витрину точки
+            </Button>
+            <span className="text-[12px] text-ink-secondary">
+              Нужно, чтобы гость мог выбрать эту точку в приложении.
+            </span>
+          </div>
+        )}
+      </div>
+
       {s.syncEnabled && health && (
         <div className="mt-3 space-y-1.5 rounded-xl border border-line bg-surface-2/60 px-3 py-2 text-[13px]">
           <div className="flex flex-wrap items-center gap-2">
@@ -217,55 +254,22 @@ type DeviceRow = {
   id: number; name: string; storeId: number; storeName: string
   revoked: number; enrollCode: string | null; enrolled: number; createdAt: number
 }
-type DayHours = { open: string; close: string } | null
-type LocalStore = {
-  id: number; name: string; address: string | null; organizationId: number | null
-  openTime?: string | null; closeTime?: string | null; lat?: number | null; lng?: number | null
-  /** Часы по дням (Пн…Вс), `null` — выходной. Пусто — работаем по общей паре open/close. */
-  hoursJson?: string | DayHours[] | null
-}
-
-const DAY_NAMES = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
-
-/** Часы по дням из ответа API: строка JSON или уже массив. */
-function weekOf(value: string | DayHours[] | null | undefined): DayHours[] {
-  if (Array.isArray(value)) return value.length === 7 ? value : new Array(7).fill(null)
-  if (typeof value === 'string' && value.trim()) {
-    try {
-      const parsed = JSON.parse(value)
-      if (Array.isArray(parsed) && parsed.length === 7) return parsed as DayHours[]
-    } catch {
-      /* битый JSON — считаем, что часов по дням нет */
-    }
-  }
-  return new Array(7).fill(null)
-}
-
 /**
- * Кофейни в приложении: адрес, часы работы и координаты.
- * Часы управляют «Открыто · до 21:00» и запретом заказа в закрытую точку,
- * координаты — схемой и «ближайшими» на экране выбора кофейни.
+ * Точки без кассы Эвотор: редкий случай (островок, точка без терминала).
+ * Основное редактирование витрины живёт в карточке точки с токеном — там же, где uuid и синхронизация.
  */
 function StoresPanel() {
   const toast = useToast()
   const stores = useApi<{ stores: LocalStore[] }>('/stores')
   const [busy, setBusy] = useState('')
-  // Ссылка из Яндекс/Google/Apple карт: владелец копирует её, мы достаём координаты.
-  const [mapLink, setMapLink] = useState<Record<number, string>>({})
-  const [form, setForm] = useState<Record<number, LocalStore>>({})
-  const [week, setWeek] = useState<Record<number, DayHours[] | null>>({})
   const orgs = useApi<{ organizations: { id: number; name: string }[] }>('/organizations')
   const [draft, setDraft] = useState<{ name: string; address: string; organizationId: string }>({
     name: '',
     address: '',
     organizationId: '',
   })
-  const list = stores.data?.stores ?? []
+  const list = (stores.data?.stores ?? []).filter((s) => !s.evotorUuid)
 
-  /**
-   * Новая точка. Без записи в `stores` предзаказ «спит»: гостю не из чего выбирать,
-   * а резерв бонуса не к чему привязать.
-   */
   const createStore = async () => {
     if (!draft.name.trim() || !draft.address.trim() || !draft.organizationId) {
       toast.push('Нужны название, адрес и организация', 'bad')
@@ -291,67 +295,22 @@ function StoresPanel() {
     }
   }
 
-  const row = (s: LocalStore): LocalStore => form[s.id] ?? s
-  const patch = (id: number, s: LocalStore, next: Partial<LocalStore>) => setForm({ ...form, [id]: { ...row(s), ...next } })
-  const weekOfStore = (s: LocalStore): DayHours[] | null =>
-    s.id in week ? week[s.id] : s.hoursJson ? weekOf(s.hoursJson) : null
-  const patchWeek = (s: LocalStore, idx: number, next: DayHours) => {
-    const current = weekOfStore(s) ?? new Array<DayHours>(7).fill(null)
-    const copy = current.slice()
-    copy[idx] = next
-    setWeek({ ...week, [s.id]: copy })
-  }
-  const toggleWeek = (s: LocalStore, on: boolean) =>
-    setWeek({
-      ...week,
-      [s.id]: on ? new Array<DayHours>(7).fill({ open: s.openTime || '08:00', close: s.closeTime || '21:00' }) : null,
-    })
-
-  const save = async (s: LocalStore) => {
-    const r = row(s)
-    setBusy(`save-${s.id}`)
-    try {
-      await api(`/stores/${s.id}`, {
-        method: 'PATCH',
-        body: {
-          name: r.name, address: r.address ?? '', organizationId: r.organizationId ?? undefined,
-          openTime: r.openTime || null, closeTime: r.closeTime || null,
-          lat: r.lat ?? null, lng: r.lng ?? null,
-          hoursJson: weekOfStore(s) ?? null,
-        },
-      })
-      // Сохранённую строку убираем из локальных правок — дальше показываем данные с сервера.
-      const next = { ...form }
-      delete next[s.id]
-      setForm(next)
-      const nextWeek = { ...week }
-      delete nextWeek[s.id]
-      setWeek(nextWeek)
-      stores.reload()
-      toast.push(`Кофейня «${r.name}» сохранена`)
-    } catch (e) {
-      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
-    } finally {
-      setBusy('')
-    }
-  }
-
   if (stores.loading && !stores.data) return <Spinner />
   return (
     <>
-      <h2 className="mb-2 mt-6 text-base font-bold">Кофейни в приложении</h2>
+      <h2 className="mb-2 mt-6 text-base font-bold">Точки без кассы</h2>
       <p className="mb-3 text-[13px] text-ink-secondary">
-        Часы работы показываются гостю («Открыто · до 21:00»), в закрытую точку заказ не отправить.
-        Координаты нужны для схемы и «ближайших» кофеен.
+        Точки, у которых нет пары в Эвоторе. Обычно витрину создают из карточки точки с токеном —
+        здесь только для исключений.
       </p>
       {stores.error && <ErrorBox message={stores.error} onRetry={stores.reload} />}
       <Card className="mb-3">
         <div className="grid gap-3 sm:grid-cols-3">
-          <Field label="Новая кофейня" hint="Название видит гость">
-            <Input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} maxLength={80} placeholder="Кофейня на Ленина" />
+          <Field label="Новая точка" hint="Название видит гость">
+            <Input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} maxLength={80} placeholder="6.7 Coffee на Багратиона" />
           </Field>
           <Field label="Адрес">
-            <Input value={draft.address} onChange={(e) => setDraft({ ...draft, address: e.target.value })} maxLength={200} placeholder="ул. Ленина, 1" />
+            <Input value={draft.address} onChange={(e) => setDraft({ ...draft, address: e.target.value })} maxLength={200} placeholder="ул. Багратиона, 7" />
           </Field>
           <Field label="Организация" hint="Из раздела «Система»">
             <Select value={draft.organizationId} onChange={(e) => setDraft({ ...draft, organizationId: e.target.value })}>
@@ -363,140 +322,19 @@ function StoresPanel() {
           </Field>
         </div>
         <div className="mt-3 flex items-center gap-2">
-          <Button size="sm" loading={busy === 'create'} onClick={() => void createStore()}>Добавить кофейню</Button>
+          <Button size="sm" loading={busy === 'create'} onClick={() => void createStore()}>Добавить точку</Button>
           {!(orgs.data?.organizations ?? []).length ? (
             <span className="text-[12px] text-ink-secondary">Сначала создайте организацию в разделе «Система»</span>
           ) : null}
         </div>
       </Card>
-      {!list.length && <Card><EmptyState title="Кофеен нет" text="Добавьте первую точку формой выше — без неё предзаказ не работает." /></Card>}
-      {list.map((s) => {
-        const r = row(s)
-        return (
-          <Card key={s.id} className="mb-3">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Название"><Input value={r.name} onChange={(e) => patch(s.id, s, { name: e.target.value })} maxLength={80} /></Field>
-              <Field label="Адрес"><Input value={r.address ?? ''} onChange={(e) => patch(s.id, s, { address: e.target.value })} maxLength={200} /></Field>
-              <Field label="Открытие" hint="Формат ЧЧ:ММ">
-                <Input type="time" value={r.openTime ?? ''} onChange={(e) => patch(s.id, s, { openTime: e.target.value || null })} />
-              </Field>
-              <Field label="Закрытие" hint="Формат ЧЧ:ММ">
-                <Input type="time" value={r.closeTime ?? ''} onChange={(e) => patch(s.id, s, { closeTime: e.target.value || null })} />
-              </Field>
-              <Field label="Координаты" hint="Необязательно: без них точка на схеме — по центру">
-                <div className="flex items-center gap-2">
-                  <Input
-                    type="number"
-                    step="0.000001"
-                    aria-label="Широта"
-                    placeholder="широта"
-                    value={r.lat ?? ''}
-                    onChange={(e) => patch(s.id, s, { lat: e.target.value === '' ? null : Number(e.target.value) })}
-                  />
-                  <Input
-                    type="number"
-                    step="0.000001"
-                    aria-label="Долгота"
-                    placeholder="долгота"
-                    value={r.lng ?? ''}
-                    onChange={(e) => patch(s.id, s, { lng: e.target.value === '' ? null : Number(e.target.value) })}
-                  />
-                </div>
-              </Field>
-            </div>
-            <div className="mt-3">
-              <Field
-                label="Ссылка из карты"
-                hint="Скопируйте ссылку на точку из Яндекс, Google или Apple карт — координаты заполнятся сами"
-              >
-                <div className="flex items-center gap-2">
-                  <Input
-                    value={mapLink[s.id] ?? ''}
-                    onChange={(e) => setMapLink({ ...mapLink, [s.id]: e.target.value })}
-                    placeholder="https://yandex.ru/maps/?pt=…"
-                    aria-label={`Ссылка из карты: ${r.name}`}
-                  />
-                  <Button
-                    type="button"
-                    size="sm"
-                    aria-label={`Заполнить координаты: ${r.name}`}
-                    onClick={() => {
-                      const c = parseCoords(mapLink[s.id] ?? '')
-                      if (!c) {
-                        toast.push('Не нашёл координаты в ссылке. Скопируйте ссылку на точку или введите числа вручную', 'bad')
-                        return
-                      }
-                      patch(s.id, s, { lat: c.lat, lng: c.lng })
-                      toast.push(`Координаты: ${fmtCoord(c.lat)}, ${fmtCoord(c.lng)}`)
-                    }}
-                  >
-                    Заполнить
-                  </Button>
-                </div>
-              </Field>
-            </div>
-            <div className="mt-4 rounded-xl border border-line p-3">
-              <label className="flex items-center gap-2 text-sm font-semibold">
-                <input
-                  type="checkbox"
-                  checked={weekOfStore(s) != null}
-                  onChange={(e) => toggleWeek(s, e.target.checked)}
-                />
-                Разные часы по дням
-              </label>
-              {weekOfStore(s) ? (
-                <div className="mt-2 space-y-1.5">
-                  {DAY_NAMES.map((name, idx) => {
-                    const day = (weekOfStore(s) ?? [])[idx] ?? null
-                    return (
-                      <div key={name} className="flex items-center gap-2">
-                        <span className="w-7 text-xs font-semibold text-ink-secondary">{name}</span>
-                        <label className="flex items-center gap-1 text-xs text-ink-secondary">
-                          <input
-                            type="checkbox"
-                            checked={day == null}
-                            onChange={(e) => patchWeek(s, idx, e.target.checked ? null : { open: s.openTime || '08:00', close: s.closeTime || '21:00' })}
-                          />
-                          выходной
-                        </label>
-                        <Input
-                          type="time"
-                          aria-label={`${name} открытие`}
-                          value={day?.open ?? ''}
-                          disabled={day == null}
-                          onChange={(e) => patchWeek(s, idx, { open: e.target.value, close: day?.close ?? '21:00' })}
-                          className="max-w-[120px]"
-                        />
-                        <Input
-                          type="time"
-                          aria-label={`${name} закрытие`}
-                          value={day?.close ?? ''}
-                          disabled={day == null}
-                          onChange={(e) => patchWeek(s, idx, { open: day?.open ?? '08:00', close: e.target.value })}
-                          className="max-w-[120px]"
-                        />
-                      </div>
-                    )
-                  })}
-                  <p className="text-[12px] text-ink-secondary">Выходной — точка закрыта весь день, заказ в неё отправить нельзя.</p>
-                </div>
-              ) : (
-                <p className="mt-1 text-[12px] text-ink-secondary">Пока одна пара «открытие/закрытие» на все дни.</p>
-              )}
-            </div>
-            <div className="mt-3">
-              <Button
-                size="sm"
-                loading={busy === `save-${s.id}`}
-                aria-label={`Сохранить кофейню: ${r.name}`}
-                onClick={() => void save(s)}
-              >
-                Сохранить
-              </Button>
-            </div>
-          </Card>
-        )
-      })}
+      {!list.length && <Card><EmptyState title="Таких точек нет" text="Все точки привязаны к кассе — витрины редактируются в карточках выше." /></Card>}
+      {list.map((s) => (
+        <Card key={s.id} className="mb-3">
+          <div className="mb-2 text-base font-bold">{s.name}</div>
+          <StoreProfile store={s} showLink onSaved={stores.reload} />
+        </Card>
+      ))}
     </>
   )
 }
@@ -667,11 +505,12 @@ function DevicesPanel() {
 
 export default function Cash() {
   const stores = useApi<{ stores: EvotorStore[]; stale?: boolean; error?: string }>('/evotor/stores')
+  const localStores = useApi<{ stores: LocalStore[] }>('/stores')
   const health = useApi<Health & { now: number }>('/evotor/health', { refreshMs: 60_000 })
   const emp = useApi<{ employees: Employee[] }>('/evotor/employees')
   const toast = useToast()
   const [syncing, setSyncing] = useState(false)
-  const reloadAll = () => { stores.reload(); health.reload() }
+  const reloadAll = () => { stores.reload(); health.reload(); localStores.reload() }
   const syncAll = async () => {
     setSyncing(true)
     try { await api('/evotor/sync', { method: 'POST', body: {} }); toast.push('Синхронизация выполнена'); reloadAll() }
@@ -704,7 +543,15 @@ export default function Cash() {
       </div>
       <div className="grid gap-3 lg:grid-cols-2">
         {list.map((s) => (
-          <StoreCard key={s.uuid} s={s} health={health.data?.stores.find((h) => h.uuid === s.uuid)} now={health.data?.now ?? Date.now()} onChanged={reloadAll} />
+          <StoreCard
+            key={s.uuid}
+            s={s}
+            health={health.data?.stores.find((h) => h.uuid === s.uuid)}
+            now={health.data?.now ?? Date.now()}
+            local={(localStores.data?.stores ?? []).find((l) => l.evotorUuid === s.uuid)}
+            linkOptions={list.map((x) => ({ uuid: x.uuid, name: x.name }))}
+            onChanged={reloadAll}
+          />
         ))}
       </div>
       <TokensPanel allStoreUuids={list.map((s) => s.uuid)} />
