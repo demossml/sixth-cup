@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto'
+import { getPreorderSettings } from '../../lib/preorderSettings'
 import type { CreateOrderBody, ItemOut, ModifierOut, OrderOut, PreorderStatus } from './types'
 import { ACTIVE_STATUSES, ALLOWED_TRANSITIONS } from './types'
 
@@ -48,6 +49,7 @@ function loadOrder(db: Db, id: string): OrderOut | null {
   const o = db.prepare(`SELECT * FROM preorders WHERE id = ?`).get(id)
   if (!o) return null
   expireIfNeeded(db, o)
+  promoteIfDue(db, o)
   const fresh = db.prepare(`SELECT * FROM preorders WHERE id = ?`).get(id)!
   const items = db
     .prepare(`SELECT * FROM preorder_items WHERE order_id = ? ORDER BY position ASC`)
@@ -62,6 +64,7 @@ function loadOrder(db: Db, id: string): OrderOut | null {
       name: String(m.name),
       priceEstimate: Number(m.price_estimate) || 0,
       sendToReceipt: Number(m.send_to_receipt) === 1,
+      evotorUuid: m.evotor_uuid ? String(m.evotor_uuid) : null,
     }))
     return {
       lineId: String(it.id),
@@ -75,6 +78,8 @@ function loadOrder(db: Db, id: string): OrderOut | null {
       modifiers,
     }
   })
+  const etaReadyAt = fresh.eta_ready_at ? Number(fresh.eta_ready_at) : null
+  const now = nowSec()
   return {
     id: String(fresh.id),
     shortCode: String(fresh.short_code),
@@ -82,6 +87,14 @@ function loadOrder(db: Db, id: string): OrderOut | null {
     status: String(fresh.status) as PreorderStatus,
     createdAt: iso(Number(fresh.created_at)),
     expiresAt: iso(Number(fresh.expires_at)),
+    etaReadyAt: etaReadyAt ? iso(etaReadyAt) : null,
+    // Остаток важен только пока заказ не готов: после «ready»/«paid» время не показываем.
+    etaMinutes: etaReadyAt && ['accepted', 'cooking'].includes(String(fresh.status))
+      ? Math.max(0, Math.ceil((etaReadyAt - now) / 60))
+      : null,
+    serverNow: iso(now),
+    pickedUpAt: fresh.picked_up_at ? iso(Number(fresh.picked_up_at)) : null,
+    readyBy: fresh.ready_by === 'auto' || fresh.ready_by === 'cashier' ? fresh.ready_by : null,
     estimateTotal: Number(fresh.estimate_total),
     currency: String(fresh.currency || 'RUB'),
     cardId: fresh.card_id ? String(fresh.card_id) : null,
@@ -98,41 +111,174 @@ function expireIfNeeded(db: Db, row: Record<string, unknown>) {
     nowSec(),
     String(row.id),
   )
+  // Невыкуп: заказ истёк, не оплачен, гость не забрал → бан на настраиваемое время.
+  if (!row.paid_at && row.guest_user_id) {
+    applyNoShowBan(db, Number(row.guest_user_id), Number(row.store_id), String(row.id))
+  }
 }
 
-/** Resolve product price/name from products table; volume/modifiers simplified for MVP mapping. */
+/**
+ * Авто-переходы по таймеру: «принят» → «готовится» через минуту,
+ * «готовится» → «готов» по eta_ready_at (если включено autoReady).
+ * Кассир всегда может подтвердить «готов» раньше — тогда ready_by = 'cashier'.
+ */
+function promoteIfDue(db: Db, row: Record<string, unknown>) {
+  const status = String(row.status)
+  if (status !== 'accepted' && status !== 'cooking') return
+  const id = String(row.id)
+  const now = nowSec()
+  const settings = getPreorderSettings(Number(row.store_id))
+  if (status === 'accepted') {
+    const acceptedAt = row.accepted_at ? Number(row.accepted_at) : Number(row.updated_at)
+    if (now - acceptedAt < 60) return
+    db.prepare(`UPDATE preorders SET status = 'cooking', cooking_at = ?, updated_at = ? WHERE id = ? AND status = 'accepted'`)
+      .run(now, now, id)
+    return
+  }
+  if (!settings.autoReady) return
+  const eta = row.eta_ready_at ? Number(row.eta_ready_at) : null
+  if (!eta || now < eta) return
+  db.prepare(`UPDATE preorders SET status = 'ready', ready_at = ?, ready_by = 'auto', updated_at = ? WHERE id = ? AND status = 'cooking'`)
+    .run(now, now, id)
+}
+
+/** Сколько минут реально нужно на заказ: база точки, но не меньше суммы рецептов. */
+export function prepMinutesForOrder(db: Db, orderId: string, storeId: number, itemsOverride?: { seconds: number; qty: number }[]): number {
+  const settings = getPreorderSettings(storeId)
+  let seconds = 0
+  if (itemsOverride) {
+    seconds = itemsOverride.reduce((sum, it) => sum + Math.max(0, it.seconds) * Math.max(1, it.qty), 0)
+  } else {
+    try {
+      const row = db.prepare(
+        `SELECT COALESCE(SUM(COALESCE(p.recipe_seconds,0) * i.quantity),0) AS s
+           FROM preorder_items i LEFT JOIN products p ON p.id = CAST(i.product_id AS INTEGER)
+          WHERE i.order_id = ?`,
+      ).get(orderId) as { s: number } | undefined
+      seconds = Number(row?.s ?? 0)
+    } catch {
+      seconds = 0
+    }
+  }
+  const fromRecipe = seconds > 0 ? Math.ceil(seconds / 60) : 0
+  return Math.min(120, Math.max(1, Math.max(settings.prepMinutes, fromRecipe)))
+}
+
+function applyNoShowBan(db: Db, userId: number, storeId: number, orderId: string) {
+  const hours = getPreorderSettings(storeId).noShowBanHours
+  if (hours <= 0) return
+  const until = nowSec() + hours * 3600
+  db.prepare(
+    `INSERT INTO preorder_bans(user_id, until, reason, order_id, created_at, lifted_at)
+     VALUES(?,?, 'no_show', ?, ?, NULL)
+     ON CONFLICT(user_id) DO UPDATE SET until = excluded.until, reason = excluded.reason,
+       order_id = excluded.order_id, created_at = excluded.created_at, lifted_at = NULL`,
+  ).run(userId, until, orderId, nowSec())
+}
+
+/** Активный бан гостя (null — можно заказывать). Истёкшие баны снимаются на чтении. */
+export function activeBan(db: Db, userId: number): { until: number; reason: string; orderId: string | null } | null {
+  const row = db.prepare('SELECT until, reason, order_id, lifted_at FROM preorder_bans WHERE user_id = ?')
+    .get(userId) as { until: number; reason: string; order_id: string | null; lifted_at: number | null } | undefined
+  if (!row) return null
+  if (row.lifted_at) return null
+  const now = nowSec()
+  if (Number(row.until) <= now) {
+    db.prepare('UPDATE preorder_bans SET lifted_at = ? WHERE user_id = ? AND lifted_at IS NULL').run(now, userId)
+    return null
+  }
+  return { until: Number(row.until), reason: String(row.reason), orderId: row.order_id ? String(row.order_id) : null }
+}
+
+export function liftBan(db: Db, userId: number): boolean {
+  const r = db.prepare('UPDATE preorder_bans SET lifted_at = ? WHERE user_id = ? AND lifted_at IS NULL').run(nowSec(), userId)
+  return r.changes > 0
+}
+
+export function listBans(db: Db): { userId: number; until: number; reason: string; orderId: string | null; createdAt: number }[] {
+  const now = nowSec()
+  return (db.prepare(
+    `SELECT user_id AS userId, until, reason, order_id AS orderId, created_at AS createdAt
+       FROM preorder_bans WHERE lifted_at IS NULL AND until > ? ORDER BY until DESC LIMIT 200`,
+  ).all(now) as { userId: number; until: number; reason: string; orderId: string | null; createdAt: number }[])
+}
+
+/**
+ * UUID товара на конкретной точке. В проекте два пространства:
+ * локальный `stores.id` (заказы, касса) и Evotor `store_uuid` (`product_store_links`).
+ * Связь — через `evotor_stores.local_store_id`.
+ */
+export function storeUuidsForLocalStore(db: Db, storeId: number): string[] {
+  try {
+    return (db.prepare('SELECT store_uuid AS uuid FROM evotor_stores WHERE local_store_id = ?')
+      .all(storeId) as { uuid: string }[]).map((r) => String(r.uuid)).filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+function evotorUuidForProduct(db: Db, productId: number | null, storeUuids: string[]): string | null {
+  if (productId == null || !Number.isFinite(productId) || storeUuids.length === 0) return null
+  try {
+    const placeholders = storeUuids.map(() => '?').join(',')
+    const row = db.prepare(
+      `SELECT evotor_uuid AS uuid FROM product_store_links
+        WHERE product_id = ? AND enabled = 1 AND evotor_uuid IS NOT NULL AND evotor_uuid <> ''
+          AND store_uuid IN (${placeholders})
+        LIMIT 1`,
+    ).get(productId, ...storeUuids) as { uuid: string } | undefined
+    return row?.uuid ? String(row.uuid) : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Строка заказа: цена-оценка, подпись состава и UUID для кассы.
+ * Объём (`volumeId`) — это отдельный SKU-товар, поэтому цена и UUID берутся у него, а не у карточки.
+ */
 function resolveLine(
   db: Db,
   item: CreateOrderBody['items'][0],
+  storeUuids: string[],
 ): { name: string; unit: number; evotor: string | null; volumeLabel: string | null; configText: string; mods: ModifierOut[] } {
-  const productId = String(item.productId)
+  const skuId = item.volumeId ?? item.productId
+  const productId = String(skuId)
+  // `SELECT *`: набор колонок products зависит от миграций, а нам нужны только id/name/price/available/variant_label.
   const p =
-    db.prepare(`SELECT id, name, price, evotor_uuid, available FROM products WHERE id = ? OR cast(id as text) = ?`).get(
+    db.prepare(`SELECT * FROM products WHERE id = ? OR cast(id as text) = ?`).get(
       Number(productId) || -1,
       productId,
-    ) || db.prepare(`SELECT id, name, price, evotor_uuid, available FROM products WHERE name = ?`).get(productId)
+    ) || db.prepare(`SELECT * FROM products WHERE name = ?`).get(productId)
 
   if (!p || Number(p.available) === 0) {
     throw Object.assign(new Error('product_unavailable'), { code: 'product_unavailable', productId })
   }
 
-  const qty = Math.max(1, Math.min(99, Number(item.quantity) || 1))
-  void qty
   let unit = Number(p.price) || 0
   const mods: ModifierOut[] = []
   const configParts: string[] = []
-  let volumeLabel: string | null = item.volumeId ? String(item.volumeId) : null
+  const volumeLabel: string | null = p.variant_label
+    ? String(p.variant_label)
+    : item.volumeId
+      ? null
+      : null
 
   for (const m of item.modifiers || []) {
-    const name = String(m.modifierId)
-    const priceEstimate = 0
-    const sendToReceipt = m.groupKey !== 'milk' || name !== 'regular'
+    const modProductId = m.productId != null && Number.isFinite(Number(m.productId)) ? Number(m.productId) : null
+    const productRow = modProductId
+      ? (db.prepare('SELECT name FROM products WHERE id = ?').get(modProductId) as { name: string } | undefined)
+      : undefined
+    const name = String(m.name || productRow?.name || m.modifierId)
+    const priceEstimate = Math.max(0, Math.round(Number(m.priceRub ?? 0)))
+    const sendToReceipt = m.groupKey !== 'milk' || m.modifierId !== 'regular'
     mods.push({
       group: String(m.groupKey),
       id: String(m.modifierId),
       name,
       priceEstimate,
       sendToReceipt,
+      evotorUuid: evotorUuidForProduct(db, modProductId, storeUuids),
     })
     configParts.push(name)
     unit += priceEstimate
@@ -143,7 +289,7 @@ function resolveLine(
   return {
     name: String(p.name),
     unit,
-    evotor: p.evotor_uuid ? String(p.evotor_uuid) : null,
+    evotor: evotorUuidForProduct(db, Number(p.id), storeUuids),
     volumeLabel,
     configText: configParts.join(' · '),
     mods,
@@ -165,12 +311,13 @@ export function createDraftOrder(
   const shortCode = genShortCode(db, storeId)
   const created = nowSec()
   const expires = created + 30 * 60
+  const storeUuids = storeUuidsForLocalStore(db, storeId)
   let total = 0
   const resolved = body.items.map((it, idx) => {
-    const r = resolveLine(db, it)
+    const r = resolveLine(db, it, storeUuids)
     const quantity = Math.max(1, Math.min(99, Number(it.quantity) || 1))
     total += r.unit * quantity
-    return { ...r, quantity, productId: String(it.productId), position: idx }
+    return { ...r, quantity, productId: String(it.volumeId ?? it.productId), position: idx }
   })
 
   db.prepare(
@@ -186,9 +333,9 @@ export function createDraftOrder(
     ).run(lineId, id, r.productId, r.evotor, r.name, r.quantity, r.volumeLabel, r.configText, r.unit, r.position)
     for (const m of r.mods) {
       db.prepare(
-        `INSERT INTO preorder_item_modifiers (id, order_item_id, group_key, modifier_id, name, price_estimate, send_to_receipt)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run(randomUUID(), lineId, m.group, m.id, m.name, m.priceEstimate, m.sendToReceipt ? 1 : 0)
+        `INSERT INTO preorder_item_modifiers (id, order_item_id, group_key, modifier_id, name, price_estimate, send_to_receipt, evotor_uuid)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(randomUUID(), lineId, m.group, m.id, m.name, m.priceEstimate, m.sendToReceipt ? 1 : 0, m.evotorUuid)
     }
   }
 
@@ -229,6 +376,7 @@ export function listActive(db: Db, storeId: number): Array<{
   const out = []
   for (const r of rows) {
     expireIfNeeded(db, r)
+    promoteIfDue(db, r)
     const fresh = db.prepare(`SELECT status FROM preorders WHERE id = ?`).get(String(r.id))
     if (!fresh || !ACTIVE_STATUSES.includes(String(fresh.status) as PreorderStatus)) continue
     const cnt = db.prepare(`SELECT COUNT(*) as c FROM preorder_items WHERE order_id = ?`).get(String(r.id))
@@ -248,18 +396,63 @@ export function transitionStatus(db: Db, id: string, next: PreorderStatus): Orde
   const row = db.prepare(`SELECT * FROM preorders WHERE id = ?`).get(id)
   if (!row) throw Object.assign(new Error('not_found'), { code: 'not_found' })
   expireIfNeeded(db, row)
+  promoteIfDue(db, row)
   const cur = String(db.prepare(`SELECT status FROM preorders WHERE id = ?`).get(id)?.status)
   const allowed = ALLOWED_TRANSITIONS[cur] || []
   if (!allowed.includes(next)) {
     throw Object.assign(new Error('invalid_transition'), { code: 'invalid_transition', from: cur, to: next })
   }
   const t = nowSec()
-  const tsCol = next === 'accepted' ? 'accepted_at' : next === 'cooking' ? 'cooking_at' : next === 'ready' ? 'ready_at' : null
-  if (tsCol) {
-    db.prepare(`UPDATE preorders SET status = ?, ${tsCol} = ?, updated_at = ? WHERE id = ?`).run(next, t, t, id)
+  const storeId = Number(row.store_id)
+  if (next === 'accepted') {
+    const prepMinutes = prepMinutesForOrder(db, id, storeId)
+    const eta = t + prepMinutes * 60
+    // Гость получает запас на «дойти и забрать»: TTL не обрывает уже принятый заказ слишком рано.
+    const grace = getPreorderSettings(storeId).pickupGraceMinutes
+    const expires = Math.max(Number(row.expires_at) || 0, eta + grace * 60)
+    db.prepare(
+      `UPDATE preorders SET status='accepted', accepted_at=?, eta_ready_at=?, expires_at=?, updated_at=? WHERE id=?`,
+    ).run(t, eta, expires, t, id)
+  } else if (next === 'cooking') {
+    db.prepare(`UPDATE preorders SET status='cooking', cooking_at=?, updated_at=? WHERE id=?`).run(t, t, id)
+  } else if (next === 'ready') {
+    db.prepare(`UPDATE preorders SET status='ready', ready_at=?, ready_by='cashier', updated_at=? WHERE id=?`).run(t, t, id)
   } else {
-    db.prepare(`UPDATE preorders SET status = ?, updated_at = ? WHERE id = ?`).run(next, t, id)
+    db.prepare(`UPDATE preorders SET status=?, updated_at=? WHERE id=?`).run(next, t, id)
   }
+  return loadOrder(db, id)!
+}
+
+/** Кассир уточняет ETA: пересчитываем eta_ready_at от «сейчас» и продлеваем TTL. */
+export function setOrderEta(db: Db, id: string, etaMinutes: number): OrderOut {
+  const row = db.prepare(`SELECT * FROM preorders WHERE id = ?`).get(id)
+  if (!row) throw Object.assign(new Error('not_found'), { code: 'not_found' })
+  const status = String(row.status)
+  if (!['accepted', 'cooking'].includes(status)) {
+    throw Object.assign(new Error('invalid_transition'), { code: 'invalid_transition', from: status })
+  }
+  const t = nowSec()
+  const minutes = Math.min(120, Math.max(1, Math.round(etaMinutes)))
+  const eta = t + minutes * 60
+  const grace = getPreorderSettings(Number(row.store_id)).pickupGraceMinutes
+  const expires = Math.max(Number(row.expires_at) || 0, eta + grace * 60)
+  db.prepare('UPDATE preorders SET eta_ready_at=?, expires_at=?, updated_at=? WHERE id=?').run(eta, expires, t, id)
+  return loadOrder(db, id)!
+}
+
+/** Гость забрал заказ. Статус не меняем (paid остаётся терминальным для кассы). */
+export function markPickedUp(db: Db, id: string, userId?: number | null): OrderOut {
+  const row = db.prepare(`SELECT * FROM preorders WHERE id = ?`).get(id)
+  if (!row) throw Object.assign(new Error('not_found'), { code: 'not_found' })
+  if (userId != null && row.guest_user_id != null && Number(row.guest_user_id) !== userId) {
+    throw Object.assign(new Error('not_found'), { code: 'not_found' })
+  }
+  const status = String(row.status)
+  if (status !== 'paid' && status !== 'ready') {
+    throw Object.assign(new Error('invalid_transition'), { code: 'invalid_transition', from: status })
+  }
+  const t = nowSec()
+  db.prepare('UPDATE preorders SET picked_up_at=COALESCE(picked_up_at, ?), updated_at=? WHERE id=?').run(t, t, id)
   return loadOrder(db, id)!
 }
 
@@ -322,7 +515,18 @@ CREATE TABLE IF NOT EXISTS preorders (
   rejected_at INTEGER,
   reject_reason TEXT,
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  eta_ready_at INTEGER,
+  picked_up_at INTEGER,
+  ready_by TEXT
+);
+CREATE TABLE IF NOT EXISTS preorder_bans (
+  user_id INTEGER PRIMARY KEY,
+  until INTEGER NOT NULL,
+  reason TEXT NOT NULL DEFAULT 'no_show',
+  order_id TEXT,
+  created_at INTEGER NOT NULL,
+  lifted_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_preorders_store_status ON preorders(store_id, status);
 CREATE INDEX IF NOT EXISTS idx_preorders_short ON preorders(store_id, short_code);
@@ -345,7 +549,17 @@ CREATE TABLE IF NOT EXISTS preorder_item_modifiers (
   modifier_id TEXT NOT NULL,
   name TEXT NOT NULL,
   price_estimate INTEGER NOT NULL DEFAULT 0,
-  send_to_receipt INTEGER NOT NULL DEFAULT 0
+  send_to_receipt INTEGER NOT NULL DEFAULT 0,
+  evotor_uuid TEXT
 );
 `)
+  // Старые БД (до 043/044): догоняем колонки, чтобы runtime-фолбэк не падал.
+  const cols = (table: string) => (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name)
+  const preorderCols = cols('preorders')
+  if (!preorderCols.includes('eta_ready_at')) db.exec('ALTER TABLE preorders ADD COLUMN eta_ready_at INTEGER')
+  if (!preorderCols.includes('picked_up_at')) db.exec('ALTER TABLE preorders ADD COLUMN picked_up_at INTEGER')
+  if (!preorderCols.includes('ready_by')) db.exec('ALTER TABLE preorders ADD COLUMN ready_by TEXT')
+  if (!cols('preorder_item_modifiers').includes('evotor_uuid')) {
+    db.exec('ALTER TABLE preorder_item_modifiers ADD COLUMN evotor_uuid TEXT')
+  }
 }

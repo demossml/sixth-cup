@@ -16,13 +16,16 @@ type Props = {
   onSubmit: () => void
   submitting?: boolean
   error?: string | null
+  /** Почему заказ нельзя отправить (бан за невыкуп): показываем вместо кнопки-обманки. */
+  blocked?: string | null
 }
 
 /** Корзина предзаказа: локальная (sessionStorage), оплата и бонусы — на кассе. */
-export function CartSheet({ open, lines, storeId, stores, storeName, onChange, onStoreChange, onClose, onSubmit, submitting, error }: Props) {
+export function CartSheet({ open, lines, storeId, stores, storeName, onChange, onStoreChange, onClose, onSubmit, submitting, error, blocked }: Props) {
   if (!open) return null
   const total = cartTotal(lines)
   const needStore = stores.length !== 1 && storeId == null
+  const isBlocked = Boolean(blocked)
 
   const setQty = (line: CartLine, quantity: number) => {
     if (quantity <= 0) onChange(lines.filter((x) => x.key !== line.key))
@@ -109,11 +112,16 @@ export function CartSheet({ open, lines, storeId, stores, storeName, onChange, o
           </p>
           <div className="mt-2 font-display text-[20px] leading-6 font-semibold text-ink num">Итого — оценка {total} ₽</div>
 
+          {blocked && (
+            <p role="status" className="mt-2 rounded-xl bg-warn-bg text-warn px-3 py-2 text-[13px] leading-[18px]">
+              {blocked}
+            </p>
+          )}
           {error && <p role="alert" className="mt-2 text-[13px] leading-[18px] text-bad">{error}</p>}
 
           <button
             type="button"
-            disabled={!lines.length || submitting || needStore}
+            disabled={!lines.length || submitting || needStore || isBlocked}
             onClick={onSubmit}
             className="btn min-h-12 w-full mt-3 disabled:opacity-50"
           >

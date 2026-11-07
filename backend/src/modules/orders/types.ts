@@ -13,6 +13,12 @@ export type PreorderStatus =
 export type ModifierIn = {
   groupKey: string
   modifierId: string
+  /** Локальный товар модификатора (если клиент знает) — нужен для UUID на точке. */
+  productId?: number | null
+  /** Подпись для чека/кассы («Кокосовое молоко»). */
+  name?: string | null
+  /** Справочная цена; финальную считает касса. */
+  priceRub?: number | null
 }
 
 export type ItemIn = {
@@ -34,6 +40,8 @@ export type ModifierOut = {
   name: string
   priceEstimate: number
   sendToReceipt: boolean
+  /** UUID товара-модификатора на точке (null — нет связи, касса добавит вручную). */
+  evotorUuid: string | null
 }
 
 export type ItemOut = {
@@ -55,6 +63,16 @@ export type OrderOut = {
   status: PreorderStatus
   createdAt: string
   expiresAt: string
+  /** Когда заказ будет готов (null — ETA ещё не назначен). */
+  etaReadyAt: string | null
+  /** Сколько минут осталось до готовности на момент ответа (null — неизвестно). */
+  etaMinutes: number | null
+  /** Серверное «сейчас»: клиент считает обратный отсчёт от него, а не от часов телефона. */
+  serverNow: string
+  /** Когда гость забрал заказ (только для paid). */
+  pickedUpAt: string | null
+  /** Кто перевёл в «готов»: авто по ETA или кассир. */
+  readyBy: 'auto' | 'cashier' | null
   estimateTotal: number
   currency: string
   cardId: string | null
@@ -66,6 +84,7 @@ export const ACTIVE_STATUSES: PreorderStatus[] = ['draft', 'accepted', 'cooking'
 
 export const ALLOWED_TRANSITIONS: Record<string, PreorderStatus[]> = {
   draft: ['accepted'],
-  accepted: ['cooking'],
+  // Кассир может сразу подтвердить готовность: ETA — прогноз, а не запрет.
+  accepted: ['cooking', 'ready'],
   cooking: ['ready'],
 }

@@ -20,6 +20,16 @@ import {
   saveChoiceScheme,
 } from '../catalog/choiceScheme'
 import { catalogReadiness, cardReadiness } from '../catalog/readiness'
+import { getPreorderSettings, hasStorePreorderSettings, setPreorderSettings } from '../../lib/preorderSettings'
+import {
+  ensurePreorderTables,
+  getOrder,
+  liftBan,
+  listBans,
+  markPaid,
+  rejectOrder,
+  transitionStatus,
+} from '../orders/service'
 import {
   VolumeSchemeError,
   deleteVolumeScheme,
@@ -1448,6 +1458,155 @@ export const adminRoutes = new Hono()
         available=excluded.available, updated_at=excluded.updated_at, updated_by=excluded.updated_by
     `).run(id, p.storeUuid, p.available ? 1 : 0, now, 'admin')
     return c.json({ ok: true })
+  })
+
+  // —— Предзаказы гостя: настройки точки, очередь, статусы, баны ——
+  // Страховка на время, пока касса не умеет двигать статусы: те же переходы, что у APK.
+  .get('/preorder/settings', (c) => {
+    const raw = Number(c.req.query('storeId'))
+    const storeId = Number.isFinite(raw) && raw > 0 ? raw : null
+    return c.json({
+      storeId,
+      own: storeId != null ? hasStorePreorderSettings(storeId) : true,
+      ...getPreorderSettings(storeId),
+    })
+  })
+
+  .patch(
+    '/preorder/settings',
+    zValidator('json', z.object({
+      storeId: z.number().int().positive().nullable().optional(),
+      prepMinutes: z.number().int().min(1).max(120).optional(),
+      noShowBanHours: z.number().int().min(0).max(720).optional(),
+      pickupGraceMinutes: z.number().int().min(0).max(720).optional(),
+      autoReady: z.boolean().optional(),
+    })),
+    (c) => {
+      const body = c.req.valid('json')
+      const { storeId, ...patch } = body
+      const saved = setPreorderSettings(storeId ?? null, patch)
+      c.set('audit', {
+        entity: 'preorder-settings',
+        entityId: String(storeId ?? 'global'),
+        summary: `Настройки предзаказа: ${saved.prepMinutes} мин, бан ${saved.noShowBanHours} ч`,
+        after: saved,
+      })
+      return c.json({ ok: true, storeId: storeId ?? null, ...saved })
+    },
+  )
+
+  .get('/preorder/orders', (c) => {
+    ensurePreorderTables(db as never)
+    const storeId = Number(c.req.query('storeId'))
+    const scope = c.req.query('scope') || 'active'
+    const where = scope === 'all' ? '1=1' : `status IN ('draft','accepted','cooking','ready','paid')`
+    const rows = db.prepare(
+      `SELECT id, short_code AS shortCode, store_id AS storeId, status, estimate_total AS estimateTotal,
+              card_id AS cardId, guest_user_id AS guestUserId, created_at AS createdAt,
+              eta_ready_at AS etaReadyAt, ready_at AS readyAt, paid_at AS paidAt, picked_up_at AS pickedUpAt
+         FROM preorders WHERE ${where} ${Number.isFinite(storeId) && storeId > 0 ? 'AND store_id = ?' : ''}
+         ORDER BY created_at DESC LIMIT 200`,
+    ).all(...(Number.isFinite(storeId) && storeId > 0 ? [storeId] : [])) as Record<string, unknown>[]
+    const items = db.prepare(
+      `SELECT order_id AS orderId, name, quantity, config_text AS configText, unit_price_estimate AS unitPrice
+         FROM preorder_items ORDER BY position`,
+    ).all() as { orderId: string; name: string; quantity: number; configText: string; unitPrice: number }[]
+    const byOrder = new Map<string, typeof items>()
+    for (const it of items) {
+      const list = byOrder.get(it.orderId) ?? []
+      list.push(it)
+      byOrder.set(it.orderId, list)
+    }
+    const now = Math.floor(Date.now() / 1000)
+    return c.json({
+      ok: true,
+      now,
+      orders: rows.map((r) => {
+        // Авто-переходы применяются на чтении списка, чтобы админка видела те же статусы, что гость.
+        const loaded = getOrder(db as never, String(r.id))
+        return {
+          id: String(r.id),
+          shortCode: String(r.shortCode),
+          storeId: Number(r.storeId),
+          status: loaded?.status ?? String(r.status),
+          etaReadyAt: r.etaReadyAt ? Number(r.etaReadyAt) : null,
+          etaMinutes: loaded?.etaMinutes ?? null,
+          paidAt: r.paidAt ? Number(r.paidAt) : null,
+          pickedUpAt: r.pickedUpAt ? Number(r.pickedUpAt) : null,
+          estimateTotal: Number(r.estimateTotal),
+          cardId: r.cardId ? String(r.cardId) : null,
+          guestUserId: r.guestUserId ? Number(r.guestUserId) : null,
+          createdAt: Number(r.createdAt),
+          minutesAgo: Math.max(0, Math.floor((now - Number(r.createdAt)) / 60)),
+          items: byOrder.get(String(r.id)) ?? [],
+        }
+      }),
+    })
+  })
+
+  .post(
+    '/preorder/orders/:id/status',
+    zValidator('json', z.object({ status: z.enum(['accepted', 'cooking', 'ready']) })),
+    (c) => {
+      const id = c.req.param('id')
+      try {
+        const order = transitionStatus(db as never, id, c.req.valid('json').status)
+        c.set('audit', {
+          entity: 'preorder',
+          entityId: id,
+          summary: `Заказ ${order.shortCode}: статус ${order.status}`,
+        })
+        return c.json({ ok: true, order })
+      } catch (e) {
+        const err = e as { code?: string; message?: string }
+        const status = err.code === 'not_found' ? 404 : 409
+        return c.json({ ok: false, error: err.code || 'error', message: err.message || 'error' }, status)
+      }
+    },
+  )
+
+  .post(
+    '/preorder/orders/:id/reject',
+    zValidator('json', z.object({ reason: z.string().max(200).optional() })),
+    (c) => {
+      const id = c.req.param('id')
+      try {
+        rejectOrder(db as never, id, c.req.valid('json').reason || 'Отклонён в админке')
+        c.set('audit', { entity: 'preorder', entityId: id, summary: 'Заказ отклонён из админки' })
+        return c.json({ ok: true })
+      } catch (e) {
+        const err = e as { code?: string; message?: string }
+        const status = err.code === 'not_found' ? 404 : 409
+        return c.json({ ok: false, error: err.code || 'error', message: err.message || 'error' }, status)
+      }
+    },
+  )
+
+  .post('/preorder/orders/:id/mark-paid', (c) => {
+    const id = c.req.param('id')
+    try {
+      const order = markPaid(db as never, id)
+      c.set('audit', { entity: 'preorder', entityId: id, summary: `Заказ ${order.shortCode}: оплачен` })
+      return c.json({ ok: true, order })
+    } catch (e) {
+      const err = e as { code?: string; message?: string }
+      const status = err.code === 'not_found' ? 404 : 409
+      return c.json({ ok: false, error: err.code || 'error', message: err.message || 'error' }, status)
+    }
+  })
+
+  .get('/preorder/bans', (c) => {
+    ensurePreorderTables(db as never)
+    return c.json({ ok: true, bans: listBans(db as never) })
+  })
+
+  .post('/preorder/bans/:userId/lift', (c) => {
+    ensurePreorderTables(db as never)
+    const userId = Number(c.req.param('userId'))
+    if (!Number.isInteger(userId) || userId <= 0) throw bad('Некорректный клиент', 400)
+    const lifted = liftBan(db as never, userId)
+    c.set('audit', { entity: 'preorder-ban', entityId: String(userId), summary: 'Бан за невыкуп снят' })
+    return c.json({ ok: true, lifted })
   })
 
   // —— Referrals summary ——

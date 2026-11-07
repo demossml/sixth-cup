@@ -2,6 +2,10 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import InstallBanner from '../components/InstallBanner'
 import InviteNotice from '../components/InviteNotice'
+import ActiveOrderBanner from '../components/order/ActiveOrderBanner'
+import { OrderQrScreen } from '../components/order/OrderQrScreen'
+import { useActiveOrder } from '../lib/useActiveOrder'
+import { loadOrderRef, saveOrderRef, type OrderOut } from '../lib/preorderApi'
 import ProgressStamps from '../components/ProgressStamps'
 import Qr from '../components/Qr'
 import QrLayer from '../components/QrLayer'
@@ -27,6 +31,9 @@ export default function CardPage() {
   const nav = useNavigate()
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null)
   const [qrOpen, setQrOpen] = useState(false)
+  // Активный заказ: баннер над картой-пропуском и экран заказа по тапу.
+  const { order: activeOrder, offline: orderOffline, refresh: refreshOrder } = useActiveOrder()
+  const [orderView, setOrderView] = useState<OrderOut | null>(null)
   const saved = (() => { try { return localStorage.getItem('sc-saved') === '1' } catch { return false } })()
 
   const N = Math.max(1, me?.cupsForFree ?? dir?.cupsForFree ?? 5)
@@ -159,6 +166,15 @@ export default function CardPage() {
       </div>
 
       <div className="px-4 -mt-3 space-y-3">
+        {/* Заказ важнее приглашения: сначала «что с моим кофе», потом всё остальное.
+            Между картой-пропуском и акцией ничего не вставляем (TITLE-SCREEN-спека). */}
+        <ActiveOrderBanner
+          order={activeOrder}
+          storeName={dir?.stores.find((s) => s.id === activeOrder?.storeId)?.name ?? null}
+          offline={orderOffline}
+          onOpen={(order) => { setOrderView(order); saveOrderRef({ orderId: order.id, qrPayload: loadOrderRef()?.qrPayload ?? null }) }}
+        />
+
         {/* Приглашение, которое не применилось (существующая карта / неверный код). */}
         <InviteNotice />
 
@@ -269,6 +285,17 @@ export default function CardPage() {
 
       {qrOpen && proof ? (
         <QrLayer proof={proof} cardCode={cardCode} onClose={() => setQrOpen(false)} />
+      ) : null}
+
+      {orderView ? (
+        <OrderQrScreen
+          orderId={orderView.id}
+          qrPayload={loadOrderRef()?.orderId === orderView.id ? loadOrderRef()?.qrPayload ?? null : null}
+          initial={orderView}
+          onStatusChange={() => void refreshOrder()}
+          onClose={() => { setOrderView(null); void refreshOrder() }}
+          onOpenLoyalty={() => setOrderView(null)}
+        />
       ) : null}
     </div>
   )

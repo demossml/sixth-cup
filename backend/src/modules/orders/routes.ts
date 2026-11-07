@@ -1,10 +1,10 @@
 import { Hono } from 'hono'
-import { createMiddleware } from 'hono/factory'
-import { verify } from 'hono/jwt'
 import { db } from '../../db'
 import { config } from '../../config'
+import { requireAuth, type AuthEnv } from '../../middleware/auth'
 import { requireDevice, type DeviceEnv } from '../../middleware/device'
 import {
+  activeBan,
   cancelDraft,
   createDraftOrder,
   ensurePreorderTables,
@@ -12,12 +12,14 @@ import {
   getOrderByCode,
   listActive,
   markPaid,
+  markPickedUp,
   rejectOrder,
+  setOrderEta,
   transitionStatus,
 } from './service'
 import type { CreateOrderBody, PreorderStatus } from './types'
 
-type Env = { Variables: { userId?: number } }
+type Env = AuthEnv
 
 type Db = Parameters<typeof createDraftOrder>[0]
 
@@ -31,62 +33,116 @@ const dbOf = (_c: unknown): Db => db as unknown as Db
 const secretOf = () => config.orderQrSecret || config.jwtSecret
 
 /**
- * Гость может быть не авторизован: заказ создаётся и без карты (тогда card_id пустой).
- * Если JWT есть и валиден — привязываем заказ к пользователю, но не блокируем заказ из-за токена.
+ * Заказы гостя привязаны к пользователю: без JWT нельзя ни создать заказ, ни прочитать чужой.
+ * Это же требование делает возможным бан за невыкуп (нужен стабильный идентификатор гостя).
  */
-const optionalAuth = createMiddleware<Env>(async (c, next) => {
-  const header = c.req.header('Authorization')
-  const token = header?.startsWith('Bearer ') ? header.slice(7) : undefined
-  if (token) {
-    try {
-      const payload = await verify(token, config.jwtSecret, 'HS256')
-      const userId = Number(payload.sub)
-      if (Number.isFinite(userId) && userId > 0) c.set('userId', userId)
-    } catch {
-      /* протухший токен не должен мешать оформить заказ — гость просто останется анонимным */
-    }
-  }
-  await next()
-})
-
-/** Guest routes: /api/orders */
 export const orderGuestRoutes = new Hono<Env>()
 
-orderGuestRoutes.use('*', optionalAuth)
+orderGuestRoutes.use('*', requireAuth)
+
+const ACTIVE_STATUSES_SQL = `('draft','accepted','cooking','ready')`
+
+/**
+ * Активный заказ: ещё не завершён, либо оплачен, но гость не нажал «Я забрал».
+ * Кандидатов прогоняем через loadOrder: истёкшие/готовые по таймеру заказы
+ * должны потерять статус «активный» до того, как мы ответим гостю.
+ */
+function findActiveOrderId(userId: number): string | null {
+  const rows = db.prepare(
+    `SELECT id FROM preorders
+      WHERE guest_user_id = ? AND (status IN ${ACTIVE_STATUSES_SQL} OR (status = 'paid' AND picked_up_at IS NULL))
+      ORDER BY created_at DESC LIMIT 10`,
+  ).all(userId) as { id: string }[]
+  for (const r of rows) {
+    const order = getOrder(dbOf(null), String(r.id))
+    if (!order) continue
+    if (['draft', 'accepted', 'cooking', 'ready'].includes(order.status)) return order.id
+    if (order.status === 'paid' && !order.pickedUpAt) return order.id
+  }
+  return null
+}
+
+function ownedOrder(id: string, userId: number) {
+  const order = getOrder(dbOf(null), id)
+  if (!order) return null
+  const row = db.prepare('SELECT guest_user_id AS uid FROM preorders WHERE id = ?').get(id) as { uid: number | null } | undefined
+  if (row?.uid != null && Number(row.uid) !== userId) return null
+  return order
+}
 
 orderGuestRoutes.post('/', async (c) => {
   ensurePreorderTables(dbOf(c))
+  const userId = c.get('userId')
   const body = (await c.req.json()) as CreateOrderBody
   try {
-    const guestUserId = c.get('userId') as number | undefined
-    const { order, qrPayload } = createDraftOrder(dbOf(c), body, {
-      guestUserId: guestUserId ?? null,
-      secret: secretOf(),
-    })
+    // Один активный заказ: пока текущий не забран и не оплачен — второй создать нельзя.
+    const activeId = findActiveOrderId(userId)
+    if (activeId) {
+      return c.json({
+        ok: false,
+        error: 'active_order_exists',
+        message: 'У вас уже есть активный заказ. Заберите или отмените его.',
+        activeOrderId: activeId,
+      }, 409)
+    }
+    const ban = activeBan(dbOf(c), userId)
+    if (ban) {
+      return c.json({
+        ok: false,
+        error: 'preorder_banned',
+        message: 'Прошлый заказ не был забран и оплачен. Новый заказ пока недоступен.',
+        bannedUntil: new Date(ban.until * 1000).toISOString(),
+      }, 403)
+    }
+    const { order, qrPayload } = createDraftOrder(dbOf(c), body, { guestUserId: userId, secret: secretOf() })
     return c.json({ ok: true, order, qrPayload })
   } catch (e) {
     const err = e as { code?: string; message?: string }
     const code = err.code || 'error'
-    const status = code === 'store_not_found' || code === 'product_unavailable' ? 400 : 400
-    return c.json({ ok: false, error: code, message: err.message || code }, status)
+    return c.json({ ok: false, error: code, message: err.message || code }, 400)
   }
 })
 
-orderGuestRoutes.get('/:id', async (c) => {
+// ВАЖНО: /active объявлен до /:id, иначе «active» попадёт в параметр.
+orderGuestRoutes.get('/active', (c) => {
   ensurePreorderTables(dbOf(c))
-  const order = getOrder(dbOf(c), c.req.param('id'))
+  const userId = c.get('userId')
+  // Сначала «проявляем» истёкшие заказы (это может создать бан), и только потом читаем бан.
+  const id = findActiveOrderId(userId)
+  const ban = activeBan(dbOf(c), userId)
+  const bannedUntil = ban ? new Date(ban.until * 1000).toISOString() : null
+  if (!id) return c.json({ ok: true, order: null, bannedUntil })
+  const order = getOrder(dbOf(c), id)
+  return c.json({ ok: true, order: order ?? null, bannedUntil })
+})
+
+orderGuestRoutes.get('/:id', (c) => {
+  ensurePreorderTables(dbOf(c))
+  const order = ownedOrder(c.req.param('id'), c.get('userId'))
   if (!order) return c.json({ ok: false, error: 'not_found', message: 'Заказ не найден' }, 404)
   return c.json({ ok: true, order })
 })
 
-orderGuestRoutes.post('/:id/cancel', async (c) => {
+orderGuestRoutes.post('/:id/cancel', (c) => {
   ensurePreorderTables(dbOf(c))
   try {
-    cancelDraft(dbOf(c), c.req.param('id'), (c.get('userId') as number | undefined) ?? null)
+    cancelDraft(dbOf(c), c.req.param('id'), c.get('userId'))
     return c.json({ ok: true })
   } catch (e) {
     const err = e as { code?: string; message?: string }
     return c.json({ ok: false, error: err.code || 'error', message: err.message || 'error' }, 400)
+  }
+})
+
+/** «Я забрал»: закрывает активный заказ, не меняя оплату и статус для кассы. */
+orderGuestRoutes.post('/:id/received', (c) => {
+  ensurePreorderTables(dbOf(c))
+  try {
+    const order = markPickedUp(dbOf(c), c.req.param('id'), c.get('userId'))
+    return c.json({ ok: true, order })
+  } catch (e) {
+    const err = e as { code?: string; message?: string }
+    return c.json({ ok: false, error: err.code || 'error', message: err.message || 'error' }, 409)
   }
 })
 
@@ -146,6 +202,28 @@ orderDeviceRoutes.patch('/orders/:id/status', async (c) => {
   }
   try {
     const order = transitionStatus(dbOf(c), c.req.param('id'), next)
+    return c.json({ ok: true, order })
+  } catch (e) {
+    const err = e as { code?: string; message?: string }
+    return c.json({ ok: false, error: err.code || 'error', message: err.message || 'error' }, 409)
+  }
+})
+
+orderDeviceRoutes.post('/orders/:id/eta', async (c) => {
+  ensurePreorderTables(dbOf(c))
+  const storeId = c.get('storeId')
+  const body = (await c.req.json().catch(() => ({}))) as { etaMinutes?: number }
+  const minutes = Number(body.etaMinutes)
+  if (!Number.isFinite(minutes) || minutes < 1 || minutes > 120) {
+    return c.json({ ok: false, error: 'bad_request', message: 'etaMinutes должен быть 1…120' }, 400)
+  }
+  const existing = getOrder(dbOf(c), c.req.param('id'))
+  if (!existing) return c.json({ ok: false, error: 'not_found', message: 'Заказ не найден' }, 404)
+  if (existing.storeId !== storeId) {
+    return c.json({ ok: false, error: 'wrong_store', message: 'Заказ для другой точки' }, 403)
+  }
+  try {
+    const order = setOrderEta(dbOf(c), c.req.param('id'), minutes)
     return c.json({ ok: true, order })
   } catch (e) {
     const err = e as { code?: string; message?: string }

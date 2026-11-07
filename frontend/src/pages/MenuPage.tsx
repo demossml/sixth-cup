@@ -21,12 +21,18 @@ import { CartSheet } from '../components/order/CartSheet'
 import { OrderQrScreen } from '../components/order/OrderQrScreen'
 import {
   clearCart,
-  createPreorder,
+  createOrder,
   loadCart,
+  loadOrderRef,
   saveCart,
+  saveOrderRef,
   type CartLine,
   type OrderOut,
 } from '../lib/preorderApi'
+import ActiveOrderBanner from '../components/order/ActiveOrderBanner'
+import { useActiveOrder } from '../lib/useActiveOrder'
+import { banLeftSec, banText } from '../lib/orderBanner'
+import { useNow } from '../lib/useNow'
 
 /** Сколько ждём чтения кэша/первой синхронизации, прежде чем объявить «нет каталога». */
 const FIRST_LOAD_GRACE_MS = 1500
@@ -48,13 +54,31 @@ export default function MenuPage() {
   const [cartBusy, setCartBusy] = useState(false)
   const [cartError, setCartError] = useState<string | null>(null)
   const [storeId, setStoreId] = useState<number | null>(null)
-  const [placed, setPlaced] = useState<{ orderId: string; qrPayload: string; order: OrderOut } | null>(null)
+  const [placed, setPlaced] = useState<{ orderId: string; qrPayload: string | null; order: OrderOut } | null>(null)
+  const [orderView, setOrderView] = useState<OrderOut | null>(null)
+  const [blockNote, setBlockNote] = useState<string | null>(null)
+  const { order: activeOrder, bannedUntil, offline: orderOffline, refresh: refreshOrder } = useActiveOrder()
+  // Бан за невыкуп: понятный текст + заблокированная кнопка «Собрать заказ».
+  const clock = useNow(30_000)
+  const banLeft = banLeftSec(bannedUntil, clock)
+  const banMessage = banLeft > 0
+    ? `Прошлый заказ не был забран и оплачен. Новый заказ будет доступен через ${banText(banLeft)}.`
+    : null
 
   const stores = dir?.stores ?? []
   useEffect(() => {
     if (storeId != null || stores.length === 0) return
-    setStoreId(stores.length === 1 ? stores[0].id : null)
+    // Выбранная точка запоминается: гость не выбирает её заново на каждом заказе.
+    let saved: number | null = null
+    try { saved = Number(localStorage.getItem('sc_store_id')) || null } catch { saved = null }
+    if (saved != null && stores.some((s) => s.id === saved)) setStoreId(saved)
+    else setStoreId(stores.length === 1 ? stores[0].id : null)
   }, [storeId, stores])
+
+  const pickStore = useCallback((id: number) => {
+    setStoreId(id)
+    try { localStorage.setItem('sc_store_id', String(id)) } catch { /* private mode */ }
+  }, [])
 
   const updateCart = useCallback((lines: CartLine[]) => {
     setCart(lines)
@@ -90,20 +114,36 @@ export default function MenuPage() {
     if (storeId == null || !cart.length) return
     setCartBusy(true)
     setCartError(null)
-    const r = await createPreorder({
+    setBlockNote(null)
+    const r = await createOrder({
       storeId,
       cardId: me?.cardCode ? String(me.cardCode) : null,
       items: cart.map((l) => ({ productId: l.productId, quantity: l.quantity, volumeId: l.volumeId ?? undefined })),
     })
     setCartBusy(false)
     if (!r.ok) {
+      // «Уже есть заказ» и бан — это не ошибка ввода: показываем понятный путь, а не красный текст.
+      if (r.error === 'active_order_exists') {
+        setCartOpen(false)
+        setBlockNote('У вас уже есть активный заказ — сначала заберите его.')
+        await refreshOrder()
+        return
+      }
+      if (r.error === 'preorder_banned') {
+        setCartOpen(false)
+        setBlockNote(r.message || 'Новый заказ пока недоступен: прошлый не был забран и оплачен.')
+        await refreshOrder()
+        return
+      }
       setCartError(r.message || 'Не удалось собрать заказ')
       return
     }
+    saveOrderRef({ orderId: r.order.id, qrPayload: r.qrPayload })
     setPlaced({ orderId: r.order.id, qrPayload: r.qrPayload, order: r.order })
     setCartOpen(false)
     updateCart([])
     clearCart()
+    void refreshOrder()
   }
 
   useEffect(() => {
@@ -226,7 +266,23 @@ export default function MenuPage() {
         )}
       </header>
 
-      <div className="px-4 pb-3">
+      <div className="px-4 pb-3 space-y-2">
+        <ActiveOrderBanner
+          order={activeOrder}
+          storeName={stores.find((s) => s.id === activeOrder?.storeId)?.name ?? null}
+          offline={orderOffline}
+          onOpen={(order) => setOrderView(order)}
+        />
+        {banMessage && (
+          <div role="status" className="rounded-2xl bg-warn-bg text-warn px-3.5 py-2.5 text-[13px] leading-[18px]">
+            {banMessage}
+          </div>
+        )}
+        {blockNote && (
+          <div role="status" className="rounded-2xl bg-warn-bg text-warn px-3.5 py-2.5 text-[13px] leading-[18px]">
+            {blockNote}
+          </div>
+        )}
         <MenuSearch value={query} onChange={setQuery} />
       </div>
 
@@ -309,11 +365,12 @@ export default function MenuPage() {
         storeId={storeId}
         storeName={stores.find((s) => s.id === storeId)?.name}
         onChange={updateCart}
-        onStoreChange={setStoreId}
+        onStoreChange={pickStore}
         onClose={() => setCartOpen(false)}
         onSubmit={() => void submitOrder()}
         submitting={cartBusy}
         error={cartError}
+        blocked={banMessage}
       />
 
       {placed && (
@@ -321,8 +378,20 @@ export default function MenuPage() {
           orderId={placed.orderId}
           qrPayload={placed.qrPayload}
           initial={placed.order}
-          onClose={() => setPlaced(null)}
+          onStatusChange={() => void refreshOrder()}
+          onClose={() => { setPlaced(null); void refreshOrder() }}
           onOpenLoyalty={() => { setPlaced(null); nav('/') }}
+        />
+      )}
+
+      {orderView && (
+        <OrderQrScreen
+          orderId={orderView.id}
+          qrPayload={loadOrderRef()?.orderId === orderView.id ? loadOrderRef()?.qrPayload ?? null : null}
+          initial={orderView}
+          onStatusChange={() => void refreshOrder()}
+          onClose={() => { setOrderView(null); void refreshOrder() }}
+          onOpenLoyalty={() => { setOrderView(null); nav('/') }}
         />
       )}
     </main>

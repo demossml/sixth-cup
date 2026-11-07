@@ -5,7 +5,7 @@ import {
   Activity, BarChart3, Bot, Box, LineChart, CalendarClock, Coffee, Gift, HelpCircle, 
   LayoutDashboard, LogOut, ClipboardList, Package, Search, Settings, Menu,
   Share2, Store, Users, X, MoreHorizontal, Milk, Ruler, Layers,
-  ListChecks,
+  ListChecks, ClipboardCheck,
 } from 'lucide-react'
 import { useApi } from '../api/useApi'
 import type { Health } from '../api/types'
@@ -29,6 +29,7 @@ const CONFIG: NavItem[] = [
 ]
 
 const MANAGE: NavItem[] = [
+  { to: '/preorders', label: 'Предзаказы', icon: <ClipboardCheck size={17} /> },
   { to: '/cash', label: 'Касса', icon: <Store size={17} /> },
   { to: '/stock', label: 'Склад', icon: <Box size={17} /> },
   { to: '/purchases', label: 'Закупки', icon: <Package size={17} /> },
@@ -79,6 +80,7 @@ const TITLES: Record<string, string> = {
   '/milk-schemes': 'Схемы молока',
   '/choice-schemes': 'Обязательный выбор',
   '/addon-schemes': 'Схемы добавок',
+  '/preorders': 'Предзаказы',
   '/cash': 'Касса',
   '/stock': 'Склад',
   '/purchases': 'Закупки',

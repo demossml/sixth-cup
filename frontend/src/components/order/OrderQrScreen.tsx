@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Qr from '../Qr'
-import { cancelPreorder, getPreorder, type OrderOut } from '../../lib/preorderApi'
+import { cancelPreorder, getPreorder, markReceived, type OrderOut } from '../../lib/preorderApi'
+import { etaLeftSec } from '../../lib/orderBanner'
+import { clearOrderRef } from '../../lib/preorderApi'
 import { X } from '../../lib/icons'
 
 const STEPS = [
@@ -12,6 +14,13 @@ const STEPS = [
 ] as const
 
 const TERMINAL = new Set(['paid', 'cancelled', 'rejected', 'expired'])
+const plMinutes = (n: number) => {
+  const m10 = n % 10
+  const m100 = n % 100
+  if (m10 === 1 && m100 !== 11) return `${n} минуту`
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return `${n} минуты`
+  return `${n} минут`
+}
 
 function statusIndex(status: string) {
   const i = STEPS.findIndex((s) => s.key === status)
@@ -20,24 +29,37 @@ function statusIndex(status: string) {
 
 type Props = {
   orderId: string
-  qrPayload: string
+  /** Есть сразу после создания; после перезагрузки может отсутствовать — тогда показываем код и таймлайн. */
+  qrPayload?: string | null
   initial?: OrderOut
   onClose: () => void
   onOpenLoyalty?: () => void
+  /** Статус на сервере изменился (например, касса отклонила заказ) — родитель обновляет баннер. */
+  onStatusChange?: (order: OrderOut) => void
 }
 
 /**
  * QR предзаказа + статус. QR рисуется локально (`qrcode`), а не через внешний сервис:
  * payload заказа не должен уходить третьим лицам. Статус опрашивается раз в 5 с.
  */
-export function OrderQrScreen({ orderId, qrPayload, initial, onClose, onOpenLoyalty }: Props) {
+export function OrderQrScreen({ orderId, qrPayload, initial, onClose, onOpenLoyalty, onStatusChange }: Props) {
   const [order, setOrder] = useState<OrderOut | null>(initial ?? null)
   const [now, setNow] = useState(Date.now())
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(t)
   }, [])
+
+  // Опрос завязан только на orderId: обновление state не должно пересоздавать таймер,
+  // иначе каждый ответ запускает следующий запрос и получается бесконечный цикл.
+  const statusRef = useRef<string | null>(initial?.status ?? null)
+  const statusChangeRef = useRef(onStatusChange)
+  useEffect(() => {
+    statusChangeRef.current = onStatusChange
+  }, [onStatusChange])
 
   useEffect(() => {
     let alive = true
@@ -45,24 +67,28 @@ export function OrderQrScreen({ orderId, qrPayload, initial, onClose, onOpenLoya
       const o = await getPreorder(orderId)
       if (!alive || !o) return
       setOrder(o)
+      if (statusRef.current !== o.status) {
+        statusRef.current = o.status
+        statusChangeRef.current?.(o)
+      }
     }
     void tick()
     const id = setInterval(() => {
-      if (order && TERMINAL.has(order.status)) return
+      if (document.hidden) return
+      if (statusRef.current && TERMINAL.has(statusRef.current)) return
       void tick()
     }, 5000)
     return () => {
       alive = false
       clearInterval(id)
     }
-  }, [orderId, order])
+  }, [orderId])
 
   const expMs = order ? new Date(order.expiresAt).getTime() : 0
   const left = Math.max(0, Math.floor((expMs - now) / 1000))
   const mm = String(Math.floor(left / 60)).padStart(2, '0')
   const ss = String(left % 60).padStart(2, '0')
   const step = statusIndex(order?.status || 'draft')
-  const finished = order ? TERMINAL.has(order.status) : false
 
   return (
     <div className="fixed inset-0 z-50 bg-page overflow-y-auto" role="dialog" aria-modal="true" aria-label="Заказ">
@@ -82,18 +108,41 @@ export function OrderQrScreen({ orderId, qrPayload, initial, onClose, onOpenLoya
         <h1 className="font-display text-[26px] leading-8 font-semibold text-ink num">
           Заказ {order?.shortCode || '······'}
         </h1>
-        <p className="mt-1 text-[13px] leading-[18px] text-ink-secondary">Покажите кассиру. Это не карта лояльности.</p>
+        <p className="mt-1 text-[13px] leading-[18px] text-ink-secondary">
+          {order?.status === 'paid'
+            ? 'Назовите номер бариста — заказ оплачен.'
+            : order?.status === 'ready'
+              ? 'Заказ готов — покажите номер на кассе.'
+              : 'Покажите кассиру. Это не карта лояльности.'}
+        </p>
 
-        <div className="mt-4 bg-white border border-line rounded-3xl p-4 flex justify-center shadow-card">
-          <div className="w-[240px] max-w-full">
-            <Qr value={qrPayload} size={240} alt="QR заказа" />
-          </div>
+        <div className="mt-4 bg-white border border-line rounded-3xl p-4 flex flex-col items-center shadow-card">
+          {qrPayload ? (
+            <div className="w-[240px] max-w-full">
+              <Qr value={qrPayload} size={240} alt="QR заказа" />
+            </div>
+          ) : (
+            <p className="text-[13px] leading-[18px] text-ink-secondary text-center py-6">
+              QR откроется после обновления страницы на кассе — назовите номер заказа.
+            </p>
+          )}
         </div>
 
         <p className="mt-3 text-center font-display text-[28px] leading-9 tracking-[0.2em] num text-ink">{order?.shortCode}</p>
         <p className="mt-1 text-center text-[13px] leading-4 text-ink-secondary num">
-          ◷ {mm}:{ss} · оценка {order?.estimateTotal ?? '—'} ₽
+          {order?.status === 'draft' ? `◷ ${mm}:${ss} · ` : ''}оценка {order?.estimateTotal ?? '—'} ₽
         </p>
+        {order && ['accepted', 'cooking'].includes(order.status) && (
+          <p className="mt-1 text-center text-[13px] leading-4 font-semibold text-brand">
+            {(() => {
+              const left = etaLeftSec(order, now)
+              if (left == null) return 'Готовность уточняется'
+              if (left <= 0) return 'Готовим, осталось совсем немного'
+              return `Будет готов примерно через ${plMinutes(Math.max(1, Math.ceil(left / 60)))}`
+            })()}
+          </p>
+        )}
+        {note && <p className="mt-2 text-center text-[13px] leading-[18px] text-bad">{note}</p>}
 
         <ol className="mt-6 space-y-2">
           {STEPS.map((s, i) => {
@@ -127,16 +176,40 @@ export function OrderQrScreen({ orderId, qrPayload, initial, onClose, onOpenLoya
         )}
 
         <div className="mt-6 space-y-2">
-          {!finished && (
+          {order?.status === 'draft' && (
             <button
               type="button"
+              disabled={busy}
               onClick={async () => {
-                await cancelPreorder(orderId)
-                onClose()
+                setBusy(true)
+                const ok = await cancelPreorder(orderId)
+                setBusy(false)
+                if (ok) {
+                  clearOrderRef()
+                  onClose()
+                } else setNote('Не удалось отменить заказ. Попробуйте ещё раз.')
               }}
-              className="btn-ghost min-h-12 w-full"
+              className="btn-ghost min-h-12 w-full disabled:opacity-60"
             >
               Отменить заказ
+            </button>
+          )}
+          {order?.status === 'paid' && !order.pickedUpAt && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true)
+                const ok = await markReceived(orderId)
+                setBusy(false)
+                if (ok) {
+                  clearOrderRef()
+                  onClose()
+                } else setNote('Не удалось отметить получение. Попробуйте ещё раз.')
+              }}
+              className="btn min-h-12 w-full disabled:opacity-60"
+            >
+              Я забрал заказ
             </button>
           )}
           {onOpenLoyalty && (
