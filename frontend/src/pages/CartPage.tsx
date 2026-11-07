@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Check, Minus, Plus, Ticket, Gift } from 'lucide-react'
 import { useApp } from '../lib/app'
-import { formatPrice, storeHours, type MenuDirectory } from '../lib/menuModel'
+import { formatPrice, hoursLabel, storeHours, type MenuDirectory } from '../lib/menuModel'
 import {
   clearCart,
   createOrder,
@@ -164,7 +164,7 @@ export default function CartPage() {
             <p className="text-[15px] leading-5 font-semibold text-ink truncate">
               {store ? store.name : 'Кофейня не выбрана'}
             </p>
-            {hours?.label ? <p className="text-[12px] leading-4 text-ink-secondary">{hours.open ? `Открыто · ${hours.label}` : `Закрыто · ${hours.label}`}</p> : null}
+            {hours ? <p className="text-[12px] leading-4 text-ink-secondary">{hoursLabel(hours)}</p> : null}
           </div>
           <button type="button" onClick={() => nav('/pick-store?from=cart')} className="shrink-0 text-[13px] font-semibold text-brand underline">
             Изменить

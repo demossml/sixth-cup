@@ -6,6 +6,7 @@ import { ago, fmtDateTime } from '../lib/format'
 import { Badge, Banner, Button, Card, ConfirmDialog, EmptyState, ErrorBox, Field, Input, PageHeader, Select, Spinner, StatusDot, Toggle, useToast } from '../ui/kit'
 import { HelpLink } from '../components/HelpLink'
 import CashierMenuPanel from './cash/CashierMenuPanel'
+import { fmtCoord, parseCoords } from '../lib/coords'
 import type { Tone } from '../ui/kit'
 
 const LEVEL: Record<string, { tone: Tone; label: string }> = {
@@ -249,6 +250,8 @@ function StoresPanel() {
   const toast = useToast()
   const stores = useApi<{ stores: LocalStore[] }>('/stores')
   const [busy, setBusy] = useState('')
+  // Ссылка из Яндекс/Google/Apple карт: владелец копирует её, мы достаём координаты.
+  const [mapLink, setMapLink] = useState<Record<number, string>>({})
   const [form, setForm] = useState<Record<number, LocalStore>>({})
   const [week, setWeek] = useState<Record<number, DayHours[] | null>>({})
   const orgs = useApi<{ organizations: { id: number; name: string }[] }>('/organizations')
@@ -380,11 +383,56 @@ function StoresPanel() {
               <Field label="Закрытие" hint="Формат ЧЧ:ММ">
                 <Input type="time" value={r.closeTime ?? ''} onChange={(e) => patch(s.id, s, { closeTime: e.target.value || null })} />
               </Field>
-              <Field label="Широта" hint="Необязательно">
-                <Input type="number" step="0.000001" value={r.lat ?? ''} onChange={(e) => patch(s.id, s, { lat: e.target.value === '' ? null : Number(e.target.value) })} />
+              <Field label="Координаты" hint="Необязательно: без них точка на схеме — по центру">
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    step="0.000001"
+                    aria-label="Широта"
+                    placeholder="широта"
+                    value={r.lat ?? ''}
+                    onChange={(e) => patch(s.id, s, { lat: e.target.value === '' ? null : Number(e.target.value) })}
+                  />
+                  <Input
+                    type="number"
+                    step="0.000001"
+                    aria-label="Долгота"
+                    placeholder="долгота"
+                    value={r.lng ?? ''}
+                    onChange={(e) => patch(s.id, s, { lng: e.target.value === '' ? null : Number(e.target.value) })}
+                  />
+                </div>
               </Field>
-              <Field label="Долгота" hint="Необязательно">
-                <Input type="number" step="0.000001" value={r.lng ?? ''} onChange={(e) => patch(s.id, s, { lng: e.target.value === '' ? null : Number(e.target.value) })} />
+            </div>
+            <div className="mt-3">
+              <Field
+                label="Ссылка из карты"
+                hint="Скопируйте ссылку на точку из Яндекс, Google или Apple карт — координаты заполнятся сами"
+              >
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={mapLink[s.id] ?? ''}
+                    onChange={(e) => setMapLink({ ...mapLink, [s.id]: e.target.value })}
+                    placeholder="https://yandex.ru/maps/?pt=…"
+                    aria-label={`Ссылка из карты: ${r.name}`}
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    aria-label={`Заполнить координаты: ${r.name}`}
+                    onClick={() => {
+                      const c = parseCoords(mapLink[s.id] ?? '')
+                      if (!c) {
+                        toast.push('Не нашёл координаты в ссылке. Скопируйте ссылку на точку или введите числа вручную', 'bad')
+                        return
+                      }
+                      patch(s.id, s, { lat: c.lat, lng: c.lng })
+                      toast.push(`Координаты: ${fmtCoord(c.lat)}, ${fmtCoord(c.lng)}`)
+                    }}
+                  >
+                    Заполнить
+                  </Button>
+                </div>
               </Field>
             </div>
             <div className="mt-4 rounded-xl border border-line p-3">
@@ -437,7 +485,14 @@ function StoresPanel() {
               )}
             </div>
             <div className="mt-3">
-              <Button size="sm" loading={busy === `save-${s.id}`} onClick={() => void save(s)}>Сохранить</Button>
+              <Button
+                size="sm"
+                loading={busy === `save-${s.id}`}
+                aria-label={`Сохранить кофейню: ${r.name}`}
+                onClick={() => void save(s)}
+              >
+                Сохранить
+              </Button>
             </div>
           </Card>
         )

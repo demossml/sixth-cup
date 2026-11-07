@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { buildMenuItems, formatKcal, formatPrice, formatSize, itemsCountLabel, pickPopular, searchItems, storeHours, type MenuDirectory } from './menuModel'
+import {
+  buildMenuItems,
+  formatKcal,
+  formatPrice,
+  formatSize,
+  hoursLabel,
+  itemsCountLabel,
+  pickPopular,
+  searchItems,
+  storeHours,
+  type MenuDirectory,
+} from './menuModel'
 
 const base = {
   serverPub: '', cupsForFree: 6, referralCashbackPercent: 0, currency: 'RUB', generatedAt: 1, devices: [], stores: [], promos: [],
@@ -158,5 +169,17 @@ describe('размеры: одна плитка на группу', () => {
     }))
     expect(one).toHaveLength(1)
     expect(one[0].variants).toBeFalsy()
+  })
+})
+
+describe('hoursLabel', () => {
+  it('без часов не оставляет висящий разделитель', () => {
+    expect(hoursLabel({ open: true, label: '' })).toBe('Открыто')
+    expect(hoursLabel({ open: false, label: '' })).toBe('Закрыто')
+  })
+
+  it('с часами показывает интервал', () => {
+    expect(hoursLabel({ open: true, label: 'до 20:00' })).toBe('Открыто · до 20:00')
+    expect(hoursLabel({ open: false, label: '08:00–20:00' })).toBe('Закрыто · 08:00–20:00')
   })
 })

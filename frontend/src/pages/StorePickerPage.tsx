@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, MapPin, Navigation } from 'lucide-react'
 import { useApp } from '../lib/app'
-import { storeHours, type MenuDirectory } from '../lib/menuModel'
+import { hoursLabel, storeHours, type MenuDirectory } from '../lib/menuModel'
 import {
   MAP_PROVIDERS,
   defaultMapProvider,
@@ -155,7 +155,7 @@ export default function StorePickerPage() {
                     <span className="block text-[15px] leading-5 font-semibold text-ink truncate">{s.name}</span>
                     <span className="block text-[13px] leading-[18px] text-ink-secondary truncate">{s.address}</span>
                     <span className={`mt-0.5 block text-[12px] leading-4 ${hours.open ? 'text-ok' : 'text-bad'}`}>
-                      {hours.open ? `Открыто · ${hours.label}` : `Закрыто · ${hours.label}`}
+                      {hoursLabel(hours)}
                     </span>
                   </span>
                   {active && <span className="text-brand text-[18px] leading-5 shrink-0">✓</span>}

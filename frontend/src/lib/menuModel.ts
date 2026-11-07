@@ -249,6 +249,12 @@ export function storeHours(
     : { open: false, label: `${fmt(store.openTime)}–${fmt(store.closeTime)}` }
 }
 
+/** «Открыто · до 20:00» без висящего разделителя, когда часы не заданы. */
+export function hoursLabel(hours: StoreHours): string {
+  const state = hours.open ? 'Открыто' : 'Закрыто'
+  return hours.label ? `${state} · ${hours.label}` : state
+}
+
 /** Можно ли заказать позицию (стоп-лист точки или снята с продажи). */
 export function isOrderable(item: MenuItem | null | undefined): boolean {
   return !!item && !item.product.soldOut
