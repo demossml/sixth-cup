@@ -164,6 +164,14 @@ describe('витрина точки', () => {
     expect(row).toMatchObject({ evotorUuid: null, evotorName: null, address: 'ул. F, 6' })
   })
 
+  it('точка создаётся без организации: юрлица приходят из Эвотора, справочник не обязателен', async () => {
+    const created = await adm('POST', '/stores', { name: `Точка-без-юрлица-${T}`, address: 'ул. Без Юрлица, 1' })
+    expect(created.s).toBe(200)
+    const list = await adm('GET', '/stores')
+    const row = (list.j.stores as any[]).find((s) => s.id === Number(created.j.id))
+    expect(row.organizationId).toBeNull()
+  })
+
   it('привязка к несуществующей облачной точке — 404', async () => {
     const id = Number((await adm('POST', '/stores', { name: `Точка-${T}`, address: 'ул. X, 1', organizationId: orgId })).j.id)
     const r = await adm('POST', `/stores/${id}/link`, { storeUuid: 'no-such-uuid' })

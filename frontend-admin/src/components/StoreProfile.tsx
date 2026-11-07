@@ -52,8 +52,6 @@ export function weekOf(value: string | DayHours[] | null | undefined): DayHours[
 
 type Props = {
   store: LocalStore
-  /** Показать блок привязки к облачной точке (карточка точки с токеном). */
-  showLink?: boolean
   /** Облачные точки для выбора привязки. */
   linkOptions?: { uuid: string; name: string | null }[]
   onSaved: () => void
@@ -63,7 +61,7 @@ type Props = {
  * Витрина точки — то, что видит гость: название, адрес, координаты, фото, ориентир, телефон, часы.
  * Название и адрес вводит владелец: «6.7 Coffee на Багратиона» понятнее, чем «Точка 1» из Эвотора.
  */
-export default function StoreProfile({ store, showLink = false, linkOptions = [], onSaved }: Props) {
+export default function StoreProfile({ store, linkOptions = [], onSaved }: Props) {
   const toast = useToast()
   const fileRef = useRef<HTMLInputElement | null>(null)
   const [d, setD] = useState<LocalStore>(store)
@@ -330,7 +328,7 @@ export default function StoreProfile({ store, showLink = false, linkOptions = []
         )}
       </div>
 
-      {showLink ? (
+      {(
         <div className="rounded-xl border border-line p-3">
           <div className="text-sm font-semibold">Касса точки</div>
           <p className="mt-1 text-[12px] text-ink-secondary">
@@ -356,7 +354,7 @@ export default function StoreProfile({ store, showLink = false, linkOptions = []
             {store.evotorCode ? <span className="text-[12px] text-ink-secondary">код: {store.evotorCode}</span> : null}
           </div>
         </div>
-      ) : null}
+      )}
 
       {gaps.length ? (
         <p className="text-[12px] text-warn">Гостю не хватает: {gaps.join(', ')}</p>

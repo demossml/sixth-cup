@@ -68,10 +68,10 @@ export function ensureShowcaseForEvotorStore(
     refreshEvotorSnapshot(db, uuid)
     return { storeId: Number(row.local_store_id), created: false }
   }
+  // Юрлица не создаём: если организация уже есть — привяжем, иначе витрина живёт без неё.
   const org = organizationId ?? (
     (db.prepare('SELECT id FROM organizations ORDER BY id LIMIT 1').get() as { id: number } | undefined)?.id ?? null
   )
-  if (!org) return null
   const r = db.prepare(`INSERT INTO stores(name, address, organization_id, evotor_name, evotor_address)
       VALUES(?,?,?,?,?)`)
     .run(row.name || `Точка ${uuid.slice(0, 6)}`, row.address || '', org, row.name ?? null, row.address ?? null)

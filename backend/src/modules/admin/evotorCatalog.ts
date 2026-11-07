@@ -172,7 +172,7 @@ export const adminEvotorCatalog = new Hono()
     const row = db.prepare('SELECT store_uuid FROM evotor_stores WHERE store_uuid=?').get(storeUuid)
     if (!row) throw bad('Store not found — сначала обновите список точек', 404)
     const made = ensureShowcaseForEvotorStore(db as never, storeUuid, null)
-    if (!made) throw bad('Сначала создайте организацию в разделе «Система»', 409)
+    if (!made) throw bad('Не удалось создать витрину: точка не найдена', 409)
     return c.json({ ok: true, storeId: made.storeId, created: made.created })
   })
 

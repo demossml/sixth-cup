@@ -283,6 +283,9 @@ export class PollService {
       .prepare(`SELECT status, raw_json AS raw FROM evotor_docs WHERE store_uuid=? AND doc_id=?`)
       .get(storeUuid, docId) as { status: string; raw: string | null } | undefined
     if (!row) return { ok: false, status: 'MISSING', reason: 'document not found' }
+    // Повторять нечего: документ уже обработан (raw стёрт после успеха).
+    // Без этой ветки ручка шла бы в Cloud за телом и висела на таймауте сети.
+    if (row.status === 'PROCESSED') return { ok: true, status: 'PROCESSED', reason: 'already processed' }
 
     let doc: Record<string, unknown> | null = null
     if (row.raw) {

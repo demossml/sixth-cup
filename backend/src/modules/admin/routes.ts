@@ -378,7 +378,8 @@ export const adminRoutes = new Hono()
   .post('/stores', zValidator('json', z.object({
     name: z.string().min(1).max(80),
     address: z.string().min(1).max(200),
-    organizationId: z.number().int().positive(),
+    /** Необязательно: юрлица приходят из Эвотора, витрине хватает названия и адреса. */
+    organizationId: z.number().int().positive().optional().nullable(),
     /** Часы работы для витрины: «08:00» … «21:00». */
     openTime: storeTimeSchema.optional().nullable(),
     closeTime: storeTimeSchema.optional().nullable(),
@@ -391,11 +392,13 @@ export const adminRoutes = new Hono()
     phone: z.string().max(32).optional().nullable(),
   })), (c) => {
     const p = c.req.valid('json')
-    const org = db.prepare('SELECT id FROM organizations WHERE id=?').get(p.organizationId)
-    if (!org) throw bad('Organization not found', 404)
+    if (p.organizationId != null) {
+      const org = db.prepare('SELECT id FROM organizations WHERE id=?').get(p.organizationId)
+      if (!org) throw bad('Organization not found', 404)
+    }
     const r = db.prepare(`INSERT INTO stores(name, address, organization_id, open_time, close_time, lat, lng, hours_json,
         photo_url, photo_full_url, entrance_hint, phone) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(p.name, p.address, p.organizationId, p.openTime ?? null, p.closeTime ?? null, p.lat ?? null, p.lng ?? null,
+      .run(p.name, p.address, p.organizationId ?? null, p.openTime ?? null, p.closeTime ?? null, p.lat ?? null, p.lng ?? null,
         p.hoursJson ? JSON.stringify(p.hoursJson) : null,
         p.photoUrl ?? null, p.photoFullUrl ?? null, p.entranceHint ?? null, p.phone ?? null)
     return c.json({ id: Number(r.lastInsertRowid) })

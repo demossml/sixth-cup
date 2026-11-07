@@ -3,7 +3,7 @@ import { api } from '../api/client'
 import { useApi } from '../api/useApi'
 import type { EvotorStore, Health } from '../api/types'
 import { ago, fmtDateTime } from '../lib/format'
-import { Badge, Banner, Button, Card, ConfirmDialog, EmptyState, ErrorBox, Field, Input, PageHeader, Select, Spinner, StatusDot, Toggle, useToast } from '../ui/kit'
+import { Badge, Banner, Button, Card, ConfirmDialog, EmptyState, ErrorBox, Field, Input, PageHeader, Spinner, StatusDot, Toggle, useToast } from '../ui/kit'
 import { HelpLink } from '../components/HelpLink'
 import CashierMenuPanel from './cash/CashierMenuPanel'
 import StoreProfile, { type LocalStore } from '../components/StoreProfile'
@@ -59,7 +59,7 @@ function StoreCard({ s, health, now, local, linkOptions, onChanged }: {
           ) : null}
         </div>
         {local ? (
-          <StoreProfile store={local} showLink linkOptions={linkOptions} onSaved={onChanged} />
+          <StoreProfile store={local} linkOptions={linkOptions} onSaved={onChanged} />
         ) : (
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -254,91 +254,6 @@ type DeviceRow = {
   id: number; name: string; storeId: number; storeName: string
   revoked: number; enrollCode: string | null; enrolled: number; createdAt: number
 }
-/**
- * Точки без кассы Эвотор: редкий случай (островок, точка без терминала).
- * Основное редактирование витрины живёт в карточке точки с токеном — там же, где uuid и синхронизация.
- */
-function StoresPanel() {
-  const toast = useToast()
-  const stores = useApi<{ stores: LocalStore[] }>('/stores')
-  const [busy, setBusy] = useState('')
-  const orgs = useApi<{ organizations: { id: number; name: string }[] }>('/organizations')
-  const [draft, setDraft] = useState<{ name: string; address: string; organizationId: string }>({
-    name: '',
-    address: '',
-    organizationId: '',
-  })
-  const list = (stores.data?.stores ?? []).filter((s) => !s.evotorUuid)
-
-  const createStore = async () => {
-    if (!draft.name.trim() || !draft.address.trim() || !draft.organizationId) {
-      toast.push('Нужны название, адрес и организация', 'bad')
-      return
-    }
-    setBusy('create')
-    try {
-      await api('/stores', {
-        method: 'POST',
-        body: {
-          name: draft.name.trim(),
-          address: draft.address.trim(),
-          organizationId: Number(draft.organizationId),
-        },
-      })
-      setDraft({ name: '', address: '', organizationId: '' })
-      stores.reload()
-      toast.push('Кофейня добавлена')
-    } catch (e) {
-      toast.push(e instanceof Error ? e.message : 'Не удалось добавить кофейню', 'bad')
-    } finally {
-      setBusy('')
-    }
-  }
-
-  if (stores.loading && !stores.data) return <Spinner />
-  return (
-    <>
-      <h2 className="mb-2 mt-6 text-base font-bold">Точки без кассы</h2>
-      <p className="mb-3 text-[13px] text-ink-secondary">
-        Точки, у которых нет пары в Эвоторе. Обычно витрину создают из карточки точки с токеном —
-        здесь только для исключений.
-      </p>
-      {stores.error && <ErrorBox message={stores.error} onRetry={stores.reload} />}
-      <Card className="mb-3">
-        <div className="grid gap-3 sm:grid-cols-3">
-          <Field label="Новая точка" hint="Название видит гость">
-            <Input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} maxLength={80} placeholder="6.7 Coffee на Багратиона" />
-          </Field>
-          <Field label="Адрес">
-            <Input value={draft.address} onChange={(e) => setDraft({ ...draft, address: e.target.value })} maxLength={200} placeholder="ул. Багратиона, 7" />
-          </Field>
-          <Field label="Организация" hint="Из раздела «Система»">
-            <Select value={draft.organizationId} onChange={(e) => setDraft({ ...draft, organizationId: e.target.value })}>
-              <option value="">— выберите —</option>
-              {(orgs.data?.organizations ?? []).map((o) => (
-                <option key={o.id} value={o.id}>{o.name}</option>
-              ))}
-            </Select>
-          </Field>
-        </div>
-        <div className="mt-3 flex items-center gap-2">
-          <Button size="sm" loading={busy === 'create'} onClick={() => void createStore()}>Добавить точку</Button>
-          {!(orgs.data?.organizations ?? []).length ? (
-            <span className="text-[12px] text-ink-secondary">Сначала создайте организацию в разделе «Система»</span>
-          ) : null}
-        </div>
-      </Card>
-      {!list.length && <Card><EmptyState title="Таких точек нет" text="Все точки привязаны к кассе — витрины редактируются в карточках выше." /></Card>}
-      {list.map((s) => (
-        <Card key={s.id} className="mb-3">
-          <div className="mb-2 text-base font-bold">{s.name}</div>
-          <StoreProfile store={s} showLink onSaved={stores.reload} />
-        </Card>
-      ))}
-    </>
-  )
-}
-
 /** Кассовые устройства: код регистрации для терминала, отзыв и удаление (R-05). */
 function DevicesPanel() {
   const toast = useToast()
@@ -555,7 +470,6 @@ export default function Cash() {
         ))}
       </div>
       <TokensPanel allStoreUuids={list.map((s) => s.uuid)} />
-      <StoresPanel />
       <DevicesPanel />
       <h2 className="mb-2 mt-6 text-base font-bold">Сотрудники</h2>
       {emp.loading && !emp.data && <Spinner />}
