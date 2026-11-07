@@ -1,0 +1,23 @@
+{
+  "ok": true,
+  "schemaVersion": 1,
+  "storeUuid": "store-config-fixture",
+  "productId": 1,
+  "generatedAt": 0,
+  "volumes": [
+    {
+      "productId": 7,
+      "evotorUuid": "ESPRESSO-A-UUID",
+      "name": "Эспрессо",
+      "label": null,
+      "sizeValue": null,
+      "sizeUnit": null,
+      "priceRub": 150,
+      "available": true
+    }
+  ],
+  "milk": null,
+  "choices": null,
+  "additions": null,
+  "configErrors": []
+}

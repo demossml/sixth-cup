@@ -9,6 +9,7 @@ import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import { buildCatalogToppings, effectiveSchemeId, listAddonProductIds, ensureAddonSchemeSchema, resolveAddonsCategoryIds, type CatalogTopping } from '../catalog/addonScheme'
 import { ensureMilkSchemeSchema, milkForProduct } from '../catalog/milkScheme'
+import { choiceForProduct, ensureChoiceSchemeSchema } from '../catalog/choiceScheme'
 import { PRODUCT_CONFIG_SCHEMA_VERSION, buildProductConfiguration, pickStoreUuid } from '../catalog/productConfig'
 import { ensureVolumeSchemeSchema, volumesForProduct } from '../catalog/volumeScheme'
 import { productArticleNumber } from '../catalog/productIdentity'
@@ -414,6 +415,7 @@ export const deviceRoutes = new Hono<DeviceEnv>()
                COALESCE(p.is_group, 0) AS isGroup,
                p.parent_product_id AS parentProductId,
                p.milk_scheme_id AS milkSchemeId,
+               p.choice_scheme_id AS choiceSchemeId,
                p.volume_scheme_id AS volumeSchemeId,
                p.modifier_scheme_id AS modifierSchemeId
         FROM products p
@@ -548,6 +550,8 @@ export const deviceRoutes = new Hono<DeviceEnv>()
       const effectiveCache = new Map<string, number | null>()
       // Схема молока — отдельная сущность: свой набор вариантов, свой резолв UUID по точке.
       ensureMilkSchemeSchema(db)
+      ensureChoiceSchemeSchema(db)
+      const choiceCache = new Map<number | null, ReturnType<typeof choiceForProduct>>()
       const milkCache = new Map<number | null, ReturnType<typeof milkForProduct>>()
       // Схема объёмов — третий независимый тип конфигурации: шаблон объёмов, цены — на товаре.
       ensureVolumeSchemeSchema(db)
@@ -568,6 +572,13 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         if (milk === undefined) {
           milk = milkForProduct(db, milkSchemeId, uuidByProduct)
           milkCache.set(milkSchemeId, milk)
+        }
+        // Обязательный выбор без цены (корица): не товар Эвотор, без uuid/цены; null — блока нет.
+        const choiceSchemeId = p.choiceSchemeId != null ? Number(p.choiceSchemeId) : null
+        let choice = choiceCache.get(choiceSchemeId)
+        if (choice === undefined) {
+          choice = choiceForProduct(db, choiceSchemeId)
+          choiceCache.set(choiceSchemeId, choice)
         }
         const evotorUuid = uuidByProduct.get(id) || null
         const volumeSchemeId = p.volumeSchemeId != null ? Number(p.volumeSchemeId) : null
@@ -630,6 +641,8 @@ export const deviceRoutes = new Hono<DeviceEnv>()
           sellable,
           notReadyReason,
           milkSchemeId,
+          /** Назначенная схема выбора без цены (null — нет): касса не добавляет такой напиток без окна выбора. */
+          choiceSchemeId: choice ? choiceSchemeId : null,
           /** Варианты молока для кассы; пустой массив — схемы нет (это норма). */
           milk,
           volumeSchemeId,

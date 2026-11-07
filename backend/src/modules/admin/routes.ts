@@ -12,6 +12,13 @@ import {
   saveMilkScheme,
   milkLabelWarnings,
 } from '../catalog/milkScheme'
+import {
+  ChoiceSchemeError,
+  applyChoiceScheme,
+  deleteChoiceScheme,
+  listChoiceSchemes,
+  saveChoiceScheme,
+} from '../catalog/choiceScheme'
 import { catalogReadiness, cardReadiness } from '../catalog/readiness'
 import {
   VolumeSchemeError,
@@ -132,7 +139,7 @@ const mediaUrl = z
 
 export const MANAGER_BLOCKED =
   // Full path (/api/admin/...) and Hono-stripped path (/stores, /devices/...) both blocked.
-  /\/(reset|wipe)(\/|$)|\/organizations(\/|$)|(?:^|\/)api\/admin\/(stores|devices)(\/|$)|^\/(stores|devices)(\/|$)|\/ai\/settings(\/|$)|\/vouchers\/grant-all(\/|$)|\/voucher-templates(\/|$)|\/milk-schemes(\/|$)|\/volume-schemes(\/|$)/
+  /\/(reset|wipe)(\/|$)|\/organizations(\/|$)|(?:^|\/)api\/admin\/(stores|devices)(\/|$)|^\/(stores|devices)(\/|$)|\/ai\/settings(\/|$)|\/vouchers\/grant-all(\/|$)|\/voucher-templates(\/|$)|\/milk-schemes(\/|$)|\/choice-schemes(\/|$)|\/volume-schemes(\/|$)/
 
 const adminAuth = createMiddleware(async (c, next) => {
   const role = resolveAdminRole(c.req.header('X-Admin-Token'))
@@ -595,6 +602,96 @@ export const adminRoutes = new Hono()
     }
   })
 
+  // —— Схемы выбора без цены («с корицей» / «без корицы»): отдельная сущность ——
+  .get('/choice-schemes', (c) => c.json({ schemes: listChoiceSchemes(db, { includeInactive: true }) }))
+
+  .post(
+    '/choice-schemes',
+    zValidator(
+      'json',
+      z.object({
+        id: z.number().int().positive().optional(),
+        name: z.string().min(1).max(80),
+        title: z.string().min(1).max(24),
+        active: z.boolean().default(true),
+        options: z
+          .array(
+            z.object({
+              id: z.number().int().positive().optional(),
+              label: z.string().min(1).max(24),
+              isDefault: z.boolean().default(false),
+              sortOrder: z.number().int().default(0),
+              active: z.boolean().default(true),
+            }),
+          )
+          .max(20),
+      }),
+    ),
+    (c) => {
+      const body = c.req.valid('json')
+      try {
+        const saved = saveChoiceScheme(body, db)
+        c.set('audit', {
+          entity: 'choice-schemes',
+          entityId: String(saved?.id ?? ''),
+          summary: `Схема выбора «${saved?.name}»: вариантов ${saved?.options.length ?? 0}`,
+          after: { name: saved?.name, title: saved?.title, active: saved?.active, options: saved?.options.length },
+        })
+        return c.json({ scheme: saved })
+      } catch (e) {
+        if (e instanceof ChoiceSchemeError) throw bad(e.message, 400)
+        throw e
+      }
+    },
+  )
+
+  .delete('/choice-schemes/:id', (c) => {
+    const id = Number(c.req.param('id'))
+    if (!Number.isInteger(id) || id <= 0) throw bad('Некорректный id схемы', 400)
+    try {
+      deleteChoiceScheme(id, db)
+      c.set('audit', { entity: 'choice-schemes', entityId: String(id), summary: `Удалена схема выбора #${id}` })
+      return c.json({ ok: true })
+    } catch (e) {
+      if (e instanceof ChoiceSchemeError) throw bad(e.message, 409)
+      throw e
+    }
+  })
+
+  // Массовое назначение (или снятие, schemeId=null) группам/товарам; dryRun — только предпросмотр.
+  .post(
+    '/choice-schemes/apply',
+    zValidator(
+      'json',
+      z.object({
+        schemeId: z.number().int().positive().nullable(),
+        groupIds: z.array(z.number().int().positive()).max(500).optional(),
+        productIds: z.array(z.number().int().positive()).max(1000).optional(),
+        dryRun: z.boolean().default(false),
+      }),
+    ),
+    (c) => {
+      const body = c.req.valid('json')
+      if (!body.groupIds?.length && !body.productIds?.length) throw bad('Выберите группы или товары', 400)
+      try {
+        const res = applyChoiceScheme(db, body.schemeId, { groupIds: body.groupIds, productIds: body.productIds }, body.dryRun)
+        if (!body.dryRun && res.changed > 0) {
+          c.set('audit', {
+            entity: 'choice-schemes',
+            entityId: String(body.schemeId ?? ''),
+            summary: body.schemeId == null
+              ? `Снято назначение схемы выбора у ${res.changed} товар(ов)`
+              : `Схема выбора #${body.schemeId} назначена ${res.changed} товар(ам)`,
+          })
+        }
+        return c.json({ ok: true, dryRun: body.dryRun, changed: res.changed, items: res.items })
+      } catch (e) {
+        if (e instanceof ChoiceSchemeError) throw bad(e.message, 400)
+        throw e
+      }
+    },
+  )
+
   // —— Схемы объёмов: отдельная сущность; цена каждого объёма — в карточке товара ——
   .get('/volume-schemes', (c) => c.json({ schemes: listVolumeSchemes(db, { includeInactive: true }) }))
 
@@ -676,6 +773,7 @@ export const adminRoutes = new Hono()
              p.catalog_source AS catalogSource, p.evotor_uuid AS evotorUuid,
              p.group_id AS groupId, p.variant_label AS variantLabel, p.variant_sort AS variantSort,
              p.milk_scheme_id AS milkSchemeId,
+             p.choice_scheme_id AS choiceSchemeId,
              p.volume_scheme_id AS volumeSchemeId
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
@@ -731,6 +829,8 @@ export const adminRoutes = new Hono()
     freeEligible: z.boolean().optional(),
     /** Схема молока — отдельное назначение, не связанное со схемой добавок. */
     milkSchemeId: z.number().int().positive().nullable().optional(),
+    /** Обязательный выбор без цены (корица): undefined = не трогать, null = снять. */
+    choiceSchemeId: z.number().int().positive().nullable().optional(),
     /** Схема объёмов — третье независимое назначение (шаблон объёмов). */
     volumeSchemeId: z.number().int().positive().nullable().optional(),
     /** Цены объёмов для этого товара: itemId — объём из назначенной схемы. */
@@ -774,6 +874,8 @@ export const adminRoutes = new Hono()
           size_value=?, size_unit=?, calories=?,
           -- undefined = «не трогать», null = «снять назначение схемы молока»
           milk_scheme_id=CASE WHEN ?=1 THEN ? ELSE milk_scheme_id END,
+          -- и для схемы выбора без цены
+          choice_scheme_id=CASE WHEN ?=1 THEN ? ELSE choice_scheme_id END,
           -- то же правило для схемы объёмов
           volume_scheme_id=CASE WHEN ?=1 THEN ? ELSE volume_scheme_id END
         WHERE id=?
@@ -791,6 +893,8 @@ export const adminRoutes = new Hono()
         p.sizeValue ?? null, p.sizeUnit ?? null, p.calories ?? null,
         p.milkSchemeId === undefined ? 0 : 1,
         p.milkSchemeId ?? null,
+        p.choiceSchemeId === undefined ? 0 : 1,
+        p.choiceSchemeId ?? null,
         p.volumeSchemeId === undefined ? 0 : 1,
         p.volumeSchemeId ?? null,
         p.id
@@ -801,8 +905,8 @@ export const adminRoutes = new Hono()
       const freeFlag = p.freeEligible === undefined ? cupFlag : (p.freeEligible ? 1 : 0)
       db.prepare(`
         INSERT INTO products(name,price,icon,available,description,category_id,image_url,sort_order,created_at,updated_at,
-          modifier_scheme_id,recipe_text,recipe_cost_rub,recipe_seconds,counts_as_cup,free_eligible,tax,measure,cost_price_kopecks,season_start_at,season_end_at,evotor_extra_json,catalog_source,size_value,size_unit,calories,milk_scheme_id,volume_scheme_id)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'SIXTH_CUP',?,?,?,?,?)
+          modifier_scheme_id,recipe_text,recipe_cost_rub,recipe_seconds,counts_as_cup,free_eligible,tax,measure,cost_price_kopecks,season_start_at,season_end_at,evotor_extra_json,catalog_source,size_value,size_unit,calories,milk_scheme_id,volume_scheme_id,choice_scheme_id)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'SIXTH_CUP',?,?,?,?,?,?)
       `).run(
         p.name, p.price, p.icon, p.available ? 1 : 0,
         p.description ?? null, p.categoryId ?? null, p.imageUrl ?? null,
@@ -812,7 +916,8 @@ export const adminRoutes = new Hono()
         p.costPriceKopecks ?? 0, p.seasonStartAt ?? null, p.seasonEndAt ?? null, p.evotorExtraJson ?? null,
         p.sizeValue ?? null, p.sizeUnit ?? null, p.calories ?? null,
         p.milkSchemeId ?? null,
-        p.volumeSchemeId ?? null
+        p.volumeSchemeId ?? null,
+        p.choiceSchemeId ?? null
       )
     }
     const productId = p.id ?? (db.prepare('SELECT last_insert_rowid() AS id').get() as { id: number }).id
@@ -893,6 +998,8 @@ export const adminRoutes = new Hono()
     modifierSchemeId: z.number().int().positive().nullable().optional(),
     /** Схема молока — у каждого размера своё назначение (undefined = не трогать, null = снять). */
     milkSchemeId: z.number().int().positive().nullable().optional(),
+    /** Обязательный выбор без цены: как у молока — недостающее поле = не трогать. */
+    choiceSchemeId: z.number().int().positive().nullable().optional(),
     /** Схема объёмов — шаблон, общий для карточки. */
     volumeSchemeId: z.number().int().positive().nullable().optional(),
     volumePrices: z.array(z.object({ itemId: z.number().int().positive(), price: z.number().int().min(0) })).max(20).optional(),
@@ -972,6 +1079,7 @@ export const adminRoutes = new Hono()
             size_value=?, size_unit=?, calories=?, group_id=?, variant_label=?, variant_sort=?,
             -- undefined = «не трогать», null = «снять»: как в POST /products
             milk_scheme_id=CASE WHEN ?=1 THEN ? ELSE milk_scheme_id END,
+            choice_scheme_id=CASE WHEN ?=1 THEN ? ELSE choice_scheme_id END,
             volume_scheme_id=CASE WHEN ?=1 THEN ? ELSE volume_scheme_id END,
             catalog_source='SIXTH_CUP'
           WHERE id=?
@@ -981,6 +1089,7 @@ export const adminRoutes = new Hono()
           cup, free, p.tax ?? null, p.measure ?? null,
           sizeValue, sizeUnit, calories, groupId, label, i,
           p.milkSchemeId === undefined ? 0 : 1, p.milkSchemeId ?? null,
+          p.choiceSchemeId === undefined ? 0 : 1, p.choiceSchemeId ?? null,
           p.volumeSchemeId === undefined ? 0 : 1, p.volumeSchemeId ?? null,
           v.id,
         )
@@ -991,14 +1100,14 @@ export const adminRoutes = new Hono()
           INSERT INTO products(name,price,icon,available,description,category_id,image_url,sort_order,
             created_at,updated_at,modifier_scheme_id,counts_as_cup,free_eligible,tax,measure,
             size_value,size_unit,calories,group_id,variant_label,variant_sort,catalog_source,
-            milk_scheme_id,volume_scheme_id)
-          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'SIXTH_CUP',?,?)
+            milk_scheme_id,volume_scheme_id,choice_scheme_id)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'SIXTH_CUP',?,?,?)
         `).run(
           name, v.price, p.icon, available, p.description ?? null, p.categoryId ?? null,
           p.imageUrl ?? null, p.sortOrder, t, t, p.modifierSchemeId ?? null,
           cup ?? (looksLikeDrink(name, p.icon) ? 1 : 0), free ?? 0, p.tax ?? 'NO_VAT', p.measure ?? 'шт',
           sizeValue, sizeUnit, calories, groupId, label, i,
-          p.milkSchemeId ?? null, p.volumeSchemeId ?? null,
+          p.milkSchemeId ?? null, p.volumeSchemeId ?? null, p.choiceSchemeId ?? null,
         )
         const newId = (db.prepare('SELECT last_insert_rowid() AS id').get() as { id: number }).id
         saveProductVolumePrices(db, Number(newId), p.volumeSchemeId ?? null, p.volumePrices)

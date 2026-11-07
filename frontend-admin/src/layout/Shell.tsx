@@ -5,6 +5,7 @@ import {
   Activity, BarChart3, Bot, Box, LineChart, CalendarClock, Coffee, Gift, HelpCircle, 
   LayoutDashboard, LogOut, ClipboardList, Package, Search, Settings, Menu,
   Share2, Store, Users, X, MoreHorizontal, Milk, Ruler, Layers,
+  ListChecks,
 } from 'lucide-react'
 import { useApi } from '../api/useApi'
 import type { Health } from '../api/types'
@@ -23,6 +24,7 @@ const SHIFT: NavItem[] = [
 const CONFIG: NavItem[] = [
   { to: '/volume-schemes', label: 'Схемы объёмов', icon: <Ruler size={17} /> },
   { to: '/milk-schemes', label: 'Схемы молока', icon: <Milk size={17} /> },
+  { to: '/choice-schemes', label: 'Обязательный выбор', icon: <ListChecks size={17} /> },
   { to: '/addon-schemes', label: 'Схемы добавок', icon: <Layers size={17} /> },
 ]
 
@@ -75,6 +77,7 @@ const TITLES: Record<string, string> = {
   '/menu': 'Меню',
   '/volume-schemes': 'Схемы объёмов',
   '/milk-schemes': 'Схемы молока',
+  '/choice-schemes': 'Обязательный выбор',
   '/addon-schemes': 'Схемы добавок',
   '/cash': 'Касса',
   '/stock': 'Склад',

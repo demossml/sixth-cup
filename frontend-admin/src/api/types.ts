@@ -93,6 +93,8 @@ export type Product = {
   modifierSchemeId: number | null
   /** Схема молока — отдельное назначение (null = без схемы). */
   milkSchemeId?: number | null
+  /** Схема обязательного выбора без цены (например, корица) — отдельное назначение. */
+  choiceSchemeId?: number | null
   /** Схема объёмов — отдельное назначение (null = без схемы). */
   volumeSchemeId?: number | null
   /** Цены объёмов этой карточки: itemId → цена в рублях. */
@@ -219,6 +221,23 @@ export type VolumeScheme = {
   name: string
   active: boolean
   items: VolumeItem[]
+  usedByProducts: number
+  createdAt: number
+  updatedAt: number
+}
+export type ChoiceOption = {
+  id?: number
+  label: string
+  isDefault: boolean
+  sortOrder: number
+  active: boolean
+}
+export type ChoiceScheme = {
+  id: number
+  name: string
+  title: string
+  active: boolean
+  options: ChoiceOption[]
   usedByProducts: number
   createdAt: number
   updatedAt: number

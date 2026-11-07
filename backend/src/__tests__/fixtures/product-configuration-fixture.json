@@ -164,6 +164,59 @@
       }
     }
   },
+  "choices": {
+    "required": true,
+    "byProductId": {
+      "4": {
+        "schemeId": 1,
+        "title": "Корица",
+        "options": [
+          {
+            "id": 1,
+            "label": "С корицей",
+            "isDefault": false
+          },
+          {
+            "id": 2,
+            "label": "Без корицы",
+            "isDefault": false
+          }
+        ]
+      },
+      "5": {
+        "schemeId": 1,
+        "title": "Корица",
+        "options": [
+          {
+            "id": 1,
+            "label": "С корицей",
+            "isDefault": false
+          },
+          {
+            "id": 2,
+            "label": "Без корицы",
+            "isDefault": false
+          }
+        ]
+      },
+      "6": {
+        "schemeId": 1,
+        "title": "Корица",
+        "options": [
+          {
+            "id": 1,
+            "label": "С корицей",
+            "isDefault": false
+          },
+          {
+            "id": 2,
+            "label": "Без корицы",
+            "isDefault": false
+          }
+        ]
+      }
+    }
+  },
   "additions": {
     "required": false,
     "byProductId": {

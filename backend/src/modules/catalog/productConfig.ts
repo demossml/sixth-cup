@@ -1,5 +1,5 @@
 /**
- * Конфигурация одной карточки для кассы: объёмы + молоко + добавки.
+ * Конфигурация одной карточки для кассы: объёмы + молоко + выбор без цены + добавки.
  *
  * Единственный источник правды для нового проксированного маршрута
  * `GET /api/devices/products/:productId/configuration`.
@@ -8,12 +8,15 @@
  * Правила:
  *  • объёмы — реальные SKU группы (`product_groups`) с UUID своей точки;
  *  • молоко — только из `milk_schemes` (`products.milk_scheme_id`);
+ *  • выбор без цены (корица) — только из `choice_schemes` (`products.choice_scheme_id`); не товар Эвотор:
+ *    ни uuid, ни цены, в чек фискальной позицией не идёт (касса печатает служебную строку);
  *  • добавки — только из `modifier_schemes`, никогда не обязательны;
  *  • UUID берутся исключительно из `product_store_links` запрошенной точки.
  */
 import type Database from 'better-sqlite3'
 import { buildCatalogToppings, effectiveSchemeId, ensureAddonSchemeSchema } from './addonScheme'
 import { ensureMilkSchemeSchema, milkForProduct } from './milkScheme'
+import { choiceForProduct, ensureChoiceSchemeSchema } from './choiceScheme'
 
 export const PRODUCT_CONFIG_SCHEMA_VERSION = 1
 
@@ -49,6 +52,23 @@ export type ConfigMilkBlock = {
   error?: 'empty_scheme'
 }
 
+export type ConfigChoiceOption = {
+  /** `choice_scheme_options.id` — своё пространство id (пересекается с молоком и добавками). */
+  id: number
+  label: string
+  isDefault: boolean
+}
+
+export type ConfigChoiceBlock = {
+  /** null — схема объёму не назначена (`options: []`, блок не рисуется). */
+  schemeId: number | null
+  /** Заголовок блока на кассе («Корица»). */
+  title: string
+  options: ConfigChoiceOption[]
+  /** Схема активна, но вариантов меньше двух — касса не должна обходить обязательный выбор. */
+  error?: 'invalid_scheme'
+}
+
 export type ConfigAddonOption = {
   id: number
   productId: number | null
@@ -71,7 +91,7 @@ export type ConfigAddonsBlock = {
 }
 
 /** Коды `configErrors`; см. `docs/DEVICES-PRODUCT-CONFIGURATION.md`. */
-export type ProductConfigErrorCode = 'links' | 'milk_scheme_empty'
+export type ProductConfigErrorCode = 'links' | 'milk_scheme_empty' | 'choice_scheme_invalid'
 
 export type ProductConfiguration = {
   ok: true
@@ -81,11 +101,14 @@ export type ProductConfiguration = {
   generatedAt: number
   volumes: ConfigVolume[]
   milk: { required: boolean; byProductId: Record<string, ConfigMilkBlock | null> } | null
+  /** Обязательный выбор без цены; `null` — ни у одного объёма схема не назначена. Ключ добавлен аддитивно. */
+  choices: { required: true; byProductId: Record<string, ConfigChoiceBlock> } | null
   additions: { required: false; byProductId: Record<string, ConfigAddonsBlock | null> } | null
   /**
    * Коды проблем контракта — массив строк, как парсит APK 151 (`List<String>`):
    *  • `links` — есть объём или платная опция без `product_store_links.evotor_uuid` на этой точке;
-   *  • `milk_scheme_empty` — схема молока назначена и активна, но вариантов для выбора нет.
+   *  • `milk_scheme_empty` — схема молока назначена и активна, но вариантов для выбора нет;
+   *  • `choice_scheme_invalid` — схема выбора активна, но активных вариантов меньше двух.
    * Пустой массив — конфигурация полная.
    */
   configErrors: ProductConfigErrorCode[]
@@ -103,13 +126,15 @@ type SkuRow = {
   sizeUnit: string | null
   modifierSchemeId: number | null
   milkSchemeId: number | null
+  choiceSchemeId: number | null
 }
 
 const SKU_COLUMNS = `
   p.id, p.name, p.price, p.available, p.group_id AS groupId,
   p.variant_label AS variantLabel, p.variant_sort AS variantSort,
   p.size_value AS sizeValue, p.size_unit AS sizeUnit,
-  p.modifier_scheme_id AS modifierSchemeId, p.milk_scheme_id AS milkSchemeId
+  p.modifier_scheme_id AS modifierSchemeId, p.milk_scheme_id AS milkSchemeId,
+  p.choice_scheme_id AS choiceSchemeId
 `
 
 /** UUID только этой точки, только включённые связи. */
@@ -187,6 +212,7 @@ export function buildProductConfiguration(
   now = Date.now(),
 ): ProductConfiguration | null {
   ensureMilkSchemeSchema(db)
+  ensureChoiceSchemeSchema(db)
   ensureAddonSchemeSchema(db)
 
   const product = db.prepare(`SELECT ${SKU_COLUMNS} FROM products p WHERE p.id=?`).get(productId) as SkuRow | undefined
@@ -212,6 +238,8 @@ export function buildProductConfiguration(
   const errorCodes = new Set<ProductConfigErrorCode>()
   const milkBySku: Record<string, ConfigMilkBlock | null> = {}
   const addonsBySku: Record<string, ConfigAddonsBlock | null> = {}
+  const choicesBySku: Record<string, ConfigChoiceBlock> = {}
+  let hasChoices = false
   let milkRequired = false
   let hasAddons = false
 
@@ -243,6 +271,24 @@ export function buildProductConfiguration(
             available: o.available,
             notReadyReason: o.notReadyReason,
           })),
+        }
+      }
+    }
+
+    // Выбор без цены: только собственное назначение SKU (как у молока), без uuid и цен.
+    const choice = choiceForProduct(db, sku.choiceSchemeId != null ? Number(sku.choiceSchemeId) : null)
+    if (!choice) {
+      choicesBySku[String(sku.id)] = { schemeId: null, title: '', options: [] }
+    } else {
+      hasChoices = true
+      if (choice.options.length < 2) {
+        choicesBySku[String(sku.id)] = { schemeId: choice.schemeId, title: choice.title, options: [], error: 'invalid_scheme' }
+        errorCodes.add('choice_scheme_invalid')
+      } else {
+        choicesBySku[String(sku.id)] = {
+          schemeId: choice.schemeId,
+          title: choice.title,
+          options: choice.options.map((o) => ({ id: o.id, label: o.label, isDefault: o.isDefault })),
         }
       }
     }
@@ -302,6 +348,7 @@ export function buildProductConfiguration(
       }
     }),
     milk: milkRequired ? { required: true, byProductId: milkBySku } : null,
+    choices: hasChoices ? { required: true, byProductId: choicesBySku } : null,
     additions: hasAddons ? { required: false, byProductId: addonsBySku } : null,
     configErrors: [...errorCodes],
   }

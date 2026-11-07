@@ -8,17 +8,19 @@
  *  • `no_store_link` — у SKU нет строки в `product_store_links` для этой точки;
  *  • `no_evotor_uuid` — связь есть, но `evotor_uuid` пустой (нужна выгрузка);
  *  • `milk_scheme_empty` — схема молока назначена и активна, но выбрать нечего;
+ *  • `choice_scheme_empty` — схема выбора (корица) назначена и активна, но активных вариантов меньше двух;
  *  • `unavailable` — позиция выключена.
  */
 import type Database from 'better-sqlite3'
 import { buildCatalogToppings, effectiveSchemeId, ensureAddonSchemeSchema, listAddonProductIds } from './addonScheme'
 import { ensureMilkSchemeSchema } from './milkScheme'
+import { choiceForProduct, ensureChoiceSchemeSchema } from './choiceScheme'
 import { ensureVolumeSchemeSchema } from './volumeScheme'
 
-export type ReadinessReason = 'no_store_link' | 'no_evotor_uuid' | 'milk_scheme_empty' | 'unavailable'
+export type ReadinessReason = 'no_store_link' | 'no_evotor_uuid' | 'milk_scheme_empty' | 'choice_scheme_empty' | 'unavailable'
 
 export type NotReadyEntry = {
-  kind: 'product' | 'volume' | 'milk' | 'addon' | 'volume_scheme'
+  kind: 'product' | 'volume' | 'milk' | 'choice' | 'addon' | 'volume_scheme'
   productId: number | null
   name: string
   reason: ReadinessReason
@@ -44,6 +46,7 @@ type SkuRow = {
   sizeUnit: string | null
   modifierSchemeId: number | null
   milkSchemeId: number | null
+  choiceSchemeId: number | null
   volumeSchemeId: number | null
   groupSchemeId: number | null
   seasonStartAt: number | null
@@ -54,7 +57,7 @@ const SKU_SQL = `
   SELECT p.id, p.name, p.price, p.available, p.group_id AS groupId, COALESCE(p.is_group,0) AS isGroup,
          p.variant_label AS variantLabel, p.variant_sort AS variantSort,
          p.size_value AS sizeValue, p.size_unit AS sizeUnit,
-         p.modifier_scheme_id AS modifierSchemeId, p.milk_scheme_id AS milkSchemeId,
+         p.modifier_scheme_id AS modifierSchemeId, p.milk_scheme_id AS milkSchemeId, p.choice_scheme_id AS choiceSchemeId,
          p.volume_scheme_id AS volumeSchemeId,
          g.modifier_scheme_id AS groupSchemeId,
          p.season_start_at AS seasonStartAt, p.season_end_at AS seasonEndAt
@@ -142,6 +145,7 @@ export function cardReadiness(
 ): CardReadiness | null {
   ensureAddonSchemeSchema(db)
   ensureMilkSchemeSchema(db)
+  ensureChoiceSchemeSchema(db)
   ensureVolumeSchemeSchema(db)
 
   const main = db.prepare(`${SKU_SQL} WHERE p.id=?`).get(productId) as SkuRow | undefined
@@ -213,6 +217,15 @@ export function cardReadiness(
         milkSeen.add(key)
         milkOptions.push({ name: r.label, isFree: r.is_free === 1, evotorUuid: uuid, ready, reason: ready ? null : uuid ? null : 'no_evotor_uuid' })
       }
+    }
+  }
+
+  // Выбор без цены (корица): у каждого объёма своё назначение; ошибка настройки — не продаётся без выбора.
+  for (const s of skus) {
+    if (s.choiceSchemeId == null) continue
+    const choice = choiceForProduct(db, Number(s.choiceSchemeId))
+    if (choice && choice.options.length < 2) {
+      add({ kind: 'choice', productId: s.id, name: `${main.name}: ${choice.title}`, reason: 'choice_scheme_empty' })
     }
   }
 

@@ -3,7 +3,7 @@ import { READINESS_KIND_LABEL, READINESS_REASON_LABEL, reasonLabel } from './rea
 
 describe('подписи готовности кассы', () => {
   it('каждая причина имеет человеческий текст', () => {
-    for (const code of ['no_store_link', 'no_evotor_uuid', 'milk_scheme_empty', 'unavailable']) {
+    for (const code of ['no_store_link', 'no_evotor_uuid', 'milk_scheme_empty', 'choice_scheme_empty', 'unavailable']) {
       expect(typeof READINESS_REASON_LABEL[code]).toBe('string')
       expect(READINESS_REASON_LABEL[code].length).toBeGreaterThan(5)
     }

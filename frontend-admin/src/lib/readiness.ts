@@ -6,6 +6,7 @@ export const READINESS_REASON_LABEL: Record<string, string> = {
   no_store_link: 'не выгружено на эту точку (нет связи с Эвотором)',
   no_evotor_uuid: 'связь есть, но UUID Эвотора пустой — выгрузите заново',
   milk_scheme_empty: 'молоко обязательно, но выбранных вариантов нет',
+  choice_scheme_empty: 'обязательный выбор настроен, но активных вариантов меньше двух',
   unavailable: 'выключено',
 }
 
@@ -13,6 +14,7 @@ export const READINESS_KIND_LABEL: Record<string, string> = {
   product: 'Напиток',
   volume: 'Объём',
   milk: 'Молоко',
+  choice: 'Обязательный выбор',
   addon: 'Добавка',
   volume_scheme: 'Схемы объёмов',
 }

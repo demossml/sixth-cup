@@ -24,6 +24,7 @@ const { config } = await import('../config')
 const { db } = await import('../db')
 
 const FIXTURE = join(import.meta.dirname, 'fixtures', 'product-configuration-fixture.json')
+const FIXTURE_ESPRESSO = join(import.meta.dirname, 'fixtures', 'product-configuration-espresso-fixture.json')
 const H = { 'X-Admin-Token': config.adminToken, 'content-type': 'application/json' }
 const adm = async (m: string, p: string, b?: unknown) => {
   const r = await app.request('/api/admin' + p, { method: m, headers: H, body: b ? JSON.stringify(b) : undefined })
@@ -70,6 +71,21 @@ describe('фикстура контракта конфигурации', () => {
       ).j.id,
     )
 
+    // Обязательный выбор без цены: корица (не товар Эвотор — без uuid и цен).
+    const cinnamon = Number(
+      (
+        await adm('POST', '/choice-schemes', {
+          name: 'Корица фикстуры',
+          title: 'Корица',
+          active: true,
+          options: [
+            { label: 'С корицей', isDefault: false, sortOrder: 0, active: true },
+            { label: 'Без корицы', isDefault: false, sortOrder: 1, active: true },
+          ],
+        })
+      ).j.scheme.id,
+    )
+
     for (const [store, tag] of [[STORE, 'A'], [STORE_B, 'B']] as const) {
       link(oat, store, `OAT-${tag}-UUID`)
       link(coconut, store, `COCONUT-${tag}-UUID`)
@@ -86,7 +102,7 @@ describe('фикстура контракта конфигурации', () => {
       for (const [store, tag] of [[STORE, 'A'], [STORE_B, 'B']] as const) link(v.id, store, `CAPP-${tag}-${v.label}`)
       await adm('POST', '/products', {
         id: v.id, name: v.name, price: v.price, icon: 'Coffee', available: true,
-        milkSchemeId: milk, modifierSchemeId: addons,
+        milkSchemeId: milk, modifierSchemeId: addons, choiceSchemeId: cinnamon,
       })
     }
 
@@ -102,5 +118,24 @@ describe('фикстура контракта конфигурации', () => {
       writeFileSync(FIXTURE, JSON.stringify(json, null, 2) + '\n')
     }
     expect(json).toEqual(JSON.parse(readFileSync(FIXTURE, 'utf8')))
+  })
+
+  it('эспрессо без схем: choices = null, фикстура для кассы', async () => {
+    db.prepare('INSERT OR IGNORE INTO evotor_stores(store_uuid,name,sync_enabled) VALUES(?,?,1)').run(STORE, 'Точка фикстуры')
+    const esp = Number((await adm('POST', '/products', { name: 'Эспрессо', price: 150, icon: 'Coffee', available: true })).j.id)
+    link(esp, STORE, 'ESPRESSO-A-UUID')
+    const res = await app.request(`/api/devices/products/${esp}/configuration?storeUuid=${STORE}`, {
+      headers: { Authorization: 'Bearer proxy-secret' },
+    })
+    const json = (await res.json()) as any
+    json.generatedAt = 0
+    json.productId = 1 // id зависит от порядка тестов — в фикстуре фиксируем
+    expect(json.choices).toBeNull()
+    expect(json.milk).toBeNull()
+    expect(json.additions).toBeNull()
+    if (process.env.WRITE_FIXTURE === '1' || !existsSync(FIXTURE_ESPRESSO)) {
+      writeFileSync(FIXTURE_ESPRESSO, JSON.stringify(json, null, 2) + '\n')
+    }
+    expect(json).toEqual(JSON.parse(readFileSync(FIXTURE_ESPRESSO, 'utf8')))
   })
 })

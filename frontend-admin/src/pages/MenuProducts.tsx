@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { Archive, Download, Plus, Pencil } from 'lucide-react'
 import { api, download, uploadFile } from '../api/client'
 import { useApi } from '../api/useApi'
-import type { BulkPlan, Category, EvotorStore, MilkScheme, Product, Scheme, VolumeScheme } from '../api/types'
+import type { BulkPlan, Category, ChoiceScheme, EvotorStore, MilkScheme, Product, Scheme, VolumeScheme } from '../api/types'
 import { useSyncStores } from '../api/useStores'
 import { FIELD_LABEL, filterProducts, showChangeValue, sortProducts, syncState, tabCounts } from '../lib/menu'
 import type { MenuTab, SortKey } from '../lib/menu'
@@ -26,9 +26,9 @@ type Draft = Partial<Product> & { name: string; price: number; storeUuids: strin
 type VariantDraft = { id?: number; label: string; price: number; sizeValue: number | null; sizeUnit: 'g' | 'ml'; available: boolean }
 
 /* ───────── single product drawer ───────── */
-function ProductDrawer({ draft, onClose, onSaved, categories, schemes, milkSchemes, volumeSchemes, stores, products }: {
+function ProductDrawer({ draft, onClose, onSaved, categories, schemes, milkSchemes, choiceSchemes, volumeSchemes, stores, products }: {
   draft: Draft | null; onClose: () => void; onSaved: () => void; categories: Category[]; schemes: Scheme[]
-  milkSchemes: MilkScheme[]; volumeSchemes: VolumeScheme[]; stores: EvotorStore[]; products: Product[]
+  milkSchemes: MilkScheme[]; choiceSchemes: ChoiceScheme[]; volumeSchemes: VolumeScheme[]; stores: EvotorStore[]; products: Product[]
 }) {
   const [d, setD] = useState<Draft | null>(draft)
   const [busy, setBusy] = useState(false)
@@ -166,6 +166,7 @@ if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} /
             modifierSchemeId: d.modifierSchemeId ?? null,
             // null = снять назначение схемы молока (независимо от схемы добавок)
             milkSchemeId: d.milkSchemeId ?? null,
+            choiceSchemeId: d.choiceSchemeId ?? null,
             volumeSchemeId: d.volumeSchemeId ?? null,
             volumePrices: volumeSchemeItems.map((it) => ({ itemId: it.id, price: volumePrices[it.id] ?? d.price })),
             countsAsCup: !!d.countsAsCup, freeEligible: !!d.freeEligible,
@@ -194,7 +195,7 @@ if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} /
         body: {
           id: d.id, expectedUpdatedAt: d.id ? (d.updatedAt ?? null) : undefined, name: d.name.trim(), price: d.price, icon: d.icon || 'Coffee', available: !!d.available,
           description: d.description || null, categoryId: d.categoryId ?? null, imageUrl: d.imageUrl ?? null,
-          sortOrder: d.sortOrder ?? 0, modifierSchemeId: d.modifierSchemeId ?? null, milkSchemeId: d.milkSchemeId ?? null,
+          sortOrder: d.sortOrder ?? 0, modifierSchemeId: d.modifierSchemeId ?? null, milkSchemeId: d.milkSchemeId ?? null, choiceSchemeId: d.choiceSchemeId ?? null,
           volumeSchemeId: d.volumeSchemeId ?? null, volumePrices: volumeSchemeItems.map((it) => ({ itemId: it.id, price: volumePrices[it.id] ?? d.price })),
           recipeText: d.recipeText ?? null, recipeCostRub: d.recipeCostRub ?? null, recipeSeconds: d.recipeSeconds ?? null,
           countsAsCup: !!d.countsAsCup, freeEligible: !!d.freeEligible,
@@ -410,6 +411,19 @@ if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} /
         <Select value={d.milkSchemeId ?? ''} onChange={(e) => set('milkSchemeId', e.target.value ? Number(e.target.value) : null)}>
           <option value="">Без схемы молока</option>
           {milkSchemes.map((s) => <option key={s.id} value={s.id}>{s.name}{s.active ? '' : ' (выключена)'}</option>)}
+        </Select>
+      </Field>
+      <Field
+        label="Обязательный выбор (без цены)"
+        hint={
+          choiceSchemes.length
+            ? 'Например, «с корицей / без корицы»: гость обязан выбрать, сумма не меняется, бариста видит выбор на чеке. Без схемы — блока на кассе нет.'
+            : 'Схем выбора ещё нет — создайте их в разделе «Обязательный выбор».'
+        }
+      >
+        <Select value={d.choiceSchemeId ?? ''} onChange={(e) => set('choiceSchemeId', e.target.value ? Number(e.target.value) : null)}>
+          <option value="">Без обязательного выбора</option>
+          {choiceSchemes.map((s) => <option key={s.id} value={s.id}>{s.name}{s.active ? '' : ' (выключена)'}</option>)}
         </Select>
       </Field>
       <Field label="Вес или объём" hint="Необязательно. Гость видит на карточке меню, например «250 мл».">
@@ -637,6 +651,7 @@ export default function MenuProducts() {
   const cats = useApi<{ categories: Category[] }>('/categories')
   const schemes = useApi<{ schemes: Scheme[] }>('/modifier-schemes')
   const milkSchemes = useApi<{ schemes: MilkScheme[] }>('/milk-schemes')
+  const choiceSchemes = useApi<{ schemes: ChoiceScheme[] }>('/choice-schemes')
   const volumeSchemes = useApi<{ schemes: VolumeScheme[] }>('/volume-schemes')
   const { stores: syncStores } = useSyncStores()
   const tab = (sp.get('tab') ?? 'all') as MenuTab
@@ -756,7 +771,7 @@ export default function MenuProducts() {
       <p className="mt-3 text-xs text-ink-secondary">Показано {fmtNum(rows.length)} из {fmtNum(all.length)}. «Убрать из продажи» скрывает товар, а не удаляет: история чеков остаётся целой.</p>
 
       <ProductDrawer draft={edit} onClose={() => setEdit(null)} onSaved={products.reload} categories={categories}
-        schemes={schemes.data?.schemes ?? []} milkSchemes={milkSchemes.data?.schemes ?? []}
+        schemes={schemes.data?.schemes ?? []} milkSchemes={milkSchemes.data?.schemes ?? []} choiceSchemes={choiceSchemes.data?.schemes ?? []}
         volumeSchemes={volumeSchemes.data?.schemes ?? []} stores={syncStores} products={all} />
       {bulk && <BulkDrawer ids={selIds} onClose={() => setBulk(false)} onDone={() => { setSel(new Set()); products.reload() }} categories={categories} stores={syncStores} />}
       <ConfirmDialog open={!!archive} title="Убрать из продажи?" confirmLabel="Убрать" danger onConfirm={doArchive} onCancel={() => setArchive(null)}>
