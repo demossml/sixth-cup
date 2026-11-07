@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildMenuItems, formatKcal, formatPrice, formatSize, modifierGroupsFor, pickHighlights, searchItems, type MenuDirectory } from './menuModel'
+import { buildMenuItems, formatKcal, formatPrice, formatSize, itemsCountLabel, pickPopular, searchItems, storeHours, type MenuDirectory } from './menuModel'
 
 const base = {
   serverPub: '', cupsForFree: 6, referralCashbackPercent: 0, currency: 'RUB', generatedAt: 1, devices: [], stores: [], promos: [],
@@ -28,9 +28,29 @@ describe('buildMenuItems', () => {
     expect(items.find((i) => i.product.id === 2)!.badge).toBe('new')
     expect(items.find((i) => i.product.id === 3)!.badge).toBe('seasonal')
   })
-  it('ряд «Стоит попробовать»: новинки раньше хитов, сезон и подарок не попадают', () => {
-    expect(pickHighlights(items).map((i) => i.product.id)).toEqual([2, 1])
-    expect(pickHighlights(buildMenuItems(dir({ products: d.products })))).toEqual([])
+  it('«Популярное»: только отмеченные в админке, максимум 4', () => {
+    const marked = buildMenuItems(dir({
+      products: [
+        { id: 1, name: 'Первый', price: 1, icon: 'Coffee', isPopular: true },
+        { id: 2, name: 'Второй', price: 1, icon: 'Coffee' },
+        { id: 3, name: 'Третий', price: 1, icon: 'Coffee', isPopular: true },
+        { id: 4, name: 'Четвёртый', price: 1, icon: 'Coffee', isPopular: true },
+        { id: 5, name: 'Пятый', price: 1, icon: 'Coffee', isPopular: true },
+        { id: 6, name: 'Шестой', price: 1, icon: 'Coffee', isPopular: true },
+      ],
+    }))
+    expect(pickPopular(marked).map((i) => i.product.id)).toEqual([1, 3, 4, 5])
+    expect(pickPopular(items)).toEqual([])
+  })
+
+  it('бейдж из админки приоритетнее CMS', () => {
+    const list = buildMenuItems(dir({
+      products: [{ id: 1, name: 'Раф', price: 1, icon: 'Coffee', badge: 'hit' }],
+      content: [{ id: 5, title: 'x', productId: 1, badge: 'new' }],
+    }))
+    expect(list[0].badge).toBe('new')
+    const onlyAdmin = buildMenuItems(dir({ products: [{ id: 1, name: 'Раф', price: 1, icon: 'Coffee', badge: 'seasonal' }] }))
+    expect(onlyAdmin[0].badge).toBe('seasonal')
   })
 })
 
@@ -49,25 +69,33 @@ describe('searchItems', () => {
   it('нет совпадений', () => expect(searchItems(items, 'пицца')).toEqual([]))
 })
 
-describe('modifierGroupsFor', () => {
-  const d = dir({
-    products: [{ id: 1, name: 'Раф', price: 1, icon: 'Coffee', modifierSchemeId: 7 }],
-    modifiers: [
-      { id: 1, name: 'Орех', price: 40, groupKey: 'syrup', sortOrder: 1 },
-      { id: 2, name: 'Овсяное', price: 60, groupKey: 'milk', sortOrder: 2 },
-      { id: 3, name: 'Корица', price: 0, groupKey: 'weird', sortOrder: 3 },
-    ],
-    modifierSchemes: [{ id: 7, name: 's', items: [
-      { modifierId: 1, required: false, maxCount: 2 }, { modifierId: 2, required: false, maxCount: 1 },
-      { modifierId: 3, required: false, maxCount: 1 }, { modifierId: 99, required: false, maxCount: 1 },
-    ] }],
+describe('storeHours', () => {
+  const at = (h: number, m = 0) => new Date(2026, 10, 7, h, m)
+
+  it('открыто и закрыто по часам точки', () => {
+    expect(storeHours({ openTime: '08:00', closeTime: '21:00' }, at(12))).toEqual({ open: true, label: 'до 21:00' })
+    expect(storeHours({ openTime: '08:00', closeTime: '21:00' }, at(22))).toEqual({ open: false, label: '08:00–21:00' })
   })
-  it('группирует и упорядочивает: молоко, сиропы, другое; неизвестные id пропускает', () => {
-    const g = modifierGroupsFor(d, d.products[0])
-    expect(g.map((x) => x.key)).toEqual(['milk', 'syrup', 'other'])
-    expect(g[1].items[0]).toMatchObject({ name: 'Орех', price: 40, maxCount: 2 })
+
+  it('ночная смена считается открытой', () => {
+    expect(storeHours({ openTime: '22:00', closeTime: '06:00' }, at(2)).open).toBe(true)
+    expect(storeHours({ openTime: '22:00', closeTime: '06:00' }, at(12)).open).toBe(false)
   })
-  it('без схемы — пусто', () => expect(modifierGroupsFor(d, { ...d.products[0], modifierSchemeId: null })).toEqual([]))
+
+  it('часы не заданы — точка считается открытой', () => {
+    expect(storeHours({}, at(3))).toEqual({ open: true, label: '' })
+    expect(storeHours({ openTime: '08:00', closeTime: null }, at(3)).open).toBe(true)
+  })
+})
+
+describe('itemsCountLabel', () => {
+  it('склоняет «позиция/позиции/позиций»', () => {
+    expect(itemsCountLabel(1)).toBe('1 позиция')
+    expect(itemsCountLabel(3)).toBe('3 позиции')
+    expect(itemsCountLabel(8)).toBe('8 позиций')
+    expect(itemsCountLabel(11)).toBe('11 позиций')
+    expect(itemsCountLabel(21)).toBe('21 позиция')
+  })
 })
 
 describe('formatPrice', () => {

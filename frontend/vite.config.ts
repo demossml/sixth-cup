@@ -31,6 +31,8 @@ export default defineConfig({
         cleanupOutdatedCaches: true,
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api\//],
+        // Обработчик push живёт отдельным файлом: подписка и показ уведомления «заказ готов».
+        importScripts: ['push-sw.js'],
       },
     }),
   ],

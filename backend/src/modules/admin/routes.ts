@@ -174,6 +174,14 @@ const adminAuth = createMiddleware(async (c, next) => {
 
 const taxRegimeZ = z.enum(TAX_REGIMES)
 
+/** «08:00» / «21:30» — часы работы точки для витрины и «Открыто/Закрыто». */
+const storeTimeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Время в формате ЧЧ:ММ')
+
+/** Часы по дням: 7 элементов (0 = Пн … 6 = Вс), null — выходной. */
+const storeHoursJsonSchema = z
+  .array(z.object({ open: storeTimeSchema, close: storeTimeSchema }).nullable())
+  .length(7, 'Нужно 7 дней: Пн…Вс')
+
 export const adminRoutes = new Hono()
   .use('*', adminAuth)
   .use('*', auditMiddleware)
@@ -327,9 +335,12 @@ export const adminRoutes = new Hono()
   })
 
   // —— Stores ——
+  // Часы работы точки: «ЧЧ:ММ» в 24-часовом формате (для «Открыто · до 21:00»).
   .get('/stores', (c) => {
     const stores = db.prepare(`
       SELECT s.id, s.name, s.address, s.organization_id AS organizationId,
+             s.open_time AS openTime, s.close_time AS closeTime, s.lat AS lat, s.lng AS lng,
+             s.hours_json AS hoursJson,
              o.name AS organizationName
       FROM stores s
       LEFT JOIN organizations o ON o.id = s.organization_id
@@ -342,6 +353,8 @@ export const adminRoutes = new Hono()
     const id = Number(c.req.param('id'))
     const store = db.prepare(`
       SELECT s.id, s.name, s.address, s.organization_id AS organizationId,
+             s.open_time AS openTime, s.close_time AS closeTime, s.lat AS lat, s.lng AS lng,
+             s.hours_json AS hoursJson,
              o.name AS organizationName, o.tax_regime AS taxRegime, o.vat_rate AS vatRate
       FROM stores s
       LEFT JOIN organizations o ON o.id = s.organization_id
@@ -355,12 +368,19 @@ export const adminRoutes = new Hono()
     name: z.string().min(1).max(80),
     address: z.string().min(1).max(200),
     organizationId: z.number().int().positive(),
+    /** Часы работы для витрины: «08:00» … «21:00». */
+    openTime: storeTimeSchema.optional().nullable(),
+    closeTime: storeTimeSchema.optional().nullable(),
+    lat: z.number().min(-90).max(90).optional().nullable(),
+    lng: z.number().min(-180).max(180).optional().nullable(),
+    hoursJson: storeHoursJsonSchema.optional().nullable(),
   })), (c) => {
     const p = c.req.valid('json')
     const org = db.prepare('SELECT id FROM organizations WHERE id=?').get(p.organizationId)
     if (!org) throw bad('Organization not found', 404)
-    const r = db.prepare('INSERT INTO stores(name, address, organization_id) VALUES(?,?,?)')
-      .run(p.name, p.address, p.organizationId)
+    const r = db.prepare('INSERT INTO stores(name, address, organization_id, open_time, close_time, lat, lng, hours_json) VALUES(?,?,?,?,?,?,?,?)')
+      .run(p.name, p.address, p.organizationId, p.openTime ?? null, p.closeTime ?? null, p.lat ?? null, p.lng ?? null,
+        p.hoursJson ? JSON.stringify(p.hoursJson) : null)
     return c.json({ id: Number(r.lastInsertRowid) })
   })
 
@@ -368,10 +388,16 @@ export const adminRoutes = new Hono()
     name: z.string().min(1).max(80).optional(),
     address: z.string().min(1).max(200).optional(),
     organizationId: z.number().int().positive().optional(),
+    /** null — сбросить часы; undefined — не трогать. */
+    openTime: storeTimeSchema.optional().nullable(),
+    closeTime: storeTimeSchema.optional().nullable(),
+    lat: z.number().min(-90).max(90).optional().nullable(),
+    lng: z.number().min(-180).max(180).optional().nullable(),
+    hoursJson: storeHoursJsonSchema.optional().nullable(),
   })), (c) => {
     const id = Number(c.req.param('id'))
     const cur = db.prepare('SELECT * FROM stores WHERE id=?').get(id) as
-      | { name: string; address: string; organization_id: number | null }
+      | { name: string; address: string; organization_id: number | null; open_time: string | null; close_time: string | null; lat: number | null; lng: number | null; hours_json: string | null }
       | undefined
     if (!cur) throw bad('Store not found', 404)
     const p = c.req.valid('json')
@@ -379,10 +405,15 @@ export const adminRoutes = new Hono()
       const org = db.prepare('SELECT id FROM organizations WHERE id=?').get(p.organizationId)
       if (!org) throw bad('Organization not found', 404)
     }
-    db.prepare('UPDATE stores SET name=?, address=?, organization_id=? WHERE id=?').run(
+    db.prepare('UPDATE stores SET name=?, address=?, organization_id=?, open_time=?, close_time=?, lat=?, lng=?, hours_json=? WHERE id=?').run(
       p.name ?? cur.name,
       p.address ?? cur.address,
       p.organizationId ?? cur.organization_id,
+      p.openTime === undefined ? cur.open_time : p.openTime,
+      p.closeTime === undefined ? cur.close_time : p.closeTime,
+      p.lat === undefined ? cur.lat : p.lat,
+      p.lng === undefined ? cur.lng : p.lng,
+      p.hoursJson === undefined ? cur.hours_json : p.hoursJson ? JSON.stringify(p.hoursJson) : null,
       id
     )
     return c.json({ ok: true })
@@ -777,6 +808,9 @@ export const adminRoutes = new Hono()
              p.recipe_seconds AS recipeSeconds,
              p.counts_as_cup AS countsAsCup, p.free_eligible AS freeEligible,
              p.size_value AS sizeValue, p.size_unit AS sizeUnit, p.calories AS calories,
+             p.protein_g AS proteinG, p.fat_g AS fatG, p.carbs_g AS carbsG,
+             p.is_popular AS isPopular, p.badge AS badge,
+             p.media_type AS mediaType, p.video_url AS videoUrl, p.poster_url AS posterUrl,
              p.tax AS tax, p.measure AS measure, p.cost_price_kopecks AS costPriceKopecks,
              p.season_start_at AS seasonStartAt, p.season_end_at AS seasonEndAt,
              p.evotor_extra_json AS evotorExtraJson,
@@ -851,6 +885,18 @@ export const adminRoutes = new Hono()
     sizeValue: z.number().int().min(1).max(100000).optional().nullable(),
     sizeUnit: z.enum(['g', 'ml']).optional().nullable(),
     calories: z.number().int().min(0).max(10000).optional().nullable(),
+    /** КБЖУ на порцию — плитки на карточке товара в меню. */
+    proteinG: z.number().min(0).max(1000).optional().nullable(),
+    fatG: z.number().min(0).max(1000).optional().nullable(),
+    carbsG: z.number().min(0).max(1000).optional().nullable(),
+    /** Блок «Популярное» на экране меню. */
+    isPopular: z.boolean().optional(),
+    /** Бейдж на карточке меню: hit | seasonal | new. */
+    badge: z.enum(['hit', 'seasonal', 'new']).nullable().optional(),
+    /** Медиа карточки: фото (image_url) или видео (video_url + poster_url). */
+    mediaType: z.enum(['image', 'video']).optional(),
+    videoUrl: z.string().max(500).nullable().optional(),
+    posterUrl: z.string().max(500).nullable().optional(),
     tax: z.string().max(32).optional(),
     measure: z.string().max(16).optional(),
     costPriceKopecks: z.number().int().min(0).optional(),
@@ -882,6 +928,9 @@ export const adminRoutes = new Hono()
           tax=COALESCE(?, tax), measure=COALESCE(?, measure), cost_price_kopecks=COALESCE(?, cost_price_kopecks),
           season_start_at=?, season_end_at=?, evotor_extra_json=?, catalog_source='SIXTH_CUP',
           size_value=?, size_unit=?, calories=?,
+          protein_g=?, fat_g=?, carbs_g=?,
+          is_popular=COALESCE(?, is_popular), badge=?,
+          media_type=COALESCE(?, media_type), video_url=?, poster_url=?,
           -- undefined = «не трогать», null = «снять назначение схемы молока»
           milk_scheme_id=CASE WHEN ?=1 THEN ? ELSE milk_scheme_id END,
           -- и для схемы выбора без цены
@@ -901,6 +950,10 @@ export const adminRoutes = new Hono()
         p.tax ?? null, p.measure ?? null, p.costPriceKopecks ?? null,
         p.seasonStartAt ?? null, p.seasonEndAt ?? null, p.evotorExtraJson ?? null,
         p.sizeValue ?? null, p.sizeUnit ?? null, p.calories ?? null,
+        p.proteinG ?? null, p.fatG ?? null, p.carbsG ?? null,
+        p.isPopular === undefined ? null : (p.isPopular ? 1 : 0),
+        p.badge ?? null,
+        p.mediaType ?? null, p.videoUrl ?? null, p.posterUrl ?? null,
         p.milkSchemeId === undefined ? 0 : 1,
         p.milkSchemeId ?? null,
         p.choiceSchemeId === undefined ? 0 : 1,
@@ -915,8 +968,9 @@ export const adminRoutes = new Hono()
       const freeFlag = p.freeEligible === undefined ? cupFlag : (p.freeEligible ? 1 : 0)
       db.prepare(`
         INSERT INTO products(name,price,icon,available,description,category_id,image_url,sort_order,created_at,updated_at,
-          modifier_scheme_id,recipe_text,recipe_cost_rub,recipe_seconds,counts_as_cup,free_eligible,tax,measure,cost_price_kopecks,season_start_at,season_end_at,evotor_extra_json,catalog_source,size_value,size_unit,calories,milk_scheme_id,volume_scheme_id,choice_scheme_id)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'SIXTH_CUP',?,?,?,?,?,?)
+          modifier_scheme_id,recipe_text,recipe_cost_rub,recipe_seconds,counts_as_cup,free_eligible,tax,measure,cost_price_kopecks,season_start_at,season_end_at,evotor_extra_json,catalog_source,size_value,size_unit,calories,milk_scheme_id,volume_scheme_id,choice_scheme_id,
+          protein_g,fat_g,carbs_g,is_popular,badge,media_type,video_url,poster_url)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'SIXTH_CUP',?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       `).run(
         p.name, p.price, p.icon, p.available ? 1 : 0,
         p.description ?? null, p.categoryId ?? null, p.imageUrl ?? null,
@@ -927,7 +981,10 @@ export const adminRoutes = new Hono()
         p.sizeValue ?? null, p.sizeUnit ?? null, p.calories ?? null,
         p.milkSchemeId ?? null,
         p.volumeSchemeId ?? null,
-        p.choiceSchemeId ?? null
+        p.choiceSchemeId ?? null,
+        p.proteinG ?? null, p.fatG ?? null, p.carbsG ?? null,
+        p.isPopular ? 1 : 0, p.badge ?? null,
+        p.mediaType ?? 'image', p.videoUrl ?? null, p.posterUrl ?? null
       )
     }
     const productId = p.id ?? (db.prepare('SELECT last_insert_rowid() AS id').get() as { id: number }).id
@@ -1534,6 +1591,9 @@ export const adminRoutes = new Hono()
           paidAt: r.paidAt ? Number(r.paidAt) : null,
           pickedUpAt: r.pickedUpAt ? Number(r.pickedUpAt) : null,
           estimateTotal: Number(r.estimateTotal),
+          // Бонус заказа: кассир видит, что позиция идёт подарком/ваучером, а не за деньги.
+          benefit: loaded?.benefit ?? null,
+          quoteTotal: loaded?.quoteTotal ?? null,
           cardId: r.cardId ? String(r.cardId) : null,
           guestUserId: r.guestUserId ? Number(r.guestUserId) : null,
           createdAt: Number(r.createdAt),
@@ -1656,7 +1716,7 @@ export const adminRoutes = new Hono()
     endsAt: z.number().int().optional(),
     imageUrl: mediaUrl,
     mediaType: z.enum(['image', 'video']).optional().default('image'),
-    placement: z.enum(['home', 'menu', 'both', 'home_hero', 'home_feature']).optional().default('home'),
+    placement: z.enum(['home', 'menu', 'both', 'home_hero', 'home_feature', 'menu_hero']).optional().default('home'),
     status: z.enum(['draft', 'published', 'archived']).optional().default('draft'),
     sortOrder: z.number().int().optional().default(0),
     ctaLabel: z.string().max(40).optional().nullable(),
@@ -1695,7 +1755,7 @@ export const adminRoutes = new Hono()
     endsAt: z.number().int().optional(),
     imageUrl: mediaUrl,
     mediaType: z.enum(['image', 'video']).optional(),
-    placement: z.enum(['home', 'menu', 'both', 'home_hero', 'home_feature']).optional(),
+    placement: z.enum(['home', 'menu', 'both', 'home_hero', 'home_feature', 'menu_hero']).optional(),
     status: z.enum(['draft', 'published', 'archived']).optional(),
     sortOrder: z.number().int().optional(),
     ctaLabel: z.string().max(40).optional().nullable(),

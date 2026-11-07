@@ -140,6 +140,41 @@ function getSc(doc: Record<string, unknown>): ScClaim | null {
   return out
 }
 
+/**
+ * Льготы предзаказа по `sc.ord`: касса не считает скидку сама, она берёт готовый набор из заказа.
+ * `null` — заказа нет/бонуса не было → поведение прежнее (claims из sc, op из sc.op).
+ */
+function preorderBenefitOf(
+  db: Database.Database,
+  orderId: string | null | undefined,
+): { reservationId: string; free: number; cb: number; voucherId: number } | null {
+  if (!orderId) return null
+  try {
+    const row = db
+      .prepare('SELECT reservation_id, benefit_json FROM preorders WHERE id=?')
+      .get(String(orderId)) as { reservation_id: string | null; benefit_json: string | null } | undefined
+    if (!row?.reservation_id) return null
+    let kind = ''
+    let amountRub = 0
+    let voucherId = 0
+    try {
+      const b = JSON.parse(String(row.benefit_json ?? '{}')) as { kind?: string; amountRub?: number; voucherId?: number }
+      kind = String(b.kind ?? '')
+      amountRub = Number(b.amountRub) || 0
+      voucherId = Number(b.voucherId) || 0
+    } catch { /* битый json — считаем, что бонуса нет */ }
+    return {
+      reservationId: String(row.reservation_id),
+      free: kind === 'gift' ? 1 : 0,
+      cb: kind === 'cashback' ? Math.round(amountRub * 100) : 0,
+      voucherId: kind === 'voucher' ? voucherId : 0,
+    }
+  } catch {
+    // Таблицы preorders может не быть в очень старых базах — не ломаем SELL.
+    return null
+  }
+}
+
 function cupsForDocument(db: Database.Database, storeUuid: string, txs: Tx[]): number {
   let cups = 0
   const byEvotor = db.prepare(`
@@ -242,18 +277,24 @@ export function handleSell(db: Database.Database, storeUuid: string, doc: Record
   const freeAvail = Math.max(0, freeEarned(state.paid_total) - state.free_used)
   const amount = amountKopecks(doc, txs)
   const isToken = rawCard.includes('.')
-  const claimedFree = Math.max(0, Math.floor(number(sc.free)))
-  const claimedCb = Math.max(0, Math.floor(number(sc.cb)))
-  // Benefits are only honoured for a signed QR with a server-issued reservation (sc.op).
-  const reserved = isToken ? consumeReservation(db, sc.op, user.card_id, storeUuid, docId) : { free: 0, cb: 0, voucherIds: [] as number[] }
+  // Предзаказ: бонус выбран гостем в PWA, резерв уже создан сервером и привязан к заказу.
+  // Касса передаёт только sc.ord — скидку и списание считает сервер.
+  const orderBenefit = preorderBenefitOf(db, sc.ord)
+  const claimedFree = orderBenefit ? orderBenefit.free : Math.max(0, Math.floor(number(sc.free)))
+  const claimedCb = orderBenefit ? orderBenefit.cb : Math.max(0, Math.floor(number(sc.cb)))
+  // Benefits are only honoured for a signed QR with a server-issued reservation (sc.op or заказ).
+  const reservationOp = orderBenefit?.reservationId ?? sc.op
+  const reserved = isToken
+    ? consumeReservation(db, reservationOp, user.card_id, storeUuid, docId)
+    : { free: 0, cb: 0, voucherIds: [] as number[] }
   const appliedFree = Math.min(reserved.free, claimedFree, freeAvail, cups)
   const appliedCb = Math.min(reserved.cb, claimedCb, user.cashback_balance, amount)
   const sequenceMatches = true
   const paidCups = Math.max(0, cups - appliedFree)
   const now = Date.now()
   const cardId = user.card_id
-  const opClaimed = sc.op ?? null
-  const claimedVoucher = Math.max(0, Math.floor(number(sc.voucherId)))
+  const opClaimed = reservationOp ?? null
+  const claimedVoucher = orderBenefit ? orderBenefit.voucherId : Math.max(0, Math.floor(number(sc.voucherId)))
 
   const vDispute = (kind: string, details: unknown) =>
     db.prepare(`INSERT INTO disputes(kind,user_id,receipt_id,details,created_at) VALUES(?,?,?,?,?)`)

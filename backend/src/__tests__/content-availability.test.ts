@@ -37,7 +37,10 @@ describe('content + availability', () => {
     `).run(id, 'store-A', now)
     const open = publicDirectory(null)
     expect((open.products as { id: number }[]).some((p) => p.id === id)).toBe(true)
+    // Позиция остаётся в витрине, но помечена «нет в наличии» (карточка серая, заказать нельзя).
     const closed = publicDirectory('store-A')
-    expect((closed.products as { id: number }[]).some((p) => p.id === id)).toBe(false)
+    const item = (closed.products as { id: number; soldOut?: boolean }[]).find((p) => p.id === id)
+    expect(item).toBeTruthy()
+    expect(item!.soldOut).toBe(true)
   })
 })

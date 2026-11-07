@@ -74,6 +74,10 @@ export type OrderOut = {
   /** Кто перевёл в «готов»: авто по ETA или кассир. */
   readyBy: 'auto' | 'cashier' | null
   estimateTotal: number
+  /** Итог с учётом бонуса гостя (null — бонуса не было). */
+  quoteTotal?: number | null
+  /** Выбранный бонус: подарок / ваучер / кэшбэк. Касса сама скидку не считает. */
+  benefit?: { kind: 'gift' | 'voucher' | 'cashback'; title: string; amountRub: number; voucherId?: number | null } | null
   currency: string
   cardId: string | null
   items: ItemOut[]

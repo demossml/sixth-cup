@@ -216,7 +216,176 @@ type DeviceRow = {
   id: number; name: string; storeId: number; storeName: string
   revoked: number; enrollCode: string | null; enrolled: number; createdAt: number
 }
-type LocalStore = { id: number; name: string; address: string | null; organizationId: number | null }
+type DayHours = { open: string; close: string } | null
+type LocalStore = {
+  id: number; name: string; address: string | null; organizationId: number | null
+  openTime?: string | null; closeTime?: string | null; lat?: number | null; lng?: number | null
+  /** Часы по дням (Пн…Вс), `null` — выходной. Пусто — работаем по общей паре open/close. */
+  hoursJson?: string | DayHours[] | null
+}
+
+const DAY_NAMES = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
+
+/** Часы по дням из ответа API: строка JSON или уже массив. */
+function weekOf(value: string | DayHours[] | null | undefined): DayHours[] {
+  if (Array.isArray(value)) return value.length === 7 ? value : new Array(7).fill(null)
+  if (typeof value === 'string' && value.trim()) {
+    try {
+      const parsed = JSON.parse(value)
+      if (Array.isArray(parsed) && parsed.length === 7) return parsed as DayHours[]
+    } catch {
+      /* битый JSON — считаем, что часов по дням нет */
+    }
+  }
+  return new Array(7).fill(null)
+}
+
+/**
+ * Кофейни в приложении: адрес, часы работы и координаты.
+ * Часы управляют «Открыто · до 21:00» и запретом заказа в закрытую точку,
+ * координаты — схемой и «ближайшими» на экране выбора кофейни.
+ */
+function StoresPanel() {
+  const toast = useToast()
+  const stores = useApi<{ stores: LocalStore[] }>('/stores')
+  const [busy, setBusy] = useState('')
+  const [form, setForm] = useState<Record<number, LocalStore>>({})
+  const [week, setWeek] = useState<Record<number, DayHours[] | null>>({})
+  const list = stores.data?.stores ?? []
+
+  const row = (s: LocalStore): LocalStore => form[s.id] ?? s
+  const patch = (id: number, s: LocalStore, next: Partial<LocalStore>) => setForm({ ...form, [id]: { ...row(s), ...next } })
+  const weekOfStore = (s: LocalStore): DayHours[] | null =>
+    s.id in week ? week[s.id] : s.hoursJson ? weekOf(s.hoursJson) : null
+  const patchWeek = (s: LocalStore, idx: number, next: DayHours) => {
+    const current = weekOfStore(s) ?? new Array<DayHours>(7).fill(null)
+    const copy = current.slice()
+    copy[idx] = next
+    setWeek({ ...week, [s.id]: copy })
+  }
+  const toggleWeek = (s: LocalStore, on: boolean) =>
+    setWeek({
+      ...week,
+      [s.id]: on ? new Array<DayHours>(7).fill({ open: s.openTime || '08:00', close: s.closeTime || '21:00' }) : null,
+    })
+
+  const save = async (s: LocalStore) => {
+    const r = row(s)
+    setBusy(`save-${s.id}`)
+    try {
+      await api(`/stores/${s.id}`, {
+        method: 'PATCH',
+        body: {
+          name: r.name, address: r.address ?? '', organizationId: r.organizationId ?? undefined,
+          openTime: r.openTime || null, closeTime: r.closeTime || null,
+          lat: r.lat ?? null, lng: r.lng ?? null,
+          hoursJson: weekOfStore(s) ?? null,
+        },
+      })
+      // Сохранённую строку убираем из локальных правок — дальше показываем данные с сервера.
+      const next = { ...form }
+      delete next[s.id]
+      setForm(next)
+      const nextWeek = { ...week }
+      delete nextWeek[s.id]
+      setWeek(nextWeek)
+      stores.reload()
+      toast.push(`Кофейня «${r.name}» сохранена`)
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  if (stores.loading && !stores.data) return <Spinner />
+  return (
+    <>
+      <h2 className="mb-2 mt-6 text-base font-bold">Кофейни в приложении</h2>
+      <p className="mb-3 text-[13px] text-ink-secondary">
+        Часы работы показываются гостю («Открыто · до 21:00»), в закрытую точку заказ не отправить.
+        Координаты нужны для схемы и «ближайших» кофеен.
+      </p>
+      {stores.error && <ErrorBox message={stores.error} onRetry={stores.reload} />}
+      {!list.length && <Card><EmptyState title="Кофеен нет" text="Добавьте точку в разделе настроек организации." /></Card>}
+      {list.map((s) => {
+        const r = row(s)
+        return (
+          <Card key={s.id} className="mb-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Название"><Input value={r.name} onChange={(e) => patch(s.id, s, { name: e.target.value })} maxLength={80} /></Field>
+              <Field label="Адрес"><Input value={r.address ?? ''} onChange={(e) => patch(s.id, s, { address: e.target.value })} maxLength={200} /></Field>
+              <Field label="Открытие" hint="Формат ЧЧ:ММ">
+                <Input type="time" value={r.openTime ?? ''} onChange={(e) => patch(s.id, s, { openTime: e.target.value || null })} />
+              </Field>
+              <Field label="Закрытие" hint="Формат ЧЧ:ММ">
+                <Input type="time" value={r.closeTime ?? ''} onChange={(e) => patch(s.id, s, { closeTime: e.target.value || null })} />
+              </Field>
+              <Field label="Широта" hint="Необязательно">
+                <Input type="number" step="0.000001" value={r.lat ?? ''} onChange={(e) => patch(s.id, s, { lat: e.target.value === '' ? null : Number(e.target.value) })} />
+              </Field>
+              <Field label="Долгота" hint="Необязательно">
+                <Input type="number" step="0.000001" value={r.lng ?? ''} onChange={(e) => patch(s.id, s, { lng: e.target.value === '' ? null : Number(e.target.value) })} />
+              </Field>
+            </div>
+            <div className="mt-4 rounded-xl border border-line p-3">
+              <label className="flex items-center gap-2 text-sm font-semibold">
+                <input
+                  type="checkbox"
+                  checked={weekOfStore(s) != null}
+                  onChange={(e) => toggleWeek(s, e.target.checked)}
+                />
+                Разные часы по дням
+              </label>
+              {weekOfStore(s) ? (
+                <div className="mt-2 space-y-1.5">
+                  {DAY_NAMES.map((name, idx) => {
+                    const day = (weekOfStore(s) ?? [])[idx] ?? null
+                    return (
+                      <div key={name} className="flex items-center gap-2">
+                        <span className="w-7 text-xs font-semibold text-ink-secondary">{name}</span>
+                        <label className="flex items-center gap-1 text-xs text-ink-secondary">
+                          <input
+                            type="checkbox"
+                            checked={day == null}
+                            onChange={(e) => patchWeek(s, idx, e.target.checked ? null : { open: s.openTime || '08:00', close: s.closeTime || '21:00' })}
+                          />
+                          выходной
+                        </label>
+                        <Input
+                          type="time"
+                          aria-label={`${name} открытие`}
+                          value={day?.open ?? ''}
+                          disabled={day == null}
+                          onChange={(e) => patchWeek(s, idx, { open: e.target.value, close: day?.close ?? '21:00' })}
+                          className="max-w-[120px]"
+                        />
+                        <Input
+                          type="time"
+                          aria-label={`${name} закрытие`}
+                          value={day?.close ?? ''}
+                          disabled={day == null}
+                          onChange={(e) => patchWeek(s, idx, { open: day?.open ?? '08:00', close: e.target.value })}
+                          className="max-w-[120px]"
+                        />
+                      </div>
+                    )
+                  })}
+                  <p className="text-[12px] text-ink-secondary">Выходной — точка закрыта весь день, заказ в неё отправить нельзя.</p>
+                </div>
+              ) : (
+                <p className="mt-1 text-[12px] text-ink-secondary">Пока одна пара «открытие/закрытие» на все дни.</p>
+              )}
+            </div>
+            <div className="mt-3">
+              <Button size="sm" loading={busy === `save-${s.id}`} onClick={() => void save(s)}>Сохранить</Button>
+            </div>
+          </Card>
+        )
+      })}
+    </>
+  )
+}
 
 /** Кассовые устройства: код регистрации для терминала, отзыв и удаление (R-05). */
 function DevicesPanel() {
@@ -425,6 +594,7 @@ export default function Cash() {
         ))}
       </div>
       <TokensPanel allStoreUuids={list.map((s) => s.uuid)} />
+      <StoresPanel />
       <DevicesPanel />
       <h2 className="mb-2 mt-6 text-base font-bold">Сотрудники</h2>
       {emp.loading && !emp.data && <Spinner />}

@@ -29,6 +29,7 @@ type PromoRow = {
 const PLACEMENT_LABEL: Record<string, string> = {
   home_hero: 'Фон шапки: логотип и чашки над QR',
   home_feature: 'Карточка под QR',
+  menu_hero: 'Баннер «Сезон» в меню',
   home: 'Карточка под QR (старый формат)',
   menu: 'Меню (старый формат)',
   both: 'Старый формат: главная + меню',
@@ -189,6 +190,7 @@ function Promos() {
               <Select value={edit.placement} onChange={(e) => setEdit({ ...edit, placement: e.target.value })}>
                 <option value="home_hero">Фон шапки с логотипом и чашками (над QR)</option>
                 <option value="home_feature">Карточка под QR на главной</option>
+                <option value="menu_hero">Баннер «Сезон» в меню (фото 3:2)</option>
               </Select>
             </Field>
             <Field label="Статус">

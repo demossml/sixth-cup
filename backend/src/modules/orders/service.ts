@@ -1,5 +1,7 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto'
 import { getPreorderSettings } from '../../lib/preorderSettings'
+import { parseBenefit } from './benefit'
+import { notifyOrderStatus } from '../push/service'
 import type { CreateOrderBody, ItemOut, ModifierOut, OrderOut, PreorderStatus } from './types'
 import { ACTIVE_STATUSES, ALLOWED_TRANSITIONS } from './types'
 
@@ -80,7 +82,7 @@ function loadOrder(db: Db, id: string): OrderOut | null {
   })
   const etaReadyAt = fresh.eta_ready_at ? Number(fresh.eta_ready_at) : null
   const now = nowSec()
-  return {
+  const out: OrderOut = {
     id: String(fresh.id),
     shortCode: String(fresh.short_code),
     storeId: Number(fresh.store_id),
@@ -96,11 +98,21 @@ function loadOrder(db: Db, id: string): OrderOut | null {
     pickedUpAt: fresh.picked_up_at ? iso(Number(fresh.picked_up_at)) : null,
     readyBy: fresh.ready_by === 'auto' || fresh.ready_by === 'cashier' ? fresh.ready_by : null,
     estimateTotal: Number(fresh.estimate_total),
+    quoteTotal: fresh.quote_total != null ? Number(fresh.quote_total) : null,
+    benefit: parseBenefit(fresh.benefit_json),
     currency: String(fresh.currency || 'RUB'),
     cardId: fresh.card_id ? String(fresh.card_id) : null,
     items: outItems,
     warnings: [],
   }
+  // Push «заказ готов / оплачен» — ровно один раз на заказ (отметки в preorders).
+  notifyOrderStatus(db as never, {
+    id: String(fresh.id),
+    status: String(fresh.status),
+    shortCode: String(fresh.short_code),
+    guestUserId: fresh.guest_user_id != null ? Number(fresh.guest_user_id) : null,
+  })
+  return out
 }
 
 function expireIfNeeded(db: Db, row: Record<string, unknown>) {

@@ -17,7 +17,8 @@ import {
   setOrderEta,
   transitionStatus,
 } from './service'
-import type { CreateOrderBody, PreorderStatus } from './types'
+import type { CreateOrderBody, ItemIn, PreorderStatus } from './types'
+import { BenefitError, benefitAvailable, parseBenefit, quoteOrder, readQuote, releaseReservation, reserveForOrder } from './benefit'
 
 type Env = AuthEnv
 
@@ -70,6 +71,32 @@ function ownedOrder(id: string, userId: number) {
   return order
 }
 
+/**
+ * Расчёт корзины: сумма позиций, скидка по выбранному бонусу и подписанный quote.
+ * PWA только показывает цифры; заказ принимается с этим же quote (иначе `quote_stale`).
+ */
+orderGuestRoutes.post('/quote', async (c) => {
+  ensurePreorderTables(dbOf(c))
+  const userId = c.get('userId')
+  const body = (await c.req.json().catch(() => ({}))) as {
+    storeId?: number | string
+    items?: ItemIn[]
+    benefit?: { kind: 'gift' | 'voucher' | 'cashback'; voucherId?: number | null } | null
+  }
+  try {
+    const q = quoteOrder(dbOf(c), {
+      userId,
+      storeId: Number(body.storeId),
+      items: body.items ?? [],
+      benefit: body.benefit ?? null,
+    })
+    return c.json(q)
+  } catch (e) {
+    if (e instanceof BenefitError) return c.json({ ok: false, error: e.code, message: e.message }, e.code === 'bad_request' ? 400 : 409)
+    throw e
+  }
+})
+
 orderGuestRoutes.post('/', async (c) => {
   ensurePreorderTables(dbOf(c))
   const userId = c.get('userId')
@@ -94,8 +121,38 @@ orderGuestRoutes.post('/', async (c) => {
         bannedUntil: new Date(ban.until * 1000).toISOString(),
       }, 403)
     }
+    const withBenefit = body as CreateOrderBody & { quoteToken?: string | null }
+    let benefitJson: string | null = null
+    let quoteTotal: number | null = null
+    let reservationId: string | null = null
+    if (withBenefit.quoteToken) {
+      const quote = readQuote(withBenefit.quoteToken)
+      if (!quote || quote.uid !== userId) {
+        return c.json({ ok: false, error: 'quote_stale', message: 'Расчёт устарел — обновите корзину' }, 409)
+      }
+      // Сумма позиций должна совпасть с quote: иначе цены/состав поменялись.
+      const fresh = quoteOrder(dbOf(c), {
+        userId,
+        storeId: Number(body.storeId),
+        items: body.items ?? [],
+        benefit: quote.benefit ? { kind: quote.benefit.kind, voucherId: quote.benefit.voucherId ?? null } : null,
+      })
+      if (fresh.subtotal !== quote.subtotal) {
+        return c.json({ ok: false, error: 'quote_stale', message: 'Состав или цены изменились — обновите корзину' }, 409)
+      }
+      if (quote.benefit) {
+        benefitJson = JSON.stringify(quote.benefit)
+        quoteTotal = quote.total
+        reservationId = reserveForOrder(dbOf(c), { userId, storeId: Number(body.storeId), benefit: quote.benefit, total: quote.total })
+      }
+    }
     const { order, qrPayload } = createDraftOrder(dbOf(c), body, { guestUserId: userId, secret: secretOf() })
-    return c.json({ ok: true, order, qrPayload })
+    if (benefitJson || reservationId) {
+      db.prepare('UPDATE preorders SET benefit_json=?, reservation_id=?, quote_total=?, quoted_at=? WHERE id=?')
+        .run(benefitJson, reservationId, quoteTotal, Math.floor(Date.now() / 1000), order.id)
+    }
+    const fresh = getOrder(dbOf(c), order.id)!
+    return c.json({ ok: true, order: fresh, qrPayload })
   } catch (e) {
     const err = e as { code?: string; message?: string }
     const code = err.code || 'error'
@@ -126,7 +183,11 @@ orderGuestRoutes.get('/:id', (c) => {
 orderGuestRoutes.post('/:id/cancel', (c) => {
   ensurePreorderTables(dbOf(c))
   try {
-    cancelDraft(dbOf(c), c.req.param('id'), c.get('userId'))
+    const id = c.req.param('id')
+    const row = db.prepare('SELECT reservation_id AS rid FROM preorders WHERE id=?').get(id) as { rid: string | null } | undefined
+    cancelDraft(dbOf(c), id, c.get('userId'))
+    // Льгота возвращается гостю: резерв больше не будет предъявлен на кассе.
+    releaseReservation(dbOf(c), row?.rid)
     return c.json({ ok: true })
   } catch (e) {
     const err = e as { code?: string; message?: string }

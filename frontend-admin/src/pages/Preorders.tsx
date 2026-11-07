@@ -18,6 +18,9 @@ type Order = {
   paidAt: number | null
   pickedUpAt: number | null
   estimateTotal: number
+  /** Бонус заказа (подарок/ваучер/кэшбэк) — позиция оплачена не деньгами. */
+  benefit?: { kind: string; title: string; amountRub: number } | null
+  quoteTotal?: number | null
   cardId: string | null
   guestUserId: number | null
   minutesAgo: number
@@ -136,6 +139,15 @@ export default function Preorders() {
                   </div>
                   <div className="mt-1 text-[12px] leading-4 text-ink-secondary">
                     {o.cardId ? `Карта ${o.cardId}` : 'Без карты'} · оценка <span className="num">{fmtNum(o.estimateTotal)} ₽</span>
+                    {o.benefit ? (
+                      <>
+                        {' · '}
+                        <span className="font-semibold text-brand">
+                          {o.benefit.title} · −{fmtNum(o.benefit.amountRub)} ₽
+                          {o.quoteTotal != null ? ` → к оплате ${fmtNum(o.quoteTotal)} ₽` : ''}
+                        </span>
+                      </>
+                    ) : null}
                     {' · '}
                     <span className="num">{etaLabel(o.status, o.etaReadyAt, now)}</span>
                   </div>

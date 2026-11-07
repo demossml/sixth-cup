@@ -3,6 +3,10 @@ import { NavLink, Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import { getJwt } from './api'
 import CardPage from './pages/CardPage'
 import MenuPage from './pages/MenuPage'
+import ProductPage from './pages/ProductPage'
+import CartPage from './pages/CartPage'
+import StorePickerPage from './pages/StorePickerPage'
+import SearchPage from './pages/SearchPage'
 import OnboardingPage from './pages/OnboardingPage'
 import ProfilePage from './pages/ProfilePage'
 import PromosPage from './pages/PromosPage'
@@ -142,6 +146,11 @@ export default function App() {
         <Route element={<Layout />}>
           <Route path="/" element={<CardPage />} />
           <Route path="/menu" element={<MenuPage />} />
+          <Route path="/catalog" element={<MenuPage catalog />} />
+          <Route path="/search" element={<SearchPage />} />
+          <Route path="/menu/:productId" element={<ProductPage />} />
+          <Route path="/cart" element={<CartPage />} />
+          <Route path="/pick-store" element={<StorePickerPage />} />
           <Route path="/promos" element={<PromosPage />} />
           <Route path="/me" element={<ProfilePage />} />
           <Route path="/invite" element={<InvitePage />} />

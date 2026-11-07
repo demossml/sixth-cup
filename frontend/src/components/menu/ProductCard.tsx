@@ -1,6 +1,6 @@
 import { memo, useState } from 'react'
 import { Info } from '../../lib/icons'
-import { formatKcal, formatPrice, formatSize, type BadgeKind, type MenuItem } from '../../lib/menuModel'
+import { formatKcal, formatPrice, formatSize, isOrderable, type BadgeKind, type MenuItem } from '../../lib/menuModel'
 import Badge from './Badge'
 import ProductPhoto from './ProductPhoto'
 
@@ -27,6 +27,7 @@ function ProductCard({ item, onSelect, eager = false, defer = false, className =
   const size = formatSize(p)
   const kcal = formatKcal(p)
   const [open, setOpen] = useState(false)
+  const soldOut = !isOrderable(item)
 
   return (
     <div
@@ -37,25 +38,46 @@ function ProductCard({ item, onSelect, eager = false, defer = false, className =
       <button
         type="button"
         onClick={() => onSelect(item)}
+        aria-disabled={soldOut}
         className="block w-full text-left active:scale-[0.98] transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
       >
         <div className="relative">
-          <ProductPhoto name={p.name} icon={p.icon} imageUrl={p.imageUrl} eager={eager} />
-          {badge ? <Badge kind={badge} className="absolute left-2 top-2" /> : null}
+          <ProductPhoto
+            name={p.name}
+            icon={p.icon}
+            imageUrl={p.imageUrl}
+            mediaType={p.mediaType ?? null}
+            videoUrl={p.videoUrl ?? null}
+            posterUrl={p.posterUrl ?? null}
+            ratio="poster"
+            eager={eager}
+          />
+          {badge && !soldOut ? <Badge kind={badge} className="absolute left-2 top-2" /> : null}
+          {soldOut ? (
+            <span className="absolute inset-x-2 top-2 inline-flex justify-center rounded-full bg-ink/80 px-2 py-0.5 text-[11px] leading-4 font-semibold text-white">
+              Нет в наличии
+            </span>
+          ) : null}
         </div>
         <div className="px-2.5 py-2.5">
-          <div className="text-[13px] leading-[17px] font-medium text-ink line-clamp-2 min-h-[34px]">{p.name}</div>
+          <div className={`text-[13px] leading-[17px] font-medium line-clamp-2 min-h-[34px] ${soldOut ? 'text-ink-secondary' : 'text-ink'}`}>
+            {p.name}
+          </div>
           <div className="text-[12px] leading-4 text-ink-secondary num mt-0.5 min-h-4">
             {sizes.length > 1 ? sizes.map((v) => v.label).join(' · ') : size}
           </div>
           <div className="font-display text-[15px] leading-5 font-semibold num text-ink mt-0.5">
-            {sizes.length > 1 ? `от ${formatPrice(p.price)}` : formatPrice(p.price)}
+            {sizes.length > 1
+              ? `от ${formatPrice(Math.min(p.price, ...sizes.map((v) => v.price)))}`
+              : p.hasVolumes
+                ? `от ${formatPrice(p.priceFrom ?? p.price)}`
+                : formatPrice(p.price)}
           </div>
         </div>
       </button>
 
       {kcal ? (
-        <div className="absolute inset-x-0 top-0 aspect-square flex items-end justify-end p-2 pointer-events-none">
+        <div className="absolute inset-x-0 top-0 aspect-[4/5] flex items-end justify-end p-2 pointer-events-none">
           <button
             type="button"
             aria-expanded={open}

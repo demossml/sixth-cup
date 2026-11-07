@@ -88,6 +88,10 @@ export type Product = {
   categoryId: number | null
   categoryName: string | null
   imageUrl: string | null
+  /** Медиа карточки: фото (`imageUrl`) или видео (`videoUrl` + кадр-обложка `posterUrl`). */
+  mediaType?: 'image' | 'video' | null
+  videoUrl?: string | null
+  posterUrl?: string | null
   sortOrder: number
   updatedAt: number | null
   modifierSchemeId: number | null
@@ -107,6 +111,14 @@ export type Product = {
   sizeValue: number | null
   sizeUnit: 'g' | 'ml' | null
   calories: number | null
+  /** КБЖУ на порцию — плитки на карточке товара в меню PWA. */
+  proteinG: number | null
+  fatG: number | null
+  carbsG: number | null
+  /** Блок «Популярное» на экране меню. */
+  isPopular: number
+  /** Бейдж карточки меню: hit | seasonal | new. */
+  badge: 'hit' | 'seasonal' | 'new' | null
   tax: string | null
   measure: string | null
   costPriceKopecks: number | null

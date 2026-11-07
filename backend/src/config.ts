@@ -48,6 +48,10 @@ export const config = {
   /** When 1, reject requests without valid proxy token on /api/devices/* */
   evotorProxyEnforce: process.env.EVOTOR_PROXY_ENFORCE === '1',
   logPath: process.env.LOG_PATH ?? '',
+  /** Web Push для PWA «заказ готов». Без ключей фича выключена (`503 push_disabled`). */
+  vapidPublicKey: process.env.VAPID_PUBLIC_KEY ?? '',
+  vapidPrivateKey: process.env.VAPID_PRIVATE_KEY ?? '',
+  vapidSubject: process.env.VAPID_SUBJECT ?? 'mailto:owner@67coffee.ru',
 
 
 }

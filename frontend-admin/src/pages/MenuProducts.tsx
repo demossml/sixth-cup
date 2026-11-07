@@ -163,6 +163,7 @@ if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} /
             id: groupId ?? undefined,
             name: d.name.trim(), icon: d.icon || 'Coffee', description: d.description || null,
             categoryId: d.categoryId ?? null, imageUrl: d.imageUrl ?? null, sortOrder: d.sortOrder ?? 0,
+            mediaType: d.mediaType ?? 'image', videoUrl: d.videoUrl ?? null, posterUrl: d.posterUrl ?? null,
             modifierSchemeId: d.modifierSchemeId ?? null,
             // null = снять назначение схемы молока (независимо от схемы добавок)
             milkSchemeId: d.milkSchemeId ?? null,
@@ -195,11 +196,14 @@ if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} /
         body: {
           id: d.id, expectedUpdatedAt: d.id ? (d.updatedAt ?? null) : undefined, name: d.name.trim(), price: d.price, icon: d.icon || 'Coffee', available: !!d.available,
           description: d.description || null, categoryId: d.categoryId ?? null, imageUrl: d.imageUrl ?? null,
+          mediaType: d.mediaType ?? 'image', videoUrl: d.videoUrl ?? null, posterUrl: d.posterUrl ?? null,
           sortOrder: d.sortOrder ?? 0, modifierSchemeId: d.modifierSchemeId ?? null, milkSchemeId: d.milkSchemeId ?? null, choiceSchemeId: d.choiceSchemeId ?? null,
           volumeSchemeId: d.volumeSchemeId ?? null, volumePrices: volumeSchemeItems.map((it) => ({ itemId: it.id, price: volumePrices[it.id] ?? d.price })),
           recipeText: d.recipeText ?? null, recipeCostRub: d.recipeCostRub ?? null, recipeSeconds: d.recipeSeconds ?? null,
           countsAsCup: !!d.countsAsCup, freeEligible: !!d.freeEligible,
           sizeValue: d.sizeValue ?? null, sizeUnit: d.sizeValue ? (d.sizeUnit ?? 'g') : null, calories: d.calories ?? null,
+          proteinG: d.proteinG ?? null, fatG: d.fatG ?? null, carbsG: d.carbsG ?? null,
+          isPopular: !!d.isPopular, badge: d.badge ?? null,
           tax: d.tax || undefined, measure: d.measure || undefined, costPriceKopecks: d.costPriceKopecks ?? undefined,
           seasonStartAt: d.seasonStartAt ?? null, seasonEndAt: d.seasonEndAt ?? null, evotorExtraJson: d.evotorExtraJson ?? null,
         },
@@ -436,9 +440,33 @@ if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} /
           </Select>
         </div>
       </Field>
-      <Field label="Калорийность, ккал" hint="Необязательно. На порцию; гость видит по нажатию на «i» в меню.">
+      <Field label="Калорийность, ккал" hint="Необязательно. На порцию; гость видит по нажатию на «i» в меню и плиткой на карточке.">
         <Input type="number" inputMode="numeric" min={0} value={d.calories ?? ''} placeholder="120"
           onChange={(e) => set('calories', e.target.value === '' ? null : Number(e.target.value))} />
+      </Field>
+      <Field label="КБЖУ на порцию" hint="Белки, жиры и углеводы в граммах — плитки на карточке товара в меню. Пусто — блок не показывается.">
+        <div className="grid grid-cols-3 gap-2">
+          <Input type="number" inputMode="decimal" min={0} step="0.1" value={d.proteinG ?? ''} placeholder="Белки"
+            aria-label="Белки, г" onChange={(e) => set('proteinG', e.target.value === '' ? null : Number(e.target.value))} />
+          <Input type="number" inputMode="decimal" min={0} step="0.1" value={d.fatG ?? ''} placeholder="Жиры"
+            aria-label="Жиры, г" onChange={(e) => set('fatG', e.target.value === '' ? null : Number(e.target.value))} />
+          <Input type="number" inputMode="decimal" min={0} step="0.1" value={d.carbsG ?? ''} placeholder="Углеводы"
+            aria-label="Углеводы, г" onChange={(e) => set('carbsG', e.target.value === '' ? null : Number(e.target.value))} />
+        </div>
+      </Field>
+      <Field label="Бейдж в меню" hint="Один бейдж на карточке: «Хит», «Сезон» или «Новинка».">
+        <Select value={d.badge ?? ''} onChange={(e) => set('badge', (e.target.value || null) as Product['badge'])}>
+          <option value="">Без бейджа</option>
+          <option value="hit">Хит</option>
+          <option value="seasonal">Сезон</option>
+          <option value="new">Новинка</option>
+        </Select>
+      </Field>
+      <Field label="Блок «Популярное»" hint="Попадает в подборку «Популярное» на экране меню (до 4 позиций, по порядку сортировки).">
+        <label className="inline-flex items-center gap-2 text-[15px]">
+          <input type="checkbox" checked={!!d.isPopular} onChange={(e) => set('isPopular', e.target.checked ? 1 : 0)} />
+          Показывать в «Популярном»
+        </label>
       </Field>
       <Field label="Описание"><Input value={d.description ?? ''} onChange={(e) => set('description', e.target.value)} maxLength={500} /></Field>
       <Field label="Рецепт (для бариста)" hint="Текст виден на кассе и в админке">
@@ -449,29 +477,69 @@ if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} /
           maxLength={4000}
         />
       </Field>
-      <Field label="Фото товара" hint="JPEG/PNG/WebP до 2 МБ. Гость видит это фото в меню PWA.">
-        {d.imageUrl ? (
-          <div className="mb-2 flex items-start gap-3">
-            <img
-              src={d.imageUrl}
-              alt=""
-              className="h-20 w-20 rounded-xl object-cover border border-line bg-[#EDE7DC]"
-            />
-            <div className="flex flex-col gap-2">
-              <Button type="button" variant="ghost" onClick={() => set('imageUrl', null)}>
-                Удалить фото
-              </Button>
+      <Field label="Медиа товара" hint="Фото или видео 4:5 — то, что гость видит в меню. Видео играет без звука на карточке товара.">
+        <div className="mb-2 flex gap-1 rounded-full border border-line bg-white p-0.5 w-fit" role="group" aria-label="Тип медиа">
+          {(['image', 'video'] as const).map((k) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => set('mediaType', k)}
+              aria-pressed={(d.mediaType ?? 'image') === k}
+              className={`min-h-8 px-3 rounded-full text-[13px] font-semibold transition-colors ${
+                (d.mediaType ?? 'image') === k ? 'bg-brand text-white' : 'text-ink-secondary'
+              }`}
+            >
+              {k === 'image' ? 'Фото' : 'Видео'}
+            </button>
+          ))}
+        </div>
+        {(() => {
+          const poster = d.posterUrl || d.imageUrl
+          if (!poster && !d.videoUrl) {
+            return <p className="text-sm text-ink-secondary mb-2">Медиа ещё нет — в меню будет нейтральная заглушка.</p>
+          }
+          return (
+            <div className="mb-2 flex items-start gap-3">
+              {d.mediaType === 'video' && d.videoUrl ? (
+                <video src={d.videoUrl} poster={poster ?? undefined} muted loop playsInline className="h-20 w-16 rounded-xl object-cover border border-line bg-surface-secondary" />
+              ) : (
+                <img src={poster ?? ''} alt="" className="h-20 w-16 rounded-xl object-cover border border-line bg-surface-secondary" />
+              )}
+              <div className="flex flex-col gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    set('imageUrl', null)
+                    set('videoUrl', null)
+                    set('posterUrl', null)
+                    set('mediaType', 'image')
+                  }}
+                >
+                  Удалить медиа
+                </Button>
+              </div>
             </div>
+          )
+        })()}
+        <Input
+          value={d.mediaType === 'video' ? (d.videoUrl ?? '') : (d.imageUrl ?? '')}
+          onChange={(e) => set(d.mediaType === 'video' ? 'videoUrl' : 'imageUrl', e.target.value || null)}
+          placeholder="https://… или /uploads/…"
+          aria-label={d.mediaType === 'video' ? 'Адрес видео' : 'Адрес фото'}
+        />
+        {d.mediaType === 'video' ? (
+          <div className="mt-2">
+            <Field label="Кадр-обложка" hint="Показывается в сетке меню и до старта видео">
+              <Input value={d.posterUrl ?? ''} onChange={(e) => set('posterUrl', e.target.value || null)} placeholder="/uploads/…" />
+            </Field>
           </div>
-        ) : (
-          <p className="text-sm text-ink-secondary mb-2">Фото ещё нет — в меню будет нейтральная заглушка.</p>
-        )}
-        <Input value={d.imageUrl ?? ''} onChange={(e) => set('imageUrl', e.target.value || null)} placeholder="https://… или /uploads/…" />
+        ) : null}
       </Field>
-      <Field label="Загрузить файл">
+      <Field label={d.mediaType === 'video' ? 'Загрузить видео' : 'Загрузить фото'}>
         <input
           type="file"
-          accept="image/jpeg,image/png,image/webp"
+          accept={d.mediaType === 'video' ? 'video/mp4,video/webm' : 'image/jpeg,image/png,image/webp'}
           className="block w-full text-sm"
           onChange={async (e) => {
             const f = e.target.files?.[0]
@@ -480,8 +548,15 @@ if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} /
             setErr('')
             try {
               const j = await uploadFile(f)
-              set('imageUrl', j.url)
-              toast.push('Фото загружено')
+              if (f.type.startsWith('video/')) {
+                set('videoUrl', j.url)
+                set('mediaType', 'video')
+                if (!d.posterUrl && d.imageUrl) set('posterUrl', d.imageUrl)
+              } else {
+                set('imageUrl', j.url)
+                if (d.mediaType === 'video' && !d.posterUrl) set('posterUrl', j.url)
+              }
+              toast.push(f.type.startsWith('video/') ? 'Видео загружено' : 'Фото загружено')
             } catch (err) {
               setErr(err instanceof Error ? err.message : 'Ошибка загрузки')
             } finally {
@@ -490,6 +565,11 @@ if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} /
             }
           }}
         />
+        {d.mediaType === 'video' ? (
+          <p className="mt-1 text-[12px] text-ink-secondary">MP4/WebM до 20 МБ. Обложку лучше загрузить фото — она показывается в сетке.</p>
+        ) : (
+          <p className="mt-1 text-[12px] text-ink-secondary">JPEG/PNG/WebP до 2 МБ. Пропорция 4:5 — так карточка не обрежется.</p>
+        )}
       </Field>
       <details className="mb-3">
         <summary className="cursor-pointer text-sm font-semibold text-brand">Дополнительно</summary>
@@ -697,8 +777,8 @@ export default function MenuProducts() {
       header: '',
       hideOnPhone: true,
       render: (row) => row.imageUrl
-        ? <img src={row.imageUrl} alt="" className="h-10 w-10 rounded-lg object-cover bg-[#EDE7DC]" />
-        : <div className="h-10 w-10 rounded-lg bg-[#EDE7DC] text-[10px] text-brand/40 flex items-center justify-center font-semibold">6.7</div>,
+        ? <img src={row.imageUrl} alt="" className="h-10 w-10 rounded-lg object-cover bg-surface-secondary" />
+        : <div className="h-10 w-10 rounded-lg bg-surface-secondary text-[10px] text-brand/40 flex items-center justify-center font-semibold">6.7</div>,
     },
     { key: 'name', header: 'Название', primary: true, sortKey: 'name', render: (p) => <span className={p.available ? '' : 'text-ink-tertiary'}>{p.name}{p.variantLabel ? <span className="text-ink-tertiary"> · {p.variantLabel}</span> : null}</span> },
     { key: 'group', header: 'Группа', sortKey: 'category', render: (p) => p.categoryName ?? <span className="text-ink-tertiary">—</span> },

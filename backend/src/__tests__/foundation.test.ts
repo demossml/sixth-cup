@@ -172,6 +172,7 @@ describe('product update and availability', () => {
     expect(p2.available).toBe(0)
 
     const dir = await (await app.request('/api/directory')).json()
-    expect(dir.products.find((x: { id: number }) => x.id === p.id)).toBeUndefined()
+    // Выключенный товар не исчезает из витрины: он помечен soldOut (карточка «Нет в наличии»).
+    expect(dir.products.find((x: { id: number }) => x.id === p.id)?.soldOut).toBe(true)
   })
 })

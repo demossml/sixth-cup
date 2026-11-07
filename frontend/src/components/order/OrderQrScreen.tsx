@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import Qr from '../Qr'
+import PushToggle from '../PushToggle'
 import { cancelPreorder, getPreorder, markReceived, type OrderOut } from '../../lib/preorderApi'
 import { etaLeftSec } from '../../lib/orderBanner'
 import { clearOrderRef } from '../../lib/preorderApi'
@@ -165,6 +166,9 @@ export function OrderQrScreen({ orderId, qrPayload, initial, onClose, onOpenLoya
 
         {order?.status === 'ready' && (
           <div className="mt-3 rounded-2xl bg-ok/10 text-ok px-3.5 py-3 text-[14px] leading-5 font-semibold">Можно забирать</div>
+        )}
+        {order && ['accepted', 'cooking'].includes(order.status) && (
+          <PushToggle className="mt-3" />
         )}
         {(order?.status === 'rejected' || order?.status === 'cancelled') && (
           <div className="mt-3 rounded-2xl bg-warn-bg text-warn px-3.5 py-3 text-[14px] leading-5">

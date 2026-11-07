@@ -12,6 +12,23 @@ export type MenuProduct = Directory['products'][number] & {
   sizeUnit?: 'g' | 'ml' | null
   /** Ккал на порцию, необязательно. */
   calories?: number | null
+  /** КБЖУ на порцию, граммы — плитки на карточке товара. */
+  proteinG?: number | null
+  fatG?: number | null
+  carbsG?: number | null
+  /** Блок «Популярное» на экране меню. */
+  isPopular?: boolean
+  /** Бейдж карточки из админки (приоритетнее CMS). */
+  badge?: BadgeKind | null
+  /** Есть выбор объёма (схема или группа) — на карточке «от N ₽». */
+  hasVolumes?: boolean
+  /** Минимальная цена объёма для «от N ₽». */
+  priceFrom?: number
+  /** Нет в наличии (стоп-лист точки или снят с продажи). */
+  soldOut?: boolean
+  mediaType?: 'image' | 'video'
+  videoUrl?: string | null
+  posterUrl?: string | null
   /** Размеры: id витринной карточки и метка варианта («200 мл»). null — обычная одиночная позиция. */
   groupId?: number | null
   variantLabel?: string | null
@@ -58,9 +75,6 @@ export const BADGE_LABEL: Record<BadgeKind, string> = {
 /** Приоритет бейджа: новинка > хит > сезон. Бейджа «в подарке» в витрине нет. */
 const BADGE_ORDER: BadgeKind[] = ['new', 'hit', 'seasonal']
 
-export type ModifierGroup = { key: string; label: string; items: { id: number; name: string; price: number; maxCount: number }[] }
-const GROUP_LABEL: Record<string, string> = { milk: 'Молоко', syrup: 'Сиропы', topping: 'Добавки', other: 'Другое' }
-const GROUP_ORDER = ['milk', 'syrup', 'topping', 'other']
 
 export type MenuItem = {
   product: MenuProduct
@@ -118,7 +132,9 @@ export function buildMenuItems(dir: MenuDirectory): MenuItem[] {
   const entries: { item: MenuItem; order: number; id: number }[] = []
 
   const mkItem = (product: MenuProduct, variants: MenuVariant[] | null, ids: number[]): void => {
-    const cmsBadge = ids.map((id) => cms.get(id)).find((b): b is BadgeKind => !!b) ?? null
+    const cmsBadge =
+      ids.map((id) => cms.get(id)).find((b): b is BadgeKind => !!b) ??
+      (product.badge === 'new' || product.badge === 'hit' || product.badge === 'seasonal' ? product.badge : null)
     const nameNorm = normalize(product.name)
     entries.push({
       item: {
@@ -174,15 +190,68 @@ export function buildMenuItems(dir: MenuDirectory): MenuItem[] {
     .map((e) => e.item)
 }
 
-/** Ряд «Стоит попробовать»: только позиции с бейджем «Новинка»/«Хит» из CMS. Нет данных — пустой массив (блок не рисуется). */
-export function pickHighlights(items: MenuItem[], limit = 8): MenuItem[] {
-  const rank = (i: MenuItem) => (i.cmsBadge === 'new' ? 0 : 1)
-  return items
-    .filter((i) => i.cmsBadge === 'new' || i.cmsBadge === 'hit')
-    .map((i, idx) => ({ i, idx }))
-    .sort((a, b) => rank(a.i) - rank(b.i) || a.idx - b.idx)
-    .slice(0, limit)
-    .map((x) => x.i)
+/**
+ * Блок «Популярное»: позиции, отмеченные в админке («Показывать в „Популярном"»).
+ * Нет отметок — блок не рисуется (никаких догадок «топ по продажам»).
+ */
+export function pickPopular(items: MenuItem[], limit = 4): MenuItem[] {
+  return items.filter((i) => i.product.isPopular === true).slice(0, limit)
+}
+
+/** «8 позиций» рядом с заголовком: количество карточек в каталоге. */
+export function itemsCountLabel(n: number): string {
+  const mod10 = n % 10
+  const mod100 = n % 100
+  const word = mod10 === 1 && mod100 !== 11 ? 'позиция' : mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14) ? 'позиции' : 'позиций'
+  return `${n} ${word}`
+}
+
+const minutesOf = (hhmm: string): number | null => {
+  const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(hhmm.trim())
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null
+}
+
+export type StoreHours = { open: boolean; label: string }
+
+/**
+ * Открыта ли точка сейчас и что показать гостю: «Открыто · до 21:00» / «Закрыто · 08:00–21:00».
+ * Часы не заданы — считаем открытой (админка их ещё не заполнила).
+ */
+export function storeHours(
+  store: {
+    openTime?: string | null
+    closeTime?: string | null
+    hours?: ({ open: string; close: string } | null)[] | null
+  },
+  now = new Date(),
+): StoreHours {
+  const fmt = (s: string | null | undefined) => (s ?? '').slice(0, 5)
+  // Часы по дням важнее общей пары: в выходной день точка закрыта целиком.
+  const week = store.hours && store.hours.length === 7 ? store.hours : null
+  if (week) {
+    const dayIdx = (now.getDay() + 6) % 7 // JS: 0 = Вс → у нас 0 = Пн
+    const today = week[dayIdx]
+    if (!today) return { open: false, label: 'сегодня выходной' }
+    const open = minutesOf(today.open)
+    const close = minutesOf(today.close)
+    if (open == null || close == null) return { open: true, label: '' }
+    const cur = now.getHours() * 60 + now.getMinutes()
+    const isOpen = cur >= open && cur < close
+    return isOpen ? { open: true, label: `до ${fmt(today.close)}` } : { open: false, label: `${fmt(today.open)}–${fmt(today.close)}` }
+  }
+  const open = store.openTime ? minutesOf(store.openTime) : null
+  const close = store.closeTime ? minutesOf(store.closeTime) : null
+  if (open == null || close == null) return { open: true, label: '' }
+  const cur = now.getHours() * 60 + now.getMinutes()
+  const isOpen = open <= close ? cur >= open && cur < close : cur >= open || cur < close
+  return isOpen
+    ? { open: true, label: `до ${fmt(store.closeTime)}` }
+    : { open: false, label: `${fmt(store.openTime)}–${fmt(store.closeTime)}` }
+}
+
+/** Можно ли заказать позицию (стоп-лист точки или снята с продажи). */
+export function isOrderable(item: MenuItem | null | undefined): boolean {
+  return !!item && !item.product.soldOut
 }
 
 /** Поиск по всем словам запроса (И), в имени и описании. Имя совпало — выше. */
@@ -198,27 +267,4 @@ export function searchItems(items: MenuItem[], query: string): MenuItem[] {
   }
   // Array.prototype.sort стабилен — внутри одного score порядок каталога сохраняется.
   return hits.sort((a, b) => a.score - b.score).map((h) => h.it)
-}
-
-/** Группы модификаторов для read-only блока в sheet. Пусто — блок не рисуется. */
-export function modifierGroupsFor(dir: MenuDirectory, product: MenuProduct): ModifierGroup[] {
-  const schemeId = product.modifierSchemeId
-  if (schemeId == null) return []
-  const scheme = dir.modifierSchemes?.find((s) => s.id === schemeId)
-  if (!scheme || !dir.modifiers?.length) return []
-  const byId = new Map(dir.modifiers.map((m) => [m.id, m]))
-  const groups = new Map<string, ModifierGroup>()
-  const used: { m: MenuModifier; maxCount: number }[] = []
-  for (const it of scheme.items) {
-    const m = byId.get(it.modifierId) // недоступные модификаторы backend уже отфильтровал
-    if (m) used.push({ m, maxCount: it.maxCount })
-  }
-  used.sort((a, b) => (a.m.sortOrder ?? 0) - (b.m.sortOrder ?? 0) || a.m.id - b.m.id)
-  for (const { m, maxCount } of used) {
-    const key = GROUP_LABEL[m.groupKey] ? m.groupKey : 'other'
-    let g = groups.get(key)
-    if (!g) groups.set(key, (g = { key, label: GROUP_LABEL[key], items: [] }))
-    g.items.push({ id: m.id, name: m.name, price: m.price, maxCount })
-  }
-  return [...groups.values()].sort((a, b) => GROUP_ORDER.indexOf(a.key) - GROUP_ORDER.indexOf(b.key))
 }

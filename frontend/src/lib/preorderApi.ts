@@ -80,7 +80,8 @@ export async function createPreorder(body: {
     productId: string
     quantity: number
     volumeId?: string
-    modifiers?: Array<{ groupKey: string; modifierId: string }>
+    /** Модификаторы строки: молоко, обязательный выбор, добавки. Подпись и цена — для чека/кассы. */
+    modifiers?: Array<{ groupKey: string; modifierId: string; name?: string | null; priceRub?: number | null; productId?: number | null }>
   }>
 }): Promise<{ ok: true; order: OrderOut; qrPayload: string } | { ok: false; error: string; message: string }> {
   const { res, data } = await jsonFetch('/api/orders', { method: 'POST', body: JSON.stringify(body) })
@@ -123,7 +124,11 @@ export type CreateResult =
   | { ok: true; order: OrderOut; qrPayload: string }
   | { ok: false; error: CreateFailure; message: string; activeOrderId?: string; bannedUntil?: string }
 
-export async function createOrder(body: Parameters<typeof createPreorder>[0]): Promise<CreateResult> {
+/** Создание заказа с расчётом бонуса: quoteToken обязателен, если гость выбрал бонус. */
+export async function createOrder(
+  body: Parameters<typeof createPreorder>[0] & { quoteToken?: string | null },
+  _unused?: never,
+): Promise<CreateResult> {
   const { res, data } = await jsonFetch('/api/orders', { method: 'POST', body: JSON.stringify(body) })
   if (res.ok && data.ok) return { ok: true, order: data.order as OrderOut, qrPayload: String(data.qrPayload) }
   const code = String(data.error || 'error')
