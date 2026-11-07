@@ -17,12 +17,22 @@ import MenuSkeleton from '../components/menu/MenuSkeleton'
 import ProductCard from '../components/menu/ProductCard'
 import ProductSheet from '../components/menu/ProductSheet'
 import StateBlock from '../components/StateBlock'
+import { CartSheet } from '../components/order/CartSheet'
+import { OrderQrScreen } from '../components/order/OrderQrScreen'
+import {
+  clearCart,
+  createPreorder,
+  loadCart,
+  saveCart,
+  type CartLine,
+  type OrderOut,
+} from '../lib/preorderApi'
 
 /** Сколько ждём чтения кэша/первой синхронизации, прежде чем объявить «нет каталога». */
 const FIRST_LOAD_GRACE_MS = 1500
 
 export default function MenuPage() {
-  const { dir: rawDir, sync, syncing, lastSync } = useApp()
+  const { dir: rawDir, sync, syncing, lastSync, me } = useApp()
   const dir = rawDir as MenuDirectory | null
   const nav = useNavigate()
   const [catId, setCatId] = useState<number | 'all'>('all')
@@ -32,6 +42,69 @@ export default function MenuPage() {
   const [loadError, setLoadError] = useState(false)
   const [waited, setWaited] = useState(false)
   const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine)
+  // Корзина предзаказа живёт в sessionStorage; схлопываем одинаковые позиции по ключу.
+  const [cart, setCart] = useState<CartLine[]>(() => loadCart())
+  const [cartOpen, setCartOpen] = useState(false)
+  const [cartBusy, setCartBusy] = useState(false)
+  const [cartError, setCartError] = useState<string | null>(null)
+  const [storeId, setStoreId] = useState<number | null>(null)
+  const [placed, setPlaced] = useState<{ orderId: string; qrPayload: string; order: OrderOut } | null>(null)
+
+  const stores = dir?.stores ?? []
+  useEffect(() => {
+    if (storeId != null || stores.length === 0) return
+    setStoreId(stores.length === 1 ? stores[0].id : null)
+  }, [storeId, stores])
+
+  const updateCart = useCallback((lines: CartLine[]) => {
+    setCart(lines)
+    saveCart(lines)
+  }, [])
+
+  const addToCart = useCallback((line: { productId: string; name: string; price: number; volumeId?: string; volumeLabel?: string }) => {
+    setCart((prev) => {
+      const key = `${line.productId}|${line.volumeId ?? ''}`
+      const exists = prev.find((l) => l.key === key)
+      const next = exists
+        ? prev.map((l) => (l.key === key ? { ...l, quantity: Math.min(99, l.quantity + 1) } : l))
+        : [
+            ...prev,
+            {
+              key,
+              productId: line.productId,
+              name: line.name,
+              quantity: 1,
+              volumeId: line.volumeId,
+              volumeLabel: line.volumeLabel,
+              unitPriceEstimate: line.price,
+              modifiers: [],
+              configText: line.volumeLabel ?? '',
+            },
+          ]
+      saveCart(next)
+      return next
+    })
+  }, [])
+
+  async function submitOrder() {
+    if (storeId == null || !cart.length) return
+    setCartBusy(true)
+    setCartError(null)
+    const r = await createPreorder({
+      storeId,
+      cardId: me?.cardCode ? String(me.cardCode) : null,
+      items: cart.map((l) => ({ productId: l.productId, quantity: l.quantity, volumeId: l.volumeId ?? undefined })),
+    })
+    setCartBusy(false)
+    if (!r.ok) {
+      setCartError(r.message || 'Не удалось собрать заказ')
+      return
+    }
+    setPlaced({ orderId: r.order.id, qrPayload: r.qrPayload, order: r.order })
+    setCartOpen(false)
+    updateCart([])
+    clearCart()
+  }
 
   useEffect(() => {
     const on = () => setOnline(true)
@@ -206,7 +279,52 @@ export default function MenuPage() {
         Заказ и оплата — на кассе{!note && at ? ` · данные на ${at}` : ''}
       </p>
 
-      {selected && <ProductSheet item={selected} groups={groups} onClose={closeSheet} onShowCard={showCard} />}
+      {cart.length > 0 && (
+        <div className="fixed left-0 right-0 max-w-[480px] mx-auto px-4 z-40" style={{ bottom: 'calc(4rem + env(safe-area-inset-bottom, 0px))' }}>
+          <button
+            type="button"
+            onClick={() => { setCartError(null); setCartOpen(true) }}
+            className="w-full min-h-14 rounded-2xl bg-brand text-white px-4 flex items-center justify-between gap-3 shadow-lift"
+          >
+            <span className="text-[15px] leading-5 font-semibold">Корзина · {cart.reduce((s, l) => s + l.quantity, 0)}</span>
+            <span className="num text-[15px] leading-5">≈ {cart.reduce((s, l) => s + l.unitPriceEstimate * l.quantity, 0)} ₽</span>
+          </button>
+        </div>
+      )}
+
+      {selected && (
+        <ProductSheet
+          item={selected}
+          groups={groups}
+          onClose={closeSheet}
+          onShowCard={showCard}
+          onAddToCart={online ? addToCart : undefined}
+        />
+      )}
+
+      <CartSheet
+        open={cartOpen}
+        lines={cart}
+        stores={stores.map((s) => ({ id: s.id, name: s.name }))}
+        storeId={storeId}
+        storeName={stores.find((s) => s.id === storeId)?.name}
+        onChange={updateCart}
+        onStoreChange={setStoreId}
+        onClose={() => setCartOpen(false)}
+        onSubmit={() => void submitOrder()}
+        submitting={cartBusy}
+        error={cartError}
+      />
+
+      {placed && (
+        <OrderQrScreen
+          orderId={placed.orderId}
+          qrPayload={placed.qrPayload}
+          initial={placed.order}
+          onClose={() => setPlaced(null)}
+          onOpenLoyalty={() => { setPlaced(null); nav('/') }}
+        />
+      )}
     </main>
   )
 }

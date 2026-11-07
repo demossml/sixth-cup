@@ -9,6 +9,8 @@ type Props = {
   groups: ModifierGroup[]
   onClose: () => void
   onShowCard: () => void
+  /** Предзаказ: положить позицию в корзину (цена всё равно уточняется на кассе). */
+  onAddToCart?: (line: { productId: string; name: string; price: number; volumeId?: string; volumeLabel?: string }) => void
 }
 
 const FOCUSABLE = 'a[href],button:not([disabled]),input,select,textarea,[tabindex]:not([tabindex="-1"])'
@@ -17,7 +19,7 @@ const FOCUSABLE = 'a[href],button:not([disabled]),input,select,textarea,[tabinde
  * Sheet позиции: фото, цена, описание, модификаторы (только просмотр), бейдж подарка,
  * CTA на карту. Закрытие: X, backdrop, Escape. Без корзины и выбора количества.
  */
-export default function ProductSheet({ item, groups, onClose, onShowCard }: Props) {
+export default function ProductSheet({ item, groups, onClose, onShowCard, onAddToCart }: Props) {
   const { product: p } = item
   const sizes = item.variants ?? []
   const [sizeIdx, setSizeIdx] = useState(0)
@@ -144,7 +146,7 @@ export default function ProductSheet({ item, groups, onClose, onShowCard }: Prop
             </section>
           ) : null}
 
-          <p className="text-[13px] leading-[18px] text-ink-secondary mt-4">Заказ и оплата — на кассе.</p>
+          <p className="text-[13px] leading-[18px] text-ink-secondary mt-4">Оплата — на кассе. Предзаказ держим 30 минут.</p>
         </div>
 
         {/* CTA всегда в зоне большого пальца, даже при длинном списке добавок */}
@@ -152,9 +154,35 @@ export default function ProductSheet({ item, groups, onClose, onShowCard }: Prop
           className="sticky bottom-0 bg-page/95 backdrop-blur-sm px-5 pt-3"
           style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
         >
-          <button type="button" onClick={onShowCard} className="btn min-h-12">
-            На кассе покажите карту
-          </button>
+          {onAddToCart ? (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  const productId = String(size ? size.productId : p.id)
+                  const label = size ? (size.label || formatSize({ sizeValue: size.sizeValue, sizeUnit: size.sizeUnit })) : ''
+                  onAddToCart({
+                    productId,
+                    name: size ? `${p.name} ${label}`.trim() : p.name,
+                    price,
+                    volumeId: size ? String(size.productId) : undefined,
+                    volumeLabel: label || undefined,
+                  })
+                  onClose()
+                }}
+                className="btn min-h-12"
+              >
+                В корзину
+              </button>
+              <button type="button" onClick={onShowCard} className="btn-ghost min-h-11 w-full mt-2">
+                На кассе покажите карту
+              </button>
+            </>
+          ) : (
+            <button type="button" onClick={onShowCard} className="btn min-h-12">
+              На кассе покажите карту
+            </button>
+          )}
         </div>
       </section>
     </div>

@@ -30,6 +30,11 @@ export const config = {
   /** Time a till reservation holds a bonus before it is released. */
   reservationTtlSec: Number(process.env.RESERVATION_TTL_SEC ?? 90),
   referralCashbackPercent: 3,
+  /**
+   * HMAC-секрет QR предзаказа (`ord1.*`). Пустой — используем JWT_SECRET:
+   * отдельный секрет позволяет отзывать коды заказов, не ломая сессии гостей.
+   */
+  orderQrSecret: process.env.ORDER_QR_SECRET ?? '',
   currency: 'RUB',
   maxVouchersInCard: 5,
   /** Сколько ваучеров касса получает в resolve (контракт: docs/CONTRACT-VOUCHERS-CASHIER.md). */

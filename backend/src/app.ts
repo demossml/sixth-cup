@@ -22,6 +22,7 @@ import { clientLogRoutes } from './modules/logs/routes'
 import { gameRoutes } from './modules/game/routes'
 import { runnerRoutes } from './modules/game/runner'
 import { publicRoutes } from './modules/public/routes'
+import { orderGuestRoutes, orderDeviceRoutes } from './modules/orders/routes'
 import { analyticsRoutes } from './modules/analytics/routes'
 
 const app = new Hono()
@@ -155,6 +156,8 @@ const routes = app
   .route('/api/game', gameRoutes)
   .route('/api/game/runner', runnerRoutes)
   .route('/api/public', publicRoutes)
+  .route('/api/orders', orderGuestRoutes)
+  .route('/api/devices', orderDeviceRoutes)
   .route('/api/analytics', analyticsRoutes)
 
 export type AppType = typeof routes

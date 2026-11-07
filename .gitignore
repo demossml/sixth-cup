@@ -10,3 +10,6 @@ backend/data
 n.md
 n2.md
 n3.md
+
+# локальные бэкапы перед накатом патчей
+.preorder-backup
