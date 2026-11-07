@@ -157,12 +157,19 @@ cp backend/data/backup-<TS>.db backend/data/sixth-cup.db && sudo systemctl resta
 
 ### 5.3. Выключить push, если что-то пошло не так
 
+Единственный выключатель — **VAPID-ключи в `.env`**. Флага `PUSH_ENABLED` в коде нет (старая
+документация вводила в заблуждение): PWA гейтит push по `GET /api/push/public-key`.
+
 ```bash
-# в .env
-PUSH_ENABLED=0
+# в .env — закомментировать оба ключа
+# VAPID_PUBLIC_KEY=…
+# VAPID_PRIVATE_KEY=…
 sudo systemctl restart sixth-cup-api
+curl -sS http://127.0.0.1:3000/api/push/public-key     # 503 push_disabled
 ```
-API продолжает работать, push не отправляется, PWA показывает «Уведомления недоступны».
+API и заказы продолжают работать, push не отправляется, кнопка «Включить уведомления» не показывается.
+Обратное включение — раскомментировать ключи и перезапустить сервис (подписки в
+`push_subscriptions` не теряются).
 
 ---
 

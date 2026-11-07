@@ -3,7 +3,7 @@ import { api } from '../api/client'
 import { useApi } from '../api/useApi'
 import type { EvotorStore, Health } from '../api/types'
 import { ago, fmtDateTime } from '../lib/format'
-import { Badge, Banner, Button, Card, ConfirmDialog, EmptyState, ErrorBox, Field, Input, PageHeader, Spinner, StatusDot, Toggle, useToast } from '../ui/kit'
+import { Badge, Banner, Button, Card, ConfirmDialog, EmptyState, ErrorBox, Field, Input, PageHeader, Select, Spinner, StatusDot, Toggle, useToast } from '../ui/kit'
 import { HelpLink } from '../components/HelpLink'
 import CashierMenuPanel from './cash/CashierMenuPanel'
 import type { Tone } from '../ui/kit'
@@ -251,7 +251,42 @@ function StoresPanel() {
   const [busy, setBusy] = useState('')
   const [form, setForm] = useState<Record<number, LocalStore>>({})
   const [week, setWeek] = useState<Record<number, DayHours[] | null>>({})
+  const orgs = useApi<{ organizations: { id: number; name: string }[] }>('/organizations')
+  const [draft, setDraft] = useState<{ name: string; address: string; organizationId: string }>({
+    name: '',
+    address: '',
+    organizationId: '',
+  })
   const list = stores.data?.stores ?? []
+
+  /**
+   * Новая точка. Без записи в `stores` предзаказ «спит»: гостю не из чего выбирать,
+   * а резерв бонуса не к чему привязать.
+   */
+  const createStore = async () => {
+    if (!draft.name.trim() || !draft.address.trim() || !draft.organizationId) {
+      toast.push('Нужны название, адрес и организация', 'bad')
+      return
+    }
+    setBusy('create')
+    try {
+      await api('/stores', {
+        method: 'POST',
+        body: {
+          name: draft.name.trim(),
+          address: draft.address.trim(),
+          organizationId: Number(draft.organizationId),
+        },
+      })
+      setDraft({ name: '', address: '', organizationId: '' })
+      stores.reload()
+      toast.push('Кофейня добавлена')
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Не удалось добавить кофейню', 'bad')
+    } finally {
+      setBusy('')
+    }
+  }
 
   const row = (s: LocalStore): LocalStore => form[s.id] ?? s
   const patch = (id: number, s: LocalStore, next: Partial<LocalStore>) => setForm({ ...form, [id]: { ...row(s), ...next } })
@@ -307,7 +342,31 @@ function StoresPanel() {
         Координаты нужны для схемы и «ближайших» кофеен.
       </p>
       {stores.error && <ErrorBox message={stores.error} onRetry={stores.reload} />}
-      {!list.length && <Card><EmptyState title="Кофеен нет" text="Добавьте точку в разделе настроек организации." /></Card>}
+      <Card className="mb-3">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Field label="Новая кофейня" hint="Название видит гость">
+            <Input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} maxLength={80} placeholder="Кофейня на Ленина" />
+          </Field>
+          <Field label="Адрес">
+            <Input value={draft.address} onChange={(e) => setDraft({ ...draft, address: e.target.value })} maxLength={200} placeholder="ул. Ленина, 1" />
+          </Field>
+          <Field label="Организация" hint="Из раздела «Система»">
+            <Select value={draft.organizationId} onChange={(e) => setDraft({ ...draft, organizationId: e.target.value })}>
+              <option value="">— выберите —</option>
+              {(orgs.data?.organizations ?? []).map((o) => (
+                <option key={o.id} value={o.id}>{o.name}</option>
+              ))}
+            </Select>
+          </Field>
+        </div>
+        <div className="mt-3 flex items-center gap-2">
+          <Button size="sm" loading={busy === 'create'} onClick={() => void createStore()}>Добавить кофейню</Button>
+          {!(orgs.data?.organizations ?? []).length ? (
+            <span className="text-[12px] text-ink-secondary">Сначала создайте организацию в разделе «Система»</span>
+          ) : null}
+        </div>
+      </Card>
+      {!list.length && <Card><EmptyState title="Кофеен нет" text="Добавьте первую точку формой выше — без неё предзаказ не работает." /></Card>}
       {list.map((s) => {
         const r = row(s)
         return (
