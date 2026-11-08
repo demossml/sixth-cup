@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react'
 import { useApi } from '../api/useApi'
-import { api } from '../api/client'
+import { api, tokenStore } from '../api/client'
 import {
   PageHeader, Card, EmptyState, Badge, Button, Input, Select, Field,
   ErrorBox, Skeleton, Tabs, useToast, cx,
 } from '../ui/kit'
-import { Plus, RefreshCw, Sparkles, Trash2 } from 'lucide-react'
+import { Plus, RefreshCw, Sparkles, Trash2, Upload, Pencil } from 'lucide-react'
 import { csvName, downloadCsv } from '../lib/csv'
 
 type Cat = { id: number; name: string; sortOrder: number; isSystem: number }
@@ -31,6 +31,7 @@ type SummaryRow = {
 }
 
 const UNIT_LABEL: Record<string, string> = { g: 'г', ml: 'мл', pcs: 'шт' }
+const API = (import.meta as any).env?.VITE_API_URL ?? ''
 
 export default function Cost() {
   const [tab, setTab] = useState<'ingredients' | 'recipes' | 'summary'>('ingredients')
@@ -38,7 +39,6 @@ export default function Cost() {
   const ings = useApi<{ ingredients: Ing[] }>('/cost/ingredients')
   const recipes = useApi<{ recipes: Recipe[] }>('/cost/recipes')
   const summary = useApi<{ rows: SummaryRow[] }>(tab === 'summary' ? '/cost/summary' : null)
-  const toast = useToast()
   const reloadAll = () => {
     cats.reload(); ings.reload(); recipes.reload(); summary.reload()
   }
@@ -47,7 +47,7 @@ export default function Cost() {
     <div className="space-y-4">
       <PageHeader
         title="Себестоимость"
-        subtitle="Ингредиенты, техкарты порций, наценка и маржа. ИИ только предлагает черновик."
+        subtitle="Техкарты, ингредиенты и наценка. Неполные позиции — красным, в себес не входят."
         actions={
           <Button variant="ghost" onClick={reloadAll}><RefreshCw size={16} /> Обновить</Button>
         }
@@ -67,25 +67,20 @@ export default function Cost() {
           ings={ings.data?.ingredients || []}
           loading={ings.loading}
           error={ings.error}
-          onChange={() => { ings.reload(); cats.reload() }}
+          onChange={() => { ings.reload(); cats.reload(); recipes.reload() }}
         />
       )}
       {tab === 'recipes' && (
         <RecipesTab
-          ings={(ings.data?.ingredients || []).filter((i) => i.complete && i.active)}
-          allIngs={ings.data?.ingredients || []}
+          ings={ings.data?.ingredients || []}
           recipes={recipes.data?.recipes || []}
           loading={recipes.loading}
           error={recipes.error}
-          onChange={() => recipes.reload()}
+          onChange={() => { recipes.reload(); ings.reload() }}
         />
       )}
       {tab === 'summary' && (
-        <SummaryTab
-          rows={summary.data?.rows || []}
-          loading={summary.loading}
-          error={summary.error}
-        />
+        <SummaryTab rows={summary.data?.rows || []} loading={summary.loading} error={summary.error} />
       )}
     </div>
   )
@@ -99,36 +94,68 @@ function IngredientsTab({
   const toast = useToast()
   const [q, setQ] = useState('')
   const [catId, setCatId] = useState('')
+  const [onlyMissing, setOnlyMissing] = useState(false)
   const [showForm, setShowForm] = useState(false)
+  const [editId, setEditId] = useState<number | null>(null)
   const [aiOpen, setAiOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
   const [form, setForm] = useState({
     name: '', categoryId: '', unit: 'ml', packQty: '1000', packPriceRub: '', comment: '',
   })
   const [newCat, setNewCat] = useState('')
+
   const filtered = useMemo(() => {
     return ings.filter((i) => {
       if (q && !i.name.toLowerCase().includes(q.toLowerCase())) return false
       if (catId && String(i.categoryId) !== catId) return false
+      if (onlyMissing && i.complete) return false
       return true
     })
-  }, [ings, q, catId])
+  }, [ings, q, catId, onlyMissing])
+
+  const openEdit = (i: Ing) => {
+    setEditId(i.id)
+    setForm({
+      name: i.name,
+      categoryId: String(i.categoryId),
+      unit: i.unit,
+      packQty: String(i.packQty),
+      packPriceRub: i.packPriceRub != null ? String(i.packPriceRub) : '',
+      comment: i.comment || '',
+    })
+    setShowForm(true)
+  }
 
   const saveIng = async () => {
     try {
-      await api('/cost/ingredients', {
-        method: 'POST',
-        body: {
-          name: form.name.trim(),
-          categoryId: Number(form.categoryId || cats[0]?.id),
-          unit: form.unit,
-          packQty: Number(form.packQty),
-          packPriceRub: form.packPriceRub === '' ? null : Number(form.packPriceRub),
-          comment: form.comment || null,
-        },
-      })
-      toast.push('Ингредиент добавлен')
+      const body = {
+        name: form.name.trim(),
+        categoryId: Number(form.categoryId || cats[0]?.id),
+        unit: form.unit,
+        packQty: Number(form.packQty),
+        packPriceRub: form.packPriceRub === '' ? null : Number(form.packPriceRub),
+        comment: form.comment || null,
+      }
+      if (editId) {
+        await api(`/cost/ingredients/${editId}`, { method: 'PUT', body })
+        toast.push('Сохранено')
+      } else {
+        await api('/cost/ingredients', { method: 'POST', body })
+        toast.push('Ингредиент добавлен')
+      }
       setShowForm(false)
-      setForm({ name: '', categoryId: '', unit: 'ml', packQty: '1000', packPriceRub: '', comment: '' })
+      setEditId(null)
+      onChange()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+    }
+  }
+
+  const removeIng = async (i: Ing) => {
+    if (!confirm(`Удалить «${i.name}»?`)) return
+    try {
+      await api(`/cost/ingredients/${i.id}`, { method: 'DELETE' })
+      toast.push('Удалено')
       onChange()
     } catch (e) {
       toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
@@ -157,8 +184,15 @@ function IngredientsTab({
             {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </Select>
         </Field>
-        <Button onClick={() => setShowForm(true)}><Plus size={16} /> Ингредиент</Button>
-        <Button variant="ghost" onClick={() => setAiOpen(true)}><Sparkles size={16} /> Заполнить с ИИ</Button>
+        <label className="flex items-center gap-2 text-sm pb-2">
+          <input type="checkbox" checked={onlyMissing} onChange={(e) => setOnlyMissing(e.target.checked)} />
+          Только без цены
+        </label>
+        <Button onClick={() => { setEditId(null); setForm({ name: '', categoryId: '', unit: 'ml', packQty: '1000', packPriceRub: '', comment: '' }); setShowForm(true) }}>
+          <Plus size={16} /> Ингредиент
+        </Button>
+        <Button variant="ghost" onClick={() => setImportOpen(true)}><Upload size={16} /> Импорт техкарты</Button>
+        <Button variant="ghost" onClick={() => setAiOpen(true)}><Sparkles size={16} /> ИИ-прайс</Button>
       </div>
       <Card className="p-3 flex flex-wrap gap-2 items-end">
         <Field label="Новая категория">
@@ -171,7 +205,7 @@ function IngredientsTab({
       {!loading && !filtered.length ? (
         <EmptyState
           title="Справочник пуст"
-          text="Добавьте молоко, кофе, стаканы и крышки с фасовкой и ценой — от них считается себес."
+          text="Импортируйте Excel-техкарту или добавьте молоко, кофе, стаканы вручную."
         />
       ) : (
         <div className="overflow-x-auto rounded-xl border border-line">
@@ -184,17 +218,27 @@ function IngredientsTab({
                 <th className="p-2">₽/фас.</th>
                 <th className="p-2">₽/ед.</th>
                 <th className="p-2">Статус</th>
+                <th className="p-2"></th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((i) => (
-                <tr key={i.id} className="border-t border-line">
+                <tr
+                  key={i.id}
+                  className={cx('border-t border-line', !i.complete && 'bg-red-50 text-red-800')}
+                >
                   <td className="p-2 font-medium">{i.name}</td>
                   <td className="p-2">{i.categoryName}</td>
                   <td className="p-2">{i.packQty} {UNIT_LABEL[i.unit] || i.unit}</td>
                   <td className="p-2">{i.packPriceRub ?? '—'}</td>
                   <td className="p-2">{i.unitPriceRub != null ? i.unitPriceRub.toFixed(4) : '—'}</td>
-                  <td className="p-2">{i.complete ? <Badge tone="ok">готов</Badge> : <Badge tone="warn">нет цены</Badge>}</td>
+                  <td className="p-2">
+                    {i.complete ? <Badge tone="ok">готов</Badge> : <Badge tone="bad">нет цены</Badge>}
+                  </td>
+                  <td className="p-2 whitespace-nowrap">
+                    <button type="button" className="mr-2" title="Изменить" onClick={() => openEdit(i)}><Pencil size={14} /></button>
+                    <button type="button" title="Удалить" onClick={() => removeIng(i)}><Trash2 size={14} /></button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -203,7 +247,7 @@ function IngredientsTab({
       )}
       {showForm && (
         <Card className="p-4 space-y-3 max-w-lg">
-          <div className="font-semibold">Новый ингредиент</div>
+          <div className="font-semibold">{editId ? 'Редактировать' : 'Новый ингредиент'}</div>
           <Field label="Название"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
           <Field label="Категория">
             <Select value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })}>
@@ -220,36 +264,128 @@ function IngredientsTab({
               </Select>
             </Field>
             <Field label="Фасовка"><Input value={form.packQty} onChange={(e) => setForm({ ...form, packQty: e.target.value })} /></Field>
-            <Field label="Цена ₽"><Input value={form.packPriceRub} onChange={(e) => setForm({ ...form, packPriceRub: e.target.value })} /></Field>
+            <Field label="Цена ₽"><Input value={form.packPriceRub} onChange={(e) => setForm({ ...form, packPriceRub: e.target.value })} placeholder="обязательно для себеса" /></Field>
           </div>
           <Field label="Комментарий"><Input value={form.comment} onChange={(e) => setForm({ ...form, comment: e.target.value })} /></Field>
           <div className="flex gap-2">
             <Button onClick={saveIng}>Сохранить</Button>
-            <Button variant="ghost" onClick={() => setShowForm(false)}>Отмена</Button>
+            <Button variant="ghost" onClick={() => { setShowForm(false); setEditId(null) }}>Отмена</Button>
           </div>
         </Card>
       )}
       {aiOpen && <AiPanel onClose={() => setAiOpen(false)} onDone={() => { setAiOpen(false); onChange() }} />}
+      {importOpen && <ImportPanel onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); onChange() }} />}
     </div>
+  )
+}
+
+function ImportPanel({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const toast = useToast()
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<string | null>(null)
+
+  const runText = async () => {
+    setBusy(true)
+    setResult(null)
+    try {
+      const res = await api<{
+        parsed: number; recipesCreated: number; recipesUpdated: number
+        ingredientsCreated: number; missingIngredientNames: string[]
+      }>('/cost/import/techcard-text', { method: 'POST', body: { text } })
+      setResult(
+        `Рецептов: ${res.parsed} (новых ${res.recipesCreated}, обновлено ${res.recipesUpdated}). ` +
+        `Новых ингредиентов: ${res.ingredientsCreated}. ` +
+        (res.missingIngredientNames?.length
+          ? `Без цены (красные): ${res.missingIngredientNames.slice(0, 12).join(', ')}${res.missingIngredientNames.length > 12 ? '…' : ''}`
+          : 'Все с ценами.'),
+      )
+      toast.push('Техкарта импортирована')
+      onDone()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка импорта', 'bad')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const runFile = async (file: File) => {
+    setBusy(true)
+    setResult(null)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch(`${API}/api/admin/cost/import/techcard-file`, {
+        method: 'POST',
+        headers: { 'X-Admin-Token': tokenStore.get() },
+        body: fd,
+      })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error((j as { error?: string; message?: string }).error || (j as { message?: string }).message || res.statusText)
+      const data = j as {
+        parsed: number; recipesCreated: number; recipesUpdated: number
+        ingredientsCreated: number; missingIngredientNames: string[]
+      }
+      setResult(
+        `Файл «${file.name}»: рецептов ${data.parsed}, новых ингредиентов ${data.ingredientsCreated}. ` +
+        (data.missingIngredientNames?.length
+          ? `Дозаполните цены: ${data.missingIngredientNames.slice(0, 15).join(', ')}`
+          : ''),
+      )
+      toast.push('Файл импортирован')
+      onDone()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка файла', 'bad')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Card className="p-4 space-y-3 border-brand">
+      <div className="flex justify-between items-center">
+        <div className="font-semibold flex items-center gap-2"><Upload size={18} /> Импорт техкарты</div>
+        <Button variant="ghost" onClick={onClose}>Закрыть</Button>
+      </div>
+      <p className="text-sm text-ink-secondary">
+        Загрузите Excel (.xlsx) с техкартами или вставьте таблицу / текст. Рецепты создадутся сами.
+        Ингредиенты без цены закупки появятся <span className="text-red-700 font-medium">красным</span> и не войдут в себес, пока не укажете цену.
+      </p>
+      <input
+        type="file"
+        accept=".xlsx,.xls,.csv,.tsv,.txt"
+        disabled={busy}
+        onChange={(e) => {
+          const f = e.target.files?.[0]
+          if (f) void runFile(f)
+        }}
+      />
+      <div className="text-xs text-ink-secondary">или вставьте текст / CSV:</div>
+      <textarea
+        className="w-full min-h-[120px] rounded-xl border border-line p-3 text-sm font-mono"
+        placeholder={'КАПУЧИНО 200\nкофе молотый — 10 г\nмолоко — 150 мл\nстакан 200 мл — 1 шт'}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+      />
+      <Button disabled={busy || !text.trim()} onClick={runText}>{busy ? 'Импорт…' : 'Импортировать текст'}</Button>
+      {result && <div className="text-sm rounded-lg bg-surface-2 p-3">{result}</div>}
+    </Card>
   )
 }
 
 function AiPanel({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
   const toast = useToast()
-  const [text, setText] = useState('Молоко 3,2% 1 л — 95 ₽\nСтаканы 200 мл, 50 шт — 310 ₽\nКрышки 80 мм, 50 шт — 190 ₽\nСироп ваниль 0,7 л — 640 ₽')
+  const [text, setText] = useState('Молоко 3,2% 1 л — 95 ₽\nСтаканы 200 мл, 50 шт — 310 ₽\nКрышки 80 мм, 50 шт — 190 ₽')
   const [busy, setBusy] = useState(false)
   const [items, setItems] = useState<{
     name: string; category: string; unit: string; packQty: number
-    packPriceRub: number | null; confidence: string; note?: string; selected?: boolean
+    packPriceRub: number | null; confidence: string; selected?: boolean
   }[]>([])
 
   const parse = async () => {
     setBusy(true)
     try {
-      const res = await api<{ items: typeof items }>('/cost/ai/parse', {
-        method: 'POST',
-        body: { text },
-      })
+      const res = await api<{ items: typeof items }>('/cost/ai/parse', { method: 'POST', body: { text } })
       setItems((res.items || []).map((i) => ({ ...i, selected: true })))
     } catch (e) {
       toast.push(e instanceof Error ? e.message : 'Ошибка ИИ', 'bad')
@@ -284,15 +420,10 @@ function AiPanel({ onClose, onDone }: { onClose: () => void; onDone: () => void 
   return (
     <Card className="p-4 space-y-3 border-brand">
       <div className="flex justify-between items-center">
-        <div className="font-semibold flex items-center gap-2"><Sparkles size={18} /> Заполнить с ИИ</div>
+        <div className="font-semibold flex items-center gap-2"><Sparkles size={18} /> Прайс → ингредиенты</div>
         <Button variant="ghost" onClick={onClose}>Закрыть</Button>
       </div>
-      <p className="text-sm text-ink-secondary">Вставьте прайс текстом. Проверьте таблицу — в базу попадёт только выбранное.</p>
-      <textarea
-        className="w-full min-h-[100px] rounded-xl border border-line p-3 text-sm"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-      />
+      <textarea className="w-full min-h-[100px] rounded-xl border border-line p-3 text-sm" value={text} onChange={(e) => setText(e.target.value)} />
       <Button disabled={busy} onClick={parse}>{busy ? 'Разбираю…' : 'Извлечь'}</Button>
       {!!items.length && (
         <div className="overflow-x-auto">
@@ -301,33 +432,23 @@ function AiPanel({ onClose, onDone }: { onClose: () => void; onDone: () => void 
               <tr className="text-left text-ink-secondary">
                 <th className="p-1"></th>
                 <th className="p-1">Название</th>
-                <th className="p-1">Кат.</th>
                 <th className="p-1">Фас.</th>
                 <th className="p-1">₽</th>
-                <th className="p-1">Увер.</th>
               </tr>
             </thead>
             <tbody>
               {items.map((it, idx) => (
-                <tr key={idx} className="border-t border-line">
+                <tr key={idx} className={cx('border-t border-line', it.packPriceRub == null && 'bg-red-50')}>
                   <td className="p-1">
-                    <input
-                      type="checkbox"
-                      checked={it.selected !== false}
-                      onChange={(e) => {
-                        const next = [...items]
-                        next[idx] = { ...it, selected: e.target.checked }
-                        setItems(next)
-                      }}
-                    />
+                    <input type="checkbox" checked={it.selected !== false} onChange={(e) => {
+                      const next = [...items]
+                      next[idx] = { ...it, selected: e.target.checked }
+                      setItems(next)
+                    }} />
                   </td>
                   <td className="p-1">{it.name}</td>
-                  <td className="p-1">{it.category}</td>
                   <td className="p-1">{it.packQty} {UNIT_LABEL[it.unit] || it.unit}</td>
                   <td className="p-1">{it.packPriceRub ?? '—'}</td>
-                  <td className="p-1">
-                    {it.confidence === 'low' ? <Badge tone="warn">проверить</Badge> : <Badge tone="ok">ok</Badge>}
-                  </td>
                 </tr>
               ))}
             </tbody>
@@ -340,12 +461,12 @@ function AiPanel({ onClose, onDone }: { onClose: () => void; onDone: () => void 
 }
 
 function RecipesTab({
-  ings, allIngs, recipes, loading, error, onChange,
+  ings, recipes, loading, error, onChange,
 }: {
-  ings: Ing[]; allIngs: Ing[]; recipes: Recipe[]; loading: boolean; error: string; onChange: () => void
+  ings: Ing[]; recipes: Recipe[]; loading: boolean; error: string; onChange: () => void
 }) {
   const toast = useToast()
-  const [sel, setSel] = useState<number | null>(recipes[0]?.id ?? null)
+  const [sel, setSel] = useState<number | null>(null)
   const current = recipes.find((r) => r.id === sel) || null
   const [name, setName] = useState('')
   const [markup, setMarkup] = useState('300')
@@ -380,7 +501,7 @@ function RecipesTab({
   const saveRecipe = async () => {
     if (!sel) return
     try {
-      await api(`/cost/recipes/${sel}`, {
+      const res = await api<{ recipe: Recipe }>(`/cost/recipes/${sel}`, {
         method: 'PUT',
         body: {
           name,
@@ -395,6 +516,19 @@ function RecipesTab({
       })
       toast.push('Сохранено')
       onChange()
+      if (res.recipe) openRecipe(res.recipe)
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+    }
+  }
+
+  const deleteRecipe = async () => {
+    if (!sel || !confirm('Удалить рецепт?')) return
+    try {
+      await api(`/cost/recipes/${sel}`, { method: 'DELETE' })
+      setSel(null)
+      toast.push('Удалён')
+      onChange()
     } catch (e) {
       toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
     }
@@ -404,7 +538,7 @@ function RecipesTab({
     const id = Number(addIngId)
     const ing = ings.find((i) => i.id === id)
     if (!ing) {
-      toast.push('Выберите ингредиент с ценой и фасовкой', 'neutral')
+      toast.push('Выберите ингредиент', 'neutral')
       return
     }
     setLines((prev) => [
@@ -415,7 +549,7 @@ function RecipesTab({
         unit: ing.unit,
         qty: Number(addQty) || 1,
         lineRole: addRole,
-        complete: true,
+        complete: ing.complete,
       },
     ])
   }
@@ -434,39 +568,50 @@ function RecipesTab({
             className={cx(
               'w-full text-left rounded-lg px-2 py-1.5 text-sm',
               sel === r.id ? 'bg-brand-soft text-brand' : 'hover:bg-surface-2',
+              r.missingPrices && 'border-l-2 border-red-500',
             )}
           >
             <div className="font-medium">{r.name}</div>
             <div className="text-xs text-ink-secondary">
-              {r.costRub != null ? `${r.costRub.toFixed(2)} ₽` : '—'}
-              {r.missingPrices ? ' · нет цен' : ''}
+              {r.costRub != null ? `${r.costRub.toFixed(2)} ₽` : 'себес —'}
+              {r.missingPrices ? ' · есть позиции без цены' : ''}
             </div>
           </button>
         ))}
-        {!recipes.length && !loading && <EmptyState title="Нет рецептов" text="Создайте техкарту порции" />}
+        {!recipes.length && !loading && (
+          <EmptyState title="Нет рецептов" text="Импортируйте Excel или создайте вручную" />
+        )}
       </Card>
       <div className="space-y-3">
         {!current ? (
-          <EmptyState title="Выберите рецепт" text="Или создайте новый" />
+          <EmptyState title="Выберите рецепт" text="Или импортируйте техкарту на вкладке «Ингредиенты»" />
         ) : (
           <>
             <Card className="p-4 space-y-3">
               <Field label="Название"><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
               <div className="grid grid-cols-2 gap-2">
                 <Field label="Наценка %"><Input value={markup} onChange={(e) => setMarkup(e.target.value)} /></Field>
-                <Field label="Розница ₽ (утв.)"><Input value={retail} onChange={(e) => setRetail(e.target.value)} placeholder="авто" /></Field>
+                <Field label="Розница ₽"><Input value={retail} onChange={(e) => setRetail(e.target.value)} placeholder="утверждённая" /></Field>
               </div>
               <div className="flex flex-wrap gap-3 text-sm">
                 <Badge tone="brand">Себес {current.costRub != null ? `${current.costRub.toFixed(2)} ₽` : '—'}</Badge>
-                <Badge tone="neutral">Расч. розница {current.retailCalcRub != null ? `${current.retailCalcRub.toFixed(2)} ₽` : '—'}</Badge>
+                <Badge tone="neutral">Расчёт {current.retailCalcRub != null ? `${current.retailCalcRub.toFixed(2)} ₽` : '—'}</Badge>
                 <Badge tone={current.marginPct != null && current.marginPct < 50 ? 'warn' : 'ok'}>
                   Маржа {current.marginPct != null ? `${current.marginPct}%` : '—'}
                 </Badge>
               </div>
-              {current.missingPrices && <Badge tone="warn">У части сырья нет цены</Badge>}
+              {current.missingPrices && (
+                <div className="text-sm text-red-700 bg-red-50 rounded-lg px-3 py-2">
+                  Красные строки без цены закупки не входят в себестоимость. Укажите цену в справочнике ингредиентов.
+                </div>
+              )}
+              <div className="flex gap-2">
+                <Button onClick={saveRecipe}>Сохранить</Button>
+                <Button variant="ghost" onClick={deleteRecipe}>Удалить рецепт</Button>
+              </div>
             </Card>
             <Card className="p-4 space-y-2">
-              <div className="font-medium">Состав порции (стакан, крышка, молоко…)</div>
+              <div className="font-medium">Состав (напиток + стакан + крышка + …)</div>
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-ink-secondary">
@@ -478,50 +623,59 @@ function RecipesTab({
                   </tr>
                 </thead>
                 <tbody>
-                  {lines.map((l, idx) => (
-                    <tr key={idx} className="border-t border-line">
-                      <td className="p-1">{l.ingredientName || allIngs.find((i) => i.id === l.ingredientId)?.name}</td>
-                      <td className="p-1">
-                        <Input
-                          className="w-20"
-                          value={String(l.qty)}
-                          onChange={(e) => {
-                            const next = [...lines]
-                            next[idx] = { ...l, qty: Number(e.target.value) || 0 }
-                            setLines(next)
-                          }}
-                        />{' '}
-                        {UNIT_LABEL[l.unit || ''] || ''}
-                      </td>
-                      <td className="p-1">
-                        <Select
-                          value={l.lineRole}
-                          onChange={(e) => {
-                            const next = [...lines]
-                            next[idx] = { ...l, lineRole: e.target.value as 'base' | 'optional' }
-                            setLines(next)
-                          }}
-                        >
-                          <option value="base">база</option>
-                          <option value="optional">по желанию</option>
-                        </Select>
-                      </td>
-                      <td className="p-1">{l.lineSumRub != null ? `${l.lineSumRub.toFixed(2)} ₽` : '—'}</td>
-                      <td className="p-1">
-                        <button type="button" onClick={() => setLines(lines.filter((_, i) => i !== idx))}>
-                          <Trash2 size={14} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {lines.map((l, idx) => {
+                    const ing = ings.find((i) => i.id === l.ingredientId)
+                    const incomplete = !(l.complete ?? ing?.complete)
+                    return (
+                      <tr key={idx} className={cx('border-t border-line', incomplete && 'bg-red-50 text-red-800')}>
+                        <td className="p-1">
+                          {l.ingredientName || ing?.name}
+                          {incomplete && <span className="ml-1 text-xs">нет цены</span>}
+                        </td>
+                        <td className="p-1">
+                          <Input
+                            className="w-20"
+                            value={String(l.qty)}
+                            onChange={(e) => {
+                              const next = [...lines]
+                              next[idx] = { ...l, qty: Number(e.target.value) || 0 }
+                              setLines(next)
+                            }}
+                          />{' '}
+                          {UNIT_LABEL[l.unit || ing?.unit || ''] || ''}
+                        </td>
+                        <td className="p-1">
+                          <Select
+                            value={l.lineRole}
+                            onChange={(e) => {
+                              const next = [...lines]
+                              next[idx] = { ...l, lineRole: e.target.value as 'base' | 'optional' }
+                              setLines(next)
+                            }}
+                          >
+                            <option value="base">база</option>
+                            <option value="optional">по желанию</option>
+                          </Select>
+                        </td>
+                        <td className="p-1">{incomplete ? '—' : (l.lineSumRub != null ? `${l.lineSumRub.toFixed(2)} ₽` : '—')}</td>
+                        <td className="p-1">
+                          <button type="button" onClick={() => setLines(lines.filter((_, i) => i !== idx))}>
+                            <Trash2 size={14} />
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
               <div className="flex flex-wrap gap-2 items-end">
-                <Field label="Ингредиент (только полные)">
+                <Field label="Ингредиент">
                   <Select value={addIngId} onChange={(e) => setAddIngId(e.target.value)}>
                     <option value="">—</option>
                     {ings.map((i) => (
-                      <option key={i.id} value={i.id}>{i.name}</option>
+                      <option key={i.id} value={i.id}>
+                        {i.name}{!i.complete ? ' (нет цены)' : ''}
+                      </option>
                     ))}
                   </Select>
                 </Field>
@@ -534,7 +688,6 @@ function RecipesTab({
                 </Field>
                 <Button variant="ghost" onClick={addLine}><Plus size={16} /> Строка</Button>
               </div>
-              <Button onClick={saveRecipe}>Сохранить рецепт</Button>
             </Card>
           </>
         )}
@@ -548,14 +701,7 @@ function SummaryTab({ rows, loading, error }: { rows: SummaryRow[]; loading: boo
     downloadCsv(
       csvName('cost-summary'),
       ['name', 'cost', 'markup', 'retail', 'margin', 'warn'],
-      rows.map((r) => [
-        r.name,
-        r.costRub ?? '',
-        r.markupPct,
-        r.retailRub ?? '',
-        r.marginPct ?? '',
-        r.warnings.join(';'),
-      ]),
+      rows.map((r) => [r.name, r.costRub ?? '', r.markupPct, r.retailRub ?? '', r.marginPct ?? '', r.warnings.join(';')]),
     )
   }
   return (
@@ -577,18 +723,18 @@ function SummaryTab({ rows, loading, error }: { rows: SummaryRow[]; loading: boo
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.id} className="border-t border-line">
+                <tr key={r.id} className={cx('border-t border-line', r.missingPrices && 'bg-red-50')}>
                   <td className="p-2 font-medium">{r.name}</td>
                   <td className="p-2">{r.costRub != null ? r.costRub.toFixed(2) : '—'}</td>
                   <td className="p-2">{r.markupPct}</td>
                   <td className="p-2">{r.retailRub != null ? r.retailRub.toFixed(2) : '—'}</td>
                   <td className="p-2">{r.marginPct != null ? r.marginPct : '—'}</td>
-                  <td className="p-2">{r.missingPrices ? <Badge tone="warn">нет цен</Badge> : <Badge tone="ok">ok</Badge>}</td>
+                  <td className="p-2">{r.missingPrices ? <Badge tone="bad">дозаполнить</Badge> : <Badge tone="ok">ok</Badge>}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          {!rows.length && <EmptyState title="Нет данных" text="Создайте рецепты" />}
+          {!rows.length && <EmptyState title="Нет данных" text="Импортируйте техкарту" />}
         </div>
       )}
     </div>

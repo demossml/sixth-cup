@@ -61,3 +61,29 @@ describe('cost tables', () => {
     expect(n).toBeGreaterThanOrEqual(7)
   })
 })
+
+import { parseTechcardText, parseQtyUnit, parseWideMatrix } from '../modules/admin/techcardImport'
+
+describe('techcard import', () => {
+  it('parseQtyUnit', () => {
+    expect(parseQtyUnit('10 гр')?.qty).toBe(10)
+    expect(parseQtyUnit('10 гр')?.unit).toBe('g')
+    expect(parseQtyUnit('0,7 л')?.unit).toBe('ml')
+    expect(parseQtyUnit('0,7 л')?.qty).toBe(700)
+  })
+  it('wide matrix cappuccino-like', () => {
+    const rows = [
+      ['КАПУЧИНО 200', '', 'ЛАТТЕ 200', ''],
+      ['кофе молотый', '10 гр', 'кофе молотый', '10 гр'],
+      ['молоко', '150 мл', 'молоко', '150 мл'],
+      ['стакан 200 мл', '1 шт', 'стакан 200 мл', '1 шт'],
+    ]
+    const r = parseWideMatrix(rows)
+    expect(r.length).toBeGreaterThanOrEqual(1)
+    expect(r[0].lines.some((l) => /кофе/i.test(l.ingredientName))).toBe(true)
+  })
+  it('freeform text', () => {
+    const r = parseTechcardText('КАПУЧИНО 200\nкофе молотый — 10 г\nмолоко — 150 мл')
+    expect(r.length).toBeGreaterThanOrEqual(1)
+  })
+})

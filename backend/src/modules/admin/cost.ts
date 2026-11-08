@@ -8,6 +8,7 @@ import { z } from 'zod'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import { resolveAiConfig } from '../../lib/aiSettings'
+import { parseTechcardText, parseTechcardBuffer, type ParsedRecipe } from './techcardImport'
 
 type Role = 'owner' | 'manager' | 'viewer'
 function roleOf(c: { get: (k: string) => unknown }): Role {
@@ -265,6 +266,137 @@ export function parseIngredientsFromText(text: string): {
   return items
 }
 
+
+function findIngredientByName(name: string, unit?: string) {
+  const n = name.trim().toLowerCase()
+  const rows = db
+    .prepare(
+      `SELECT id, name, unit, pack_qty AS packQty, pack_price_kop AS packPriceKop, category_id AS categoryId
+         FROM cost_ingredients WHERE lower(name)=lower(?) AND active=1`,
+    )
+    .all(name) as { id: number; name: string; unit: string; packQty: number; packPriceKop: number | null; categoryId: number }[]
+  if (unit) {
+    const m = rows.find((r) => r.unit === unit)
+    if (m) return m
+  }
+  return rows[0] || null
+}
+
+function ensureCategoryId(name: string): number {
+  const existing = db.prepare(`SELECT id FROM cost_ingredient_categories WHERE name=?`).get(name) as
+    | { id: number }
+    | undefined
+  if (existing) return existing.id
+  const max = (db.prepare(`SELECT COALESCE(MAX(sort_order),0) AS m FROM cost_ingredient_categories`).get() as { m: number }).m
+  const info = db
+    .prepare(`INSERT INTO cost_ingredient_categories(name, sort_order, is_system) VALUES(?,?,0)`)
+    .run(name, max + 10)
+  return Number(info.lastInsertRowid)
+}
+
+function guessCategory(name: string): string {
+  const low = name.toLowerCase()
+  if (/молок|сливк|овсян|миндал|соев/.test(low)) return 'Молоко и альтернативы'
+  if (/сироп|топпинг/.test(low)) return 'Сиропы и топпинги'
+  if (/стакан|крышк|трубоч|салфет/.test(low)) return 'Посуда'
+  if (/кофе|эспрессо|зерн|какао/.test(low)) return 'Кофе и зерно'
+  if (/маршмел|кориц|спец|посып|анис|гвоздик/.test(low)) return 'Специи и украшения'
+  if (/хлеб|чиабат|индейк|сыр|салат|томат|сэндвич|тунец/.test(low)) return 'Еда / заготовки'
+  return 'Прочее'
+}
+
+function defaultPackQty(unit: string): number {
+  if (unit === 'ml') return 1000
+  if (unit === 'g') return 1000
+  return 50
+}
+
+/** Импорт техкарт: создаёт stub-ингредиенты без цены (красные) и рецепты со строками. */
+function importParsedRecipes(parsed: ParsedRecipe[]) {
+  const t = Date.now()
+  const result = {
+    recipesCreated: 0,
+    recipesUpdated: 0,
+    ingredientsCreated: 0,
+    missingIngredientNames: [] as string[],
+    recipeIds: [] as number[],
+  }
+  db.transaction(() => {
+    for (const pr of parsed) {
+      const lineIds: { ingredientId: number; qty: number; lineRole: string }[] = []
+      for (const ln of pr.lines) {
+        let ing = findIngredientByName(ln.ingredientName, ln.unit)
+        if (!ing) {
+          const catId = ensureCategoryId(guessCategory(ln.ingredientName))
+          const packQty = defaultPackQty(ln.unit)
+          const info = db
+            .prepare(
+              `INSERT INTO cost_ingredients(category_id, name, unit, pack_qty, pack_price_kop, comment, active, created_at, updated_at)
+               VALUES(?,?,?,?,NULL,?,?,?,?)`,
+            )
+            .run(
+              catId,
+              ln.ingredientName,
+              ln.unit,
+              packQty,
+              'Импорт из техкарты — укажите цену закупки',
+              1,
+              t,
+              t,
+            )
+          result.ingredientsCreated++
+          result.missingIngredientNames.push(ln.ingredientName)
+          ing = {
+            id: Number(info.lastInsertRowid),
+            name: ln.ingredientName,
+            unit: ln.unit,
+            packQty,
+            packPriceKop: null,
+            categoryId: catId,
+          }
+        } else if (ing.packPriceKop == null) {
+          result.missingIngredientNames.push(ing.name)
+        }
+        lineIds.push({
+          ingredientId: ing.id,
+          qty: ln.qty,
+          lineRole: ln.lineRole,
+        })
+      }
+      const existing = db
+        .prepare(`SELECT id FROM cost_recipes WHERE lower(name)=lower(?)`)
+        .get(pr.name) as { id: number } | undefined
+      let recipeId: number
+      if (existing) {
+        recipeId = existing.id
+        db.prepare(
+          `UPDATE cost_recipes SET output_label=COALESCE(?, output_label), method_text=COALESCE(?, method_text), updated_at=? WHERE id=?`,
+        ).run(pr.outputLabel, pr.methodText, t, recipeId)
+        db.prepare(`DELETE FROM cost_recipe_lines WHERE recipe_id=?`).run(recipeId)
+        result.recipesUpdated++
+      } else {
+        const info = db
+          .prepare(
+            `INSERT INTO cost_recipes(name, output_label, product_id, markup_pct, retail_price_kop, method_text, status, created_at, updated_at)
+             VALUES(?,?,NULL,300,NULL,?,'active',?,?)`,
+          )
+          .run(pr.name, pr.outputLabel, pr.methodText, t, t)
+        recipeId = Number(info.lastInsertRowid)
+        result.recipesCreated++
+      }
+      lineIds.forEach((ln, i) => {
+        db.prepare(
+          `INSERT INTO cost_recipe_lines(recipe_id, ingredient_id, qty, line_role, sort_order) VALUES(?,?,?,?,?)`,
+        ).run(recipeId, ln.ingredientId, ln.qty, ln.lineRole, i)
+      })
+      result.recipeIds.push(recipeId)
+    }
+  })()
+  result.missingIngredientNames = [...new Set(result.missingIngredientNames)]
+  return result
+}
+
+
 export const adminCost = new Hono()
   .get('/cost/categories', (c) => {
     const rows = db
@@ -420,6 +552,27 @@ export const adminCost = new Hono()
       return c.json({ ok: true, ingredient: row ? serializeIngredient(row) : null })
     },
   )
+
+  .delete('/cost/ingredients/:id', (c) => {
+    requireWrite(c)
+    const id = Number(c.req.param('id'))
+    if (!ingredientRow(id)) throw bad('Ингредиент не найден', 404)
+    const used = db
+      .prepare(
+        `SELECT r.id AS recipeId, r.name AS recipeName FROM cost_recipe_lines l
+         JOIN cost_recipes r ON r.id = l.recipe_id WHERE l.ingredient_id=? LIMIT 20`,
+      )
+      .all(id) as { recipeId: number; recipeName: string }[]
+    if (used.length) {
+      throw bad(
+        `Нельзя удалить: используется в рецептах: ${used.map((u) => u.recipeName).join(', ')}`,
+        409,
+      )
+    }
+    db.prepare(`DELETE FROM cost_ingredients WHERE id=?`).run(id)
+    return c.json({ ok: true })
+  })
+
   .get('/cost/ingredients/:id/usage', (c) => {
     const id = Number(c.req.param('id'))
     if (!ingredientRow(id)) throw bad('Ингредиент не найден', 404)
@@ -499,9 +652,7 @@ export const adminCost = new Hono()
         for (const [i, ln] of (p.lines || []).entries()) {
           const ing = ingredientRow(ln.ingredientId)
           if (!ing) throw bad(`Ингредиент ${ln.ingredientId} не найден`, 400)
-          if (!isComplete(ing.packQty, ing.packPriceKop)) {
-            throw bad(`Ингредиент «${ing.name}» без фасовки или цены — сначала заполните справочник`, 400)
-          }
+          // неполный ингредиент допустим: в UI красный, в себес не входит
           db.prepare(
             `INSERT INTO cost_recipe_lines(recipe_id, ingredient_id, qty, line_role, sort_order) VALUES(?,?,?,?,?)`,
           ).run(id, ln.ingredientId, ln.qty, ln.lineRole ?? 'base', i)
@@ -577,9 +728,7 @@ export const adminCost = new Hono()
           for (const [i, ln] of p.lines.entries()) {
             const ing = ingredientRow(ln.ingredientId)
             if (!ing) throw bad(`Ингредиент ${ln.ingredientId} не найден`, 400)
-            if (!isComplete(ing.packQty, ing.packPriceKop)) {
-              throw bad(`Ингредиент «${ing.name}» без фасовки или цены`, 400)
-            }
+            // неполный ингредиент допустим
             db.prepare(
               `INSERT INTO cost_recipe_lines(recipe_id, ingredient_id, qty, line_role, sort_order) VALUES(?,?,?,?,?)`,
             ).run(id, ln.ingredientId, ln.qty, ln.lineRole ?? 'base', i)
@@ -597,6 +746,39 @@ export const adminCost = new Hono()
     if (!r.changes) throw bad('Рецепт не найден', 404)
     return c.json({ ok: true })
   })
+  .post(
+    '/cost/import/techcard-text',
+    zValidator('json', z.object({ text: z.string().min(1).max(500_000) })),
+    (c) => {
+      requireWrite(c)
+      const { text } = c.req.valid('json')
+      const parsed = parseTechcardText(text)
+      if (!parsed.length) throw bad('Не удалось разобрать техкарту — проверьте формат', 400)
+      const result = importParsedRecipes(parsed)
+      return c.json({ ok: true, parsed: parsed.length, ...result })
+    },
+  )
+  .post('/cost/import/techcard-file', async (c) => {
+    requireWrite(c)
+    const body = await c.req.parseBody()
+    const file = body['file']
+    if (!file || typeof file === 'string') throw bad('Нужен файл file (xlsx/csv)', 400)
+    const f = file as File
+    // Техкарта — это таблица на пару десятков строк: большой файл явно не про неё,
+    // а разбор Excel дорогой (и лишний риск для памяти).
+    if (f.size > 5 * 1024 * 1024) throw bad('Файл больше 5 МБ — сохраните техкарту отдельно', 400)
+    const buf = await f.arrayBuffer()
+    let parsed
+    try {
+      parsed = parseTechcardBuffer(buf, f.name || 'techcard.xlsx')
+    } catch (e) {
+      throw bad(e instanceof Error ? e.message : 'Не удалось прочитать файл', 400)
+    }
+    if (!parsed.length) throw bad('В файле не найдено рецептов с составом', 400)
+    const result = importParsedRecipes(parsed)
+    return c.json({ ok: true, file: f.name, parsed: parsed.length, ...result })
+  })
+
   .get('/cost/summary', (c) => {
     const ids = (
       db.prepare(`SELECT id FROM cost_recipes ORDER BY name`).all() as { id: number }[]
