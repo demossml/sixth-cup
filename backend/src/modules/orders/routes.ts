@@ -2,7 +2,9 @@ import { Hono } from 'hono'
 import { db } from '../../db'
 import { config } from '../../config'
 import { requireAuth, type AuthEnv } from '../../middleware/auth'
-import { requireDevice, type DeviceEnv } from '../../middleware/device'
+import type { DeviceEnv } from '../../middleware/device'
+import { deviceStoreAuth } from '../../middleware/deviceStore'
+import { evotorProxy } from '../../middleware/evotorProxy'
 import {
   activeBan,
   cancelDraft,
@@ -226,12 +228,12 @@ orderGuestRoutes.post('/:id/received', (c) => {
 
 /**
  * Device routes: mounted under /api/devices.
- * Доступ — только по X-Device-Token (requireDevice), точка берётся из самого устройства,
- * поэтому заказ чужой точки отклонится проверкой storeId.
+ * Точка определяется deviceStoreAuth: по X-Device-Token (enroll) либо по X-Evotor-Store-Uuid
+ * от облака Эвотора (так работает текущий APK). Заказ чужой точки отклоняется проверкой storeId.
  */
 export const orderDeviceRoutes = new Hono<DeviceEnv>()
 
-orderDeviceRoutes.use('/orders/*', requireDevice)
+orderDeviceRoutes.use('/orders/*', evotorProxy, deviceStoreAuth)
 
 orderDeviceRoutes.get('/orders/resolve', async (c) => {
   ensurePreorderTables(dbOf(c))

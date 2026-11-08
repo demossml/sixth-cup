@@ -32,7 +32,7 @@ Implementation package for pre-order (PWA + server) delivered as additive module
 | GET | /api/orders/:id | guest status |
 | POST | /api/orders/:id/cancel | guest cancel draft |
 | GET | /api/devices/orders/resolve | device |
-| GET | /api/devices/orders/active | device |
+| GET | /api/devices/orders/active | касса: `X-Device-Token` **или** `X-Evotor-Store-Uuid` (прокси Эвотор) |
 | PATCH | /api/devices/orders/:id/status | device |
 | POST | /api/devices/orders/:id/reject | device |
 | POST | /api/devices/orders/:id/mark-paid | device |
