@@ -25,6 +25,7 @@ const Assistant = lazy(() => import('./pages/Assistant'))
 const System = lazy(() => import('./pages/System'))
 const Staff = lazy(() => import('./pages/Staff'))
 const Stock = lazy(() => import('./pages/Stock'))
+const Cost = lazy(() => import('./pages/Cost'))
 const Purchases = lazy(() => import('./pages/Purchases'))
 const Inventory = lazy(() => import('./pages/Inventory'))
 const Analytics = lazy(() => import('./pages/Analytics'))
@@ -112,6 +113,7 @@ export default function App() {
             <Route path="help" element={<Help />} />
             <Route path="staff" element={<Staff />} />
             <Route path="stock" element={<Stock />} />
+            <Route path="cost" element={<Cost />} />
             <Route path="purchases" element={<Purchases />} />
             <Route path="inventory" element={<Inventory />} />
             <Route path="*" element={<Navigate to="/" replace />} />
