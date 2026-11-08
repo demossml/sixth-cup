@@ -71,6 +71,37 @@ describe('авторизация кассы для экрана заказов',
     expect((await active(PROXY)).status).toBe(200)
   })
 
+  it('POST /orders/:id/status работает как PATCH (касса на Android не умеет PATCH)', async () => {
+    const storeId = await mkStore('Точка E')
+    await linkEvotor(storeId, STORE_UUID)
+    const now = Math.floor(Date.now() / 1000)
+    db.prepare(`INSERT INTO preorders(id, short_code, store_id, status, estimate_total, currency, expires_at, created_at, updated_at)
+      VALUES('o-status','222222',?,'draft',300,'RUB',?,?,?)`).run(storeId, now + 1800, now, now)
+    const res = await app.request('/api/devices/orders/o-status/status', {
+      method: 'POST',
+      headers: { ...JSONH, ...PROXY, 'X-Evotor-Store-Uuid': STORE_UUID, 'X-HTTP-Method-Override': 'PATCH' },
+      body: JSON.stringify({ status: 'accepted' }),
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { ok: boolean; order: { status: string } }
+    expect(body.ok).toBe(true)
+    expect(body.order.status).toBe('accepted')
+  })
+
+  it('PATCH /orders/:id/status тоже работает (новые сборки кассы)', async () => {
+    const storeId = await mkStore('Точка F')
+    await linkEvotor(storeId, STORE_UUID)
+    const now = Math.floor(Date.now() / 1000)
+    db.prepare(`INSERT INTO preorders(id, short_code, store_id, status, estimate_total, currency, expires_at, created_at, updated_at)
+      VALUES('o-patch','333333',?,'draft',300,'RUB',?,?,?)`).run(storeId, now + 1800, now, now)
+    const res = await app.request('/api/devices/orders/o-patch/status', {
+      method: 'PATCH',
+      headers: { ...JSONH, ...PROXY, 'X-Evotor-Store-Uuid': STORE_UUID },
+      body: JSON.stringify({ status: 'accepted' }),
+    })
+    expect(res.status).toBe(200)
+  })
+
   it('чужой store-заголовок не открывает заказы другой точки', async () => {
     const a = await mkStore('Точка C')
     const b = await mkStore('Точка D')

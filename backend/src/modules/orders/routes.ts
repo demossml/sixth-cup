@@ -1,4 +1,4 @@
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import { db } from '../../db'
 import { config } from '../../config'
 import { requireAuth, type AuthEnv } from '../../middleware/auth'
@@ -267,7 +267,7 @@ orderDeviceRoutes.get('/orders/active', async (c) => {
   return c.json({ ok: true, orders })
 })
 
-orderDeviceRoutes.patch('/orders/:id/status', async (c) => {
+async function setOrderStatus(c: Context<DeviceEnv, '/orders/:id/status'>) {
   ensurePreorderTables(dbOf(c))
   const storeId = c.get('storeId')
   const body = (await c.req.json()) as { status?: PreorderStatus }
@@ -287,7 +287,12 @@ orderDeviceRoutes.patch('/orders/:id/status', async (c) => {
     const err = e as { code?: string; message?: string }
     return c.json({ ok: false, error: err.code || 'error', message: err.message || 'error' }, 409)
   }
-})
+}
+
+orderDeviceRoutes.patch('/orders/:id/status', setOrderStatus)
+// Касса на Android не умеет PATCH: HttpURLConnection бросает ProtocolException, и APK шлёт
+// POST с X-HTTP-Method-Override: PATCH. Без этого алиаса «Принять» получала 404.
+orderDeviceRoutes.post('/orders/:id/status', setOrderStatus)
 
 orderDeviceRoutes.post('/orders/:id/eta', async (c) => {
   ensurePreorderTables(dbOf(c))
