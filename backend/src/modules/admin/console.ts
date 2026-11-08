@@ -15,6 +15,7 @@ import { config } from '../../config'
 import { log } from '../../lib/logBuffer'
 import { createTemplate, grantVoucher, listTemplates, templateCreateZ, templatePatchZ, updateTemplate } from '../vouchers/service'
 import { pushMetrics } from '../push/service'
+import { activeBan } from '../orders/service'
 import { enqueueProductSync } from './enqueue'
 import { writeAudit } from './audit'
 import type { AuditInput } from './audit'
@@ -383,17 +384,23 @@ export const adminConsole = new Hono<Env>()
     const receipts = db.prepare(`SELECT id, amount, dp, df, dcb, ts FROM receipts WHERE user_id = ? ORDER BY ts DESC LIMIT 20`).all(id)
     let blocked = false
     if (cardId) blocked = !!db.prepare('SELECT 1 FROM card_denylist WHERE card_id = ? AND released_at IS NULL').get(cardId)
+    // Бан за невыкуп: админ должен видеть его в карточке клиента и снимать здесь же.
+    let preorderBan: { until: number; reason: string; orderId: string | null } | null = null
+    try {
+      preorderBan = activeBan(db as never, id)
+    } catch { /* таблиц предзаказа может не быть в старой БД */ }
 
     // Plain-language hints, derived only from the data above.
     const hints: string[] = []
     if (blocked) hints.push('Карта заблокирована (стоп-лист): касса её не принимает.')
+    if (preorderBan) hints.push('Бан за невыкуп предзаказа: гость не может оформить новый заказ, пока бан не снят.')
     if (!ops.length) hints.push('За этой картой нет ни одной операции с кассы Эвотор.')
     const zero = ops.filter((o) => o.kind === 'SELL' && !o.cups).length
     if (zero) hints.push(`Операций без начисленных чашек: ${zero}. Проверьте, что у проданных товаров стоит «считается чашкой».`)
     hints.push('Карта, введённая на кассе вручную по номеру, не резервирует бонусы (кэшбэк и бесплатные позиции) — так устроено.')
 
     return c.json({
-      user, hasPhone: !String(phone).startsWith('guest:'), blocked, invitedBy,
+      user, hasPhone: !String(phone).startsWith('guest:'), blocked, preorderBan, invitedBy,
       ops, cashback, vouchers, referrals, receipts, hints,
     })
   })

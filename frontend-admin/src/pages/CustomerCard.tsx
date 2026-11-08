@@ -5,12 +5,15 @@ import { api } from '../api/client'
 import { useApi } from '../api/useApi'
 import type { VoucherTemplate } from '../api/types'
 import { fmtDate, fmtDateTime, fmtKop, fmtKopFixed, fmtNum, shortId } from '../lib/format'
+import { banText, banUntilText } from '../lib/preorder'
 import { Badge, Banner, Button, Card, ConfirmDialog, cx, ErrorBox, KpiTile, PageHeader, Select, Spinner, useToast } from '../ui/kit'
 
 type Detail = {
   user: { id: number; nickname: string; cardId: string | null; cardCode: string | null; inviteCode: string; invitedBy: number | null; cashbackBalance: number; createdAt: number; paidTotal: number; freeUsed: number; seq: number }
   hasPhone: boolean
   blocked: boolean
+  /** Бан за невыкуп предзаказа: пока он активен, гость не может оформить новый заказ. */
+  preorderBan: { until: number; reason: string; orderId: string | null } | null
   invitedBy: { id: number; nickname: string; cardCode: string | null } | null
   ops: { storeUuid: string; storeName: string | null; docId: string; kind: string; cups: number | null; free: number | null; cashbackKopecks: number | null; resultRub: number | null; createdAt: number }[]
   cashback: { id: number; amount: number; receiptId: string | null; createdAt: number; fromUserId: number | null; fromNickname: string | null }[]
@@ -36,6 +39,7 @@ export default function CustomerCard() {
   const tpl = useApi<{ templates: VoucherTemplate[] }>('/voucher-templates')
   const [code, setCode] = useState('')
   const [confirm, setConfirm] = useState(false)
+  const [liftOpen, setLiftOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [phone, setPhone] = useState<string | null | undefined>(undefined)
 
@@ -53,6 +57,15 @@ export default function CustomerCard() {
       reload()
     } catch (e) { toast.push(e instanceof Error ? e.message : 'Не удалось выдать', 'bad') } finally { setBusy(false) }
   }
+  const liftBan = async () => {
+    setBusy(true)
+    try {
+      await api(`/preorder/bans/${u.id}/lift`, { method: 'POST' })
+      toast.push('Бан за невыкуп снят')
+      setLiftOpen(false)
+      reload()
+    } catch (e) { toast.push(e instanceof Error ? e.message : 'Не удалось снять бан', 'bad') } finally { setBusy(false) }
+  }
   const showPhone = async () => {
     try { setPhone((await api<{ phone: string | null }>(`/customers/${u.id}/phone`)).phone) }
     catch (e) { toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad') }
@@ -67,7 +80,7 @@ export default function CustomerCard() {
       <PageHeader
         title={u.cardCode ? `Карта №${u.cardCode}` : `Клиент #${u.id}`}
         subtitle={<>{u.nickname} · регистрация {fmtDate(u.createdAt)} · код приглашения {u.inviteCode}</>}
-        actions={data.blocked ? <Badge tone="bad">Карта в стоп-листе</Badge> : undefined}
+        actions={data.blocked ? <Badge tone="bad">Карта в стоп-листе</Badge> : data.preorderBan ? <Badge tone="warn">Бан за невыкуп</Badge> : undefined}
       />
       <div className="mb-3 grid grid-cols-2 gap-3 md:grid-cols-4">
         <KpiTile label="Оплаченных чашек" value={fmtNum(u.paidTotal)} sub={`бесплатных использовано: ${u.freeUsed}`} />
@@ -78,6 +91,23 @@ export default function CustomerCard() {
       {data.hints.length > 0 && (
         <Banner tone="neutral"><ul className="list-disc space-y-1 pl-4">{data.hints.map((h) => <li key={h}>{h}</li>)}</ul></Banner>
       )}
+
+      <Section title="Предзаказ">
+        {data.preorderBan ? (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="text-sm">
+              <p className="font-semibold text-bad">Бан за невыкуп до {banUntilText(data.preorderBan.until)} <span className="font-normal text-ink-secondary">· осталось {banText(data.preorderBan.until)}</span></p>
+              <p className="text-ink-secondary">
+                Клиент не может оформить новый заказ{data.preorderBan.orderId ? ` · заказ ${data.preorderBan.orderId.slice(0, 8)}` : ''}.
+                Бан снимается сам по истечении срока или здесь — вручную.
+              </p>
+            </div>
+            <Button size="sm" variant="secondary" onClick={() => setLiftOpen(true)}>Снять бан</Button>
+          </div>
+        ) : (
+          <p className="text-sm text-ink-secondary">Бана нет — клиент может оформлять предзаказы.</p>
+        )}
+      </Section>
 
       <Section title="Телефон">
         {!data.hasPhone ? <p className="text-sm text-ink-secondary">Телефон не указан — клиент идентифицируется только картой.</p> : phone ? <p className="font-mono text-sm">{phone}</p> : (
@@ -172,6 +202,17 @@ export default function CustomerCard() {
 
       <ConfirmDialog open={confirm} title="Выдать ваучер?" confirmLabel="Выдать" busy={busy} onConfirm={grant} onCancel={() => setConfirm(false)}>
         «{selTpl?.title}» будет выдан клиенту {u.cardCode ? `№${u.cardCode}` : `#${u.id}`}. Действие записывается в журнал.
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={liftOpen}
+        title="Снять бан за невыкуп?"
+        confirmLabel="Снять бан"
+        busy={busy}
+        onCancel={() => setLiftOpen(false)}
+        onConfirm={() => void liftBan()}
+      >
+        Клиент {u.cardCode ? `№${u.cardCode}` : `#${u.id}`} снова сможет оформить предзаказ. Действие попадёт в журнал.
       </ConfirmDialog>
     </>
   )
