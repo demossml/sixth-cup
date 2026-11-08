@@ -12,7 +12,7 @@ import {
   saveMapProvider,
   type MapProvider,
 } from '../lib/mapLinks'
-import StoreMap from '../components/map/StoreMap'
+import StoreMapEmbed from '../components/map/StoreMapEmbed'
 import { mediaUrl } from '../lib/media'
 
 type GeoState = 'idle' | 'asking' | 'denied' | 'ready'
@@ -115,7 +115,11 @@ export default function StorePickerPage() {
 
         {stores.length > 0 && (
           <div className="mt-3">
-            <StoreMap stores={stores} selectedId={selected} onSelect={setSelected} />
+            <StoreMapEmbed stores={stores} selectedId={selected} onSelect={setSelected} />
+            <p className="mt-1 text-[11px] leading-4 text-ink-tertiary">
+              Карта Яндекса
+              {provider === 'apple' ? ' · маршрут откроется в Apple Картах' : provider === 'google' ? ' · маршрут откроется в Google Картах' : ''}
+            </p>
             <div className="mt-2 flex items-center gap-1.5" role="group" aria-label="Открыть в карте">
               {MAP_PROVIDERS.map((p) => (
                 <button
