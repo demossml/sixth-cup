@@ -10,6 +10,7 @@ import { config } from '../../config'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import { processProductImage } from '../../lib/productImage'
+import { clientIp } from '../../lib/clientIp'
 
 const ALLOWED = new Map<string, string>([
   ['image/jpeg', '.jpg'],
@@ -38,11 +39,7 @@ function hitRate(key: string, max: number, windowMs: number) {
   db.prepare('UPDATE rate_limits SET count = count + 1 WHERE key=?').run(key)
 }
 
-function clientIp(c: { req: { header: (n: string) => string | undefined } }): string {
-  return c.req.header('x-forwarded-for')?.split(',')[0]?.trim()
-    || c.req.header('x-real-ip')
-    || 'unknown'
-}
+
 
 const adminAuth = createMiddleware(async (c, next) => {
   const given = c.req.header('X-Admin-Token') ?? ''
@@ -51,7 +48,9 @@ const adminAuth = createMiddleware(async (c, next) => {
   const isManager = !isOwner && !!config.adminMarketerToken && safeEq(given, config.adminMarketerToken)
   if (!isOwner && !isManager) {
     if (config.adminViewerToken && safeEq(given, config.adminViewerToken)) throw bad('Read-only admin token', 403)
-    hitRate(`admin-ip:${clientIp(c)}`, 30, 15 * 60_000)
+    // Без доверенного прокси IP неизвестен: лимит тогда не по IP (иначе общий счётчик на всех).
+    const ip = clientIp(c)
+    if (ip) hitRate(`admin-ip:${ip}`, 30, 15 * 60_000)
     throw bad('Forbidden', 403)
   }
   await next()

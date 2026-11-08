@@ -19,8 +19,10 @@ type ScClaim = {
   cb?: number
   ts?: number
   kind?: 'token' | 'code'
-  /** order_id из queue_numbers: канонический ключ связи чека с публичным номером. */
+  /** order_id из queue_numbers: канонический ключ связи чека с публичным номером (НЕ id предзаказа). */
   ord?: string
+  /** id предзаказа (uuid) — канон для льгот предзаказа. Пишет актуальная касса. */
+  preorder?: string
   /** public_order_number строкой — только для логов, не источник истины. */
   qn?: string
   /** id ваучера из таблицы vouchers, который касса применяет к чеку. */
@@ -66,7 +68,24 @@ function qty(tx: Tx): number {
   return Math.max(0, number(tx.quantity ?? tx.qty ?? 0))
 }
 
-function amountKopecks(doc: Record<string, unknown>, txs: Tx[]): number {
+/** Явный масштаб денег точки (P1-5): `rub` / `kopecks` / `auto` (эвристика). */
+export function moneyScaleForStore(db: Database.Database, storeUuid: string): 'rub' | 'kopecks' | 'auto' {
+  try {
+    const row = db
+      .prepare(
+        `SELECT s.money_scale AS scale
+           FROM evotor_stores e JOIN stores s ON s.id = e.local_store_id
+          WHERE e.store_uuid = ?`,
+      )
+      .get(storeUuid) as { scale: string | null } | undefined
+    const v = String(row?.scale ?? 'auto')
+    return v === 'rub' || v === 'kopecks' ? v : 'auto'
+  } catch {
+    return 'auto'
+  }
+}
+
+function amountKopecks(doc: Record<string, unknown>, txs: Tx[], scale: 'rub' | 'kopecks' | 'auto' = 'auto'): number {
   /**
    * Evotor money scale is store-dependent:
    * - cloud / some stores: price=15000 for 150.00 RUB (already kopecks)
@@ -78,7 +97,8 @@ function amountKopecks(doc: Record<string, unknown>, txs: Tx[]): number {
     return t === 'REGISTER_POSITION' || t === 'POSITION' || productUuid(tx) != null
   })
   const unitPrices = positions.map((tx) => number(tx.price ?? tx.resultPrice ?? tx.result_price)).filter((p) => p > 0)
-  const alreadyKopecks = unitPrices.some((p) => p >= 1000)
+  // Явная настройка точки главнее эвристики: «≥1000» ломается на дорогих позициях в рублях.
+  const alreadyKopecks = scale === 'kopecks' ? true : scale === 'rub' ? false : unitPrices.some((p) => p >= 1000)
 
   const body = obj(doc.body)
   const candidates = [
@@ -140,8 +160,51 @@ function getSc(doc: Record<string, unknown>): ScClaim | null {
   return out
 }
 
+/** Похоже ли значение на uuid заказа: 8-4-4-4-12 (или любой длинный uuid-подобный id). */
+export function looksLikeOrderId(value: unknown): boolean {
+  const s = String(value ?? '').trim()
+  if (s.length < 16 || s.length > 64) return false
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)
+}
+
 /**
- * Льготы предзаказа по `sc.ord`: касса не считает скидку сама, она берёт готовый набор из заказа.
+ * id предзаказа из `sc`: канон — `preorder` (так пишет актуальная касса).
+ *
+ * `ord` — это id очереди (`queue_numbers`), а не заказ: раньше сервер искал льготу по нему
+ * и мог списать чужой бонус. Поэтому fallback на `ord` только если значение похоже на uuid
+ * И такой заказ реально существует; в этом случае пишем предупреждение об устаревшем поле.
+ */
+export function resolvePreorderId(
+  db: Database.Database,
+  sc: { preorder?: unknown; ord?: unknown },
+): { orderId: string | null; legacy: boolean } {
+  const canon = typeof sc.preorder === 'string' ? sc.preorder.trim() : ''
+  const exists = (id: string): boolean => {
+    try {
+      return Boolean(db.prepare('SELECT 1 FROM preorders WHERE id=?').get(id))
+    } catch {
+      return false
+    }
+  }
+  if (canon && exists(canon)) return { orderId: canon, legacy: false }
+  if (canon) {
+    // Касса прислала не наш заказ — не списываем ничего и оставляем след.
+    log.warn('sc.preorder: order not found', { preorder: canon.slice(0, 12) })
+    return { orderId: null, legacy: false }
+  }
+  const ord = typeof sc.ord === 'string' ? sc.ord.trim() : ''
+  if (ord && looksLikeOrderId(ord) && exists(ord)) {
+    log.warn('sc.ord with preorder id: legacy field, касса должна писать sc.preorder', {
+      ord: ord.slice(0, 12),
+    })
+    return { orderId: ord, legacy: true }
+  }
+  // id очереди (короткий/несуществующий) — это не заказ, льгот нет.
+  return { orderId: null, legacy: false }
+}
+
+/**
+ * Льготы предзаказа по id заказа (`sc.preorder`): касса не считает скидку сама, она берёт готовый набор из заказа.
  * `null` — заказа нет/бонуса не было → поведение прежнее (claims из sc, op из sc.op).
  */
 function preorderBenefitOf(
@@ -275,11 +338,11 @@ export function handleSell(db: Database.Database, storeUuid: string, doc: Record
     paid_total: number; free_used: number; seq: number
   }
   const freeAvail = Math.max(0, freeEarned(state.paid_total) - state.free_used)
-  const amount = amountKopecks(doc, txs)
+  const amount = amountKopecks(doc, txs, moneyScaleForStore(db, storeUuid))
   const isToken = rawCard.includes('.')
   // Предзаказ: бонус выбран гостем в PWA, резерв уже создан сервером и привязан к заказу.
-  // Касса передаёт только sc.ord — скидку и списание считает сервер.
-  const orderBenefit = preorderBenefitOf(db, sc.ord)
+  // Касса передаёт id заказа в sc.preorder (канон). `sc.ord` — id очереди, не заказ.
+  const orderBenefit = preorderBenefitOf(db, resolvePreorderId(db, sc).orderId)
   const claimedFree = orderBenefit ? orderBenefit.free : Math.max(0, Math.floor(number(sc.free)))
   const claimedCb = orderBenefit ? orderBenefit.cb : Math.max(0, Math.floor(number(sc.cb)))
   // Benefits are only honoured for a signed QR with a server-issued reservation (sc.op or заказ).
@@ -429,7 +492,7 @@ export function handlePayback(db: Database.Database, storeUuid: string, doc: Rec
 
   // Proportional reversal: share of the original sale refunded by this PAYBACK, capped by what is not yet reversed.
   const origRub = Math.max(0, Number(original.result_rub ?? 0))
-  const paybackRub = amountKopecks(doc, transactions(doc)) / 100
+  const paybackRub = amountKopecks(doc, transactions(doc), moneyScaleForStore(db, storeUuid)) / 100
   const prev = db.prepare(`SELECT COALESCE(SUM(result_rub),0) AS rub, COALESCE(SUM(cups_counted),0) AS cups, COALESCE(SUM(free),0) AS free, COALESCE(SUM(cb),0) AS cb
     FROM loyalty_ops WHERE doc_store=? AND kind='PAYBACK' AND op_claimed=?`).get(storeUuid, baseId) as { rub: number; cups: number; free: number; cb: number }
   const remaining = Math.max(0, origRub - prev.rub)

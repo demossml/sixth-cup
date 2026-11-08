@@ -6,6 +6,7 @@
  */
 import { createMiddleware } from 'hono/factory'
 import { db } from '../../db'
+import { clientIp } from '../../lib/clientIp'
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS admin_audit (
@@ -109,7 +110,8 @@ export const auditMiddleware = createMiddleware<{ Variables: { audit?: Partial<A
   await next()
   try {
     const extra = c.get('audit') ?? {}
-    const fwd = c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ?? null
+    // В аудит пишем IP только из доверенных заголовков (P1-2), иначе null.
+    const fwd = clientIp(c)
     writeAudit({
       method,
       path: c.req.path,

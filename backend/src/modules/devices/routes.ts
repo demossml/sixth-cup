@@ -21,9 +21,37 @@ import { config } from '../../config'
 import { resolveAndReserve } from '../loyalty/reservations'
 import { log, maskCode, shortId } from '../../lib/logBuffer'
 import { allowLogIngest, entryZ, ingest } from '../logs/routes'
+import { clientIp } from '../../lib/clientIp'
 import { staffDeviceRoutes } from '../staff/deviceRoutes'
 import { getCashierMenu } from '../../lib/cashierMenu'
 import { formatQueueNumber, issueQueueNumber } from '../queue/numbers'
+
+/** Сколько живёт код регистрации. 15 минут — успеть дойти до терминала, но не «навсегда». */
+const ENROLL_TTL_MS = Number(process.env.ENROLL_TTL_MIN ?? 15) * 60_000
+/** Попыток ввода кода с одного IP за окно. */
+const ENROLL_IP_MAX = 10
+const ENROLL_IP_WINDOW_MS = 10 * 60_000
+/** Попыток по конкретному коду: перебор hex-кода должен упираться в лимит. */
+const ENROLL_CODE_MAX = 5
+const ENROLL_LOCK_MS = 15 * 60_000
+
+/** Счётчик попыток в окне: возвращает false, когда лимит исчерпан. */
+function allowAttempt(key: string, max: number, windowMs: number): boolean {
+  const now = Date.now()
+  const row = db.prepare('SELECT count, window_start FROM rate_limits WHERE key=?').get(key) as
+    | { count: number; window_start: number }
+    | undefined
+  if (!row || now - row.window_start > windowMs) {
+    db.prepare('INSERT OR REPLACE INTO rate_limits(key,count,window_start) VALUES(?,?,?)').run(key, 1, now)
+    return true
+  }
+  if (row.count >= max) return false
+  db.prepare('UPDATE rate_limits SET count=count+1 WHERE key=?').run(key)
+  return true
+}
+
+/** 32–64 символа base64url/base64/hex: так выглядит ключ терминала, мусор не принимаем. */
+const PUBLIC_KEY_RE = /^[A-Za-z0-9+/=_-]{32,64}$/
 
 export const deviceRoutes = new Hono<DeviceEnv>()
   .get('/ping', (c) => {
@@ -134,13 +162,42 @@ export const deviceRoutes = new Hono<DeviceEnv>()
     zValidator('json', z.object({ code: z.string().min(4).max(20), publicKey: z.string().min(0).max(64).optional() })),
     (c) => {
       const { code, publicKey } = c.req.valid('json')
-      const d = db.prepare('SELECT id, store_id FROM devices WHERE enroll_code=? AND revoked=0')
-        .get(code.toUpperCase()) as { id: number; store_id: number } | undefined
-      if (!d) throw bad('Код регистрации не найден', 404)
+      const ip = clientIp(c)
+      const norm = code.trim().toUpperCase()
+      // Перебор кода с одного IP или по одному коду — стоп (аудит B-06/S-1).
+      if (ip && !allowAttempt(`enroll-ip:${ip}`, ENROLL_IP_MAX, ENROLL_IP_WINDOW_MS)) {
+        log.warn('device enroll rate-limited by ip', { ip })
+        throw bad('Слишком много попыток регистрации. Попробуйте позже.', 429)
+      }
+      if (!allowAttempt(`enroll-code:${norm}`, ENROLL_CODE_MAX, ENROLL_LOCK_MS)) {
+        log.warn('device enroll locked: too many attempts for code', { code: norm.slice(0, 2) + '…' })
+        throw bad('Код заблокирован после нескольких неудачных попыток', 429)
+      }
+      const d = db.prepare('SELECT id, store_id, enroll_expires_at AS expiresAt, key_bound_at AS keyBoundAt FROM devices WHERE enroll_code=? AND revoked=0')
+        .get(norm) as { id: number; store_id: number; expiresAt: number | null; keyBoundAt: number | null } | undefined
+      if (!d) {
+        log.warn('device enroll: code not found', { ip: ip ?? 'unknown' })
+        throw bad('Код регистрации не найден', 404)
+      }
+      if (d.expiresAt != null && Number(d.expiresAt) <= Date.now()) {
+        log.warn('device enroll: code expired', { deviceId: d.id, storeId: d.store_id })
+        throw bad('Срок действия кода истёк — создайте новый в админке', 410)
+      }
+      if (d.keyBoundAt != null) {
+        // Ключ уже привязан: повторная регистрация тем же кодом не должна перевыпускать токен.
+        log.warn('device enroll: key already bound', { deviceId: d.id })
+        throw bad('Этот код уже использован — создайте новый', 409)
+      }
+      if (publicKey && publicKey.length > 0 && !PUBLIC_KEY_RE.test(publicKey)) {
+        log.warn('device enroll: invalid public key format', { deviceId: d.id })
+        throw bad('Некорректный формат публичного ключа', 400)
+      }
       const token = randomBytes(24).toString('base64url')
       const pk = publicKey && publicKey.length > 0 ? publicKey : 'evotor-no-key'
-      db.prepare('UPDATE devices SET public_key=?, token_hash=?, enroll_code=NULL WHERE id=?')
-        .run(pk, hashToken(token), d.id)
+      const now = Date.now()
+      db.prepare('UPDATE devices SET public_key=?, token_hash=?, enroll_code=NULL, key_bound_at=? WHERE id=?')
+        .run(pk, hashToken(token), now, d.id)
+      log.info('device enrolled', { deviceId: d.id, storeId: d.store_id, keyBound: publicKey ? 1 : 0 })
       const store = db.prepare('SELECT name FROM stores WHERE id=?').get(d.store_id) as { name: string }
       const org = db.prepare(
         `SELECT o.legal_name as legalName, o.tax_regime as taxRegime, o.vat_rate as vatRate

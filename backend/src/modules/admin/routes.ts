@@ -65,6 +65,7 @@ import {
 } from '../catalog/addonScheme'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
+import { clientIp } from '../../lib/clientIp'
 import { grantVoucher } from '../vouchers/service'
 import { listQueueNumbers } from '../queue/numbers'
 import { resetLoyaltyData, resetCatalogData } from '../../db/seed'
@@ -129,11 +130,8 @@ function hitRate(key: string, max: number, windowMs: number) {
   db.prepare('UPDATE rate_limits SET count = count + 1 WHERE key=?').run(key)
 }
 
-function clientIp(c: { req: { header: (n: string) => string | undefined } }): string {
-  return c.req.header('x-forwarded-for')?.split(',')[0]?.trim()
-    || c.req.header('x-real-ip')
-    || 'unknown'
-}
+/** IP для лимитов админки: только доверенный прокси (P1-2), иначе «unknown». */
+const adminIp = (c: { req: { header: (n: string) => string | undefined } }): string => clientIp(c) ?? 'unknown'
 
 /** Mutating paths the manager role may not call (anchored, so /evotor/stores/... stays allowed). */
 /** Адрес медиа: пусто, наш /uploads/… или внешний http(s). Локальные пути не сохраняем. */
@@ -155,7 +153,7 @@ export const MANAGER_BLOCKED =
 const adminAuth = createMiddleware(async (c, next) => {
   const role = resolveAdminRole(c.req.header('X-Admin-Token'))
   if (!role) {
-    hitRate(`admin-ip:${clientIp(c)}`, 30, 15 * 60_000)
+    hitRate(`admin-ip:${adminIp(c)}`, 30, 15 * 60_000)
     throw bad('Forbidden', 403)
   }
   c.set('adminRole' as never, role as never)
@@ -344,6 +342,7 @@ export const adminRoutes = new Hono()
              s.hours_json AS hoursJson,
              s.photo_url AS photoUrl, s.photo_full_url AS photoFullUrl,
              s.entrance_hint AS entranceHint, s.phone AS phone,
+             s.money_scale AS moneyScale,
              s.evotor_name AS evotorName, s.evotor_address AS evotorAddress,
              e.store_uuid AS evotorUuid, e.code AS evotorCode, e.sync_enabled AS evotorSyncEnabled,
              o.name AS organizationName
@@ -363,6 +362,7 @@ export const adminRoutes = new Hono()
              s.hours_json AS hoursJson,
              s.photo_url AS photoUrl, s.photo_full_url AS photoFullUrl,
              s.entrance_hint AS entranceHint, s.phone AS phone,
+             s.money_scale AS moneyScale,
              s.evotor_name AS evotorName, s.evotor_address AS evotorAddress,
              e.store_uuid AS evotorUuid, e.code AS evotorCode,
              o.name AS organizationName, o.tax_regime AS taxRegime, o.vat_rate AS vatRate
@@ -419,10 +419,12 @@ export const adminRoutes = new Hono()
     photoFullUrl: mediaUrl,
     entranceHint: z.string().max(160).optional().nullable(),
     phone: z.string().max(32).optional().nullable(),
+    /** Масштаб денег в чеках точки: auto — эвристика, rub/kopecks — явно (P1-5). */
+    moneyScale: z.enum(['auto', 'rub', 'kopecks']).optional(),
   })), (c) => {
     const id = Number(c.req.param('id'))
     const cur = db.prepare('SELECT * FROM stores WHERE id=?').get(id) as
-      | { name: string; address: string; organization_id: number | null; open_time: string | null; close_time: string | null; lat: number | null; lng: number | null; hours_json: string | null; photo_url: string | null; photo_full_url: string | null; entrance_hint: string | null; phone: string | null }
+      | { name: string; address: string; organization_id: number | null; open_time: string | null; close_time: string | null; lat: number | null; lng: number | null; hours_json: string | null; photo_url: string | null; photo_full_url: string | null; entrance_hint: string | null; phone: string | null; money_scale: string | null }
       | undefined
     if (!cur) throw bad('Store not found', 404)
     const p = c.req.valid('json')
@@ -431,7 +433,7 @@ export const adminRoutes = new Hono()
       if (!org) throw bad('Organization not found', 404)
     }
     db.prepare(`UPDATE stores SET name=?, address=?, organization_id=?, open_time=?, close_time=?,
-        lat=?, lng=?, hours_json=?, photo_url=?, photo_full_url=?, entrance_hint=?, phone=? WHERE id=?`).run(
+        lat=?, lng=?, hours_json=?, photo_url=?, photo_full_url=?, entrance_hint=?, phone=?, money_scale=? WHERE id=?`).run(
       p.name ?? cur.name,
       p.address ?? cur.address,
       p.organizationId ?? cur.organization_id,
@@ -444,6 +446,7 @@ export const adminRoutes = new Hono()
       p.photoFullUrl === undefined ? cur.photo_full_url : p.photoFullUrl,
       p.entranceHint === undefined ? cur.entrance_hint : p.entranceHint,
       p.phone === undefined ? cur.phone : p.phone,
+      p.moneyScale ?? cur.money_scale ?? 'auto',
       id
     )
     return c.json({ ok: true })
@@ -485,6 +488,7 @@ export const adminRoutes = new Hono()
     const role = ((c as { get: (k: string) => string }).get('adminRole') || 'owner') as string
     const rows = (db.prepare(`
       SELECT d.id, d.name, d.store_id AS storeId, d.revoked, d.enroll_code AS enrollCode,
+             d.enroll_expires_at AS enrollExpiresAt,
              d.public_key IS NOT NULL AS enrolled, d.created_at AS createdAt, s.name AS storeName
       FROM devices d JOIN stores s ON s.id = d.store_id ORDER BY d.id DESC`).all() as Record<string, unknown>[])
       // An enrolment code lets whoever holds it register a till: only the owner sees it.
@@ -497,9 +501,12 @@ export const adminRoutes = new Hono()
     const store = db.prepare('SELECT id FROM stores WHERE id=?').get(storeId)
     if (!store) throw bad('Store not found', 404)
     const code = randomBytes(4).toString('hex').toUpperCase()
-    const r = db.prepare('INSERT INTO devices(store_id,name,enroll_code,created_at) VALUES(?,?,?,?)')
-      .run(storeId, name, code, Date.now())
-    return c.json({ id: Number(r.lastInsertRowid), enrollCode: code })
+    // Код живёт 15 минут (ENROLL_TTL_MIN): утёкший код не должен работать «навсегда» (P0-4).
+    const ttlMin = Number(process.env.ENROLL_TTL_MIN ?? 15)
+    const now = Date.now()
+    const r = db.prepare('INSERT INTO devices(store_id,name,enroll_code,created_at,enroll_expires_at) VALUES(?,?,?,?,?)')
+      .run(storeId, name, code, now, now + ttlMin * 60_000)
+    return c.json({ id: Number(r.lastInsertRowid), enrollCode: code, expiresAt: new Date(now + ttlMin * 60_000).toISOString() })
   })
 
   .post('/devices/:id/revoke', (c) => {
@@ -1694,10 +1701,17 @@ export const adminRoutes = new Hono()
     },
   )
 
-  .post('/preorder/orders/:id/mark-paid', (c) => {
+  .post('/preorder/orders/:id/mark-paid', async (c) => {
     const id = c.req.param('id')
+    const pay = (await c.req.json().catch(() => ({}))) as {
+      fiscalDocumentNumber?: string | null
+      amountRub?: number | string | null
+    }
     try {
-      const order = markPaid(db as never, id)
+      const order = markPaid(db as never, id, {
+        fiscalDocumentNumber: pay.fiscalDocumentNumber ?? null,
+        amountRub: pay.amountRub == null ? null : Number(pay.amountRub),
+      })
       c.set('audit', { entity: 'preorder', entityId: id, summary: `Заказ ${order.shortCode}: оплачен` })
       return c.json({ ok: true, order })
     } catch (e) {

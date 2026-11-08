@@ -18,7 +18,8 @@ export const devRoutes = new Hono()
     const u = db.prepare('SELECT id, phone, nickname FROM users WHERE phone=?')
       .get(phone) as { id: number; phone: string; nickname: string } | undefined
     if (!u) throw bad('Демо-пользователь не найден', 404)
-    const token = await sign({ sub: u.id, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 180 }, config.jwtSecret)
+    const ver = Number((db.prepare('SELECT token_version AS v FROM users WHERE id=?').get(u.id) as { v?: number } | undefined)?.v ?? 0)
+    const token = await sign({ sub: u.id, ver, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 180 }, config.jwtSecret)
     return c.json({ token, user: { id: u.id, phone: u.phone, nickname: u.nickname } })
   })
   .get('/users', (c) => {

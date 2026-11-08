@@ -109,11 +109,10 @@ export default function CartPage() {
         productId: l.productId,
         quantity: l.quantity,
         volumeId: l.volumeId,
+        // Только выбор: цену и название добавки считает сервер — клиентская цена не истина.
         modifiers: l.modifiers.map((m) => ({
           groupKey: m.groupKey,
           modifierId: m.modifierId,
-          name: m.name ?? null,
-          priceRub: m.price ?? null,
         })),
       })),
       quoteToken: quote?.quoteToken ?? null,

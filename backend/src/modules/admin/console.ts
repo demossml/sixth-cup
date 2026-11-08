@@ -9,10 +9,12 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { db } from '../../db'
+import { clientIp } from '../../lib/clientIp'
 import { bad } from '../../lib/errors'
 import { config } from '../../config'
 import { log } from '../../lib/logBuffer'
 import { createTemplate, grantVoucher, listTemplates, templateCreateZ, templatePatchZ, updateTemplate } from '../vouchers/service'
+import { pushMetrics } from '../push/service'
 import { enqueueProductSync } from './enqueue'
 import { writeAudit } from './audit'
 import type { AuditInput } from './audit'
@@ -203,6 +205,7 @@ export const adminConsole = new Hono<Env>()
       WHERE d.received_at >= ? AND d.type='SELL' AND d.status='PROCESSED' AND (o.doc_id IS NULL OR o.card_id IS NULL) ${store ? 'AND d.store_uuid = ?' : ''}`)
       .get(since, ...sArg) as { n: number }).n
     const health = queryStoreHealth(now)
+    const push = pushMetrics()
     const recent = queryOperations({ limit: 10, store })
     const customers = (db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }).n
     const newCustomers = (db.prepare('SELECT COUNT(*) AS n FROM users WHERE created_at >= ?').get(since) as { n: number }).n
@@ -233,12 +236,15 @@ export const adminConsole = new Hono<Env>()
     if (quality.noPhoto > 0) {
       exceptions.push({ id: 'nophoto', level: 'warn', title: 'Товары без фото', href: '/menu', count: quality.noPhoto })
     }
+    if (push.failing > 0) {
+      exceptions.push({ id: 'push', level: 'warn', title: 'Push-подписки с ошибками доставки', href: '/customers', count: push.failing })
+    }
     const revenueSource = 'loyalty_ops_and_evotor_docs'
     const coverageNote = 'Выручка и средний чек считаются по документам/операциям, полученным интеграцией 6.7, а не по полной кассе Эвотор.'
     return c.json({
       now, period, since, store: store ?? null, health, docs, ops,
       sellWithoutCard: noCard, customers, newCustomers, recent: recent.ops,
-      exceptions, quality, failedDocs, pendingOutbox,
+      exceptions, quality, failedDocs, pendingOutbox, push,
       coverage: { source: revenueSource, note: coverageNote, complete: false },
       asOf: now,
     })
@@ -405,7 +411,7 @@ export const adminConsole = new Hono<Env>()
     writeAudit({
       method: 'GET', path: c.req.path, status: 200, entity: 'customers', entityId: String(id),
       summary: 'Показан номер телефона клиента', actor: role,
-      ip: c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+      ip: clientIp(c),
     })
     return c.json({ phone: u.phone })
   })

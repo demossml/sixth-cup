@@ -42,6 +42,8 @@ export type ModifierOut = {
   sendToReceipt: boolean
   /** UUID товара-модификатора на точке (null — нет связи, касса добавит вручную). */
   evotorUuid: string | null
+  /** Почему касса не добавит добавку сама: `no_evotor_uuid` — нет связи товара с точкой. */
+  warning?: 'no_evotor_uuid' | null
 }
 
 export type ItemOut = {

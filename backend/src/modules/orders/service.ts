@@ -3,6 +3,7 @@ import { getPreorderSettings } from '../../lib/preorderSettings'
 import { parseBenefit } from './benefit'
 import { notifyOrderStatus } from '../push/service'
 import type { CreateOrderBody, ItemOut, ModifierOut, OrderOut, PreorderStatus } from './types'
+import { resolveItemModifiers } from './pricing'
 import { ACTIVE_STATUSES, ALLOWED_TRANSITIONS } from './types'
 
 type Db = {
@@ -60,14 +61,20 @@ function loadOrder(db: Db, id: string): OrderOut | null {
     const mods = db
       .prepare(`SELECT * FROM preorder_item_modifiers WHERE order_item_id = ?`)
       .all(String(it.id))
-    const modifiers: ModifierOut[] = mods.map((m) => ({
-      group: String(m.group_key),
-      id: String(m.modifier_id),
-      name: String(m.name),
-      priceEstimate: Number(m.price_estimate) || 0,
-      sendToReceipt: Number(m.send_to_receipt) === 1,
-      evotorUuid: m.evotor_uuid ? String(m.evotor_uuid) : null,
-    }))
+    const modifiers: ModifierOut[] = mods.map((m) => {
+      const evotorUuid = m.evotor_uuid ? String(m.evotor_uuid) : null
+      const paid = Number(m.price_estimate) > 0
+      return {
+        group: String(m.group_key),
+        id: String(m.modifier_id),
+        name: String(m.name),
+        priceEstimate: Number(m.price_estimate) || 0,
+        sendToReceipt: Number(m.send_to_receipt) === 1,
+        evotorUuid,
+        // Касса добавит эту добавку вручную: связи товара с точкой нет (B-02, не выдумываем uuid).
+        warning: evotorUuid == null && paid ? ('no_evotor_uuid' as const) : null,
+      }
+    })
     return {
       lineId: String(it.id),
       productId: String(it.product_id),
@@ -103,7 +110,10 @@ function loadOrder(db: Db, id: string): OrderOut | null {
     currency: String(fresh.currency || 'RUB'),
     cardId: fresh.card_id ? String(fresh.card_id) : null,
     items: outItems,
-    warnings: [],
+    // Предупреждения для кассы/админки: что не удалось связать с точкой.
+    warnings: outItems.flatMap((it) =>
+      it.modifiers.filter((m) => m.warning).map((m) => `${m.warning}:${it.name}:${m.name}`),
+    ),
   }
   // Push «заказ готов / оплачен» — ровно один раз на заказ (отметки в preorders).
   notifyOrderStatus(db as never, {
@@ -123,8 +133,10 @@ function expireIfNeeded(db: Db, row: Record<string, unknown>) {
     nowSec(),
     String(row.id),
   )
-  // Невыкуп: заказ истёк, не оплачен, гость не забрал → бан на настраиваемое время.
-  if (!row.paid_at && row.guest_user_id) {
+  // Бан — только за реальный невыкуп: заказ был принят кассой (accepted/cooking/ready),
+  // не оплачен и не забран. Если касса даже не приняла draft, гость не виноват.
+  const tookByCashier = status === 'accepted' || status === 'cooking' || status === 'ready'
+  if (tookByCashier && !row.paid_at && row.guest_user_id) {
     applyNoShowBan(db, Number(row.guest_user_id), Number(row.store_id), String(row.id))
   }
 }
@@ -253,7 +265,7 @@ function resolveLine(
   db: Db,
   item: CreateOrderBody['items'][0],
   storeUuids: string[],
-): { name: string; unit: number; evotor: string | null; volumeLabel: string | null; configText: string; mods: ModifierOut[] } {
+): { name: string; unit: number; evotor: string | null; volumeLabel: string | null; configText: string; mods: ModifierOut[]; warnings: string[] } {
   const skuId = item.volumeId ?? item.productId
   const productId = String(skuId)
   // `SELECT *`: набор колонок products зависит от миграций, а нам нужны только id/name/price/available/variant_label.
@@ -267,51 +279,78 @@ function resolveLine(
     throw Object.assign(new Error('product_unavailable'), { code: 'product_unavailable', productId })
   }
 
-  let unit = Number(p.price) || 0
-  const mods: ModifierOut[] = []
-  const configParts: string[] = []
-  const volumeLabel: string | null = p.variant_label
-    ? String(p.variant_label)
-    : item.volumeId
-      ? null
-      : null
+  const skuProductId = Number(p.id)
+  // Цена и состав — серверные: клиент присылает только выбор опций (цена 0 в запросе ничего не занижает).
+  // Один резолвер с quote: иначе корзина и заказ расходятся по сумме (B-07).
+  const resolved = resolveItemModifiers(db as never, skuProductId, Number(p.price) || 0, item.modifiers ?? [])
+  const mods: ModifierOut[] = resolved.modifiers.map((m) => {
+    const uuid = m.zeroOption || m.priceRub <= 0 ? null : evotorUuidForProduct(db, m.productId, storeUuids)
+    return {
+      group: m.groupKey,
+      id: m.optionId,
+      name: m.name,
+      priceEstimate: m.priceRub,
+      sendToReceipt: !(m.groupKey === 'milk' && m.priceRub === 0),
+      evotorUuid: uuid,
+      // Причина, по которой касса не сможет добавить добавку автоматически.
+      warning: uuid == null && !m.zeroOption && m.priceRub > 0 ? 'no_evotor_uuid' : null,
+    }
+  })
 
-  for (const m of item.modifiers || []) {
-    const modProductId = m.productId != null && Number.isFinite(Number(m.productId)) ? Number(m.productId) : null
-    const productRow = modProductId
-      ? (db.prepare('SELECT name FROM products WHERE id = ?').get(modProductId) as { name: string } | undefined)
-      : undefined
-    const name = String(m.name || productRow?.name || m.modifierId)
-    const priceEstimate = Math.max(0, Math.round(Number(m.priceRub ?? 0)))
-    const sendToReceipt = m.groupKey !== 'milk' || m.modifierId !== 'regular'
-    mods.push({
-      group: String(m.groupKey),
-      id: String(m.modifierId),
-      name,
-      priceEstimate,
-      sendToReceipt,
-      evotorUuid: evotorUuidForProduct(db, modProductId, storeUuids),
-    })
-    configParts.push(name)
-    unit += priceEstimate
-  }
-
+  const volumeLabel: string | null = p.variant_label ? String(p.variant_label) : null
+  const configParts = mods.map((m) => m.name)
   if (volumeLabel) configParts.unshift(volumeLabel)
 
   return {
     name: String(p.name),
-    unit,
-    evotor: evotorUuidForProduct(db, Number(p.id), storeUuids),
+    unit: resolved.unitPrice,
+    evotor: evotorUuidForProduct(db, skuProductId, storeUuids),
     volumeLabel,
     configText: configParts.join(' · '),
     mods,
+    warnings: resolved.warnings,
+  }
+}
+
+/** Idempotency-Key: повтор того же запроса возвращает тот же заказ, а не создаёт второй (P1-3). */
+function idempotentOrder(db: Db, key: string | null | undefined, userId: number | null): { order: OrderOut; qrPayload: string } | null {
+  const k = String(key ?? '').trim().slice(0, 120)
+  if (!k) return null
+  try {
+    const row = db.prepare('SELECT user_id AS userId, result_id AS resultId, created_at AS createdAt FROM idempotency_keys WHERE key=? AND scope=?')
+      .get(k, 'create_order') as { userId: number | null; resultId: string | null; createdAt: number } | undefined
+    if (!row) return null
+    // Ключ принадлежит другому гостю — не отдаём чужой заказ.
+    if (row.userId != null && userId != null && Number(row.userId) !== userId) return null
+    if (!row.resultId) return null
+    const order = getOrder(db, String(row.resultId))
+    if (!order) return null
+    return { order, qrPayload: '' }
+  } catch {
+    return null
+  }
+}
+
+/** Публичная проверка ключа: повтор запроса возвращает существующий заказ (P1-3). */
+export function findIdempotentOrder(db: Db, key: string | null | undefined, userId: number | null): OrderOut | null {
+  return idempotentOrder(db, key, userId)?.order ?? null
+}
+
+function rememberIdempotency(db: Db, key: string | null | undefined, userId: number | null, orderId: string): void {
+  const k = String(key ?? '').trim().slice(0, 120)
+  if (!k) return
+  try {
+    db.prepare('INSERT OR REPLACE INTO idempotency_keys(key, scope, user_id, result_id, created_at) VALUES(?,?,?,?,?)')
+      .run(k, 'create_order', userId ?? null, orderId, nowSec())
+  } catch {
+    /* таблицы может не быть в старых базах — идемпотентность не критична для создания */
   }
 }
 
 export function createDraftOrder(
   db: Db,
   body: CreateOrderBody,
-  opts: { guestUserId?: number | null; secret: string },
+  opts: { guestUserId?: number | null; secret: string; idempotencyKey?: string | null },
 ): { order: OrderOut; qrPayload: string } {
   const storeId = Number(body.storeId)
   if (!Number.isFinite(storeId)) throw Object.assign(new Error('invalid_store'), { code: 'invalid_store' })
@@ -319,23 +358,37 @@ export function createDraftOrder(
   if (!store) throw Object.assign(new Error('store_not_found'), { code: 'store_not_found' })
   if (!body.items?.length) throw Object.assign(new Error('empty_items'), { code: 'empty_items' })
 
+  // Повтор с тем же Idempotency-Key — отдаём уже созданный заказ.
+  const replay = idempotentOrder(db, opts.idempotencyKey, opts.guestUserId ?? null)
+  if (replay) return { order: replay.order, qrPayload: buildQrPayload(replay.order.id, storeId, Math.floor(Date.parse(replay.order.expiresAt) / 1000), opts.secret) }
+
   const id = randomUUID()
   const shortCode = genShortCode(db, storeId)
   const created = nowSec()
   const expires = created + 30 * 60
   const storeUuids = storeUuidsForLocalStore(db, storeId)
   let total = 0
+  const orderWarnings: string[] = []
   const resolved = body.items.map((it, idx) => {
     const r = resolveLine(db, it, storeUuids)
+    orderWarnings.push(...r.warnings)
     const quantity = Math.max(1, Math.min(99, Number(it.quantity) || 1))
     total += r.unit * quantity
     return { ...r, quantity, productId: String(it.volumeId ?? it.productId), position: idx }
   })
 
-  db.prepare(
-    `INSERT INTO preorders (id, short_code, store_id, status, card_id, guest_user_id, estimate_total, currency, expires_at, created_at, updated_at)
-     VALUES (?, ?, ?, 'draft', ?, ?, ?, 'RUB', ?, ?, ?)`,
-  ).run(id, shortCode, storeId, body.cardId || null, opts.guestUserId ?? null, total, expires, created, created)
+  try {
+    db.prepare(
+      `INSERT INTO preorders (id, short_code, store_id, status, card_id, guest_user_id, estimate_total, currency, expires_at, created_at, updated_at)
+       VALUES (?, ?, ?, 'draft', ?, ?, ?, 'RUB', ?, ?, ?)`,
+    ).run(id, shortCode, storeId, body.cardId || null, opts.guestUserId ?? null, total, expires, created, created)
+  } catch (e) {
+    // Уникальный индекс «один активный заказ на гостя»: гонка двух параллельных запросов.
+    if (String((e as { code?: string }).code ?? '').includes('SQLITE_CONSTRAINT')) {
+      throw Object.assign(new Error('active_order_exists'), { code: 'active_order_exists' })
+    }
+    throw e
+  }
 
   for (const r of resolved) {
     const lineId = randomUUID()
@@ -351,6 +404,7 @@ export function createDraftOrder(
     }
   }
 
+  rememberIdempotency(db, opts.idempotencyKey, opts.guestUserId ?? null, id)
   const order = loadOrder(db, id)!
   const qrPayload = buildQrPayload(id, storeId, expires, opts.secret)
   return { order, qrPayload }
@@ -456,7 +510,8 @@ export function setOrderEta(db: Db, id: string, etaMinutes: number): OrderOut {
 export function markPickedUp(db: Db, id: string, userId?: number | null): OrderOut {
   const row = db.prepare(`SELECT * FROM preorders WHERE id = ?`).get(id)
   if (!row) throw Object.assign(new Error('not_found'), { code: 'not_found' })
-  if (userId != null && row.guest_user_id != null && Number(row.guest_user_id) !== userId) {
+  // Гость может закрыть только свой заказ; заказ без владельца — не гостевой (P1-4).
+  if (userId != null && (row.guest_user_id == null || Number(row.guest_user_id) !== userId)) {
     throw Object.assign(new Error('not_found'), { code: 'not_found' })
   }
   const status = String(row.status)
@@ -488,14 +543,30 @@ export function cancelDraft(db: Db, id: string, guestUserId?: number | null): vo
   const row = db.prepare(`SELECT * FROM preorders WHERE id = ?`).get(id)
   if (!row) throw Object.assign(new Error('not_found'), { code: 'not_found' })
   if (String(row.status) !== 'draft') throw Object.assign(new Error('invalid_transition'), { code: 'invalid_transition' })
-  if (guestUserId != null && row.guest_user_id != null && Number(row.guest_user_id) !== guestUserId) {
+  // Отменить чужой (или бесхозный) заказ гость не может (P1-4).
+  if (guestUserId != null && (row.guest_user_id == null || Number(row.guest_user_id) !== guestUserId)) {
     throw Object.assign(new Error('forbidden'), { code: 'forbidden' })
   }
   const t = nowSec()
   db.prepare(`UPDATE preorders SET status = 'cancelled', updated_at = ? WHERE id = ?`).run(t, id)
 }
 
-export function markPaid(db: Db, id: string): OrderOut {
+/** Контекст оплаты от кассы: необязательный, но если пришёл — сверяем с заказом (P0-6). */
+export type PaymentContext = {
+  fiscalDocumentNumber?: string | null
+  /** Сумма, которую реально оплатили, в рублях. */
+  amountRub?: number | null
+}
+
+/**
+ * Отметка «оплачен».
+ *
+ * Идемпотентно: повторный вызов для оплаченного заказа возвращает его же.
+ * Отменённый/отклонённый/истёкший заказ оплатить нельзя — иначе отмена «воскресает».
+ * Если касса передала фискальный номер или сумму, они сверяются с заказом:
+ * чужой/повторный фискальный номер и расхождение суммы — отказ, а не тихое закрытие.
+ */
+export function markPaid(db: Db, id: string, payment: PaymentContext = {}): OrderOut {
   const row = db.prepare(`SELECT * FROM preorders WHERE id = ?`).get(id)
   if (!row) throw Object.assign(new Error('not_found'), { code: 'not_found' })
   const cur = String(row.status)
@@ -503,12 +574,34 @@ export function markPaid(db: Db, id: string): OrderOut {
   if (!['accepted', 'cooking', 'ready'].includes(cur)) {
     throw Object.assign(new Error('invalid_transition'), { code: 'invalid_transition' })
   }
+
+  const expected = row.quote_total != null ? Number(row.quote_total) : Number(row.estimate_total)
+  if (payment.amountRub != null) {
+    const paid = Math.round(Number(payment.amountRub))
+    if (!Number.isFinite(paid) || paid !== Math.round(expected)) {
+      throw Object.assign(new Error('amount_mismatch'), { code: 'amount_mismatch' })
+    }
+  }
+
+  const fiscal = String(payment.fiscalDocumentNumber ?? '').trim() || null
+  if (fiscal) {
+    const used = db.prepare('SELECT id FROM preorders WHERE fiscal_document_number=? AND id<>?')
+      .get(fiscal, id) as { id: string } | undefined
+    if (used) throw Object.assign(new Error('duplicate_fiscal'), { code: 'duplicate_fiscal' })
+  }
+
   const t = nowSec()
-  db.prepare(`UPDATE preorders SET status = 'paid', paid_at = ?, updated_at = ? WHERE id = ?`).run(t, t, id)
+  db.prepare(`UPDATE preorders SET status='paid', paid_at=?, updated_at=?, fiscal_document_number=?, paid_amount=? WHERE id=?`)
+    .run(t, t, fiscal, payment.amountRub != null ? Math.round(Number(payment.amountRub)) : null, id)
   return loadOrder(db, id)!
 }
 
+/** Схема предзаказов создаётся один раз на соединение, а не на каждый запрос (P2-1). */
+const preorderSchemaReady = new WeakSet<object>()
+
 export function ensurePreorderTables(db: Db) {
+  const key = db as unknown as object
+  if (preorderSchemaReady.has(key)) return
   db.exec(`
 CREATE TABLE IF NOT EXISTS preorders (
   id TEXT PRIMARY KEY,
@@ -530,7 +623,9 @@ CREATE TABLE IF NOT EXISTS preorders (
   updated_at INTEGER NOT NULL,
   eta_ready_at INTEGER,
   picked_up_at INTEGER,
-  ready_by TEXT
+  ready_by TEXT,
+  fiscal_document_number TEXT,
+  paid_amount INTEGER
 );
 CREATE TABLE IF NOT EXISTS preorder_bans (
   user_id INTEGER PRIMARY KEY,
@@ -574,4 +669,7 @@ CREATE TABLE IF NOT EXISTS preorder_item_modifiers (
   if (!cols('preorder_item_modifiers').includes('evotor_uuid')) {
     db.exec('ALTER TABLE preorder_item_modifiers ADD COLUMN evotor_uuid TEXT')
   }
+  if (!preorderCols.includes('fiscal_document_number')) db.exec('ALTER TABLE preorders ADD COLUMN fiscal_document_number TEXT')
+  if (!preorderCols.includes('paid_amount')) db.exec('ALTER TABLE preorders ADD COLUMN paid_amount INTEGER')
+  preorderSchemaReady.add(key)
 }

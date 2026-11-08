@@ -80,7 +80,10 @@ export async function createPreorder(body: {
     productId: string
     quantity: number
     volumeId?: string
-    /** Модификаторы строки: молоко, обязательный выбор, добавки. Подпись и цена — для чека/кассы. */
+    /**
+     * Модификаторы строки: молоко, обязательный выбор, добавки.
+     * Цену и название считает сервер по каталогу; поля `name`/`priceRub` — справочные.
+     */
     modifiers?: Array<{ groupKey: string; modifierId: string; name?: string | null; priceRub?: number | null; productId?: number | null }>
   }>
 }): Promise<{ ok: true; order: OrderOut; qrPayload: string } | { ok: false; error: string; message: string }> {

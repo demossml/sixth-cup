@@ -74,6 +74,8 @@ export default function ProfilePage() {
 
   async function doReset() {
     setResetStep('none')
+    // Отзываем токены на сервере, пока он ещё есть локально (best-effort, сброс не блокируем).
+    await unwrap(api.api.auth.revoke.$post()).catch(() => undefined)
     setJwt(null)
     clearInvite() // осознанно сброшенная карта начинается с нуля: прежний реферер не тянем
     await clearUserData()

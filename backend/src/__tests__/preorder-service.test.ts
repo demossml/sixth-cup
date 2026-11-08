@@ -42,7 +42,7 @@ describe('preorder service', () => {
       db,
       {
         storeId: 1,
-        items: [{ productId: '1', quantity: 1, modifiers: [{ groupKey: 'milk', modifierId: 'coconut' }] }],
+        items: [{ productId: '1', quantity: 1 }],
       },
       { secret: 'test-secret' },
     )
@@ -51,6 +51,52 @@ describe('preorder service', () => {
     expect(order.estimateTotal).toBeGreaterThan(0)
     expect(qrPayload.startsWith('ord1.')).toBe(true)
     expect(order.items.length).toBe(1)
+  })
+
+  it('выдуманная добавка не принимается (P0-1): у товара нет такой опции', () => {
+    expect(() =>
+      createDraftOrder(
+        db,
+        {
+          storeId: 1,
+          items: [{ productId: '1', quantity: 1, modifiers: [{ groupKey: 'milk', modifierId: 'coconut' }] }],
+        },
+        { secret: 'test-secret' },
+      ),
+    ).toThrow(/недоступн/i)
+  })
+
+  it('клиентская цена добавки игнорируется: в заказ идёт серверная', () => {
+    // Схема с опцией: id опции 1, цена 40. Клиент пытается прислать 0 — сумма должна остаться 300.
+    db.exec(`
+      CREATE TABLE modifier_schemes (id INTEGER PRIMARY KEY, name TEXT);
+      CREATE TABLE modifier_scheme_items (id INTEGER PRIMARY KEY, scheme_id INTEGER, modifier_id INTEGER,
+        product_id INTEGER, group_key TEXT, required INTEGER DEFAULT 0, max_count INTEGER DEFAULT 1,
+        is_default INTEGER DEFAULT 0, zero_option INTEGER DEFAULT 0, price_override INTEGER, name_override TEXT, sort_order INTEGER DEFAULT 0);
+      CREATE TABLE modifiers (id INTEGER PRIMARY KEY, name TEXT, price INTEGER, group_key TEXT, available INTEGER DEFAULT 1, linked_product_id INTEGER, sort_order INTEGER DEFAULT 0);
+      INSERT INTO modifier_schemes (id, name) VALUES (1, 'Сиропы');
+      INSERT INTO modifiers (id, name, price, group_key, available) VALUES (7, 'Ваниль', 40, 'syrup', 1);
+      INSERT INTO modifier_scheme_items (id, scheme_id, modifier_id, group_key, max_count, sort_order)
+        VALUES (1, 1, 7, 'syrup', 2, 0);
+    `)
+    const cols = (db.prepare('PRAGMA table_info(products)').all() as { name: string }[]).map((c) => c.name)
+    if (!cols.includes('modifier_scheme_id')) db.exec('ALTER TABLE products ADD COLUMN modifier_scheme_id INTEGER')
+    db.prepare('UPDATE products SET modifier_scheme_id=1 WHERE id=1').run()
+
+    const { order } = createDraftOrder(
+      db,
+      {
+        storeId: 1,
+        items: [{
+          productId: '1',
+          quantity: 1,
+          modifiers: [{ groupKey: 'syrup', modifierId: '1', name: 'Бесплатно', priceRub: 0 } as never],
+        }],
+      },
+      { secret: 'test-secret' },
+    )
+    expect(order.estimateTotal).toBe(300)
+    expect(order.items[0].modifiers[0]).toMatchObject({ name: 'Ваниль', priceEstimate: 40 })
   })
 
   it('transitions accepted -> cooking -> ready', () => {

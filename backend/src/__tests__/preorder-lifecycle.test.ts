@@ -228,6 +228,27 @@ describe('B: активный заказ, один заказ, бан', () => {
     expect((await createOrder(g.token, STORE, PRODUCT)).status).toBe(200)
   })
 
+  it('P1-4: заказ без guest_user_id не читается и не отменяется гостем', async () => {
+    const g = await guest()
+    const { body } = await createOrder(g.token, STORE, PRODUCT)
+    const id = (body.order as { id: string }).id
+    // Заказ, созданный кассой/админом: владельца нет.
+    db.prepare('UPDATE preorders SET guest_user_id=NULL WHERE id=?').run(id)
+
+    const read = await app.request(`/api/orders/${id}`, { headers: auth(g.token) })
+    expect(read.status).toBe(404)
+
+    const cancel = await app.request(`/api/orders/${id}/cancel`, {
+      method: 'POST', headers: { ...JSONH, ...auth(g.token) }, body: '{}',
+    })
+    expect([400, 404]).toContain(cancel.status)
+
+    const received = await app.request(`/api/orders/${id}/received`, {
+      method: 'POST', headers: { ...JSONH, ...auth(g.token) }, body: '{}',
+    })
+    expect([404, 409]).toContain(received.status)
+  })
+
   it('чужой заказ не читается', async () => {
     const owner = await guest()
     const stranger = await guest()
@@ -237,13 +258,19 @@ describe('B: активный заказ, один заказ, бан', () => {
     expect(r.status).toBe(404)
   })
 
-  it('невыкуп → бан; create → 403; админ снимает бан → create снова работает', async () => {
+  it('невыкуп принятого заказа → бан; create → 403; админ снимает бан → create снова работает', async () => {
     await app.request('/api/admin/preorder/settings', {
       method: 'PATCH', headers: H_ADMIN, body: JSON.stringify({ storeId: STORE, noShowBanHours: 48 }),
     })
     const g = await guest()
+    const dev = await deviceToken(STORE)
     const { body } = await createOrder(g.token, STORE, PRODUCT)
     const id = (body.order as { id: string }).id
+    // Касса приняла заказ — только тогда истечение считается невыкупом (P0-5).
+    const acc = await app.request(`/api/devices/orders/${id}/status`, {
+      method: 'PATCH', headers: { ...JSONH, 'X-Device-Token': dev }, body: JSON.stringify({ status: 'accepted' }),
+    })
+    expect(acc.status).toBe(200)
     // TTL истёк, заказ не оплачен
     db.prepare('UPDATE preorders SET expires_at=? WHERE id=?').run(Math.floor(Date.now() / 1000) - 60, id)
 
@@ -263,14 +290,96 @@ describe('B: активный заказ, один заказ, бан', () => {
     expect((await createOrder(g.token, STORE, PRODUCT)).status).toBe(200)
   })
 
-  it('бан истекает сам', async () => {
+  it('draft истёк без принятия кассой → бана нет (P0-5)', async () => {
     const g = await guest()
     const { body } = await createOrder(g.token, STORE, PRODUCT)
     const id = (body.order as { id: string }).id
     db.prepare('UPDATE preorders SET expires_at=? WHERE id=?').run(Math.floor(Date.now() / 1000) - 60, id)
+
+    const a = await active(g.token)
+    expect(a.body.order).toBeNull()
+    expect(a.body.bannedUntil).toBeNull()
+
+    const row = db.prepare('SELECT status FROM preorders WHERE id=?').get(id) as { status: string }
+    expect(row.status).toBe('expired')
+    const bans = db.prepare('SELECT COUNT(*) AS n FROM preorder_bans WHERE user_id=?').get(g.userId) as { n: number }
+    expect(bans.n).toBe(0)
+
+    // Новый заказ доступен сразу: гость не спамил, его заказ касса даже не увидела.
+    expect((await createOrder(g.token, STORE, PRODUCT)).status).toBe(200)
+  })
+
+  it('бан истекает сам', async () => {
+    const g = await guest()
+    const dev = await deviceToken(STORE)
+    const { body } = await createOrder(g.token, STORE, PRODUCT)
+    const id = (body.order as { id: string }).id
+    await app.request(`/api/devices/orders/${id}/status`, {
+      method: 'PATCH', headers: { ...JSONH, 'X-Device-Token': dev }, body: JSON.stringify({ status: 'accepted' }),
+    })
+    db.prepare('UPDATE preorders SET expires_at=? WHERE id=?').run(Math.floor(Date.now() / 1000) - 60, id)
     await active(g.token) // фиксируем бан
     db.prepare('UPDATE preorder_bans SET until=? WHERE user_id=?').run(Math.floor(Date.now() / 1000) - 1, g.userId)
     expect((await createOrder(g.token, STORE, PRODUCT)).status).toBe(200)
+  })
+
+  it('P0-6: mark-paid идемпотентен и не закрывает отменённый заказ', async () => {
+    const dev = await deviceToken(STORE)
+    const g = await guest()
+    const first = await createOrder(g.token, STORE, PRODUCT)
+    const id = (first.body.order as { id: string }).id
+    await app.request(`/api/devices/orders/${id}/status`, {
+      method: 'PATCH', headers: { ...JSONH, 'X-Device-Token': dev }, body: JSON.stringify({ status: 'accepted' }),
+    })
+    await app.request(`/api/devices/orders/${id}/status`, {
+      method: 'PATCH', headers: { ...JSONH, 'X-Device-Token': dev }, body: JSON.stringify({ status: 'ready' }),
+    })
+    const paid1 = await app.request(`/api/devices/orders/${id}/mark-paid`, {
+      method: 'POST', headers: { ...JSONH, 'X-Device-Token': dev },
+      body: JSON.stringify({ amountRub: 260, fiscalDocumentNumber: 'FD-1' }),
+    })
+    expect(paid1.status).toBe(200)
+    // Повтор — тот же результат, без ошибки.
+    const paid2 = await app.request(`/api/devices/orders/${id}/mark-paid`, {
+      method: 'POST', headers: { ...JSONH, 'X-Device-Token': dev }, body: '{}',
+    })
+    expect(paid2.status).toBe(200)
+    expect(((await paid2.json()) as any).order.status).toBe('paid')
+
+    // Отменённый заказ оплатить нельзя.
+    const g2 = await guest()
+    const second = await createOrder(g2.token, STORE, PRODUCT)
+    const id2 = (second.body.order as { id: string }).id
+    await app.request(`/api/orders/${id2}/cancel`, { method: 'POST', headers: { ...JSONH, ...auth(g2.token) }, body: '{}' })
+    const paidCancelled = await app.request(`/api/devices/orders/${id2}/mark-paid`, {
+      method: 'POST', headers: { ...JSONH, 'X-Device-Token': dev }, body: '{}',
+    })
+    expect(paidCancelled.status).toBe(409)
+  })
+
+  it('P0-6: расхождение суммы и чужой фискальный номер — отказ', async () => {
+    const dev = await deviceToken(STORE)
+    const g = await guest()
+    const { body } = await createOrder(g.token, STORE, PRODUCT)
+    const id = (body.order as { id: string }).id
+    await app.request(`/api/devices/orders/${id}/status`, {
+      method: 'PATCH', headers: { ...JSONH, 'X-Device-Token': dev }, body: JSON.stringify({ status: 'accepted' }),
+    })
+
+    const wrong = await app.request(`/api/devices/orders/${id}/mark-paid`, {
+      method: 'POST', headers: { ...JSONH, 'X-Device-Token': dev }, body: JSON.stringify({ amountRub: 1 }),
+    })
+    expect(wrong.status).toBe(409)
+    expect(((await wrong.json()) as any).error).toBe('amount_mismatch')
+
+    db.prepare(`INSERT OR REPLACE INTO preorders(id, short_code, store_id, status, estimate_total, currency, expires_at, created_at, updated_at, fiscal_document_number)
+      VALUES('other-fiscal','999999',?, 'ready', 260, 'RUB', ?, ?, ?, 'FD-DUP')`)
+      .run(STORE, Math.floor(Date.now() / 1000) + 600, Math.floor(Date.now() / 1000), Math.floor(Date.now() / 1000))
+    const dup = await app.request(`/api/devices/orders/${id}/mark-paid`, {
+      method: 'POST', headers: { ...JSONH, 'X-Device-Token': dev }, body: JSON.stringify({ fiscalDocumentNumber: 'FD-DUP' }),
+    })
+    expect(dup.status).toBe(409)
+    expect(((await dup.json()) as any).error).toBe('duplicate_fiscal')
   })
 
   it('оплаченный заказ остаётся активным до «Я забрал»', async () => {

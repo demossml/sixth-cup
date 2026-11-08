@@ -7,6 +7,7 @@ import {
   activeBan,
   cancelDraft,
   createDraftOrder,
+  findIdempotentOrder,
   ensurePreorderTables,
   getOrder,
   getOrderByCode,
@@ -17,6 +18,8 @@ import {
   setOrderEta,
   transitionStatus,
 } from './service'
+import { allowRequest } from '../../lib/rateLimit'
+import { bad } from '../../lib/errors'
 import type { CreateOrderBody, ItemIn, PreorderStatus } from './types'
 import { BenefitError, benefitAvailable, parseBenefit, quoteOrder, readQuote, releaseReservation, reserveForOrder } from './benefit'
 
@@ -63,12 +66,17 @@ function findActiveOrderId(userId: number): string | null {
   return null
 }
 
+/**
+ * Заказ доступен только своему гостю (P1-4).
+ * Заказ без `guest_user_id` (создан кассой/админом) гостю недоступен вообще: раньше
+ * такой заказ мог открыть любой, кто узнал uuid.
+ */
 function ownedOrder(id: string, userId: number) {
-  const order = getOrder(dbOf(null), id)
-  if (!order) return null
-  const row = db.prepare('SELECT guest_user_id AS uid FROM preorders WHERE id = ?').get(id) as { uid: number | null } | undefined
-  if (row?.uid != null && Number(row.uid) !== userId) return null
-  return order
+  const row = db.prepare('SELECT guest_user_id AS uid FROM preorders WHERE id = ?').get(id) as
+    | { uid: number | null }
+    | undefined
+  if (!row?.uid || Number(row.uid) !== userId) return null
+  return getOrder(dbOf(null), id)
 }
 
 /**
@@ -78,6 +86,8 @@ function ownedOrder(id: string, userId: number) {
 orderGuestRoutes.post('/quote', async (c) => {
   ensurePreorderTables(dbOf(c))
   const userId = c.get('userId')
+  // Расчёт корзины — самый частый вызов PWA; ограничиваем, чтобы им нельзя было нагрузить БД (P2-9).
+  if (!allowRequest(`quote:${userId}`, 120, 60_000)) throw bad('Слишком много запросов. Попробуйте позже.', 429)
   const body = (await c.req.json().catch(() => ({}))) as {
     storeId?: number | string
     items?: ItemIn[]
@@ -102,6 +112,12 @@ orderGuestRoutes.post('/', async (c) => {
   const userId = c.get('userId')
   const body = (await c.req.json()) as CreateOrderBody
   try {
+    // Idempotency-Key проверяем ДО активного заказа: retry того же запроса должен получить свой заказ,
+    // а не 409 «у вас уже есть активный заказ».
+    const idempotencyKey = c.req.header('idempotency-key') ?? null
+    const replay = findIdempotentOrder(dbOf(c), idempotencyKey, userId)
+    if (replay) return c.json({ ok: true, order: replay, qrPayload: '' })
+
     // Один активный заказ: пока текущий не забран и не оплачен — второй создать нельзя.
     const activeId = findActiveOrderId(userId)
     if (activeId) {
@@ -146,7 +162,8 @@ orderGuestRoutes.post('/', async (c) => {
         reservationId = reserveForOrder(dbOf(c), { userId, storeId: Number(body.storeId), benefit: quote.benefit, total: quote.total })
       }
     }
-    const { order, qrPayload } = createDraftOrder(dbOf(c), body, { guestUserId: userId, secret: secretOf() })
+    // Idempotency-Key уже прочитан выше: повторная отправка не создаст второй заказ.
+    const { order, qrPayload } = createDraftOrder(dbOf(c), body, { guestUserId: userId, secret: secretOf(), idempotencyKey })
     if (benefitJson || reservationId) {
       db.prepare('UPDATE preorders SET benefit_json=?, reservation_id=?, quote_total=?, quoted_at=? WHERE id=?')
         .run(benefitJson, reservationId, quoteTotal, Math.floor(Date.now() / 1000), order.id)
@@ -313,13 +330,21 @@ orderDeviceRoutes.post('/orders/:id/reject', async (c) => {
 orderDeviceRoutes.post('/orders/:id/mark-paid', async (c) => {
   ensurePreorderTables(dbOf(c))
   const storeId = c.get('storeId')
+  // Необязательный контекст оплаты: если касса его пришлёт, сервер сверит сумму и фискальный номер.
+  const pay = (await c.req.json().catch(() => ({}))) as {
+    fiscalDocumentNumber?: string | null
+    amountRub?: number | string | null
+  }
   const existing = getOrder(dbOf(c), c.req.param('id'))
   if (!existing) return c.json({ ok: false, error: 'not_found', message: 'Заказ не найден' }, 404)
   if (existing.storeId !== storeId) {
     return c.json({ ok: false, error: 'wrong_store', message: 'Заказ для другой точки' }, 403)
   }
   try {
-    const order = markPaid(dbOf(c), c.req.param('id'))
+    const order = markPaid(dbOf(c), c.req.param('id'), {
+      fiscalDocumentNumber: pay.fiscalDocumentNumber ?? null,
+      amountRub: pay.amountRub == null ? null : Number(pay.amountRub),
+    })
     return c.json({ ok: true, order })
   } catch (e) {
     const err = e as { code?: string; message?: string }

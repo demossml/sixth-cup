@@ -207,5 +207,6 @@ export function resetDemo() {
 
 export async function demoToken(phone = DEMO_CUSTOMER_PHONE) {
   const u = db.prepare('SELECT id FROM users WHERE phone=?').get(phone) as { id: number }
-  return sign({ sub: u.id, exp: Math.floor(Date.now() / 1000) + 86400 * 180 }, config.jwtSecret)
+  const ver = Number((db.prepare('SELECT token_version AS v FROM users WHERE id=?').get(u.id) as { v?: number } | undefined)?.v ?? 0)
+  return sign({ sub: u.id, ver, exp: Math.floor(Date.now() / 1000) + 86400 * 180 }, config.jwtSecret)
 }

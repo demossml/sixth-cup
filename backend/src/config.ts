@@ -13,6 +13,8 @@ export const config = {
   publicBaseUrl: process.env.PUBLIC_BASE_URL ?? '',
   /** Явный id категории «Добавки» (иначе ищется по имени). */
   addonsCategoryId: Number.isInteger(Number(process.env.ADDONS_CATEGORY_ID)) && Number(process.env.ADDONS_CATEGORY_ID) > 0 ? Number(process.env.ADDONS_CATEGORY_ID) : null as number | null,
+  /** Доверять X-Forwarded-For только за нашим прокси (иначе IP подделывается). */
+  trustProxyHeaders: (process.env.TRUST_PROXY_HEADERS ?? '0') === '1',
   adminHost: process.env.ADMIN_HOST ?? '',
   /** POST /api/admin/reset. Defaults to allowed outside production; production must opt in with ADMIN_ALLOW_RESET=1. */
   /** Optional second token: read-only admin (GET only). */
@@ -60,6 +62,15 @@ if (!isDev && (config.jwtSecret === 'dev-secret-change-me' || config.adminToken 
   throw new Error('Set JWT_SECRET and ADMIN_TOKEN in production!')
 }
 
+/**
+ * Разрешённые CORS-origin (P2-6). Пусто = только dev-хосты localhost/127.0.0.1.
+ * Прод отдаёт PWA и админку с того же домена — cross-origin там не нужен.
+ */
+export const corsOrigins = (process.env.CORS_ORIGINS ?? '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean)
+
 /** Evotor Cloud (MASTER-TZ). Empty token = integration disabled until Phase 0. */
 export const evotorConfig = {
   apiToken: process.env.EVOTOR_API_TOKEN ?? '',
@@ -69,6 +80,8 @@ export const evotorConfig = {
   hourlyWindowHours: Number(process.env.EVOTOR_HOURLY_WINDOW_HOURS ?? 48),
   dailyWindowDays: Number(process.env.EVOTOR_DAILY_WINDOW_DAYS ?? 7),
   silenceHours: Number(process.env.EVOTOR_SILENCE_HOURS ?? 8),
+  // Сколько точек опрашиваем одновременно (P2-3). 1 = прежнее последовательное поведение.
+  pollConcurrency: Math.max(1, Number(process.env.EVOTOR_POLL_CONCURRENCY ?? 3)),
   appId: process.env.EVOTOR_APP_ID ?? '151071e8-88a4-44f6-b71a-b17c559f9b7d',
   pushExtras: process.env.EVOTOR_PUSH_EXTRAS === '1',
   pushEnabled: process.env.PUSH_ENABLED === '1',

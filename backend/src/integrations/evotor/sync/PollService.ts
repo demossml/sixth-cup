@@ -4,6 +4,7 @@
  */
 import type Database from 'better-sqlite3'
 import { EvotorClient, formatDateWithTime } from '../client/EvotorClient'
+import { mapLimit } from '../../../lib/concurrency'
 import { evotorConfig } from '../../../config'
 import { handlePayback, handleSell, sellInternals } from '../processing/SellHandler'
 import { applyStockForDocument } from '../processing/StockHandler'
@@ -469,20 +470,22 @@ export class PollService {
       log.info('evotor poll skipped — no stores with sync_enabled=1')
       return { stores: 0, inserted: 0, seen: 0, sellSeen: 0, errors: [] }
     }
-    let inserted = 0
     const errors: { storeUuid: string; error: string }[] = []
     const overlap = evotorConfig.fastOverlapMin * 60 * 1000
     let skipped = 0
-    for (const s of stores) {
+    // Точки опрашиваем с ограниченным параллелизмом: последовательно — медленно,
+    // без лимита — риск упереться в rate limit облака.
+    const counts = await mapLimit(stores, evotorConfig.pollConcurrency, async (s) => {
       if (this.coolingDown(s)) {
         skipped++
-        continue
+        return 0
       }
       try {
         const row = this.db.prepare(`SELECT last_seen_close_ms FROM evotor_sync_state WHERE store_uuid=?`).get(s) as { last_seen_close_ms: number } | undefined
         const since = Math.max(0, (row?.last_seen_close_ms ?? 0) - overlap)
-        inserted += await this.pollStore(s, since || Date.now() - 5 * 86400_000)
+        const n = await this.pollStore(s, since || Date.now() - 5 * 86400_000)
         this.db.prepare(`UPDATE evotor_sync_state SET status='OK',last_error=NULL WHERE store_uuid=?`).run(s)
+        return n
       } catch (e) {
         const error = String(e)
         if (PollService.isNotInstalled(e)) {
@@ -491,8 +494,10 @@ export class PollService {
         }
         errors.push({ storeUuid: s, error })
         this.db.prepare(`UPDATE evotor_sync_state SET status='ERROR',last_error=? WHERE store_uuid=?`).run(error, s)
+        return 0
       }
-    }
+    })
+    const inserted = counts.reduce((a, b) => a + b, 0)
     if (skipped > 0) log.info('evotor poll paused (not_installed cooldown)', { stores: skipped })
     return { stores: stores.length, inserted, seen: this.stats.seen, sellSeen: this.stats.sellSeen, errors }
   }

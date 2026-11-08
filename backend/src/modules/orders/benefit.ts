@@ -15,6 +15,7 @@ import type Database from 'better-sqlite3'
 import { activeVouchers, todayDay } from '../vouchers/service'
 import { freeEarned } from '../loyalty/rules'
 import { config } from '../../config'
+import { ModifierError, resolveItemModifiers } from './pricing'
 
 type Db = {
   prepare: (sql: string) => {
@@ -71,27 +72,17 @@ function productOf(db: Db, id: string): ProductRow | undefined {
 }
 
 /** Модификатор в позиции: одна запись = одно добавление (как в `cart.modifiers`). */
-export type QuoteModifierIn = { modifierId: string | number }
-
 export type QuoteItemIn = {
   productId: string
   quantity: number
   volumeId?: string | null
-  /** Молоко/сиропы/топпинги: id из справочника `modifiers`, по записи на единицу. */
-  modifiers?: QuoteModifierIn[]
-}
-
-function modifierPrice(db: Db, modifierId: string | number): number | null {
-  const row = db.prepare('SELECT price, available FROM modifiers WHERE id=?').get(Number(modifierId)) as
-    | { price: number; available: number }
-    | undefined
-  if (!row || Number(row.available) === 0) return null
-  return Number(row.price) || 0
+  /** Молоко/сиропы/топпинги: id опции схемы, как в `/api/directory/config`. */
+  modifiers?: Array<{ modifierId: string | number; groupKey?: string | null }>
 }
 
 /**
- * Сумма и позиции для quote: цена SKU + платные модификаторы (молоко, добавки).
- * Клиент передаёт только id и количество — цены всегда серверные.
+ * Сумма и позиции для quote: цена SKU + платные опции по тому же резолверу, что и создание заказа.
+ * Один расчёт на оба пути — корзина и заказ не могут разойтись (B-07).
  */
 function priceItems(db: Db, items: QuoteItemIn[]): QuoteItem[] {
   return items.map((it) => {
@@ -102,10 +93,18 @@ function priceItems(db: Db, items: QuoteItemIn[]): QuoteItem[] {
     }
     const quantity = Math.max(1, Math.min(99, Number(it.quantity) || 1))
     let unitPriceEstimate = Number(p.price) || 0
-    for (const m of it.modifiers ?? []) {
-      const price = modifierPrice(db, m.modifierId)
-      // Неизвестный/выключенный модификатор в сумме не участвует: касса посчитает по своему каталогу.
-      if (price != null) unitPriceEstimate += price
+    try {
+      unitPriceEstimate = resolveItemModifiers(
+        db as never,
+        Number(p.id),
+        Number(p.price) || 0,
+        (it.modifiers ?? []).map((m) => ({ modifierId: m.modifierId, groupKey: m.groupKey ?? null })),
+      ).unitPrice
+    } catch (e) {
+      // Цена добавки не резолвится (чужая схема) — это ошибка клиента, а не «повезло».
+      // Код сохраняем: клиенту важно отличие «чужой выбор» от «превысил лимит».
+      if (e instanceof ModifierError) throw new BenefitError(e.code, e.message)
+      throw e
     }
     return { productId: String(skuId), quantity, unitPriceEstimate, sum: unitPriceEstimate * quantity }
   })

@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { requireAuth, type AuthEnv } from '../../middleware/auth'
 import { config } from '../../config'
+import { allowRequest } from '../../lib/rateLimit'
 import { pushConfigured, revokeSubscription, saveSubscription } from './service'
 
 /** Подписка PWA на push «заказ готов». Только для авторизованного гостя. */
@@ -26,6 +27,10 @@ const subscriptionSchema = z.object({
 
 pushRoutes.post('/subscribe', async (c) => {
   if (!pushConfigured()) return c.json({ ok: false, error: 'push_disabled' }, 503)
+  // Подписка не должна превращаться в канал спама подписок на один аккаунт (P2-9).
+  if (!allowRequest(`push-sub:${c.get('userId')}`, 20, 60 * 60_000)) {
+    return c.json({ ok: false, error: 'rate_limited' }, 429)
+  }
   const body = await c.req.json().catch(() => null)
   const parsed = subscriptionSchema.safeParse(body)
   if (!parsed.success) return c.json({ ok: false, error: 'bad_request', message: 'Некорректная подписка' }, 400)

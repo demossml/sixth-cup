@@ -95,6 +95,25 @@ export async function pushToUser(userId: number, payload: PushPayload): Promise<
   return sent
 }
 
+/**
+ * Метрики доставки push (P2-4): сколько подписок живо, сколько умерло, сколько стабильно падает.
+ * Без них сбойные подписки копятся молча: гость «включил уведомления», а пуши не приходят.
+ */
+export function pushMetrics(): { subscriptions: number; live: number; revoked: number; failing: number; delivered: number } {
+  const count = (sql: string) => Number((db.prepare(sql).get() as { n: number } | undefined)?.n ?? 0)
+  try {
+    return {
+      subscriptions: count('SELECT COUNT(*) AS n FROM push_subscriptions'),
+      live: count('SELECT COUNT(*) AS n FROM push_subscriptions WHERE revoked_at IS NULL'),
+      revoked: count('SELECT COUNT(*) AS n FROM push_subscriptions WHERE revoked_at IS NOT NULL'),
+      failing: count('SELECT COUNT(*) AS n FROM push_subscriptions WHERE revoked_at IS NULL AND failures >= 3'),
+      delivered: count('SELECT COUNT(*) AS n FROM push_subscriptions WHERE last_sent_at IS NOT NULL'),
+    }
+  } catch {
+    return { subscriptions: 0, live: 0, revoked: 0, failing: 0, delivered: 0 }
+  }
+}
+
 /** Текст уведомления по статусу заказа. `null` — для этого статуса не пушим. */
 export function orderPushPayload(status: string, shortCode: string, orderId: string): PushPayload | null {
   if (status === 'ready') {

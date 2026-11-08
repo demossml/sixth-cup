@@ -8,7 +8,7 @@ import { serveStatic } from '@hono/node-server/serve-static'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import { join, resolve } from 'node:path'
-import { config } from './config'
+import { config, corsOrigins } from './config'
 import { adminRoutes } from './modules/admin/routes'
 import { authRoutes } from './modules/auth/routes'
 import { devRoutes } from './modules/dev/routes'
@@ -57,7 +57,15 @@ app.use('/api/*', async (c, next) => {
   writeLog('server', status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info', redact(msg))
 })
 app.use('*', logger())
-app.use('/api/*', cors())
+// CORS: только известные origin (P2-6). Прод отдаёт PWA и админку с того же домена,
+// поэтому список нужен лишь для отдельно размещённых клиентов — env CORS_ORIGINS.
+app.use('/api/*', cors({
+  origin: (origin) => (isAllowedOrigin(origin) ? origin : null),
+  allowHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Admin-Token'],
+  allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+  credentials: true,
+  maxAge: 600,
+}))
 
 app.onError((err, c) => {
   if (err instanceof HTTPException) return c.json({ error: err.message }, err.status)
@@ -165,6 +173,18 @@ const routes = app
 export type AppType = typeof routes
 export { app }
 export default app
+
+/** Разрешён ли cross-origin запрос: явный список из CORS_ORIGINS, иначе только dev-хосты. */
+function isAllowedOrigin(origin: string | undefined): boolean {
+  if (!origin) return true // same-origin / серверные вызовы без Origin
+  if (corsOrigins.includes(origin)) return true
+  try {
+    const u = new URL(origin)
+    return u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '[::1]'
+  } catch {
+    return false
+  }
+}
 
 /** admin.example.com or ADMIN_HOST → admin SPA; else customer SPA */
 function isAdminHost(host: string | undefined): boolean {

@@ -47,7 +47,7 @@ const auth = (t: string) => ({ Authorization: `Bearer ${t}` })
 
 const quote = async (
   g: Guest,
-  items: Array<{ productId: string; quantity: number; modifiers?: Array<{ modifierId: string }> }>,
+  items: Array<{ productId: string; quantity: number; volumeId?: string | null; modifiers?: Array<{ modifierId: string }> }>,
   benefit: unknown = null,
 ) => {
   const r = await app.request('/api/orders/quote', {
@@ -118,20 +118,41 @@ describe('quote', () => {
     expect(String(body.quoteToken)).toMatch(/^q1\./)
   })
 
-  it('платные модификаторы входят в сумму, цена берётся из справочника', async () => {
+  it('платные опции входят в сумму: цена серверная, чужая опция — ошибка', async () => {
     const t = Date.now()
     db.prepare(`INSERT OR REPLACE INTO modifiers(id,name,price,group_key,available,sort_order,created_at,updated_at)
       VALUES(?,?,?,?,?,?,?,?)`).run(9001, 'Ваниль', 40, 'syrup', 1, 0, t, t)
-    db.prepare(`INSERT OR REPLACE INTO modifiers(id,name,price,group_key,available,sort_order,created_at,updated_at)
-      VALUES(?,?,?,?,?,?,?,?)`).run(9002, 'Овсяное', 50, 'milk', 0, 0, t, t)
+    const adm = (m: string, p: string, b?: unknown) =>
+      app.request('/api/admin' + p, {
+        method: m,
+        headers: { ...H, 'content-type': 'application/json' },
+        body: b ? JSON.stringify(b) : undefined,
+      })
+    const schemeRes = await adm('POST', '/modifier-schemes', {
+      name: `Схема-${t}`,
+      options: [{ kind: 'modifier', modifierId: 9001, groupKey: 'syrup', maxCount: 2, required: false }],
+    })
+    expect(schemeRes.status).toBe(200)
+    const schemeId = Number(((await schemeRes.json()) as any).id ?? ((await schemeRes.json()) as any).scheme?.id)
+    const optionRow = db
+      .prepare('SELECT id FROM modifier_scheme_options WHERE scheme_id=? ORDER BY id LIMIT 1')
+      .get(schemeId) as { id: number } | undefined
+    const optionId = String(optionRow?.id ?? '')
+    expect(optionId).not.toBe('')
+
+    // Цена в запросе занижена до 0 — сервер обязан взять цену из схемы.
     const g = await guest()
+    db.prepare('UPDATE products SET modifier_scheme_id=? WHERE id=?').run(schemeId, CUP)
     const { body } = await quote(g, [
-      { productId: String(CUP), quantity: 1, modifiers: [{ modifierId: '9001' }, { modifierId: '9001' }] },
-      // Выключенный модификатор не участвует: его цену касса посчитает по своему каталогу.
-      { productId: String(FOOD), quantity: 1, modifiers: [{ modifierId: '9002' }] },
+      { productId: String(CUP), quantity: 1, modifiers: [{ modifierId: optionId, priceRub: 0 } as never] },
     ])
-    expect(body.subtotal).toBe(300 + 80 + 190)
-    expect(body.items[0]).toMatchObject({ unitPriceEstimate: 380, sum: 380 })
+    expect(body.subtotal).toBe(300 + 40)
+    expect(body.items[0]).toMatchObject({ unitPriceEstimate: 340 })
+
+    // Опция из чужой схемы (обычный id модификатора) — не принимаем.
+    const bad = await quote(g, [{ productId: String(CUP), quantity: 1, modifiers: [{ modifierId: '9001' }] }])
+    expect(bad.status).toBe(409)
+    expect((bad.body as any).error).toBe('modifier_not_allowed')
   })
 
   it('подарок: списывает самый дорогой напиток, еда не участвует', async () => {

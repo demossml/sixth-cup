@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { app } from '../app'
 import { config } from '../config'
+import { db } from '../db'
 
 const H = { 'X-Admin-Token': config.adminToken, 'content-type': 'application/json' }
 const call = async (m: string, p: string, body?: unknown) => {
@@ -43,7 +44,7 @@ describe('admin devices (R-05)', () => {
     const enroll = await app.request('/api/devices/enroll', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ code, publicKey: 'test-key' }),
+      body: JSON.stringify({ code, publicKey: 'test-public-key-0123456789abcdefghijklm' }),
     })
     expect(enroll.status).toBe(200)
     const enrolled = (await enroll.json()) as any
@@ -53,6 +54,46 @@ describe('admin devices (R-05)', () => {
     const row = list.json.devices.find((d: any) => d.id === created.json.id)
     expect(row.enrolled).toBe(1)
     expect(row.enrollCode).toBeNull()
+  })
+
+  it('просроченный код не пускает (410), повтор по тому же коду — 409 (P0-4)', async () => {
+    const storeId = await localStore('dev-ttl')
+    const created = await call('POST', '/devices', { storeId, name: 'Касса-TTL' })
+    const code = created.json.enrollCode as string
+    db.prepare('UPDATE devices SET enroll_expires_at=? WHERE id=?')
+      .run(Date.now() - 1000, Number(created.json.id))
+
+    const expired = await app.request('/api/devices/enroll', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code }),
+    })
+    expect(expired.status).toBe(410)
+
+    // Свежий код — успешная привязка, второй раз тот же код уже не работает.
+    const again = await call('POST', '/devices', { storeId, name: 'Касса-TTL-2' })
+    const fresh = again.json.enrollCode as string
+    const ok = await app.request('/api/devices/enroll', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: fresh }),
+    })
+    expect(ok.status).toBe(200)
+    const second = await app.request('/api/devices/enroll', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: fresh }),
+    })
+    expect([404, 409]).toContain(second.status)
+  })
+
+  it('перебор одного кода упирается в 429 (лимит по коду не зависит от IP)', async () => {
+    const storeId = await localStore('dev-brute')
+    await call('POST', '/devices', { storeId, name: 'Касса-брут' })
+    let limited = 0
+    for (let i = 0; i < 8; i++) {
+      const r = await app.request('/api/devices/enroll', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ code: 'BADCODE1' }),
+      })
+      if (r.status === 429) limited++
+    }
+    expect(limited).toBeGreaterThan(0)
   })
 
   it('revoke помечает устройство, повтор → 404 на несуществующем', async () => {

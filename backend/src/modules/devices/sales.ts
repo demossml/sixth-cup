@@ -28,11 +28,44 @@ export type SaleResult = {
   paidCups: number
 }
 
+/**
+ * Сколько чашек максимум может дать один онлайн-чек. Касса присылает состав сама,
+ * поэтому щедрое ограничение защищает от «нарисованного» чека на 99 напитков (P1-1).
+ */
+const MAX_CUPS_PER_SALE = Number(process.env.MAX_CUPS_PER_SALE ?? 20)
+/** Сколько онлайн-продаж допускаем с одного терминала в час. */
+const SALES_PER_DEVICE_HOUR = Number(process.env.SALES_PER_DEVICE_HOUR ?? 120)
+
+/** Частотный лимит по устройству: перебор чеков не должен начислять бесконечно. */
+function allowSale(deviceId: number): void {
+  const key = `sale-device:${deviceId}`
+  const now = Date.now()
+  const row = db.prepare('SELECT count, window_start FROM rate_limits WHERE key=?').get(key) as
+    | { count: number; window_start: number }
+    | undefined
+  if (!row || now - row.window_start > 3_600_000) {
+    db.prepare('INSERT OR REPLACE INTO rate_limits(key,count,window_start) VALUES(?,?,?)').run(key, 1, now)
+    return
+  }
+  if (row.count >= SALES_PER_DEVICE_HOUR) throw bad('Слишком много чеков с терминала, попробуйте позже', 429)
+  db.prepare('UPDATE rate_limits SET count=count+1 WHERE key=?').run(key)
+}
+
 export function applyOnlineSale(deviceId: number, input: SaleInput): SaleResult {
   const card = verifyCardProof(input.cardToken)
   if (!card) throw bad('Недействительная или просроченная карта гостя', 400)
   const userId = card.userId
+  allowSale(deviceId)
 
+  // Фискальный номер уникален у кассы: тот же номер с другого терминала — попытка переиграть чек.
+  const dupOther = db.prepare(`SELECT device_id AS deviceId FROM receipts WHERE id LIKE ? AND device_id<>?`)
+    .get(`%:${input.fiscalId}`, deviceId) as { deviceId: number } | undefined
+  if (dupOther) {
+    db.prepare(`INSERT INTO disputes(kind,details,created_at) VALUES(?,?,?)`)
+      .run('fiscal_duplicate', `fiscal ${input.fiscalId} уже применён на устройстве ${dupOther.deviceId}`, Date.now())
+    log.warn('online sale: fiscal id already used', { device: deviceId, fiscal: input.fiscalId })
+    throw bad('Этот фискальный номер уже применён на другом терминале', 409)
+  }
   const fiscalKey = `${deviceId}:${input.fiscalId}`.slice(0, 80)
   const dup = db.prepare('SELECT id FROM receipts WHERE id=?').get(fiscalKey)
   if (dup) {
@@ -65,6 +98,13 @@ export function applyOnlineSale(deviceId: number, input: SaleInput): SaleResult 
     if (isCup) cupUnits += Math.max(1, it.qty)
   }
 
+  // Лимит на состав чека: больше MAX_CUPS_PER_SALE чашек за один чек не начисляем.
+  if (cupUnits > MAX_CUPS_PER_SALE) {
+    db.prepare(`INSERT INTO disputes(kind,details,created_at) VALUES(?,?,?)`)
+      .run('cups_limit', `online sale: ${cupUnits} чашек в чеке ${input.fiscalId}`, Date.now())
+    cupUnits = MAX_CUPS_PER_SALE
+  }
+
   let useFree = input.useFree ? 1 : 0
   const freeAvail = Math.max(0, freeEarned(before.paid_total) - before.free_used)
   if (useFree > freeAvail || cupUnits < 1) useFree = 0
@@ -72,6 +112,12 @@ export function applyOnlineSale(deviceId: number, input: SaleInput): SaleResult 
   const amountKopecks = Math.max(0, Math.round(input.amountRub * 100))
   let cashbackUse = Math.max(0, Math.round(input.cashbackUseRub * 100))
   cashbackUse = Math.min(cashbackUse, user.cashback_balance, amountKopecks)
+  // Нулевой чек с платными чашками — повод не начислять: касса могла прислать мусор.
+  if (input.amountRub === 0 && paidCups > 0) {
+    db.prepare(`INSERT INTO disputes(kind,details,created_at) VALUES(?,?,?)`)
+      .run('zero_amount_with_cups', `online sale ${input.fiscalId}: ${paidCups} чашек при сумме 0`, Date.now())
+    throw bad('Сумма чека 0 при платных позициях — начисление отклонено', 409)
+  }
   const now = Date.now()
 
   db.transaction(() => {
