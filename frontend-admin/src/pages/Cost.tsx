@@ -995,45 +995,85 @@ function RecipesTab({
 
 
 function SummaryTab({ rows, loading, error }: { rows: SummaryRow[]; loading: boolean; error: string }) {
+  const [onlyProblems, setOnlyProblems] = useState(false)
+  const problems = useMemo(() => rows.filter((r) => r.missingPrices), [rows])
+  const visible = onlyProblems ? problems : rows
+
   const exportCsv = () => {
     downloadCsv(
       csvName('cost-summary'),
       ['name', 'cost', 'markup', 'retail', 'margin', 'warn'],
-      rows.map((r) => [r.name, r.costRub ?? '', r.markupPct, r.retailRub ?? '', r.marginPct ?? '', r.warnings.join(';')]),
+      visible.map((r) => [r.name, r.costRub ?? '', r.markupPct, r.retailRub ?? '', r.marginPct ?? '', r.warnings.join(';')]),
     )
   }
+
+  const columns: Column<SummaryRow>[] = [
+    {
+      key: 'name',
+      header: 'Рецепт',
+      primary: true,
+      render: (r) => (
+        <span className="flex flex-wrap items-center gap-2">
+          <span className="font-medium">{r.name}</span>
+          {r.missingPrices && <Badge tone="bad">дозаполнить</Badge>}
+        </span>
+      ),
+    },
+    {
+      key: 'cost',
+      header: 'Себес',
+      align: 'right',
+      render: (r) => (r.costRub != null ? `${r.costRub.toFixed(2)} ₽` : '—'),
+    },
+    { key: 'markup', header: 'Наценка %', align: 'right', render: (r) => r.markupPct },
+    {
+      key: 'retail',
+      header: 'Розница',
+      align: 'right',
+      hideOnPhone: true,
+      render: (r) => (r.retailRub != null ? `${r.retailRub.toFixed(2)} ₽` : '—'),
+    },
+    {
+      key: 'margin',
+      header: 'Маржа %',
+      align: 'right',
+      render: (r) => (
+        <span className={cx(r.marginPct != null && r.marginPct < 50 && 'text-amber-700')}>
+          {r.marginPct != null ? `${r.marginPct}%` : '—'}
+        </span>
+      ),
+    },
+    {
+      key: 'status',
+      header: 'Статус',
+      hideOnPhone: true,
+      render: (r) => (r.missingPrices ? <Badge tone="bad">дозаполнить</Badge> : <Badge tone="ok">ok</Badge>),
+    },
+  ]
+
   return (
     <div className="space-y-3">
-      <Button variant="ghost" onClick={exportCsv}>CSV</Button>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Chip active={!onlyProblems} onClick={() => setOnlyProblems(false)}>Все {rows.length}</Chip>
+        <Chip active={onlyProblems} onClick={() => setOnlyProblems(true)}>Только проблемы {problems.length}</Chip>
+        <Button variant="ghost" className="ml-auto" onClick={exportCsv}>CSV</Button>
+      </div>
       {error && <ErrorBox message={error} />}
-      {loading ? <Skeleton className="h-32" /> : (
-        <div className="overflow-x-auto rounded-xl border border-line">
-          <table className="w-full text-sm">
-            <thead className="bg-surface-2 text-left">
-              <tr>
-                <th className="p-2">Рецепт</th>
-                <th className="p-2">Себес</th>
-                <th className="p-2">Наценка %</th>
-                <th className="p-2">Розница</th>
-                <th className="p-2">Маржа %</th>
-                <th className="p-2">Статус</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} className={cx('border-t border-line', r.missingPrices && 'bg-red-50')}>
-                  <td className="p-2 font-medium">{r.name}</td>
-                  <td className="p-2">{r.costRub != null ? r.costRub.toFixed(2) : '—'}</td>
-                  <td className="p-2">{r.markupPct}</td>
-                  <td className="p-2">{r.retailRub != null ? r.retailRub.toFixed(2) : '—'}</td>
-                  <td className="p-2">{r.marginPct != null ? r.marginPct : '—'}</td>
-                  <td className="p-2">{r.missingPrices ? <Badge tone="bad">дозаполнить</Badge> : <Badge tone="ok">ok</Badge>}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {!rows.length && <EmptyState title="Нет данных" text="Импортируйте техкарту" />}
-        </div>
+      {loading ? (
+        <Skeleton className="h-32" />
+      ) : (
+        <DataTable
+          rows={visible}
+          columns={columns}
+          rowKey={(r) => r.id}
+          rowClassName={(r) => (r.missingPrices ? '!bg-red-50' : undefined)}
+          empty={
+            <EmptyState
+              title={onlyProblems ? 'Проблем нет' : 'Нет данных'}
+              text={onlyProblems ? 'У всех рецептов заполнены цены.' : 'Импортируйте техкарту кнопкой «Загрузить».'}
+            />
+          }
+        />
       )}
     </div>
   )
