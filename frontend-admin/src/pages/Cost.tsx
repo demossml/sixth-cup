@@ -4,7 +4,7 @@ import { useApi } from '../api/useApi'
 import { api, tokenStore } from '../api/client'
 import {
   PageHeader, Card, EmptyState, Badge, Button, Input, Select, Field,
-  ErrorBox, Skeleton, Tabs, useToast, cx, DataTable, type Column,
+  ErrorBox, Skeleton, Tabs, useToast, cx, DataTable, type Column, ConfirmDialog,
 } from '../ui/kit'
 import { Plus, RefreshCw, Sparkles, Trash2, Upload, Pencil } from 'lucide-react'
 import { csvName, downloadCsv } from '../lib/csv'
@@ -162,6 +162,161 @@ export default function Cost() {
   )
 }
 
+/**
+ * Форма ингредиента: bottom sheet на телефоне, карточка по центру на десктопе.
+ * Цена закупки — единственное поле, которое закрывает «красные» позиции в техкартах.
+ */
+function IngredientSheet({
+  cats, initial, onClose, onSaved,
+}: {
+  cats: Cat[]; initial: Ing | null; onClose: () => void; onSaved: () => void
+}) {
+  const toast = useToast()
+  const [busy, setBusy] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [form, setForm] = useState({
+    name: initial?.name ?? '',
+    categoryId: initial ? String(initial.categoryId) : '',
+    unit: initial?.unit ?? 'ml',
+    packQty: initial ? String(initial.packQty) : '1000',
+    packPriceRub: initial?.packPriceRub != null ? String(initial.packPriceRub) : '',
+    comment: initial?.comment ?? '',
+  })
+
+  const canSave = form.name.trim().length > 0 && Number(form.packQty) > 0
+
+  const save = async () => {
+    if (!canSave) {
+      toast.push('Укажите название и фасовку', 'neutral')
+      return
+    }
+    setBusy(true)
+    try {
+      const body = {
+        name: form.name.trim(),
+        categoryId: Number(form.categoryId || cats[0]?.id),
+        unit: form.unit,
+        packQty: Number(form.packQty),
+        packPriceRub: form.packPriceRub.trim() === '' ? null : Number(form.packPriceRub),
+        comment: form.comment.trim() || null,
+      }
+      if (initial) {
+        await api(`/cost/ingredients/${initial.id}`, { method: 'PUT', body })
+        toast.push('Сохранено')
+      } else {
+        await api('/cost/ingredients', { method: 'POST', body })
+        toast.push('Ингредиент добавлен')
+      }
+      onSaved()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const remove = async () => {
+    if (!initial) return
+    setBusy(true)
+    try {
+      await api(`/cost/ingredients/${initial.id}`, { method: 'DELETE' })
+      toast.push('Удалено')
+      setConfirmDelete(false)
+      onSaved()
+    } catch (e) {
+      // 409 приходит текстом сервера («используется в рецептах: …») — показываем как есть.
+      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+      setConfirmDelete(false)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <div
+        className="fixed inset-0 z-[60] flex items-end justify-center bg-black/50 sm:items-center sm:p-4"
+        onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+      >
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={initial ? `Ингредиент ${initial.name}` : 'Новый ингредиент'}
+          className="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white p-4 shadow-soft sm:rounded-2xl sm:p-5"
+        >
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <div className="text-base font-bold">{initial ? 'Ингредиент' : 'Новый ингредиент'}</div>
+            <Button variant="ghost" onClick={onClose} disabled={busy}>Закрыть</Button>
+          </div>
+          <div className="space-y-3">
+            <Field label="Название">
+              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} autoFocus={!initial} />
+            </Field>
+            <Field label="Категория">
+              <Select value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })}>
+                <option value="">—</option>
+                {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </Select>
+            </Field>
+            <div className="grid grid-cols-3 gap-2">
+              <Field label="Ед.">
+                <Select value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })}>
+                  <option value="ml">мл</option>
+                  <option value="g">г</option>
+                  <option value="pcs">шт</option>
+                </Select>
+              </Field>
+              <Field label="Фасовка">
+                <Input
+                  inputMode="decimal"
+                  value={form.packQty}
+                  onChange={(e) => setForm({ ...form, packQty: e.target.value })}
+                />
+              </Field>
+              <Field label="Цена ₽">
+                <Input
+                  inputMode="decimal"
+                  value={form.packPriceRub}
+                  onChange={(e) => setForm({ ...form, packPriceRub: e.target.value })}
+                  placeholder="для себеса"
+                />
+              </Field>
+            </div>
+            <Field label="Комментарий">
+              <Input value={form.comment} onChange={(e) => setForm({ ...form, comment: e.target.value })} />
+            </Field>
+            {form.packPriceRub.trim() === '' && (
+              <div className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                Без цены закупки позиция не входит в себестоимость.
+              </div>
+            )}
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button onClick={save} disabled={!canSave} loading={busy}>Сохранить</Button>
+            <Button variant="secondary" onClick={onClose} disabled={busy}>Отмена</Button>
+            {initial && (
+              <Button variant="danger" className="sm:ml-auto" onClick={() => setConfirmDelete(true)} disabled={busy}>
+                <Trash2 size={15} /> Удалить
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+      <ConfirmDialog
+        open={confirmDelete}
+        title={`Удалить «${initial?.name ?? ''}»?`}
+        confirmLabel="Удалить"
+        danger
+        busy={busy}
+        onConfirm={() => void remove()}
+        onCancel={() => setConfirmDelete(false)}
+      >
+        Если ингредиент входит в рецепты, удаление будет отклонено — цену проще обнулить.
+      </ConfirmDialog>
+    </>
+  )
+}
+
 /** Компактный чип-фильтр (дизайн §A3): «Без цены» / «Все» / категории. */
 function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
@@ -192,11 +347,8 @@ function FillTab({
   const [q, setQ] = useState('')
   const [catId, setCatId] = useState('')
   const [onlyMissing, setOnlyMissing] = useState(true)
-  const [showForm, setShowForm] = useState(false)
-  const [editId, setEditId] = useState<number | null>(null)
-  const [form, setForm] = useState({
-    name: '', categoryId: '', unit: 'ml', packQty: '1000', packPriceRub: '', comment: '',
-  })
+  const [sheetOpen, setSheetOpen] = useState(false)
+  const [editing, setEditing] = useState<Ing | null>(null)
   const [newCat, setNewCat] = useState('')
 
   useEffect(() => {
@@ -213,52 +365,13 @@ function FillTab({
   }, [ings, q, catId, onlyMissing])
 
   const openEdit = (i: Ing) => {
-    setEditId(i.id)
-    setForm({
-      name: i.name,
-      categoryId: String(i.categoryId),
-      unit: i.unit,
-      packQty: String(i.packQty),
-      packPriceRub: i.packPriceRub != null ? String(i.packPriceRub) : '',
-      comment: i.comment || '',
-    })
-    setShowForm(true)
+    setEditing(i)
+    setSheetOpen(true)
   }
 
-  const saveIng = async () => {
-    try {
-      const body = {
-        name: form.name.trim(),
-        categoryId: Number(form.categoryId || cats[0]?.id),
-        unit: form.unit,
-        packQty: Number(form.packQty),
-        packPriceRub: form.packPriceRub === '' ? null : Number(form.packPriceRub),
-        comment: form.comment || null,
-      }
-      if (editId) {
-        await api(`/cost/ingredients/${editId}`, { method: 'PUT', body })
-        toast.push('Сохранено')
-      } else {
-        await api('/cost/ingredients', { method: 'POST', body })
-        toast.push('Ингредиент добавлен')
-      }
-      setShowForm(false)
-      setEditId(null)
-      onChange()
-    } catch (e) {
-      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
-    }
-  }
-
-  const removeIng = async (i: Ing) => {
-    if (!confirm(`Удалить «${i.name}»?`)) return
-    try {
-      await api(`/cost/ingredients/${i.id}`, { method: 'DELETE' })
-      toast.push('Удалено')
-      onChange()
-    } catch (e) {
-      toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
-    }
+  const openNew = () => {
+    setEditing(null)
+    setSheetOpen(true)
   }
 
   const addCategory = async () => {
@@ -310,8 +423,7 @@ function FillTab({
       hideOnPhone: true,
       render: (i) => (
         <span className="whitespace-nowrap">
-          <button type="button" className="mr-2" title="Изменить" onClick={(e) => { e.stopPropagation(); openEdit(i) }}><Pencil size={14} /></button>
-          <button type="button" title="Удалить" onClick={(e) => { e.stopPropagation(); void removeIng(i) }}><Trash2 size={14} /></button>
+          <button type="button" title="Изменить" onClick={(e) => { e.stopPropagation(); openEdit(i) }}><Pencil size={14} /></button>
         </span>
       ),
     },
@@ -321,10 +433,7 @@ function FillTab({
     <div className="space-y-3">
       <div className="flex flex-wrap items-end gap-2">
         <Field label="Поиск"><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Молоко, стакан…" /></Field>
-        <Button
-          className="sm:ml-auto"
-          onClick={() => { setEditId(null); setForm({ name: '', categoryId: '', unit: 'ml', packQty: '1000', packPriceRub: '', comment: '' }); setShowForm(true) }}
-        >
+        <Button className="sm:ml-auto" onClick={openNew}>
           <Plus size={16} /> Ингредиент
         </Button>
       </div>
@@ -369,33 +478,13 @@ function FillTab({
           rowClassName={(i) => (i.complete ? undefined : '!bg-red-50')}
         />
       )}
-      {showForm && (
-        <Card className="p-4 space-y-3 max-w-lg">
-          <div className="font-semibold">{editId ? 'Редактировать' : 'Новый ингредиент'}</div>
-          <Field label="Название"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
-          <Field label="Категория">
-            <Select value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })}>
-              <option value="">—</option>
-              {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </Select>
-          </Field>
-          <div className="grid grid-cols-3 gap-2">
-            <Field label="Ед.">
-              <Select value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })}>
-                <option value="ml">мл</option>
-                <option value="g">г</option>
-                <option value="pcs">шт</option>
-              </Select>
-            </Field>
-            <Field label="Фасовка"><Input value={form.packQty} onChange={(e) => setForm({ ...form, packQty: e.target.value })} /></Field>
-            <Field label="Цена ₽"><Input value={form.packPriceRub} onChange={(e) => setForm({ ...form, packPriceRub: e.target.value })} placeholder="обязательно для себеса" /></Field>
-          </div>
-          <Field label="Комментарий"><Input value={form.comment} onChange={(e) => setForm({ ...form, comment: e.target.value })} /></Field>
-          <div className="flex gap-2">
-            <Button onClick={saveIng}>Сохранить</Button>
-            <Button variant="ghost" onClick={() => { setShowForm(false); setEditId(null) }}>Отмена</Button>
-          </div>
-        </Card>
+      {sheetOpen && (
+        <IngredientSheet
+          cats={cats}
+          initial={editing}
+          onClose={() => setSheetOpen(false)}
+          onSaved={() => { setSheetOpen(false); onChange() }}
+        />
       )}
     </div>
   )
