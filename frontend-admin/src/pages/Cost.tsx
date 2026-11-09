@@ -8,6 +8,7 @@ import {
 } from '../ui/kit'
 import { Plus, RefreshCw, Sparkles, Trash2, Upload, Pencil } from 'lucide-react'
 import { csvName, downloadCsv } from '../lib/csv'
+import { initialCostTab, shouldAutoFocusMissing, type CostTabKey } from '../lib/costTabs'
 
 type Cat = { id: number; name: string; sortOrder: number; isSystem: number }
 type Ing = {
@@ -34,17 +35,16 @@ type SummaryRow = {
 const UNIT_LABEL: Record<string, string> = { g: 'г', ml: 'мл', pcs: 'шт' }
 const API = (import.meta as any).env?.VITE_API_URL ?? ''
 
-type TabKey = 'fill' | 'recipes' | 'summary'
-
 export default function Cost() {
   const [params] = useSearchParams()
   // ?focus=missing — из импорта техкарты и внешних ссылок: сразу режим дозаполнения.
   const focusMissing = params.get('focus') === 'missing'
-  const [tab, setTab] = useState<TabKey>(focusMissing ? 'fill' : 'recipes')
+  const [tab, setTab] = useState<CostTabKey>(initialCostTab(params.get('focus')))
   const cats = useApi<{ categories: Cat[] }>('/cost/categories')
   const ings = useApi<{ ingredients: Ing[] }>('/cost/ingredients')
   const recipes = useApi<{ recipes: Recipe[] }>('/cost/recipes')
   const summary = useApi<{ rows: SummaryRow[] }>(tab === 'summary' ? '/cost/summary' : null)
+  const toast = useToast()
   const reloadAll = () => {
     cats.reload(); ings.reload(); recipes.reload(); summary.reload()
   }
@@ -57,15 +57,37 @@ export default function Cost() {
   const tabTouched = useRef(false)
   const autoTabDone = useRef(false)
   useEffect(() => {
-    if (autoTabDone.current || tabTouched.current || focusMissing) return
-    if (!ings.data) return
+    const decide = shouldAutoFocusMissing({
+      focusMissing,
+      userPicked: tabTouched.current,
+      alreadyDone: autoTabDone.current,
+      hasData: Boolean(ings.data),
+      missingCount,
+    })
+    if (!ings.data || tabTouched.current) return
     autoTabDone.current = true
-    if (missingCount > 0) setTab('fill')
+    if (decide) setTab('fill')
   }, [ings.data, missingCount, focusMissing])
 
-  const selectTab = (k: TabKey) => {
+  const selectTab = (k: CostTabKey) => {
     tabTouched.current = true
     setTab(k)
+  }
+
+  const [uploadOpen, setUploadOpen] = useState(false)
+  const [importInfo, setImportInfo] = useState<{ count: number; names: string[] } | null>(null)
+  const [missingSignal, setMissingSignal] = useState(0)
+
+  /** Импорт завершён: обновляем справочник и рецепты, ведём кассира к незаполненным ценам. */
+  const onImported = (res: { missingIngredientNames?: string[] }) => {
+    ings.reload(); cats.reload(); recipes.reload()
+    setUploadOpen(false)
+    const names = res.missingIngredientNames
+    // undefined — источник не сообщает о ценах (ИИ-прайс): баннер не показываем.
+    setImportInfo(names === undefined ? null : { count: names.length, names })
+    selectTab('fill')
+    if (names && names.length) setMissingSignal((n) => n + 1)
+    toast.push('Импорт завершён')
   }
 
   return (
@@ -74,9 +96,37 @@ export default function Cost() {
         title="Себестоимость"
         subtitle="Техкарты, ингредиенты и наценка. Неполные позиции — красным, в себес не входят."
         actions={
-          <Button variant="ghost" onClick={reloadAll}><RefreshCw size={16} /> Обновить</Button>
+          <>
+            <Button variant="secondary" onClick={reloadAll}><RefreshCw size={16} /> Обновить</Button>
+            <Button onClick={() => setUploadOpen(true)}><Upload size={16} /> Загрузить</Button>
+          </>
         }
       />
+      {uploadOpen && (
+        <UploadPanel onClose={() => setUploadOpen(false)} onImported={onImported} />
+      )}
+      {importInfo && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm">
+          {importInfo.count > 0 ? (
+            <>
+              <b>{importInfo.count} позиций без цены.</b> В себестоимость они не войдут, пока не укажете цену закупки.
+              {importInfo.names.length > 0 && (
+                <div className="mt-1 text-ink-secondary">
+                  {importInfo.names.slice(0, 10).join(', ')}
+                  {importInfo.names.length > 10 ? '…' : ''}
+                </div>
+              )}
+              <div className="mt-2">
+                <Button size="sm" onClick={() => { selectTab('fill'); setMissingSignal((n) => n + 1) }}>
+                  Показать без цены
+                </Button>
+              </div>
+            </>
+          ) : (
+            <b>Импорт завершён: все позиции с ценами.</b>
+          )}
+        </div>
+      )}
       <Tabs
         value={tab}
         onChange={selectTab}
@@ -92,6 +142,7 @@ export default function Cost() {
           ings={ingredientList}
           loading={ings.loading}
           error={ings.error}
+          focusMissingSignal={missingSignal}
           onChange={() => { ings.reload(); cats.reload(); recipes.reload() }}
         />
       )}
@@ -112,9 +163,11 @@ export default function Cost() {
 }
 
 function FillTab({
-  cats, ings, loading, error, onChange,
+  cats, ings, loading, error, onChange, focusMissingSignal = 0,
 }: {
   cats: Cat[]; ings: Ing[]; loading: boolean; error: string; onChange: () => void
+  /** Растёт, когда кассир просит показать позиции без цены (импорт, deep link). */
+  focusMissingSignal?: number
 }) {
   const toast = useToast()
   const [q, setQ] = useState('')
@@ -122,12 +175,14 @@ function FillTab({
   const [onlyMissing, setOnlyMissing] = useState(false)
   const [showForm, setShowForm] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
-  const [aiOpen, setAiOpen] = useState(false)
-  const [importOpen, setImportOpen] = useState(false)
   const [form, setForm] = useState({
     name: '', categoryId: '', unit: 'ml', packQty: '1000', packPriceRub: '', comment: '',
   })
   const [newCat, setNewCat] = useState('')
+
+  useEffect(() => {
+    if (focusMissingSignal > 0) setOnlyMissing(true)
+  }, [focusMissingSignal])
 
   const filtered = useMemo(() => {
     return ings.filter((i) => {
@@ -216,8 +271,6 @@ function FillTab({
         <Button onClick={() => { setEditId(null); setForm({ name: '', categoryId: '', unit: 'ml', packQty: '1000', packPriceRub: '', comment: '' }); setShowForm(true) }}>
           <Plus size={16} /> Ингредиент
         </Button>
-        <Button variant="ghost" onClick={() => setImportOpen(true)}><Upload size={16} /> Импорт техкарты</Button>
-        <Button variant="ghost" onClick={() => setAiOpen(true)}><Sparkles size={16} /> ИИ-прайс</Button>
       </div>
       <Card className="p-3 flex flex-wrap gap-2 items-end">
         <Field label="Новая категория">
@@ -298,14 +351,30 @@ function FillTab({
           </div>
         </Card>
       )}
-      {aiOpen && <AiPanel onClose={() => setAiOpen(false)} onDone={() => { setAiOpen(false); onChange() }} />}
-      {importOpen && <ImportPanel onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); onChange() }} />}
     </div>
   )
 }
 
-function ImportPanel({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+type ImportResult = {
+  parsed: number
+  recipesCreated: number
+  recipesUpdated: number
+  ingredientsCreated: number
+  missingIngredientNames?: string[]
+}
+
+/**
+ * Единая точка импорта: Excel/CSV-файл, вставленный текст техкарты и ИИ-прайс.
+ * Живёт в шапке страницы, чтобы на телефоне не было трёх кнопок в ряд.
+ */
+function UploadPanel({
+  onClose, onImported,
+}: {
+  onClose: () => void
+  onImported: (res: ImportResult) => void
+}) {
   const toast = useToast()
+  const [section, setSection] = useState<'file' | 'text' | 'ai'>('file')
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<string | null>(null)
@@ -314,19 +383,12 @@ function ImportPanel({ onClose, onDone }: { onClose: () => void; onDone: () => v
     setBusy(true)
     setResult(null)
     try {
-      const res = await api<{
-        parsed: number; recipesCreated: number; recipesUpdated: number
-        ingredientsCreated: number; missingIngredientNames: string[]
-      }>('/cost/import/techcard-text', { method: 'POST', body: { text } })
+      const res = await api<ImportResult>('/cost/import/techcard-text', { method: 'POST', body: { text } })
       setResult(
         `Рецептов: ${res.parsed} (новых ${res.recipesCreated}, обновлено ${res.recipesUpdated}). ` +
-        `Новых ингредиентов: ${res.ingredientsCreated}. ` +
-        (res.missingIngredientNames?.length
-          ? `Без цены (красные): ${res.missingIngredientNames.slice(0, 12).join(', ')}${res.missingIngredientNames.length > 12 ? '…' : ''}`
-          : 'Все с ценами.'),
+        `Новых ингредиентов: ${res.ingredientsCreated}.`,
       )
-      toast.push('Техкарта импортирована')
-      onDone()
+      onImported(res)
     } catch (e) {
       toast.push(e instanceof Error ? e.message : 'Ошибка импорта', 'bad')
     } finally {
@@ -345,20 +407,12 @@ function ImportPanel({ onClose, onDone }: { onClose: () => void; onDone: () => v
         headers: { 'X-Admin-Token': tokenStore.get() },
         body: fd,
       })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error((j as { error?: string; message?: string }).error || (j as { message?: string }).message || res.statusText)
-      const data = j as {
-        parsed: number; recipesCreated: number; recipesUpdated: number
-        ingredientsCreated: number; missingIngredientNames: string[]
-      }
+      const j = (await res.json().catch(() => ({}))) as ImportResult & { error?: string; message?: string }
+      if (!res.ok) throw new Error(j.error || j.message || res.statusText)
       setResult(
-        `Файл «${file.name}»: рецептов ${data.parsed}, новых ингредиентов ${data.ingredientsCreated}. ` +
-        (data.missingIngredientNames?.length
-          ? `Дозаполните цены: ${data.missingIngredientNames.slice(0, 15).join(', ')}`
-          : ''),
+        `Файл «${file.name}»: рецептов ${j.parsed}, новых ингредиентов ${j.ingredientsCreated}.`,
       )
-      toast.push('Файл импортирован')
-      onDone()
+      onImported(j)
     } catch (e) {
       toast.push(e instanceof Error ? e.message : 'Ошибка файла', 'bad')
     } finally {
@@ -366,39 +420,74 @@ function ImportPanel({ onClose, onDone }: { onClose: () => void; onDone: () => v
     }
   }
 
+  const sectionBtn = (key: 'file' | 'text' | 'ai', label: string) => (
+    <button
+      key={key}
+      type="button"
+      onClick={() => setSection(key)}
+      className={cx('seg-item', section === key && 'is-on')}
+      aria-pressed={section === key}
+    >
+      {label}
+    </button>
+  )
+
   return (
     <Card className="p-4 space-y-3 border-brand">
-      <div className="flex justify-between items-center">
-        <div className="font-semibold flex items-center gap-2"><Upload size={18} /> Импорт техкарты</div>
+      <div className="flex justify-between items-center gap-2">
+        <div className="font-semibold flex items-center gap-2"><Upload size={18} /> Загрузить</div>
         <Button variant="ghost" onClick={onClose}>Закрыть</Button>
       </div>
       <p className="text-sm text-ink-secondary">
-        Загрузите Excel (.xlsx) с техкартами или вставьте таблицу / текст. Рецепты создадутся сами.
-        Ингредиенты без цены закупки появятся <span className="text-red-700 font-medium">красным</span> и не войдут в себес, пока не укажете цену.
+        Техкарта из Excel/CSV или текстом — рецепты создадутся сами. Ингредиенты без цены
+        появятся <span className="text-red-700 font-medium">красным</span> и не войдут в себес.
       </p>
-      <input
-        type="file"
-        accept=".xlsx,.xls,.csv,.tsv,.txt"
-        disabled={busy}
-        onChange={(e) => {
-          const f = e.target.files?.[0]
-          if (f) void runFile(f)
-        }}
-      />
-      <div className="text-xs text-ink-secondary">или вставьте текст / CSV:</div>
-      <textarea
-        className="w-full min-h-[120px] rounded-xl border border-line p-3 text-sm font-mono"
-        placeholder={'КАПУЧИНО 200\nкофе молотый — 10 г\nмолоко — 150 мл\nстакан 200 мл — 1 шт'}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-      />
-      <Button disabled={busy || !text.trim()} onClick={runText}>{busy ? 'Импорт…' : 'Импортировать текст'}</Button>
+      <div className="seg inline-flex flex-wrap gap-[2px] p-[3px] bg-surface-2 rounded-[10px] border border-line">
+        {sectionBtn('file', 'Excel / файл')}
+        {sectionBtn('text', 'Вставить текст')}
+        {sectionBtn('ai', 'ИИ-прайс')}
+      </div>
+
+      {section === 'file' && (
+        <div className="space-y-2">
+          <input
+            type="file"
+            accept=".xlsx,.xls,.csv,.tsv,.txt"
+            disabled={busy}
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              if (f) void runFile(f)
+            }}
+          />
+          <div className="text-xs text-ink-secondary">
+            Excel (.xlsx/.xls), CSV/TSV или TXT. Техкарты и цены сопоставятся по названию.
+          </div>
+        </div>
+      )}
+
+      {section === 'text' && (
+        <div className="space-y-2">
+          <textarea
+            className="w-full min-h-[140px] rounded-xl border border-line p-3 text-sm font-mono"
+            placeholder={'КАПУЧИНО 200\nкофе молотый — 10 г\nмолоко — 150 мл\nстакан 200 мл — 1 шт'}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+          />
+          <Button disabled={busy || !text.trim()} onClick={runText}>
+            {busy ? 'Импорт…' : 'Импортировать текст'}
+          </Button>
+        </div>
+      )}
+
+      {section === 'ai' && <AiSection onDone={() => onImported({ parsed: 0, recipesCreated: 0, recipesUpdated: 0, ingredientsCreated: 0 })} />}
+
       {result && <div className="text-sm rounded-lg bg-surface-2 p-3">{result}</div>}
     </Card>
   )
 }
 
-function AiPanel({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+/** ИИ-прайс: разбор текста в ингредиенты. Секция внутри «Загрузить». */
+function AiSection({ onDone }: { onDone: () => void }) {
   const toast = useToast()
   const [text, setText] = useState('Молоко 3,2% 1 л — 95 ₽\nСтаканы 200 мл, 50 шт — 310 ₽\nКрышки 80 мм, 50 шт — 190 ₽')
   const [busy, setBusy] = useState(false)
@@ -443,10 +532,9 @@ function AiPanel({ onClose, onDone }: { onClose: () => void; onDone: () => void 
   }
 
   return (
-    <Card className="p-4 space-y-3 border-brand">
-      <div className="flex justify-between items-center">
-        <div className="font-semibold flex items-center gap-2"><Sparkles size={18} /> Прайс → ингредиенты</div>
-        <Button variant="ghost" onClick={onClose}>Закрыть</Button>
+    <div className="space-y-2">
+      <div className="text-sm text-ink-secondary">
+        Вставьте прайс поставщика — ИИ предложит ингредиенты с фасовкой и ценой. Проверьте и добавьте.
       </div>
       <textarea className="w-full min-h-[100px] rounded-xl border border-line p-3 text-sm" value={text} onChange={(e) => setText(e.target.value)} />
       <Button disabled={busy} onClick={parse}>{busy ? 'Разбираю…' : 'Извлечь'}</Button>
@@ -481,7 +569,7 @@ function AiPanel({ onClose, onDone }: { onClose: () => void; onDone: () => void 
           <Button className="mt-2" onClick={commit}>Добавить выбранные</Button>
         </div>
       )}
-    </Card>
+    </div>
   )
 }
 
