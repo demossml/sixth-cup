@@ -36,7 +36,7 @@ const UNIT_LABEL: Record<string, string> = { g: 'г', ml: 'мл', pcs: 'шт' }
 const API = (import.meta as any).env?.VITE_API_URL ?? ''
 
 export default function Cost() {
-  const [params] = useSearchParams()
+  const [params, setParams] = useSearchParams()
   // ?focus=missing — из импорта техкарты и внешних ссылок: сразу режим дозаполнения.
   const focusMissing = params.get('focus') === 'missing'
   const [tab, setTab] = useState<CostTabKey>(initialCostTab(params.get('focus')))
@@ -56,6 +56,7 @@ export default function Cost() {
   // но только пока кассир сам не выбрал другую вкладку.
   const tabTouched = useRef(false)
   const autoTabDone = useRef(false)
+  const [missingSignal, setMissingSignal] = useState(0)
   useEffect(() => {
     const decide = shouldAutoFocusMissing({
       focusMissing,
@@ -74,9 +75,23 @@ export default function Cost() {
     setTab(k)
   }
 
+  /** Переход на ?focus=missing в уже открытой странице: вкладка + фильтр «Без цены». */
+  useEffect(() => {
+    if (!focusMissing) return
+    tabTouched.current = true
+    setTab('fill')
+    setMissingSignal((n) => n + 1)
+  }, [focusMissing])
+
+  /** Ссылка «без цены» должна переживать перезагрузку и шариться. */
+  const focusMissingInUrl = () => {
+    const next = new URLSearchParams(params)
+    next.set('focus', 'missing')
+    setParams(next, { replace: true })
+  }
+
   const [uploadOpen, setUploadOpen] = useState(false)
   const [importInfo, setImportInfo] = useState<{ count: number; names: string[] } | null>(null)
-  const [missingSignal, setMissingSignal] = useState(0)
 
   /** Импорт завершён: обновляем справочник и рецепты, ведём кассира к незаполненным ценам. */
   const onImported = (res: { missingIngredientNames?: string[] }) => {
@@ -86,7 +101,12 @@ export default function Cost() {
     // undefined — источник не сообщает о ценах (ИИ-прайс): баннер не показываем.
     setImportInfo(names === undefined ? null : { count: names.length, names })
     selectTab('fill')
-    if (names && names.length) setMissingSignal((n) => n + 1)
+    if (names && names.length) {
+      setMissingSignal((n) => n + 1)
+      const next = new URLSearchParams(params)
+      next.set('focus', 'missing')
+      setParams(next, { replace: true })
+    }
     toast.push('Импорт завершён')
   }
 
@@ -117,7 +137,7 @@ export default function Cost() {
                 </div>
               )}
               <div className="mt-2">
-                <Button size="sm" onClick={() => { selectTab('fill'); setMissingSignal((n) => n + 1) }}>
+                <Button size="sm" onClick={() => { focusMissingInUrl(); selectTab('fill'); setMissingSignal((n) => n + 1) }}>
                   Показать без цены
                 </Button>
               </div>
@@ -144,6 +164,7 @@ export default function Cost() {
           error={ings.error}
           focusMissingSignal={missingSignal}
           onChange={() => { ings.reload(); cats.reload(); recipes.reload() }}
+          onUpload={() => setUploadOpen(true)}
         />
       )}
       {tab === 'recipes' && (
@@ -153,10 +174,16 @@ export default function Cost() {
           loading={recipes.loading}
           error={recipes.error}
           onChange={() => { recipes.reload(); ings.reload() }}
+          onUpload={() => setUploadOpen(true)}
         />
       )}
       {tab === 'summary' && (
-        <SummaryTab rows={summary.data?.rows || []} loading={summary.loading} error={summary.error} />
+        <SummaryTab
+          rows={summary.data?.rows || []}
+          loading={summary.loading}
+          error={summary.error}
+          onUpload={() => setUploadOpen(true)}
+        />
       )}
     </div>
   )
@@ -337,11 +364,12 @@ function Chip({ active, onClick, children }: { active: boolean; onClick: () => v
 }
 
 function FillTab({
-  cats, ings, loading, error, onChange, focusMissingSignal = 0,
+  cats, ings, loading, error, onChange, focusMissingSignal = 0, onUpload,
 }: {
   cats: Cat[]; ings: Ing[]; loading: boolean; error: string; onChange: () => void
   /** Растёт, когда кассир просит показать позиции без цены (импорт, deep link). */
   focusMissingSignal?: number
+  onUpload?: () => void
 }) {
   const toast = useToast()
   const [q, setQ] = useState('')
@@ -463,6 +491,7 @@ function FillTab({
       {!loading && !filtered.length ? (
         <EmptyState
           title={onlyMissing ? 'Все цены заполнены' : 'Справочник пуст'}
+          action={onUpload && <Button onClick={onUpload}><Upload size={16} /> Загрузить</Button>}
           text={
             onlyMissing
               ? `Позиций без цены нет — в себестоимость входят все ${withPrice} ингредиентов. Импортируйте техкарту кнопкой «Загрузить».`
@@ -709,9 +738,10 @@ function AiSection({ onDone }: { onDone: () => void }) {
 }
 
 function RecipesTab({
-  ings, recipes, loading, error, onChange,
+  ings, recipes, loading, error, onChange, onUpload,
 }: {
   ings: Ing[]; recipes: Recipe[]; loading: boolean; error: string; onChange: () => void
+  onUpload?: () => void
 }) {
   const toast = useToast()
   const [sel, setSel] = useState<number | null>(null)
@@ -838,7 +868,11 @@ function RecipesTab({
             </button>
           ))}
           {!recipes.length && !loading && (
-            <EmptyState title="Нет рецептов" text="Импортируйте Excel или создайте вручную" />
+            <EmptyState
+              title="Нет рецептов"
+              text="Загрузите техкарту — рецепты создадутся сами."
+              action={onUpload && <Button onClick={onUpload}><Upload size={16} /> Загрузить</Button>}
+            />
           )}
         </Card>
 
@@ -994,7 +1028,11 @@ function RecipesTab({
 }
 
 
-function SummaryTab({ rows, loading, error }: { rows: SummaryRow[]; loading: boolean; error: string }) {
+function SummaryTab({
+  rows, loading, error, onUpload,
+}: {
+  rows: SummaryRow[]; loading: boolean; error: string; onUpload?: () => void
+}) {
   const [onlyProblems, setOnlyProblems] = useState(false)
   const problems = useMemo(() => rows.filter((r) => r.missingPrices), [rows])
   const visible = onlyProblems ? problems : rows
@@ -1071,6 +1109,7 @@ function SummaryTab({ rows, loading, error }: { rows: SummaryRow[]; loading: boo
             <EmptyState
               title={onlyProblems ? 'Проблем нет' : 'Нет данных'}
               text={onlyProblems ? 'У всех рецептов заполнены цены.' : 'Импортируйте техкарту кнопкой «Загрузить».'}
+              action={!onlyProblems && onUpload && <Button onClick={onUpload}><Upload size={16} /> Загрузить</Button>}
             />
           }
         />
