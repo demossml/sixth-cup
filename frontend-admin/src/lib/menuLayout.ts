@@ -1,32 +1,50 @@
 /**
- * Макет меню: клиентская модель и раскладка.
+ * Макет меню: клиентская модель холста и геометрия блоков.
  *
- * Алгоритм раскладки совпадает с серверным (menuLayoutDoc.flowPage): превью в админке
- * должно показывать ровно то, что уйдёт в PDF, иначе «на экране красиво, в печати нет».
+ * Блок живёт в координатах xPct/yPct/wPct/hPct (% от безопасной области листа) и zIndex.
+ * Раскладки «потоком» здесь больше нет: сервер отдаёт старые макеты уже переведёнными
+ * в координаты, редактор двигает блоки независимо, PDF рисует те же рамки.
  */
 
-export type BlockType = 'header' | 'hero' | 'category' | 'product' | 'text' | 'note' | 'photo' | 'divider' | 'qr'
+export type BlockType = 'product' | 'category' | 'text' | 'image' | 'logo' | 'divider'
+
+/** Legacy-типы встречаются только в непересохранённых старых макетах. */
+export type AnyBlockType = BlockType | 'header' | 'hero' | 'note' | 'photo' | 'qr'
 
 export type MenuBlock = {
   id: string
-  type: BlockType
+  type: AnyBlockType
+  xPct: number
+  yPct: number
+  wPct: number
+  hPct: number
+  zIndex: number
+  rotationDeg: number
+  hidden: boolean
   productId: number | null
   categoryId: number | null
   titleOverride: string | null
   priceRubOverride: number | null
   priceText: string | null
   showPhoto: boolean
+  photoUrlOverride: string | null
   badge: string | null
-  hidden: boolean
-  sortOrder: number
   text: string | null
+  url: string | null
+  fit: 'cover' | 'contain'
+  fontSizePt: number
+  align: 'left' | 'center' | 'right'
+  bold: boolean
   snapshotPriceRub: number | null
   snapshotName: string | null
   snapshotImageUrl: string | null
+  sortOrder: number
+  // поля резолва с сервера
   product?: { name: string; priceRub: number | null; imageUrl: string | null; available: boolean; variantLabel: string | null; categoryName: string | null } | null
   displayName?: string
   displayPrice?: string | null
   displayCategory?: string | null
+  displayImageUrl?: string | null
   catalogPriceRub?: number | null
   warnings?: string[]
 }
@@ -39,13 +57,12 @@ export type MenuTheme = {
   bg: string
   text: string
   accent: string
+  backgroundImageUrl: string | null
+  backgroundDim: number
   fontHeading: 'Unbounded' | 'Golos Text'
   fontBody: 'Golos Text' | 'Unbounded'
-  headingSize: number
   itemSize: number
-  columns: 1 | 2 | 3
   ornament: 'none' | 'line' | 'beans' | 'leaf'
-  density: 'air' | 'normal' | 'dense'
   logoPosition: 'left' | 'top-right' | 'footer'
 }
 
@@ -60,13 +77,12 @@ export const DEFAULT_THEME: MenuTheme = {
   bg: THEME_PRESETS.classic.bg,
   text: THEME_PRESETS.classic.text,
   accent: THEME_PRESETS.classic.accent,
+  backgroundImageUrl: null,
+  backgroundDim: 0,
   fontHeading: 'Unbounded',
   fontBody: 'Golos Text',
-  headingSize: 46,
   itemSize: 10.5,
-  columns: 2,
   ornament: 'line',
-  density: 'normal',
   logoPosition: 'left',
 }
 
@@ -85,90 +101,86 @@ export const formatRatio = (format: string): number =>
 
 export const formatLabel = (format: string): string => LAYOUT_FORMATS.find((f) => f.id === format)?.label ?? 'A4'
 
-/* ───────── раскладка ───────── */
+/* ───────────── геометрия холста ───────────── */
 
-export type FlowGroup = { category: MenuBlock | null; products: MenuBlock[] }
-export type PageFlow = { lead: MenuBlock[]; columns: FlowGroup[][]; tail: MenuBlock[] }
+export const MIN_W = 6
+export const MIN_H = 2
 
-export function flowPage(blocks: MenuBlock[], columns: number): PageFlow {
-  const lead: MenuBlock[] = []
-  const groups: FlowGroup[] = []
-  const tail: MenuBlock[] = []
-  let current: FlowGroup | null = null
+export type Rect = { xPct: number; yPct: number; wPct: number; hPct: number }
 
-  for (const b of blocks) {
-    if (b.type === 'category') {
-      current = { category: b, products: [] }
-      groups.push(current)
-      continue
-    }
-    if (b.type === 'product') {
-      if (!current) {
-        current = { category: null, products: [] }
-        groups.push(current)
-      }
-      current.products.push(b)
-      continue
-    }
-    if (groups.length === 0) lead.push(b)
-    else tail.push(b)
+export const clamp = (v: number, min: number, max: number): number => Math.min(max, Math.max(min, v))
+
+/** Держит блок внутри листа: не даём уехать за край и потеряться. */
+export function clampRect(r: Rect): Rect {
+  const w = clamp(r.wPct, MIN_W, 100)
+  const h = clamp(r.hPct, MIN_H, 100)
+  return {
+    xPct: clamp(r.xPct, 0, 100 - w),
+    yPct: clamp(r.yPct, 0, 100 - h),
+    wPct: w,
+    hPct: h,
   }
-
-  const count = Math.max(1, Math.min(3, columns))
-  // Одна категория — один столбец: рвать список ради «ровных» колонок хуже для чтения.
-  const canSplit = groups.length > 1
-  const total = groups.reduce((sum, g) => sum + g.products.length + 1, 0)
-  const perColumn = Math.max(1, Math.ceil(total / count))
-  const buckets: FlowGroup[][] = Array.from({ length: count }, () => [])
-  let ci = 0
-  let used = 0
-  for (const g of groups) {
-    if (canSplit && ci < count - 1 && used > 0 && used + g.products.length + 1 > perColumn) {
-      ci++
-      used = 0
-    }
-    // Длинную категорию продолжаем в следующей колонке — без заголовка, чтобы не дублировать.
-    let chunk: FlowGroup = { category: g.category, products: [] }
-    buckets[ci]!.push(chunk)
-    used += 1
-    for (const p of g.products) {
-      if (canSplit && ci < count - 1 && used >= perColumn) {
-        ci++
-        used = 0
-        chunk = { category: null, products: [] }
-        buckets[ci]!.push(chunk)
-      }
-      chunk.products.push(p)
-      used++
-    }
-  }
-  const nonEmpty = buckets.filter((b) => b.length > 0)
-  return { lead, columns: nonEmpty.length ? nonEmpty : [[{ category: null, products: [] }]], tail }
 }
 
-export const visibleBlocks = (blocks: MenuBlock[]): MenuBlock[] => blocks.filter((b) => !b.hidden)
+/** Сдвиг блока в процентах листа. */
+export const moveRect = (r: Rect, dxPct: number, dyPct: number): Rect =>
+  clampRect({ ...r, xPct: r.xPct + dxPct, yPct: r.yPct + dyPct })
 
-/* ───────── блоки ───────── */
+export type ResizeHandle = 'se' | 'e' | 's'
+
+/**
+ * Изменение размера от правого-нижнего угла (и его рёбер).
+ * Левый-верхний угол остаётся на месте: у края листа режем размер, а не сдвигаем блок.
+ */
+export function resizeRect(r: Rect, handle: ResizeHandle, dxPct: number, dyPct: number): Rect {
+  const maxW = Math.max(MIN_W, 100 - r.xPct)
+  const maxH = Math.max(MIN_H, 100 - r.yPct)
+  const w = clamp(handle === 's' ? r.wPct : r.wPct + dxPct, MIN_W, maxW)
+  const h = clamp(handle === 'e' ? r.hPct : r.hPct + dyPct, MIN_H, maxH)
+  return { xPct: r.xPct, yPct: r.yPct, wPct: w, hPct: h }
+}
+
+export const DEFAULT_RECT: Record<BlockType, { w: number; h: number }> = {
+  product: { w: 40, h: 7 },
+  category: { w: 40, h: 6 },
+  text: { w: 36, h: 8 },
+  image: { w: 28, h: 22 },
+  logo: { w: 32, h: 7 },
+  divider: { w: 40, h: 2 },
+}
 
 export const uid = (prefix = 'b'): string => `${prefix}-${Math.random().toString(36).slice(2, 9)}`
 
-export function newBlock(type: BlockType, sortOrder: number, extra: Partial<MenuBlock> = {}): MenuBlock {
+export function newBlock(type: BlockType, rect: Partial<Rect> = {}, extra: Partial<MenuBlock> = {}): MenuBlock {
+  const def = DEFAULT_RECT[type]
   return {
     id: uid(type),
     type,
+    xPct: rect.xPct ?? 0,
+    yPct: rect.yPct ?? 0,
+    wPct: rect.wPct ?? def.w,
+    hPct: rect.hPct ?? def.h,
+    zIndex: extra.zIndex ?? 0,
+    rotationDeg: 0,
+    hidden: false,
     productId: null,
     categoryId: null,
     titleOverride: null,
     priceRubOverride: null,
     priceText: null,
-    showPhoto: false,
+    showPhoto: type === 'product',
+    photoUrlOverride: null,
     badge: null,
-    hidden: false,
-    sortOrder,
     text: null,
+    url: null,
+    fit: 'cover',
+    fontSizePt: 10,
+    align: 'left',
+    bold: false,
     snapshotPriceRub: null,
     snapshotName: null,
     snapshotImageUrl: null,
+    sortOrder: 0,
     ...extra,
   }
 }
@@ -184,72 +196,137 @@ export type CatalogProduct = {
   variantLabel: string | null
 }
 
-export function productBlock(product: CatalogProduct, sortOrder: number): MenuBlock {
-  return newBlock('product', sortOrder, {
+export function productBlock(product: CatalogProduct, rect: Partial<Rect>, z: number): MenuBlock {
+  return newBlock('product', rect, {
     productId: product.id,
     categoryId: product.categoryId,
     snapshotPriceRub: product.price,
     snapshotName: product.name,
     snapshotImageUrl: product.imageUrl,
+    zIndex: z,
   })
 }
 
-/** Нумерует блоки заново: sortOrder — единственный порядок, который читает сервер. */
-export function reindex(blocks: MenuBlock[]): MenuBlock[] {
-  return blocks.map((b, i) => ({ ...b, sortOrder: i }))
+/* ───────────── раскладка новых блоков ───────────── */
+
+export const topZ = (blocks: MenuBlock[]): number => blocks.reduce((m, b) => Math.max(m, b.zIndex), 0) + 1
+
+const overlaps = (a: Rect, b: Rect, gapPct = 1): boolean =>
+  a.xPct < b.xPct + b.wPct + gapPct &&
+  a.xPct + a.wPct + gapPct > b.xPct &&
+  a.yPct < b.yPct + b.hPct + gapPct &&
+  a.yPct + a.hPct + gapPct > b.yPct
+
+/**
+ * Свободное место для нового блока: идём по сетке сверху вниз и ищем ячейку,
+ * которая не пересекается с уже стоящими блоками.
+ */
+export function nextFreeRect(blocks: MenuBlock[], w: number, h: number): Rect {
+  const stepY = 2
+  for (let y = 0; y + h <= 100; y += stepY) {
+    for (const x of [0, w + 4, 2 * (w + 4)]) {
+      if (x + w > 100) continue
+      const candidate = { xPct: x, yPct: y, wPct: w, hPct: h }
+      if (!blocks.some((b) => !b.hidden && overlaps(candidate, b))) return candidate
+    }
+  }
+  return { xPct: 0, yPct: 0, wPct: w, hPct: h }
 }
 
-export function moveBlock(blocks: MenuBlock[], id: string, dir: -1 | 1): MenuBlock[] {
-  const i = blocks.findIndex((b) => b.id === id)
-  if (i < 0) return blocks
-  const j = i + dir
-  if (j < 0 || j >= blocks.length) return blocks
-  const next = [...blocks]
-  const tmp = next[i]!
-  next[i] = next[j]!
-  next[j] = tmp
-  return reindex(next)
+/** Порядок слоёв: сверху — больший zIndex. */
+export const byZ = (blocks: MenuBlock[]): MenuBlock[] => [...blocks].sort((a, b) => b.zIndex - a.zIndex)
+
+export function bringToFront(blocks: MenuBlock[], id: string): MenuBlock[] {
+  const z = topZ(blocks)
+  return blocks.map((b) => (b.id === id ? { ...b, zIndex: z } : b))
 }
+
+export function sendToBack(blocks: MenuBlock[], id: string): MenuBlock[] {
+  const min = blocks.reduce((m, b) => Math.min(m, b.zIndex), 0)
+  return blocks.map((b) => (b.id === id ? { ...b, zIndex: Math.max(0, min - 1) } : b))
+}
+
+export function raiseLayer(blocks: MenuBlock[], id: string, dir: -1 | 1): MenuBlock[] {
+  return dir === 1 ? bringToFront(blocks, id) : sendToBack(blocks, id)
+}
+
+export const reindex = (blocks: MenuBlock[]): MenuBlock[] => blocks.map((b, i) => ({ ...b, sortOrder: i }))
 
 export function toggleHidden(blocks: MenuBlock[], id: string): MenuBlock[] {
   return blocks.map((b) => (b.id === id ? { ...b, hidden: !b.hidden } : b))
 }
 
+/** Полный набор «чистых» полей блока — то, что уходит на сервер. */
+export const blockPayload = (b: MenuBlock): MenuBlock => ({
+  id: b.id,
+  type: b.type,
+  xPct: round2(b.xPct),
+  yPct: round2(b.yPct),
+  wPct: round2(b.wPct),
+  hPct: round2(b.hPct),
+  zIndex: Math.round(b.zIndex),
+  rotationDeg: b.rotationDeg,
+  hidden: b.hidden,
+  productId: b.productId,
+  categoryId: b.categoryId,
+  titleOverride: b.titleOverride,
+  priceRubOverride: b.priceRubOverride,
+  priceText: b.priceText,
+  showPhoto: b.showPhoto,
+  photoUrlOverride: b.photoUrlOverride,
+  badge: b.badge,
+  text: b.text,
+  url: b.url,
+  fit: b.fit,
+  fontSizePt: b.fontSizePt,
+  align: b.align,
+  bold: b.bold,
+  snapshotPriceRub: b.snapshotPriceRub,
+  snapshotName: b.snapshotName,
+  snapshotImageUrl: b.snapshotImageUrl,
+  sortOrder: b.sortOrder,
+})
+
+const round2 = (v: number): number => Math.round(v * 100) / 100
+
+export const docPayload = (doc: MenuDoc): MenuDoc => ({
+  pages: doc.pages.map((p) => ({ id: p.id, blocks: p.blocks.map(blockPayload) })),
+})
+
+/** Копия документа для undo. */
+export const docSnapshot = (doc: MenuDoc): MenuDoc => docPayload(doc)
+
 export const blockLabel = (b: MenuBlock): string => {
   switch (b.type) {
-    case 'header':
-      return 'Шапка с логотипом'
-    case 'hero':
-      return b.titleOverride ? `Заголовок · ${b.titleOverride}` : 'Заголовок'
-    case 'category':
-      return b.titleOverride ?? b.displayCategory ?? 'Категория'
     case 'product':
       return b.displayName ?? b.titleOverride ?? b.snapshotName ?? 'Позиция'
+    case 'category':
+      return b.titleOverride ?? b.displayCategory ?? 'Категория'
     case 'text':
-      return b.titleOverride ?? b.text ?? 'Текст'
-    case 'note':
-      return b.titleOverride ?? 'Заметка'
-    case 'photo':
-      return b.titleOverride ?? 'Фото-блок'
+      return b.text ?? b.titleOverride ?? 'Текст'
+    case 'image':
+      return b.titleOverride ?? 'Картинка'
+    case 'logo':
+      return 'Логотип 6.7'
     case 'divider':
-      return 'Линия'
-    case 'qr':
-      return b.titleOverride ?? 'QR-блок'
+      return 'Разделитель'
     default:
       return b.type
   }
 }
 
-export const blockIconName = (type: BlockType): string =>
-  type === 'product' ? 'package' : type === 'category' ? 'layers' : type === 'photo' ? 'image' : type === 'note' ? 'sticky-note' : 'type'
-
-/** Подпись под заголовком позиции: объём/вариант из каталога. */
-export const productSubline = (b: MenuBlock): string | null => b.product?.variantLabel ?? null
+/** Тип блока для старых макетов, если сервер ещё не смигрировал. */
+export const effectiveType = (b: MenuBlock): BlockType =>
+  (['product', 'category', 'text', 'image', 'logo', 'divider'] as const).includes(b.type as BlockType)
+    ? (b.type as BlockType)
+    : b.type === 'photo'
+      ? 'image'
+      : 'text'
 
 export const priceModeLabel = (mode: 'live' | 'frozen'): string =>
   mode === 'frozen' ? 'цены зафиксированы' : 'цены живые, из каталога'
 
-/** Что показать в баннере расхождения цен. Возвращает null, если показывать нечего. */
+/** Что показать в баннере расхождения цен. null — показывать нечего. */
 export function driftBanner(
   drift: { title: string; from: number | null; to: number | null }[],
   mode: 'live' | 'frozen',
@@ -262,36 +339,11 @@ export function driftBanner(
     : `В каталоге изменились цены у ${drift.length} поз. ${head}${rest}. Макет берёт цены из каталога — обновите, чтобы увидеть.`
 }
 
-/** Копия документа для undo: без серверных полей, чтобы стек не распухал. */
-export const docSnapshot = (doc: MenuDoc): MenuDoc => ({
-  pages: doc.pages.map((p) => ({
-    id: p.id,
-    blocks: p.blocks.map((b) => ({
-      id: b.id,
-      type: b.type,
-      productId: b.productId,
-      categoryId: b.categoryId,
-      titleOverride: b.titleOverride,
-      priceRubOverride: b.priceRubOverride,
-      priceText: b.priceText,
-      showPhoto: b.showPhoto,
-      badge: b.badge,
-      hidden: b.hidden,
-      sortOrder: b.sortOrder,
-      text: b.text,
-      snapshotPriceRub: b.snapshotPriceRub,
-      snapshotName: b.snapshotName,
-      snapshotImageUrl: b.snapshotImageUrl,
-    })),
-  })),
-})
-
-export type Blockers = { code: string; text: string; blockId: string }[]
+/* ───────────── локальный резолв ───────────── */
 
 /**
- * Локальный резолв каталога для мгновенного превью и замечаний.
- * Сервер считает то же самое при сохранении — здесь дублируем, чтобы редактор
- * не ждал round-trip на каждое нажатие клавиши.
+ * Резолв каталога на клиенте: мгновенное превью и замечания без round-trip.
+ * Сервер считает то же самое при сохранении.
  */
 export function resolvePreview(doc: MenuDoc, products: CatalogProduct[], mode: 'live' | 'frozen'): MenuDoc {
   const byId = new Map(products.map((p) => [p.id, p]))
@@ -302,23 +354,28 @@ export function resolvePreview(doc: MenuDoc, products: CatalogProduct[], mode: '
     pages: doc.pages.map((page) => ({
       ...page,
       blocks: page.blocks.map((b): MenuBlock => {
-        if (b.type === 'category') {
+        if (effectiveType(b) === 'category') {
           const name = b.titleOverride ?? (b.categoryId ? catName.get(b.categoryId) ?? null : null)
           return { ...b, displayCategory: name, warnings: name ? [] : ['категория не найдена'] }
         }
-        if (b.type !== 'product') return { ...b, warnings: [] }
+        if (effectiveType(b) !== 'product') {
+          const warnings = effectiveType(b) === 'image' && !b.url && !b.displayImageUrl ? ['нет картинки'] : []
+          return { ...b, warnings }
+        }
 
         const live = b.productId == null ? null : byId.get(b.productId) ?? null
         const catalogPrice = mode === 'frozen' ? b.snapshotPriceRub ?? live?.price ?? null : live?.price ?? null
         const priceRub = b.priceRubOverride ?? catalogPrice
         const displayPrice = b.priceText ?? (priceRub != null && priceRub > 0 ? String(priceRub) : null)
-        const displayName = b.titleOverride ?? (mode === 'frozen' ? b.snapshotName ?? live?.name ?? '' : live?.name ?? b.snapshotName ?? '')
-        const imageUrl = live?.imageUrl ?? (mode === 'frozen' ? b.snapshotImageUrl : null) ?? null
+        const displayName =
+          b.titleOverride ?? (mode === 'frozen' ? b.snapshotName ?? live?.name ?? '' : live?.name ?? b.snapshotName ?? '')
+        const displayImageUrl =
+          b.photoUrlOverride ?? live?.imageUrl ?? (mode === 'frozen' ? b.snapshotImageUrl : null) ?? null
         const warnings: string[] = []
         if (b.productId != null && !live) warnings.push('позиции больше нет в каталоге')
         if (live && !live.available) warnings.push('скрыта в каталоге')
         if (!displayPrice) warnings.push('нет цены')
-        if (b.showPhoto && !imageUrl) warnings.push('нет фото')
+        if (b.showPhoto && !displayImageUrl) warnings.push('нет фото')
 
         return {
           ...b,
@@ -326,16 +383,16 @@ export function resolvePreview(doc: MenuDoc, products: CatalogProduct[], mode: '
             ? {
                 name: live.name,
                 priceRub: live.price,
-                imageUrl,
+                imageUrl: displayImageUrl,
                 available: live.available,
                 variantLabel: live.variantLabel,
                 categoryName: live.categoryName,
               }
-            : b.snapshotName
+            : b.snapshotName || b.photoUrlOverride
               ? {
-                  name: b.snapshotName,
+                  name: b.snapshotName ?? displayName,
                   priceRub: b.snapshotPriceRub,
-                  imageUrl: b.snapshotImageUrl,
+                  imageUrl: displayImageUrl,
                   available: false,
                   variantLabel: null,
                   categoryName: null,
@@ -344,6 +401,7 @@ export function resolvePreview(doc: MenuDoc, products: CatalogProduct[], mode: '
           catalogPriceRub: live?.price ?? null,
           displayName,
           displayPrice,
+          displayImageUrl,
           warnings,
         }
       }),

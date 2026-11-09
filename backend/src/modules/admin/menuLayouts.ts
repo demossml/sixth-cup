@@ -10,14 +10,17 @@ import { z } from 'zod'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import {
+  DEFAULT_RECT,
   DEFAULT_THEME,
   collectBlockers,
   docStats,
   formatMetrics,
+  migrateDocToCanvas,
   normalizeDoc,
   normalizeTheme,
   resolveDoc,
   type LayoutFormat,
+  type MenuBlock,
   type MenuDoc,
   type MenuTheme,
   type PriceMode,
@@ -54,46 +57,87 @@ const jsonParse = <T>(raw: string, fallback: T): T => {
 
 const pageId = () => `page-${Math.random().toString(36).slice(2, 8)}`
 
+/** Стартовый лист: логотип сверху слева и заголовок — уже в координатах холста. */
+/** Пустой блок нужного типа в координатах по умолчанию. */
+export function emptyBlock(type: MenuBlock['type']): MenuBlock {
+  return {
+    id: `${type}-${Math.random().toString(36).slice(2, 9)}`,
+    type,
+    xPct: 0,
+    yPct: 0,
+    wPct: DEFAULT_RECT[type]?.w ?? 30,
+    hPct: DEFAULT_RECT[type]?.h ?? 8,
+    zIndex: 0,
+    rotationDeg: 0,
+    hidden: false,
+    productId: null,
+    categoryId: null,
+    titleOverride: null,
+    priceRubOverride: null,
+    priceText: null,
+    showPhoto: false,
+    photoUrlOverride: null,
+    badge: null,
+    text: null,
+    url: null,
+    fit: 'cover',
+    fontSizePt: 10,
+    align: 'left',
+    bold: false,
+    snapshotPriceRub: null,
+    snapshotName: null,
+    snapshotImageUrl: null,
+    sortOrder: 0,
+  }
+}
+
 export function emptyDoc(): MenuDoc {
+  const base = (over: Partial<MenuBlock> & Pick<MenuBlock, 'id' | 'type'>): MenuBlock => ({
+    xPct: 0,
+    yPct: 0,
+    wPct: DEFAULT_RECT[over.type]?.w ?? 30,
+    hPct: DEFAULT_RECT[over.type]?.h ?? 8,
+    zIndex: 0,
+    rotationDeg: 0,
+    hidden: false,
+    productId: null,
+    categoryId: null,
+    titleOverride: null,
+    priceRubOverride: null,
+    priceText: null,
+    showPhoto: false,
+    photoUrlOverride: null,
+    badge: null,
+    text: null,
+    url: null,
+    fit: 'cover',
+    fontSizePt: 10,
+    align: 'left',
+    bold: false,
+    snapshotPriceRub: null,
+    snapshotName: null,
+    snapshotImageUrl: null,
+    sortOrder: 0,
+    ...over,
+  })
   return {
     pages: [
       {
         id: 'page-1',
         blocks: [
-          {
-            id: 'head-1',
-            type: 'header',
-            productId: null,
-            categoryId: null,
-            titleOverride: null,
-            priceRubOverride: null,
-            priceText: null,
-            showPhoto: false,
-            badge: null,
-            hidden: false,
-            sortOrder: 0,
-            text: 'весна / лето 2026',
-            snapshotPriceRub: null,
-            snapshotName: null,
-            snapshotImageUrl: null,
-          },
-          {
-            id: 'hero-1',
-            type: 'hero',
-            productId: null,
-            categoryId: null,
-            titleOverride: 'Кофе и не только',
-            priceRubOverride: null,
-            priceText: null,
-            showPhoto: false,
-            badge: null,
-            hidden: false,
+          base({ id: 'logo-1', type: 'logo', xPct: 0, yPct: 0, wPct: 32, hPct: 7, text: 'весна / лето 2026', zIndex: 0, sortOrder: 0 }),
+          base({
+            id: 'title-1',
+            type: 'text',
+            xPct: 0,
+            yPct: 8,
+            wPct: 80,
+            hPct: 12,
+            text: 'Кофе и не только',
+            fontSizePt: 34,
+            zIndex: 1,
             sortOrder: 1,
-            text: 'МЕНЮ · ТВЕРСКАЯ, 18',
-            snapshotPriceRub: null,
-            snapshotName: null,
-            snapshotImageUrl: null,
-          },
+          }),
         ],
       },
     ],
@@ -123,7 +167,8 @@ type LayoutView = {
 
 function layoutView(row: Row): LayoutView {
   const theme = normalizeTheme(jsonParse<unknown>(row.theme_json, {}))
-  const doc = normalizeDoc(jsonParse<unknown>(row.doc_json, emptyDoc()))
+  // Старые (flow) макеты раскладываются в координаты при чтении — редактор и PDF работают только с холстом.
+  const doc = migrateDocToCanvas(normalizeDoc(jsonParse<unknown>(row.doc_json, emptyDoc())))
   const resolved = resolveDoc(doc, row.price_mode === 'frozen' ? 'frozen' : 'live')
   const drift: LayoutView['drift'] = []
   for (const page of resolved.pages) {
@@ -179,17 +224,29 @@ export function snapshotDoc(doc: MenuDoc): { doc: MenuDoc; changed: { blockId: s
 
 const blockZ = z.object({
   id: z.string().min(1).max(64),
-  type: z.enum(['header', 'hero', 'category', 'product', 'text', 'note', 'photo', 'divider', 'qr']),
+  type: z.enum(['product', 'category', 'text', 'image', 'logo', 'divider', 'header', 'hero', 'note', 'photo', 'qr']),
+  xPct: z.number().min(0).max(100),
+  yPct: z.number().min(0).max(100),
+  wPct: z.number().min(1).max(100),
+  hPct: z.number().min(0.5).max(100),
+  zIndex: z.number().int().min(0).max(9999).optional(),
+  rotationDeg: z.number().min(-180).max(180).optional(),
+  hidden: z.boolean().optional(),
   productId: z.number().int().positive().nullable().optional(),
   categoryId: z.number().int().positive().nullable().optional(),
   titleOverride: z.string().max(120).nullable().optional(),
   priceRubOverride: z.number().int().min(0).max(1_000_000).nullable().optional(),
   priceText: z.string().max(40).nullable().optional(),
   showPhoto: z.boolean().optional(),
+  photoUrlOverride: z.string().max(500).nullable().optional(),
   badge: z.string().max(16).nullable().optional(),
-  hidden: z.boolean().optional(),
-  sortOrder: z.number().int().min(0).max(10_000).optional(),
   text: z.string().max(400).nullable().optional(),
+  url: z.string().max(500).nullable().optional(),
+  fit: z.enum(['cover', 'contain']).optional(),
+  fontSizePt: z.number().min(5).max(72).optional(),
+  align: z.enum(['left', 'center', 'right']).optional(),
+  bold: z.boolean().optional(),
+  sortOrder: z.number().int().min(0).max(10_000).optional(),
   snapshotPriceRub: z.number().int().nullable().optional(),
   snapshotName: z.string().max(120).nullable().optional(),
   snapshotImageUrl: z.string().max(400).nullable().optional(),
@@ -212,13 +269,12 @@ const themeZ = z.object({
   bg: z.string().max(7).optional(),
   text: z.string().max(7).optional(),
   accent: z.string().max(7).optional(),
+  backgroundImageUrl: z.string().max(500).nullable().optional(),
+  backgroundDim: z.number().min(0).max(80).optional(),
   fontHeading: z.enum(['Unbounded', 'Golos Text']).optional(),
   fontBody: z.enum(['Golos Text', 'Unbounded']).optional(),
-  headingSize: z.number().min(28).max(72).optional(),
   itemSize: z.number().min(8).max(16).optional(),
-  columns: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
   ornament: z.enum(['none', 'line', 'beans', 'leaf']).optional(),
-  density: z.enum(['air', 'normal', 'dense']).optional(),
   logoPosition: z.enum(['left', 'top-right', 'footer']).optional(),
 })
 
@@ -293,19 +349,19 @@ export const adminMenuLayouts = new Hono<Env>()
       const body = c.req.valid('json')
       const now = Date.now()
 
-      let doc = body.doc ? normalizeDoc(body.doc) : undefined
+      let doc = body.doc ? migrateDocToCanvas(normalizeDoc(body.doc)) : undefined
       let priceMode: PriceMode = body.priceMode ?? (row.price_mode === 'frozen' ? 'frozen' : 'live')
       let frozenAt = row.frozen_at
       // Переключение на frozen фиксирует текущие цены каталога, иначе лист «поплывёт» после правок каталога.
       if (body.priceMode === 'frozen' && row.price_mode !== 'frozen') {
-        const snap = snapshotDoc(doc ?? normalizeDoc(jsonParse<unknown>(row.doc_json, emptyDoc())))
+        const snap = snapshotDoc(doc ?? migrateDocToCanvas(normalizeDoc(jsonParse<unknown>(row.doc_json, emptyDoc()))))
         doc = snap.doc
         frozenAt = now
       }
       if (body.priceMode === 'live') frozenAt = null
       // В live-режиме снапшот обновляем на каждом сохранении: он нужен баннеру «каталог изменился».
       if (priceMode === 'live') {
-        const snap = snapshotDoc(doc ?? normalizeDoc(jsonParse<unknown>(row.doc_json, emptyDoc())))
+        const snap = snapshotDoc(doc ?? migrateDocToCanvas(normalizeDoc(jsonParse<unknown>(row.doc_json, emptyDoc()))))
         doc = snap.doc
       }
 
@@ -426,54 +482,67 @@ export const adminMenuLayouts = new Hono<Env>()
         )
         .all() as { id: number; name: string; price: number; categoryId: number | null; imageUrl: string | null; variantLabel: string | null }[]
 
-      const doc = normalizeDoc(jsonParse<unknown>(row.doc_json, emptyDoc()))
+      const doc = migrateDocToCanvas(normalizeDoc(jsonParse<unknown>(row.doc_json, emptyDoc())))
       const targetPage = body.pageId ? doc.pages.find((p) => p.id === body.pageId) : doc.pages[0]
       if (!targetPage) throw bad('Страница не найдена', 404)
 
-      let order = body.replace ? 0 : targetPage.blocks.length
-      const blocks = body.replace ? [...targetPage.blocks.filter((b) => b.type === 'header' || b.type === 'hero')] : [...targetPage.blocks]
-      order = blocks.length
-
+      // Сборка из каталога — не «поток», а сетка холста: две колонки, позиции встают по порядку.
+      const COLS = 2
+      const COL_W = 44
+      const COL_GAP = 6
+      const ROW_H = 6.2
+      const ROW_CAT = 6.5
+      const TOP = 22
+      const keep = body.replace ? targetPage.blocks.filter((b) => b.type === 'logo' || b.type === 'text') : [...targetPage.blocks]
+      const blocks: MenuBlock[] = [...keep]
+      let z = blocks.reduce((m, b) => Math.max(m, b.zIndex), 0) + 1
+      let gridCol = 0
+      let gridRow = 0
       let added = 0
+
+      const place = (b: MenuBlock) => {
+        b.zIndex = z++
+        b.sortOrder = blocks.length
+        blocks.push(b)
+      }
+
       for (const cat of categories) {
         if (wanted && !wanted.has(cat.id)) continue
         const items = products.filter((p) => p.categoryId === cat.id)
         if (items.length === 0) continue
-        blocks.push({
+        if (gridRow > 0) gridRow += 1
+        place({
+          ...emptyBlock('category'),
           id: `cat-${cat.id}-${Math.random().toString(36).slice(2, 7)}`,
-          type: 'category',
-          productId: null,
           categoryId: cat.id,
-          titleOverride: null,
-          priceRubOverride: null,
-          priceText: null,
-          showPhoto: false,
-          badge: null,
-          hidden: false,
-          sortOrder: order++,
-          text: null,
-          snapshotPriceRub: null,
-          snapshotName: null,
-          snapshotImageUrl: null,
+          xPct: gridCol * (COL_W + COL_GAP),
+          yPct: TOP + gridRow * ROW_H,
+          wPct: COL_W,
+          hPct: ROW_CAT - 1.5,
+          sortOrder: blocks.length,
         })
+        gridRow += 1
         for (const p of items) {
-          blocks.push({
+          // Колонка кончилась — переходим в следующую, как только упёрлись в низ листа.
+          if (TOP + (gridRow + 1) * ROW_H > 92 && gridCol < COLS - 1) {
+            gridCol += 1
+            gridRow = 0
+          }
+          place({
+            ...emptyBlock('product'),
             id: `p-${p.id}-${Math.random().toString(36).slice(2, 7)}`,
-            type: 'product',
             productId: p.id,
             categoryId: cat.id,
-            titleOverride: null,
-            priceRubOverride: null,
-            priceText: null,
-            showPhoto: false,
-            badge: null,
-            hidden: false,
-            sortOrder: order++,
-            text: null,
+            xPct: gridCol * (COL_W + COL_GAP),
+            yPct: TOP + gridRow * ROW_H,
+            wPct: COL_W,
+            hPct: ROW_H - 1.8,
             snapshotPriceRub: p.price,
             snapshotName: p.name,
             snapshotImageUrl: p.imageUrl,
+            sortOrder: blocks.length,
           })
+          gridRow += 1
           added++
         }
       }

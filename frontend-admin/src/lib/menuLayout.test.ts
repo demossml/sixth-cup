@@ -1,111 +1,136 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DEFAULT_RECT,
   DEFAULT_THEME,
-  localDrift,
-  resolvePreview,
-  docSnapshot,
+  bringToFront,
+  byZ,
+  clampRect,
+  docPayload,
   driftBanner,
-  flowPage,
+  effectiveType,
   formatRatio,
-  moveBlock,
+  localDrift,
+  moveRect,
   newBlock,
+  nextFreeRect,
   productBlock,
-  reindex,
+  resizeRect,
+  resolvePreview,
+  sendToBack,
+  topZ,
   toggleHidden,
   type MenuBlock,
 } from './menuLayout'
 
 const b = (type: MenuBlock['type'], id: string, extra: Partial<MenuBlock> = {}): MenuBlock =>
-  newBlock(type, 0, { id, ...extra })
+  newBlock(type as never, {}, { id, ...extra })
 
-describe('раскладка листа', () => {
-  it('до первой категории — шапка, после последней — подвал', () => {
-    const blocks = [
-      b('header', 'h'),
-      b('hero', 'hero'),
-      b('category', 'c1'),
-      b('product', 'p1'),
-      b('product', 'p2'),
-      b('note', 'n'),
-    ]
-    const flow = flowPage(blocks, 2)
-    expect(flow.lead.map((x) => x.id)).toEqual(['h', 'hero'])
-    expect(flow.tail.map((x) => x.id)).toEqual(['n'])
-    expect(flow.columns[0]![0]!.category!.id).toBe('c1')
-    expect(flow.columns[0]![0]!.products.map((p) => p.id)).toEqual(['p1', 'p2'])
+describe('геометрия холста', () => {
+  it('clampRect не выпускает блок за лист и не даёт нулевой размер', () => {
+    expect(clampRect({ xPct: -10, yPct: -5, wPct: 40, hPct: 10 })).toEqual({ xPct: 0, yPct: 0, wPct: 40, hPct: 10 })
+    expect(clampRect({ xPct: 95, yPct: 98, wPct: 40, hPct: 10 })).toEqual({ xPct: 60, yPct: 90, wPct: 40, hPct: 10 })
+    const tiny = clampRect({ xPct: 10, yPct: 10, wPct: 0, hPct: 0 })
+    expect(tiny.wPct).toBeGreaterThanOrEqual(6)
+    expect(tiny.hPct).toBeGreaterThanOrEqual(2)
   })
 
-  it('позиции без категории не теряются', () => {
-    const flow = flowPage([b('product', 'p1'), b('product', 'p2')], 2)
-    const total = flow.columns.reduce((n, col) => n + col.reduce((m, g) => m + g.products.length, 0), 0)
-    expect(total).toBe(2)
+  it('moveRect двигает блок и держит в границах листа', () => {
+    const r = { xPct: 10, yPct: 10, wPct: 20, hPct: 10 }
+    expect(moveRect(r, 5, 5)).toEqual({ xPct: 15, yPct: 15, wPct: 20, hPct: 10 })
+    expect(moveRect(r, -100, -100)).toEqual({ xPct: 0, yPct: 0, wPct: 20, hPct: 10 })
+    expect(moveRect(r, 100, 100)).toEqual({ xPct: 80, yPct: 90, wPct: 20, hPct: 10 })
   })
 
-  it('одна категория не рвётся на колонки, несколько — расходятся', () => {
-    expect(flowPage([], 3).columns).toHaveLength(1)
-    const single = [b('category', 'c1'), ...Array.from({ length: 9 }, (_, i) => b('product', `p${i}`))]
-    expect(flowPage(single, 3).columns).toHaveLength(1)
-
-    const three = [
-      b('category', 'c1'), ...Array.from({ length: 4 }, (_, i) => b('product', `a${i}`)),
-      b('category', 'c2'), ...Array.from({ length: 4 }, (_, i) => b('product', `b${i}`)),
-      b('category', 'c3'), ...Array.from({ length: 4 }, (_, i) => b('product', `c${i}`)),
-    ]
-    const flow = flowPage(three, 3)
-    expect(flow.columns).toHaveLength(3)
-    expect(flow.columns.map((col) => col[0]!.category!.id)).toEqual(['c1', 'c2', 'c3'])
+  it('resizeRect меняет размер от угла, не сдвигая блок', () => {
+    const r = { xPct: 10, yPct: 10, wPct: 20, hPct: 10 }
+    expect(resizeRect(r, 'se', 5, 5)).toEqual({ xPct: 10, yPct: 10, wPct: 25, hPct: 15 })
+    expect(resizeRect(r, 'e', 5, 5).hPct).toBe(10)
+    expect(resizeRect(r, 's', 5, 5).wPct).toBe(20)
+    expect(resizeRect({ xPct: 80, yPct: 80, wPct: 15, hPct: 15 }, 'se', 50, 50)).toEqual({ xPct: 80, yPct: 80, wPct: 20, hPct: 20 })
   })
 })
 
-describe('операции с блоками', () => {
-  const blocks = [b('category', 'c'), b('product', 'p1'), b('product', 'p2')]
+describe('слои и видимость', () => {
+  const blocks = [b('text', 'a', { zIndex: 1 }), b('text', 'z', { zIndex: 5 })]
 
-  it('moveBlock меняет порядок и перенумеровывает', () => {
-    const moved = moveBlock(blocks, 'p2', -1)
-    expect(moved.map((x) => x.id)).toEqual(['c', 'p2', 'p1'])
-    expect(moved.map((x) => x.sortOrder)).toEqual([0, 1, 2])
-    expect(moveBlock(blocks, 'c', -1).map((x) => x.id)).toEqual(['c', 'p1', 'p2'])
+  it('topZ выше всех, bringToFront поднимает выбранный', () => {
+    expect(topZ(blocks)).toBe(6)
+    const front = bringToFront(blocks, 'a')
+    expect(front.find((x) => x.id === 'a')!.zIndex).toBe(6)
+    expect(byZ(front).map((x) => x.id)).toEqual(['a', 'z'])
   })
 
-  it('reindex чинит дырки в sortOrder', () => {
-    const broken = blocks.map((x, i) => ({ ...x, sortOrder: i * 10 }))
-    expect(reindex(broken).map((x) => x.sortOrder)).toEqual([0, 1, 2])
+  it('sendToBack опускает под остальные', () => {
+    const back = sendToBack(blocks, 'z')
+    expect(byZ(back).map((x) => x.id)).toEqual(['a', 'z'])
+    expect(back.find((x) => x.id === 'z')!.zIndex).toBeLessThan(1)
   })
 
   it('toggleHidden скрывает, но не удаляет', () => {
-    const hidden = toggleHidden(blocks, 'p1')
-    expect(hidden).toHaveLength(3)
-    expect(hidden.find((x) => x.id === 'p1')!.hidden).toBe(true)
+    const hidden = toggleHidden(blocks, 'a')
+    expect(hidden).toHaveLength(2)
+    expect(hidden.find((x) => x.id === 'a')!.hidden).toBe(true)
+  })
+})
+
+describe('новые блоки встают в свободное место', () => {
+  it('не пересекаются с уже стоящими', () => {
+    const first = nextFreeRect([], 40, 8)
+    const blocks = [b('product', 'p1', first)]
+    const second = nextFreeRect(blocks, 40, 8)
+    const overlap =
+      second.xPct < first.xPct + first.wPct &&
+      second.xPct + second.wPct > first.xPct &&
+      second.yPct < first.yPct + first.hPct &&
+      second.yPct + second.hPct > first.yPct
+    expect(overlap).toBe(false)
   })
 
-  it('productBlock запоминает снапшот цены и фото', () => {
+  it('productBlock запоминает снапшот и ставится в переданную рамку', () => {
     const pb = productBlock(
-      { id: 7, name: 'Латте', price: 189, imageUrl: '/uploads/latte.jpg', available: true, categoryId: 3, categoryName: 'Кофе', variantLabel: '400 мл' },
-      0,
+      {
+        id: 7,
+        name: 'Латте',
+        price: 189,
+        imageUrl: '/uploads/latte.jpg',
+        available: true,
+        categoryId: 3,
+        categoryName: 'Кофе',
+        variantLabel: '400 мл',
+      },
+      { xPct: 12, yPct: 34, wPct: 40, hPct: 7 },
+      3,
     )
     expect(pb.productId).toBe(7)
     expect(pb.snapshotPriceRub).toBe(189)
-    expect(pb.snapshotImageUrl).toBe('/uploads/latte.jpg')
-    expect(pb.categoryId).toBe(3)
+    expect(pb.xPct).toBe(12)
+    expect(pb.yPct).toBe(34)
+    expect(pb.zIndex).toBe(3)
+  })
+
+  it('дефолтные размеры по типу разумные', () => {
+    expect(DEFAULT_RECT.product.h).toBeGreaterThan(4)
+    expect(DEFAULT_RECT.image.w).toBeGreaterThan(10)
   })
 })
 
-describe('баннер цен', () => {
-  it('live и frozen говорят разное', () => {
-    const drift = [{ title: 'Капучино', from: 169, to: 179 }]
-    expect(driftBanner(drift, 'live')).toContain('Капучино 169 → 179 ₽')
-    expect(driftBanner(drift, 'live')).toContain('обновите')
-    expect(driftBanner(drift, 'frozen')).toContain('зафиксированы')
-    expect(driftBanner([], 'live')).toBeNull()
+describe('payload и legacy-типы', () => {
+  it('в payload нет серверных полей резолва', () => {
+    const block = { ...b('product', 'p', { productId: 1 }), displayName: 'Капучино', warnings: ['нет фото'], product: null }
+    const payload = docPayload({ pages: [{ id: 'p', blocks: [block] }] })
+    expect(payload.pages[0]!.blocks[0]).not.toHaveProperty('displayName')
+    expect(payload.pages[0]!.blocks[0]).not.toHaveProperty('warnings')
+    expect(payload.pages[0]!.blocks[0]!.xPct).toBeTypeOf('number')
   })
 
-  it('больше двух расхождений сворачиваются в «и ещё N»', () => {
-    const drift = Array.from({ length: 4 }, (_, i) => ({ title: `Поз ${i}`, from: 100, to: 110 }))
-    expect(driftBanner(drift, 'live')).toContain('и ещё 2')
+  it('старые типы приводятся к холсту', () => {
+    expect(effectiveType({ type: 'photo' } as MenuBlock)).toBe('image')
+    expect(effectiveType({ type: 'header' } as MenuBlock)).toBe('text')
+    expect(effectiveType({ type: 'product' } as MenuBlock)).toBe('product')
   })
 })
 
-describe('локальный резолв для превью', () => {
+describe('локальный резолв каталога', () => {
   const catalog = [
     {
       id: 1,
@@ -124,10 +149,7 @@ describe('локальный резолв для превью', () => {
       pages: [
         {
           id: 'p',
-          blocks: [
-            { ...newBlock('category', 0, { id: 'c', categoryId: 10 }), productId: null },
-            newBlock('product', 1, { id: 'p1', productId: 1, snapshotPriceRub: 159 }),
-          ],
+          blocks: [b('category', 'c', { categoryId: 10 }), b('product', 'p1', { productId: 1, snapshotPriceRub: 159 })],
         },
       ],
     }
@@ -140,47 +162,43 @@ describe('локальный резолв для превью', () => {
     expect(frozen[1]!.displayPrice).toBe('159')
   })
 
-  it('override и текст цены сильнее каталога', () => {
+  it('своё фото сильнее каталога', () => {
     const doc = {
-      pages: [{ id: 'p', blocks: [newBlock('product', 0, { id: 'p1', productId: 1, titleOverride: 'Капучино 6.7', priceText: '169 / 269' })] }],
+      pages: [{ id: 'p', blocks: [b('product', 'p1', { productId: 1, photoUrlOverride: '/uploads/mine.jpg', showPhoto: true })] }],
     }
-    const b = resolvePreview(doc, catalog, 'live').pages[0]!.blocks[0]!
-    expect(b.displayName).toBe('Капучино 6.7')
-    expect(b.displayPrice).toBe('169 / 269')
-    expect(b.warnings).toEqual([])
+    const block = resolvePreview(doc, catalog, 'live').pages[0]!.blocks[0]!
+    expect(block.displayImageUrl).toBe('/uploads/mine.jpg')
+    expect(block.warnings).toEqual([])
   })
 
-  it('удалённый товар и отсутствие цены дают замечания', () => {
-    const doc = { pages: [{ id: 'p', blocks: [newBlock('product', 0, { id: 'ghost', productId: 999 })] }] }
-    const b = resolvePreview(doc, catalog, 'live').pages[0]!.blocks[0]!
-    expect(b.warnings).toContain('позиции больше нет в каталоге')
-    expect(b.warnings).toContain('нет цены')
+  it('удалённый товар, отсутствие цены и пустая картинка дают замечания', () => {
+    const realDoc = {
+      pages: [{ id: 'p', blocks: [b('product', 'ghost', { productId: 999 }), b('image', 'img', { url: null })] }],
+    }
+    const blocks = resolvePreview(realDoc, catalog, 'live').pages[0]!.blocks
+    expect(blocks[0]!.warnings).toContain('позиции больше нет в каталоге')
+    expect(blocks[0]!.warnings).toContain('нет цены')
+    expect(blocks[1]!.warnings).toContain('нет картинки')
   })
 
   it('localDrift показывает расхождение со снапшотом', () => {
-    const doc = { pages: [{ id: 'p', blocks: [newBlock('product', 0, { id: 'p1', productId: 1, snapshotPriceRub: 159 })] }] }
+    const doc = { pages: [{ id: 'p', blocks: [b('product', 'p1', { productId: 1, snapshotPriceRub: 159 })] }] }
     expect(localDrift(doc, catalog)).toEqual([{ blockId: 'p1', title: 'Капучино', from: 159, to: 169 }])
-    const overridden = { pages: [{ id: 'p', blocks: [newBlock('product', 0, { id: 'p1', productId: 1, snapshotPriceRub: 159, priceRubOverride: 199 })] }] }
-    expect(localDrift(overridden, catalog)).toEqual([])
   })
 })
 
 describe('служебное', () => {
-  it('snapshot документа не тащит серверные поля', () => {
-    const doc = { pages: [{ id: 'p', blocks: [{ ...b('product', 'p1'), displayName: 'Капучино', warnings: ['нет фото'] }] }] }
-    const snap = docSnapshot(doc)
-    expect(snap.pages[0]!.blocks[0]).not.toHaveProperty('displayName')
-    expect(snap.pages[0]!.blocks[0]).not.toHaveProperty('warnings')
+  it('баннер цен различает live и frozen', () => {
+    const drift = [{ title: 'Капучино', from: 169, to: 179 }]
+    expect(driftBanner(drift, 'live')).toContain('169 → 179 ₽')
+    expect(driftBanner(drift, 'frozen')).toContain('зафиксированы')
+    expect(driftBanner([], 'live')).toBeNull()
   })
 
-  it('форматы: A4 портрет вертикальный, экран горизонтальный', () => {
+  it('форматы и тема по умолчанию', () => {
     expect(formatRatio('a4_portrait')).toBeLessThan(1)
     expect(formatRatio('screen_16_9')).toBeGreaterThan(1)
-    expect(formatRatio('unknown')).toBe(formatRatio('a4_portrait'))
-  })
-
-  it('тема по умолчанию — brand-safe классика', () => {
     expect(DEFAULT_THEME.bg).toBe('#F6F3EE')
-    expect(DEFAULT_THEME.columns).toBe(2)
+    expect(DEFAULT_THEME.backgroundImageUrl).toBeNull()
   })
 })

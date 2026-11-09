@@ -13,7 +13,7 @@ import {
   type MenuTheme,
 } from '../lib/menuLayout'
 import { Badge, Button, Card, ConfirmDialog, cx, EmptyState, ErrorBox, Field, Input, PageHeader, Spinner, useToast } from '../ui/kit'
-import MenuSheet from '../components/menuLayout/MenuSheet'
+import MenuCanvas from '../components/menuLayout/MenuCanvas'
 
 type LayoutRow = {
   id: number
@@ -139,7 +139,7 @@ export default function MenuLayouts() {
                 <Link to={`/menu-layouts/${row.id}`} className="block focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand">
                   <div className="ml-card-thumb">
                     <div className="ml-thumb-inner">
-                      <MenuSheet
+                      <MenuCanvas
                         page={{ id: 'preview', blocks: row.preview?.firstPage ?? [] }}
                         theme={theme}
                         title={row.title}

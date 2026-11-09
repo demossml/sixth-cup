@@ -1,15 +1,15 @@
 /**
- * PDF макета меню: векторный текст (ToUnicode), брендовые шрифты, несколько страниц.
+ * PDF макета меню: холст по координатам, векторный текст (ToUnicode), брендовые шрифты.
  *
- * Почему PDFKit, а не «печать страницы в PDF»: типографии нужен текст, а не растр.
- * Здесь все надписи — реальные глифы встроенных Golos Text и Unbounded, картинки — только фото.
+ * Каждый блок рисуется в своей рамке xPct/yPct/wPct/hPct — то же, что видно в редакторе.
+ * Никакой «потоковой» раскладки здесь нет: превью и печать совпадают по определению.
  */
 import { createRequire } from 'node:module'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { config } from '../../config'
-import { flowPage, formatMetrics, type RenderBlock } from './menuLayoutDoc'
+import { formatMetrics, type RenderBlock } from './menuLayoutDoc'
 import type { LayoutView } from './menuLayouts'
 
 const require = createRequire(import.meta.url)
@@ -28,10 +28,38 @@ export type PdfOptions = { preset: 'print' | 'screen'; bleedMm: number }
 
 const MM_TO_PT = 72 / 25.4
 
-/** Ограничение ширины строки: длинное название не должно ломать колонку. */
+/** Длинное название не должно вылезать за рамку блока. */
 function clip(text: string, max: number): string {
   const t = text.trim()
   return t.length > max ? `${t.slice(0, Math.max(1, max - 1)).trimEnd()}…` : t
+}
+
+/**
+ * PDFKit принимает только JPEG/PNG. Фото из админки часто webp — конвертируем в PNG.
+ * Ошибки глотаем: картинка не критична, блок нарисуется пустым.
+ */
+async function loadImage(url: string | null | undefined): Promise<Buffer | null> {
+  const path = imagePathFor(url)
+  if (!path) return null
+  try {
+    if (/\.(jpe?g|png)$/i.test(path)) return readFileSync(path)
+    const sharp = (await import('sharp')).default
+    return await sharp(path).png().toBuffer()
+  } catch {
+    return null
+  }
+}
+
+function imagePathFor(url: string | null | undefined): string | null {
+  if (!url) return null
+  const clean = url.split('?')[0]!
+  if (clean.startsWith('/uploads/')) {
+    const file = clean.slice('/uploads/'.length)
+    if (!/^[a-zA-Z0-9._-]+$/.test(file)) return null
+    const p = join(config.uploadsDir, file)
+    return existsSync(p) ? p : null
+  }
+  return null
 }
 
 function drawBrand(doc: PdfDoc, x: number, y: number, size: number, color: string, accent: string) {
@@ -48,22 +76,105 @@ function drawBrand(doc: PdfDoc, x: number, y: number, size: number, color: strin
   doc.text('coffee', x + w6 + w7 + dot + size * 0.24, y + size * 0.42, { lineBreak: false })
 }
 
-function imagePathFor(url: string | null | undefined): string | null {
-  if (!url) return null
-  const clean = url.split('?')[0]!
-  if (clean.startsWith('/uploads/')) {
-    const file = clean.slice('/uploads/'.length)
-    if (!/^[a-zA-Z0-9._-]+$/.test(file)) return null
-    const p = join(config.uploadsDir, file)
-    return existsSync(p) ? p : null
+type Rect = { x: number; y: number; w: number; h: number }
+
+/** Рисует один блок в его рамке. Ошибки картинок не валят экспорт — блок остаётся без фото. */
+function drawBlock(
+  doc: PdfDoc,
+  block: RenderBlock,
+  rect: Rect,
+  ctx: { theme: LayoutView['theme']; scale: number; muted: string; line: string; imageFor: (url: string | null | undefined) => Buffer | null },
+) {
+  const { theme, scale, muted, line, imageFor } = ctx
+  const { x, y, w, h } = rect
+
+  switch (block.type) {
+    case 'logo': {
+      const size = Math.min(h * 0.9, 26 * scale)
+      drawBrand(doc, x, y + Math.max(0, (h - size) / 2), size, theme.text, theme.accent)
+      if (block.text) {
+        doc.font('body').fontSize(Math.max(5, Math.min(8 * scale, h * 0.35))).fillColor(muted)
+        doc.text(block.text.toUpperCase(), x, y + h * 0.15, { width: w, align: 'right', lineBreak: false, ellipsis: true })
+      }
+      return
+    }
+    case 'text': {
+      const size = Math.max(5, block.fontSizePt * scale)
+      const content = clip(block.text ?? block.titleOverride ?? '', 240)
+      if (!content) return
+      doc.font(block.bold ? 'displayBold' : 'body').fontSize(size).fillColor(theme.text)
+      doc.text(content, x, y, { width: w, height: h, align: block.align, ellipsis: true })
+      return
+    }
+    case 'category': {
+      const name = clip(block.titleOverride ?? block.displayCategory ?? 'Категория', 48)
+      const size = Math.max(6, Math.min(h * 0.62, 15 * scale))
+      doc.font(theme.fontHeading === 'Unbounded' ? 'displayBold' : 'bodyBold').fontSize(size).fillColor(theme.accent)
+      doc.text(name, x, y, { width: w, height: h, lineBreak: false, ellipsis: true })
+      doc.strokeColor(line).lineWidth(0.6).moveTo(x, y + h).lineTo(x + w, y + h).stroke()
+      return
+    }
+    case 'divider': {
+      doc.strokeColor(block.warnings.length ? '#B4472C' : line).lineWidth(1)
+      doc.moveTo(x, y + h / 2).lineTo(x + w, y + h / 2).stroke()
+      return
+    }
+    case 'image': {
+      const src = imageFor(block.displayImageUrl ?? block.url)
+      if (!src) {
+        doc.strokeColor(line).lineWidth(0.8).rect(x, y, w, h).stroke()
+        doc.font('body').fontSize(Math.max(5, 7 * scale)).fillColor(muted)
+        doc.text('фото', x + 4, y + h / 2 - 4, { width: w - 8, align: 'center' })
+        return
+      }
+      try {
+        if (block.fit === 'contain') doc.image(src, x, y, { fit: [w, h], align: 'center', valign: 'center' })
+        else doc.image(src, x, y, { cover: [w, h], align: 'center', valign: 'center' })
+      } catch {
+        doc.strokeColor(line).lineWidth(0.8).rect(x, y, w, h).stroke()
+      }
+      return
+    }
+    default: {
+      // product
+      const thumbSrc = block.showPhoto ? imageFor(block.displayImageUrl) : null
+      const thumb = thumbSrc ? Math.min(h, w * 0.35) : 0
+      const padX = thumb ? thumb + 4 * scale : 0
+      const contentW = w - padX
+      if (thumb) {
+        try {
+          doc.image(thumbSrc!, x, y, { cover: [thumb, h] })
+        } catch {
+          /* без фото */
+        }
+      }
+      const nameSize = Math.max(5, Math.min(h * 0.42, 11 * scale))
+      const price = block.displayPrice ?? '—'
+      doc.font('bodyBold').fontSize(nameSize).fillColor(theme.text)
+      doc.text(clip(block.displayName ?? block.titleOverride ?? 'Позиция', 64), x + padX, y, {
+        width: contentW - 40 * scale,
+        height: h,
+        lineBreak: false,
+        ellipsis: true,
+      })
+      doc.font('body').fontSize(nameSize).fillColor(theme.text)
+      doc.text(price, x + padX, y, { width: contentW, align: 'right', lineBreak: false })
+      const sub = block.product?.variantLabel
+      if (sub && h > nameSize * 2) {
+        doc.font('body').fontSize(Math.max(4, nameSize * 0.72)).fillColor(muted)
+        doc.text(sub, x + padX, y + nameSize * 1.35, { width: contentW - 40 * scale, lineBreak: false, ellipsis: true })
+      }
+      if (block.badge && h > nameSize * 2.6) {
+        doc.font('bodyBold').fontSize(Math.max(4, nameSize * 0.5)).fillColor(theme.accent)
+        doc.text(block.badge.toUpperCase(), x + padX, y + h - nameSize * 0.9, { width: contentW, lineBreak: false })
+      }
+      doc.strokeColor(line).lineWidth(0.4).dash(1, { space: 2 })
+        .moveTo(x + padX, y + h).lineTo(x + w, y + h).stroke().undash()
+    }
   }
-  return null
 }
 
-/**
- * Рендер всех страниц макета. Возвращает готовый PDF-буфер.
- * Ошибки отдельных фото не валят экспорт: лист печатается без картинки, о чём сказано в замечаниях.
- */
+/** Рендер всех страниц макета по координатам. Возвращает готовый PDF-буфер. */
 export async function renderLayoutPdf(view: LayoutView, opts: PdfOptions): Promise<Buffer> {
   const PDFDocument = require('pdfkit') as new (o: Record<string, unknown>) => PdfDoc
   const metrics = formatMetrics(view.format)
@@ -90,198 +201,74 @@ export async function renderLayoutPdf(view: LayoutView, opts: PdfOptions): Promi
 
   const W = metrics.width
   const H = metrics.height
-  const pad = Math.round(34 * scale) + bleed
-  const contentW = W - pad * 2
+  const pad = Math.round(26 * scale) + bleed
+  const cbW = W - pad * 2
+  const cbH = H - pad * 2
   const muted = theme.preset === 'dark' ? '#A5A39D' : theme.preset === 'season' ? '#76695B' : '#6E6A62'
   const line = theme.preset === 'dark' ? '#3B3F49' : theme.preset === 'season' ? '#D9C9B3' : '#D8D2C7'
-
   const pages = view.doc.pages
+
+  const urls = new Set<string>()
+  if (theme.backgroundImageUrl) urls.add(theme.backgroundImageUrl)
+  for (const page of pages) {
+    for (const block of page.blocks) {
+      const url = block.type === 'image' ? block.displayImageUrl ?? block.url : block.type === 'product' ? block.displayImageUrl : null
+      if (url) urls.add(url)
+    }
+  }
+  const loaded = new Map<string, Buffer | null>()
+  await Promise.all([...urls].map(async (url) => void loaded.set(url, await loadImage(url))))
+  const imageFor = (url: string | null | undefined): Buffer | null => (url ? loaded.get(url) ?? null : null)
 
   for (let pi = 0; pi < pages.length; pi++) {
     const page = pages[pi]!
     doc.addPage({ size: [W, H], margin: 0 })
     doc.rect(0, 0, W, H).fill(theme.bg)
 
-    const flow = flowPage(page.blocks as RenderBlock[], theme.columns)
-    let y = pad
-
-    // ── шапка / hero ────────────────────────────────────────────
-    const header = flow.lead.find((b) => b.type === 'header')
-    const hero = flow.lead.find((b) => b.type === 'hero')
-    const edition = header?.text ?? ''
-    const brandSize = 22 * scale
-
-    if (theme.logoPosition !== 'footer') {
-      const brandX = theme.logoPosition === 'top-right' ? W - pad - 80 * scale : pad
-      drawBrand(doc, brandX, y, brandSize, theme.text, theme.accent)
-      if (edition) {
-        doc.font('body').fontSize(7 * scale).fillColor(muted)
-        doc.text(edition.toUpperCase(), pad, y + 2, {
-          width: contentW,
-          align: theme.logoPosition === 'top-right' ? 'left' : 'right',
-          lineBreak: true,
-        })
-      }
-      y += brandSize + 26 * scale
-    }
-
-    if (hero) {
-      const kicker = hero.text ?? ''
-      if (kicker) {
-        doc.font('bodyBold').fontSize(6.5 * scale).fillColor(theme.accent)
-        doc.text(kicker.toUpperCase(), pad, y, { width: contentW * 0.6, lineBreak: false })
-        y += 11 * scale
-      }
-      const title = clip(hero.titleOverride ?? 'Меню', 80)
-      const titleSize = theme.headingSize * scale
-      doc.font(theme.fontHeading === 'Unbounded' ? 'display' : 'body').fontSize(titleSize).fillColor(theme.text)
-      const titleW = contentW * 0.62
-      doc.text(title, pad, y, { width: titleW, lineBreak: true })
-      const titleH = doc.heightOfString(title, { width: titleW })
-      y += titleH + 6 * scale
-    }
-
-    if (theme.ornament !== 'none') {
-      const oy = pad + 45 * scale
-      const ox = W - pad - 30 * scale
-      doc.strokeColor(theme.accent).lineWidth(1)
-      if (theme.ornament === 'line') {
-        doc.moveTo(ox, oy).lineTo(ox + 23 * scale, oy).stroke()
-        doc.rect(ox + 26 * scale, oy - 2, 4 * scale, 4 * scale).fill(theme.accent)
-      } else if (theme.ornament === 'beans') {
-        doc.circle(ox + 4, oy, 3 * scale).fill(theme.accent)
-        doc.circle(ox + 14 * scale, oy + 2, 2.4 * scale).fill(theme.accent)
-      } else {
-        doc.moveTo(ox, oy).lineTo(ox + 28 * scale, oy).stroke()
-      }
-    }
-
-    // линия-разделитель под hero
-    doc.strokeColor(theme.accent).lineWidth(1)
-    doc.moveTo(pad, y + 4).lineTo(pad + 50 * scale, y + 4).stroke()
-    doc.circle(pad + 55 * scale, y + 4, 2 * scale).fill(theme.accent)
-    y += 20 * scale
-
-    // ── колонки категорий ───────────────────────────────────────
-    const colCount = Math.max(1, flow.columns.length)
-    const gap = 30 * scale
-    const colW = (contentW - gap * (colCount - 1)) / colCount
-    const itemSize = theme.itemSize * scale
-    const baseGap = (theme.density === 'air' ? 9 : theme.density === 'dense' ? 3 : 6) * scale
-    const rowCount = flow.columns.reduce(
-      (sum, col) => sum + col.reduce((n, g) => n + g.products.length + (g.category ? 1 : 0), 0),
-      0,
-    )
-    // Подвал листа прижат к низу (как в вёрстке прототипа), поэтому его высоту вычитаем заранее.
-    const tailHeight = flow.tail.reduce((sum, b) => {
-      if (b.type === 'note' || b.type === 'text') return sum + 34 * scale
-      if (b.type === 'divider') return sum + 12 * scale
-      if (b.type === 'photo' || b.type === 'qr') return sum + 80 * scale
-      return sum
-    }, 0)
-    const footerReserve = 22 * scale
-    const free = Math.max(0, H - pad - footerReserve - tailHeight - y)
-    // Лист не должен оставаться пустым на две трети: распределяем свободную высоту между строками.
-    const extraGap = rowCount > 1 ? Math.max(0, Math.min(24 * scale, free / rowCount - baseGap)) : 0
-    const rowGap = baseGap + extraGap
-    let maxBottom = y
-    let categoryOrdinal = 0
-
-    flow.columns.forEach((groups, ci) => {
-      const x = pad + ci * (colW + gap)
-      let cy = y
-      for (const group of groups) {
-        if (group.category) {
-          categoryOrdinal += 1
-          const name = clip(group.category.titleOverride ?? group.category.displayCategory ?? 'Категория', 40)
-          doc.font(theme.fontHeading === 'Unbounded' ? 'display' : 'body').fontSize(13 * scale).fillColor(theme.accent)
-          doc.text(name, x, cy, { width: colW - 18 * scale, lineBreak: false })
-          doc.font('body').fontSize(6 * scale).fillColor(muted)
-          doc.text(String(categoryOrdinal).padStart(2, '0'), x, cy + 3 * scale, { width: colW, align: 'right', lineBreak: false })
-          cy += 17 * scale
-          doc.strokeColor(line).lineWidth(0.6).moveTo(x, cy).lineTo(x + colW, cy).stroke()
-          cy += 8 * scale
+    const bg = imageFor(theme.backgroundImageUrl)
+    if (bg) {
+      try {
+        doc.save()
+        doc.image(bg, 0, 0, { cover: [W, H] })
+        if (theme.backgroundDim > 0) {
+          doc.opacity(theme.backgroundDim / 100)
+          doc.rect(0, 0, W, H).fill('#000000')
+          doc.opacity(1)
         }
-        for (const p of group.products) {
-          const name = clip(p.displayName ?? p.titleOverride ?? 'Позиция', 60)
-          const price = p.displayPrice ?? '—'
-          doc.font('bodyBold').fontSize(itemSize).fillColor(theme.text)
-          doc.text(name, x, cy, { width: colW - 46 * scale, lineBreak: false, ellipsis: true })
-          doc.font('body').fontSize(itemSize).fillColor(theme.text)
-          doc.text(price, x, cy, { width: colW, align: 'right', lineBreak: false })
-          let rowH = itemSize * 1.5
-          const sub = p.product?.variantLabel
-          if (sub) {
-            doc.font('body').fontSize(7.5 * scale).fillColor(muted)
-            doc.text(sub, x, cy + itemSize * 1.25, { width: colW - 46 * scale, lineBreak: false })
-            rowH += 7.5 * scale
-          }
-          if (p.badge) {
-            doc.font('bodyBold').fontSize(5 * scale).fillColor(theme.accent)
-            doc.text(p.badge.toUpperCase(), x, cy + rowH, { width: colW, lineBreak: false })
-            rowH += 7 * scale
-          }
-          cy += rowH + rowGap
-          doc.strokeColor(line).lineWidth(0.4).dash(1, { space: 2 })
-            .moveTo(x, cy - rowGap / 2).lineTo(x + colW, cy - rowGap / 2).stroke().undash()
-        }
-      }
-      maxBottom = Math.max(maxBottom, cy)
-    })
-
-    // ── блоки после категорий (прижаты к низу листа) ────────────
-    let ty = Math.max(maxBottom + 12 * scale, H - pad - footerReserve - tailHeight)
-    for (const b of flow.tail) {
-      if (ty > H - pad - 60 * scale) break
-      if (b.type === 'note' || b.type === 'text') {
-        doc.strokeColor(line).lineWidth(0.8).rect(pad, ty, contentW, 1).stroke()
-        doc.font('displayBold').fontSize(9 * scale).fillColor(theme.text)
-        doc.text(clip(b.titleOverride ?? b.text ?? 'Заметка', 90), pad, ty + 6 * scale, { width: contentW })
-        ty += 34 * scale
-      } else if (b.type === 'divider') {
-        doc.strokeColor(line).lineWidth(0.6).moveTo(pad, ty).lineTo(pad + contentW, ty).stroke()
-        ty += 10 * scale
-      } else if (b.type === 'photo' || (b.type === 'qr')) {
-        const img = imagePathFor(b.snapshotImageUrl)
-        const boxH = 70 * scale
-        if (img) {
-          try {
-            doc.image(img, pad, ty, { fit: [contentW * 0.45, boxH] })
-          } catch {
-            doc.rect(pad, ty, contentW * 0.45, boxH).stroke(line)
-          }
-        } else {
-          doc.strokeColor(line).lineWidth(0.8).rect(pad, ty, contentW * 0.45, boxH).stroke()
-          doc.font('body').fontSize(7 * scale).fillColor(muted)
-          doc.text(b.type === 'qr' ? 'меню по QR · 67coffee.ru' : 'фото', pad + 6, ty + boxH / 2 - 4, { width: contentW * 0.45 - 12 })
-        }
-        doc.font('displayBold').fontSize(10 * scale).fillColor(theme.text)
-        doc.text(clip(b.titleOverride ?? '6.7 Coffee', 60), pad + contentW * 0.5, ty + 2, { width: contentW * 0.5 })
-        if (b.text) {
-          doc.font('body').fontSize(7 * scale).fillColor(muted)
-          doc.text(b.text, pad + contentW * 0.5, ty + 16 * scale, { width: contentW * 0.5 })
-        }
-        ty += boxH + 10 * scale
+        doc.restore()
+      } catch {
+        /* фон не критичен */
       }
     }
 
-    // ── подвал ──────────────────────────────────────────────────
-    const footerY = H - pad
-    doc.strokeColor(line).lineWidth(0.6).moveTo(pad, footerY - 14 * scale).lineTo(W - pad, footerY - 14 * scale).stroke()
-    doc.font('body').fontSize(5.5 * scale).fillColor(muted)
-    if (theme.logoPosition === 'footer') {
-      doc.font('displayBold').fontSize(8 * scale).fillColor(theme.text).text('6▪7', pad, footerY - 10 * scale, { lineBreak: false })
-      doc.font('body').fontSize(5.5 * scale).fillColor(muted)
+    for (const block of page.blocks) {
+      const rect: Rect = {
+        x: pad + (block.xPct / 100) * cbW,
+        y: pad + (block.yPct / 100) * cbH,
+        w: (block.wPct / 100) * cbW,
+        h: (block.hPct / 100) * cbH,
+      }
+      doc.save()
+      if (block.rotationDeg) {
+        const cx = rect.x + rect.w / 2
+        const cy = rect.y + rect.h / 2
+        doc.rotate(block.rotationDeg, { origin: [cx, cy] })
+      }
+      drawBlock(doc, block, rect, { theme, scale, muted, line, imageFor })
+      doc.restore()
     }
-    doc.text(clip(view.title.toUpperCase(), 60), pad, footerY - 8 * scale, { width: contentW * 0.5, lineBreak: false })
+
+    // Подвал вне безопасной области: номер страницы, название, режим цен.
+    const footY = H - pad * 0.62
+    doc.font('body').fontSize(Math.max(4.5, 5.5 * scale)).fillColor(muted)
+    doc.text(clip(view.title.toUpperCase(), 60), pad, footY, { width: cbW * 0.6, lineBreak: false })
     doc.text(
       `${metrics.label} · ${metrics.mm} · ${pi + 1}/${pages.length}${view.priceMode === 'frozen' ? ' · цены зафиксированы' : ''}`,
       pad,
-      footerY - 8 * scale,
-      { width: contentW, align: 'right', lineBreak: false },
+      footY,
+      { width: cbW, align: 'right', lineBreak: false },
     )
 
-    // ── метки реза для печати ───────────────────────────────────
     if (opts.preset === 'print' && bleed > 0) {
       const m = bleed
       doc.strokeColor('#000000').lineWidth(0.3)
@@ -311,7 +298,7 @@ export async function renderLayoutPdf(view: LayoutView, opts: PdfOptions): Promi
   return done
 }
 
-/** Для тестов и диагностики: путь к встроенному шрифту (проверяем, что файл реально есть). */
+/** Для тестов и диагностики: встроенный шрифт реально на месте. */
 export function fontFileExists(kind: keyof typeof FONTS): boolean {
   return existsSync(FONTS[kind]) && readFileSync(FONTS[kind]).length > 1000
 }

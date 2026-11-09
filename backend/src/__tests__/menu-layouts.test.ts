@@ -18,13 +18,20 @@ process.env.NODE_ENV = 'development'
 
 const { app } = await import('../app')
 const { db } = await import('../db')
-const { normalizeDoc, flowPage, normalizeTheme } = await import('../modules/admin/menuLayoutDoc')
+const { normalizeDoc, migrateDocToCanvas, normalizeTheme, hasCanvasPosition } = await import('../modules/admin/menuLayoutDoc')
 
 const H = { 'X-Admin-Token': 'test-admin', 'content-type': 'application/json' }
 
 type Block = {
   id: string
   type: string
+  xPct?: number
+  yPct?: number
+  wPct?: number
+  hPct?: number
+  zIndex?: number
+  url?: string | null
+  fontSizePt?: number
   productId?: number | null
   titleOverride?: string | null
   priceRubOverride?: number | null
@@ -48,7 +55,7 @@ type LayoutBody = {
     stats: { pages: number; products: number; warnings: number }
     drift: { blockId: string; from: number | null; to: number | null }[]
     blockers: { code: string }[]
-    theme: { columns: number; preset: string }
+    theme: { preset: string; itemSize: number; backgroundDim: number; backgroundImageUrl: string | null }
     doc: { pages: { id: string; blocks: Block[] }[] }
   }
   changed?: { blockId: string; from: number | null; to: number | null }[]
@@ -80,6 +87,8 @@ async function createLayout(title = 'Летнее меню'): Promise<LayoutBody
   return ((await res.json()) as LayoutBody).layout
 }
 
+const rect = { xPct: 0, yPct: 0, wPct: 40, hPct: 7 }
+
 const put = async (id: number, body: unknown) => {
   const res = await app.request(`/api/admin/menu-layouts/${id}`, { method: 'PUT', headers: H, body: JSON.stringify(body) })
   return { status: res.status, body: (await res.json()) as LayoutBody & { error?: string } }
@@ -100,11 +109,12 @@ beforeEach(() => {
 })
 
 describe('макет меню: CRUD и сохранение', () => {
-  it('создаёт макет с шапкой и hero, отдаёт список', async () => {
+  it('создаёт макет с логотипом и заголовком в координатах холста', async () => {
     const created = await createLayout()
     expect(created.title).toBe('Летнее меню')
     expect(created.doc.pages).toHaveLength(1)
-    expect(created.doc.pages[0]!.blocks.map((b) => b.type)).toEqual(['header', 'hero'])
+    expect(created.doc.pages[0]!.blocks.map((b) => b.type)).toEqual(['logo', 'text'])
+    expect(created.doc.pages[0]!.blocks.every((b) => Number.isFinite(b.xPct) && Number.isFinite(b.yPct))).toBe(true)
 
     const list = await app.request('/api/admin/menu-layouts', { headers: H })
     const { layouts } = (await list.json()) as { layouts: { id: number; title: string; preview: { theme: unknown } }[] }
@@ -118,17 +128,18 @@ describe('макет меню: CRUD и сохранение', () => {
     const productId = mkProduct('Капучино', 169, null)
     const { status, body } = await put(created.id, {
       doc: docWith([
-        { id: 'cat-1', type: 'category', titleOverride: 'Кофе', sortOrder: 0 },
-        { id: 'p-1', type: 'product', productId, sortOrder: 1, showPhoto: false },
+        { id: 'cat-1', type: 'category', titleOverride: 'Кофе', sortOrder: 0, ...rect },
+        { id: 'p-1', type: 'product', productId, sortOrder: 1, showPhoto: false, ...rect, yPct: 10 },
       ]),
-      theme: { preset: 'dark', columns: 3 },
+      theme: { preset: 'dark', itemSize: 12, backgroundDim: 20 },
     })
     expect(status).toBe(200)
     expect(body.savedAt).toBeTypeOf('number')
 
     const reloaded = await getLayout(created.id)
     expect(reloaded.theme.preset).toBe('dark')
-    expect(reloaded.theme.columns).toBe(3)
+    expect(reloaded.theme.itemSize).toBe(12)
+    expect(reloaded.theme.backgroundDim).toBe(20)
     const blocks = reloaded.doc.pages[0]!.blocks
     expect(blocks.map((b) => b.id)).toEqual(['cat-1', 'p-1'])
     expect(blocks[1]!.displayName).toBe('Капучино')
@@ -140,9 +151,9 @@ describe('макет меню: CRUD и сохранение', () => {
     const created = await createLayout()
     await put(created.id, {
       doc: docWith([
-        { id: 'cat-1', type: 'category', titleOverride: 'Кофе', sortOrder: 0 },
-        { id: 'p-1', type: 'product', productId, sortOrder: 1 },
-        { id: 'p-2', type: 'product', productId, sortOrder: 2, hidden: true },
+        { id: 'cat-1', type: 'category', titleOverride: 'Кофе', sortOrder: 0, ...rect },
+        { id: 'p-1', type: 'product', productId, sortOrder: 1, ...rect, yPct: 10 },
+        { id: 'p-2', type: 'product', productId, sortOrder: 2, hidden: true, ...rect, yPct: 20 },
       ]),
     })
     const view = await getLayout(created.id)
@@ -157,7 +168,7 @@ describe('макет меню: CRUD и сохранение', () => {
     const created = await createLayout()
     await put(created.id, {
       doc: docWith([
-        { id: 'p-1', type: 'product', productId, titleOverride: 'Раф ванильный', priceText: '259 / 319', sortOrder: 0 },
+        { id: 'p-1', type: 'product', productId, titleOverride: 'Раф ванильный', priceText: '259 / 319', sortOrder: 0, ...rect },
       ]),
     })
     const b = (await getLayout(created.id)).doc.pages[0]!.blocks[0]!
@@ -168,7 +179,7 @@ describe('макет меню: CRUD и сохранение', () => {
   it('удалённый из каталога товар даёт предупреждение и блокер', async () => {
     const productId = mkProduct('Сезонный', 199, null)
     const created = await createLayout()
-    await put(created.id, { doc: docWith([{ id: 'p-1', type: 'product', productId, sortOrder: 0 }]) })
+    await put(created.id, { doc: docWith([{ id: 'p-1', type: 'product', productId, sortOrder: 0, ...rect }]) })
     db.prepare('DELETE FROM products WHERE id=?').run(productId)
     const view = await getLayout(created.id)
     expect(view.doc.pages[0]!.blocks[0]!.warnings).toContain('позиции больше нет в каталоге')
@@ -198,7 +209,7 @@ describe('макет меню: цены live / frozen', () => {
   it('live показывает цену каталога, drift считает расхождение со снапшотом', async () => {
     const productId = mkProduct('Фильтр', 200, null)
     const created = await createLayout()
-    await put(created.id, { doc: docWith([{ id: 'p-1', type: 'product', productId, sortOrder: 0 }]) })
+    await put(created.id, { doc: docWith([{ id: 'p-1', type: 'product', productId, sortOrder: 0, ...rect }]) })
     db.prepare('UPDATE products SET price=? WHERE id=?').run(240, productId)
     const view = await getLayout(created.id)
     expect(view.doc.pages[0]!.blocks[0]!.displayPrice).toBe('240')
@@ -208,7 +219,7 @@ describe('макет меню: цены live / frozen', () => {
   it('sync-prices в live обновляет снапшот и сообщает об изменениях', async () => {
     const productId = mkProduct('Мокка', 239, null)
     const created = await createLayout()
-    await put(created.id, { doc: docWith([{ id: 'p-1', type: 'product', productId, sortOrder: 0 }]) })
+    await put(created.id, { doc: docWith([{ id: 'p-1', type: 'product', productId, sortOrder: 0, ...rect }]) })
     db.prepare('UPDATE products SET price=? WHERE id=?').run(249, productId)
 
     const res = await app.request(`/api/admin/menu-layouts/${created.id}/sync-prices`, { method: 'POST', headers: H })
@@ -221,7 +232,7 @@ describe('макет меню: цены live / frozen', () => {
   it('frozen держит зафиксированную цену и не переписывает её при sync', async () => {
     const productId = mkProduct('Американо', 149, null)
     const created = await createLayout()
-    await put(created.id, { doc: docWith([{ id: 'p-1', type: 'product', productId, sortOrder: 0 }]) })
+    await put(created.id, { doc: docWith([{ id: 'p-1', type: 'product', productId, sortOrder: 0, ...rect }]) })
     const frozen = await put(created.id, { priceMode: 'frozen' })
     expect(frozen.body.layout.priceMode).toBe('frozen')
     expect(frozen.body.layout.frozenAt).toBeTypeOf('number')
@@ -265,9 +276,9 @@ describe('макет меню: сборка из каталога и PDF', () =>
     const created = await createLayout('Меню для печати')
     await put(created.id, {
       doc: docWith([
-        { id: 'cat-1', type: 'category', titleOverride: 'Кофе', sortOrder: 0 },
-        { id: 'p-1', type: 'product', productId, sortOrder: 1 },
-        { id: 'p-2', type: 'product', productId, titleOverride: 'Латте', priceText: '189 / 269', sortOrder: 2 },
+        { id: 'cat-1', type: 'category', titleOverride: 'Кофе', sortOrder: 0, ...rect },
+        { id: 'p-1', type: 'product', productId, sortOrder: 1, ...rect, yPct: 10 },
+        { id: 'p-2', type: 'product', productId, titleOverride: 'Латте', priceText: '189 / 269', sortOrder: 2, ...rect, yPct: 70 },
       ]),
     })
     const res = await app.request(`/api/admin/menu-layouts/${created.id}/export.pdf?preset=print&bleed=3`, { headers: H })
@@ -281,13 +292,30 @@ describe('макет меню: сборка из каталога и PDF', () =>
     expect(buf.length).toBeGreaterThan(2000)
   })
 
+  it('картинки встраиваются в PDF, включая webp из админки', async () => {
+    const sharp = (await import('sharp')).default
+    const fileName = 'photo-webp.webp'
+    await sharp({ create: { width: 40, height: 40, channels: 3, background: { r: 30, g: 60, b: 200 } } })
+      .webp()
+      .toFile(join(process.env.UPLOADS_DIR!, fileName))
+
+    const created = await createLayout()
+    await put(created.id, {
+      doc: docWith([{ id: 'img-1', type: 'image', url: `/uploads/${fileName}`, sortOrder: 0, ...rect, hPct: 20 }]),
+    })
+    const res = await app.request(`/api/admin/menu-layouts/${created.id}/export.pdf?preset=print`, { headers: H })
+    expect(res.status).toBe(200)
+    const raw = Buffer.from(await res.arrayBuffer()).toString('latin1')
+    expect(raw).toContain('/Subtype /Image')
+  })
+
   it('multi-page: две страницы дают многостраничный PDF', async () => {
     const created = await createLayout()
     await put(created.id, {
       doc: {
         pages: [
-          { id: 'page-1', blocks: [{ id: 'hero-1', type: 'hero', titleOverride: 'Стр. 1', sortOrder: 0 }] },
-          { id: 'page-2', blocks: [{ id: 'hero-2', type: 'hero', titleOverride: 'Стр. 2', sortOrder: 0 }] },
+          { id: 'page-1', blocks: [{ id: 't-1', type: 'text', text: 'Стр. 1', sortOrder: 0, ...rect, hPct: 12 }] },
+          { id: 'page-2', blocks: [{ id: 't-2', type: 'text', text: 'Стр. 2', sortOrder: 0, ...rect, hPct: 12 }] },
         ],
       },
     })
@@ -300,7 +328,7 @@ describe('макет меню: сборка из каталога и PDF', () =>
   it('без цены PDF не отдаётся молча: 409 со списком, force=1 скачивает', async () => {
     const created = await createLayout()
     await put(created.id, {
-      doc: docWith([{ id: 'p-1', type: 'product', productId: 999999, sortOrder: 0 }]),
+      doc: docWith([{ id: 'p-1', type: 'product', productId: 999999, sortOrder: 0, ...rect }]),
     })
     const blocked = await app.request(`/api/admin/menu-layouts/${created.id}/export.pdf`, { headers: H })
     expect(blocked.status).toBe(409)
@@ -315,32 +343,106 @@ describe('макет меню: сборка из каталога и PDF', () =>
   })
 })
 
-describe('раскладка страницы', () => {
-  const block = (type: string, id: string): Block & { warnings: string[] } => ({ id, type, warnings: [] })
+describe('холст: координаты и миграция старых макетов', () => {
+  const legacy = (id: string, type: string, extra: Record<string, unknown> = {}) => ({ id, type, ...extra })
 
-  it('категории уходят в колонки, блоки после них — в подвал', () => {
-    const blocks = [
-      block('header', 'h'),
-      block('category', 'c1'),
-      block('product', 'p1'),
-      block('product', 'p2'),
-      block('category', 'c2'),
-      block('product', 'p3'),
-      block('note', 'n1'),
-    ]
-    const flow = flowPage(blocks as never, 2)
-    expect(flow.lead.map((b) => b.id)).toEqual(['h'])
-    expect(flow.tail.map((b) => b.id)).toEqual(['n1'])
-    expect(flow.columns.length).toBe(2)
-    expect(flow.columns[0]![0]!.category!.id).toBe('c1')
-    expect(flow.columns[1]![0]!.category!.id).toBe('c2')
+  it('блоки без координат раскладываются в сетку детерминированно', () => {
+    const doc = normalizeDoc({
+      pages: [
+        {
+          id: 'p',
+          blocks: [
+            legacy('h', 'header', { text: 'весна 2026', sortOrder: 0 }),
+            legacy('hero', 'hero', { titleOverride: 'Кофе', text: 'меню', sortOrder: 1 }),
+            legacy('c1', 'category', { titleOverride: 'Кофе', sortOrder: 2 }),
+            legacy('p1', 'product', { productId: 1, sortOrder: 3 }),
+            legacy('p2', 'product', { productId: 2, sortOrder: 4 }),
+            legacy('note', 'note', { titleOverride: 'Заметка', sortOrder: 5 }),
+          ],
+        },
+      ],
+    })
+    expect(doc.pages[0]!.blocks.some((b) => hasCanvasPosition(b))).toBe(false)
+
+    const canvas = migrateDocToCanvas(doc)
+    const blocks = canvas.pages[0]!.blocks
+    expect(blocks.every((b) => hasCanvasPosition(b))).toBe(true)
+    // логотип сверху, заголовок ниже, позиции в двух колонках, подвал — внизу
+    const logo = blocks.find((b) => b.type === 'logo')!
+    const title = blocks.find((b) => b.type === 'text' && b.fontSizePt > 20)!
+    const products = blocks.filter((b) => b.type === 'product')
+    expect(logo.yPct).toBe(0)
+    expect(title.yPct).toBeGreaterThanOrEqual(logo.yPct)
+    expect(products.length).toBe(2)
+    expect(new Set(products.map((p) => p.xPct)).size).toBe(1) // обе в первой колонке
+    expect(products[0]!.yPct!).toBeLessThan(products[1]!.yPct!)
+
+    // повторная миграция ничего не двигает
+    expect(JSON.stringify(migrateDocToCanvas(canvas))).toBe(JSON.stringify(canvas))
   })
 
-  it('одна колонка не теряет категории', () => {
-    const blocks = [block('category', 'c1'), block('product', 'p1'), block('category', 'c2'), block('product', 'p2')]
-    const flow = flowPage(blocks as never, 1)
-    expect(flow.columns).toHaveLength(1)
-    expect(flow.columns[0]!.map((g) => g.category!.id)).toEqual(['c1', 'c2'])
+  it('категории и позиции уходят во вторую колонку, когда первая заполнена', () => {
+    const blocks = [legacy('c1', 'category', { titleOverride: 'Кофе' })]
+    for (let i = 0; i < 6; i++) blocks.push(legacy(`p${i}`, 'product', { productId: i + 1 }))
+    blocks.push(legacy('c2', 'category', { titleOverride: 'Еда' }))
+    for (let i = 0; i < 6; i++) blocks.push(legacy(`e${i}`, 'product', { productId: 100 + i }))
+
+    const canvas = migrateDocToCanvas(normalizeDoc({ pages: [{ id: 'p', blocks }] }))
+    const items = canvas.pages[0]!.blocks
+    const xs = [...new Set(items.map((b) => b.xPct))].sort((a, b) => a - b)
+    expect(xs.length).toBe(2)
+    expect(xs[1]! - xs[0]!).toBeGreaterThan(10)
+  })
+
+  it('старый photo-блок становится image, note — текстом', () => {
+    const canvas = migrateDocToCanvas(
+      normalizeDoc({
+        pages: [
+          {
+            id: 'p',
+            blocks: [
+              legacy('c', 'category', { titleOverride: 'Кофе' }),
+              legacy('photo', 'photo', { titleOverride: 'Витрина', snapshotImageUrl: '/uploads/a.jpg' }),
+              legacy('note', 'note', { titleOverride: 'Хорошего дня' }),
+            ],
+          },
+        ],
+      }),
+    )
+    const types = canvas.pages[0]!.blocks.map((b) => b.type)
+    expect(types).toContain('image')
+    expect(types).toContain('text')
+    const img = canvas.pages[0]!.blocks.find((b) => b.type === 'image')!
+    expect(img.url).toBe('/uploads/a.jpg')
+  })
+
+  it('координаты сохраняются как есть (PUT → GET)', async () => {
+    const productId = mkProduct('Латте позиция', 189, null)
+    const created = await createLayout()
+    await put(created.id, {
+      doc: docWith([
+        { id: 'p-1', type: 'product', productId, sortOrder: 0, xPct: 61.5, yPct: 12.25, wPct: 33, hPct: 9, zIndex: 5 },
+      ]),
+    })
+    const view = await getLayout(created.id)
+    const b = view.doc.pages[0]!.blocks[0]!
+    expect(b.xPct).toBe(61.5)
+    expect(b.yPct).toBe(12.25)
+    expect(b.wPct).toBe(33)
+    expect(b.hPct).toBe(9)
+    expect(b.zIndex).toBe(5)
+  })
+
+  it('zIndex определяет порядок рендера', async () => {
+    const created = await createLayout()
+    await put(created.id, {
+      doc: docWith([
+        { id: 'a', type: 'text', text: 'низ', sortOrder: 0, ...rect, zIndex: 1 },
+        { id: 'b', type: 'text', text: 'верх', sortOrder: 1, ...rect, zIndex: 9 },
+      ]),
+    })
+    const view = await getLayout(created.id)
+    expect(view.doc.pages[0]!.blocks.map((x) => x.id)).toEqual(['a', 'b'])
   })
 })
 
@@ -351,11 +453,11 @@ describe('нормализация документа и темы', () => {
     expect(doc.pages[0]!.blocks[1]!.productId).toBe(42)
   })
 
-  it('невалидные цвета и колонки заменяются дефолтами', () => {
-    const theme = normalizeTheme({ bg: 'red', columns: 9, headingSize: 1000, preset: 'dark' })
+  it('невалидные цвета и фон заменяются дефолтами', () => {
+    const theme = normalizeTheme({ bg: 'red', backgroundDim: 500, backgroundImageUrl: 42, preset: 'dark' })
     expect(theme.bg).toMatch(/^#[0-9A-F]{6}$/)
-    expect(theme.columns).toBe(2)
-    expect(theme.headingSize).toBeLessThanOrEqual(72)
+    expect(theme.backgroundDim).toBeLessThanOrEqual(80)
+    expect(theme.backgroundImageUrl).toBeNull()
     expect(theme.preset).toBe('dark')
   })
 })

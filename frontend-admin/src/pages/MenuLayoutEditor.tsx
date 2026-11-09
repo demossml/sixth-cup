@@ -1,36 +1,50 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { PointerEvent as ReactPointerEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
-  ArrowDown, ArrowLeft, ArrowUp, Check, Download, Eye, EyeOff, Grid3x3, Image as ImageIcon, Layers, ListTree,
-  Loader2, Minus, Palette, Plus, RefreshCw, Search, Trash2, Type, Undo2, X,
+  ArrowDown, ArrowLeft, ArrowUp, Check, Download, Eye, EyeOff, Grid3x3, ImagePlus, Layers, ListTree, Loader2,
+  Minus, Palette, Plus, RefreshCw, Search, Trash2, Type, Undo2, Upload, X,
 } from 'lucide-react'
-import { api, tokenStore } from '../api/client'
+import { api, tokenStore, uploadFile } from '../api/client'
 import { useApi } from '../api/useApi'
 import { ago } from '../lib/format'
 import {
+  DEFAULT_RECT,
   DEFAULT_THEME,
   LAYOUT_FORMATS,
+  MIN_H,
+  MIN_W,
   THEME_PRESETS,
   blockLabel,
+  bringToFront,
+  byZ,
+  clampRect,
+  docPayload,
   docSnapshot,
   driftBanner,
+  effectiveType,
   formatLabel,
   localDrift,
-  moveBlock,
+  moveRect,
   newBlock,
+  nextFreeRect,
   productBlock,
-  reindex,
+  resizeRect,
   resolvePreview,
+  sendToBack,
   toggleHidden,
+  topZ,
   type BlockType,
   type CatalogProduct,
   type LayoutFormat,
   type MenuBlock,
   type MenuDoc,
   type MenuTheme,
+  type Rect,
+  type ResizeHandle,
 } from '../lib/menuLayout'
-import { Badge, Banner, Button, ConfirmDialog, Drawer, cx, ErrorBox, Field, Input, Select, Spinner, useToast } from '../ui/kit'
-import MenuSheet from '../components/menuLayout/MenuSheet'
+import { Badge, Button, Banner, Drawer, cx, ErrorBox, Field, Input, Select, Spinner, useToast } from '../ui/kit'
+import MenuCanvas from '../components/menuLayout/MenuCanvas'
 
 type ServerLayout = {
   id: number
@@ -49,27 +63,28 @@ type ServerLayout = {
 }
 
 type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error'
-
-/** «до 12 нояб.» — человеку важна дата, а не секунды. */
-const fmtFrozen = (ms: number | null): string =>
-  ms ? ` с ${new Date(ms).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}` : ''
 type MobileTab = 'preview' | 'content' | 'design' | 'export'
 type LeftTab = 'catalog' | 'layers'
-type RightTab = 'design' | 'layer'
+type RightTab = 'design' | 'block'
 
 const AUTOSAVE_MS = 800
-const UNDO_LIMIT = 10
+const UNDO_LIMIT = 12
+
+const fmtFrozen = (ms: number | null): string =>
+  ms ? ` с ${new Date(ms).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}` : ''
 
 /**
- * Редактор макета. Три зоны на десктопе, четыре вкладки на телефоне — но состояние одно:
- * любой путь ведёт к тому же PUT /menu-layouts/:id (автосохранение через 800 мс).
+ * Редактор макета: холст с независимыми блоками.
+ * Каждый блок двигается и растягивается сам по себе — никакой общей «потоковой» сетки.
  */
 export default function MenuLayoutEditor() {
   const { id } = useParams()
   const toast = useToast()
   const numericId = Number(id)
 
-  const { data, error, loading, reload } = useApi<{ layout: ServerLayout }>(Number.isFinite(numericId) ? `/menu-layouts/${numericId}` : null)
+  const { data, error, loading, reload } = useApi<{ layout: ServerLayout }>(
+    Number.isFinite(numericId) ? `/menu-layouts/${numericId}` : null,
+  )
   const catalog = useApi<{ products: CatalogProduct[] }>('/products')
   const cats = useApi<{ categories: { id: number; name: string }[] }>('/categories')
 
@@ -77,12 +92,11 @@ export default function MenuLayoutEditor() {
   const [theme, setTheme] = useState<MenuTheme>(DEFAULT_THEME)
   const [title, setTitle] = useState('')
   const [status, setStatus] = useState<'draft' | 'ready'>('draft')
-  const [frozenAt, setFrozenAt] = useState<number | null>(null)
   const [priceMode, setPriceMode] = useState<'live' | 'frozen'>('live')
+  const [frozenAt, setFrozenAt] = useState<number | null>(null)
   const [save, setSave] = useState<SaveState>('idle')
   const [savedAt, setSavedAt] = useState<number | null>(null)
   const [drift, setDrift] = useState<ServerLayout['drift']>([])
-  const [serverStats, setServerStats] = useState<ServerLayout['stats'] | null>(null)
 
   const [pageIdx, setPageIdx] = useState(0)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -93,15 +107,26 @@ export default function MenuLayoutEditor() {
   const [catFilter, setCatFilter] = useState<number | 'all'>('all')
   const [zoom, setZoom] = useState(1)
   const [showGrid, setShowGrid] = useState(false)
-  const [showSafe, setShowSafe] = useState(false)
+  const [showSafe, setShowSafe] = useState(true)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
-  const [deleteOpen, setDeleteOpen] = useState(false)
   const [formatOpen, setFormatOpen] = useState(false)
+  const [busyUpload, setBusyUpload] = useState(false)
 
   const undoStack = useRef<MenuDoc[]>([])
   const hydrated = useRef<number | null>(null)
   const lastSaved = useRef('')
+  const sheetRef = useRef<HTMLDivElement | null>(null)
+  const drag = useRef<{
+    id: string
+    mode: 'move' | 'resize'
+    handle: ResizeHandle
+    startX: number
+    startY: number
+    rect: Rect
+    w: number
+    h: number
+  } | null>(null)
 
   useEffect(() => {
     const layout = data?.layout
@@ -114,7 +139,6 @@ export default function MenuLayoutEditor() {
     setPriceMode(layout.priceMode)
     setFrozenAt(layout.frozenAt)
     setDrift(layout.drift)
-    setServerStats(layout.stats)
     lastSaved.current = JSON.stringify({ title: layout.title, theme: layout.theme, doc: docSnapshot(layout.doc) })
     setSave('idle')
   }, [data])
@@ -122,11 +146,9 @@ export default function MenuLayoutEditor() {
   const products = catalog.data?.products ?? []
   const categories = cats.data?.categories ?? []
   const page = doc?.pages[Math.min(pageIdx, (doc?.pages.length ?? 1) - 1)] ?? null
-
   const previewDoc = useMemo(() => (doc ? resolvePreview(doc, products, priceMode) : null), [doc, products, priceMode])
   const previewPage = previewDoc?.pages[Math.min(pageIdx, (previewDoc.pages.length || 1) - 1)] ?? null
   const selected = page?.blocks.find((b) => b.id === selectedId) ?? null
-
   const liveDrift = useMemo(() => (doc ? localDrift(doc, products) : []), [doc, products])
 
   const blockers = useMemo(() => {
@@ -135,7 +157,11 @@ export default function MenuLayoutEditor() {
     for (const p of previewDoc.pages) {
       for (const b of p.blocks) {
         for (const w of b.warnings ?? []) {
-          out.push({ blockId: b.id, code: w === 'нет цены' ? 'no_price' : w === 'позиции больше нет в каталоге' ? 'missing_product' : 'notice', text: w })
+          out.push({
+            blockId: b.id,
+            code: w === 'нет цены' ? 'no_price' : w === 'позиции больше нет в каталоге' ? 'missing_product' : 'notice',
+            text: w,
+          })
         }
       }
     }
@@ -158,29 +184,36 @@ export default function MenuLayoutEditor() {
       if (!doc) return
       const target = doc.pages[Math.min(pageIdx, doc.pages.length - 1)]
       if (!target) return
-      mutate({ pages: doc.pages.map((p) => (p.id === target.id ? { ...p, blocks: reindex(updater(p.blocks)) } : p)) })
+      mutate({ pages: doc.pages.map((p) => (p.id === target.id ? { ...p, blocks: updater(p.blocks) } : p)) })
     },
     [doc, pageIdx, mutate],
+  )
+
+  const patchBlock = useCallback(
+    (patch: Partial<MenuBlock>, id: string | null = selectedId) => {
+      if (!id) return
+      updatePage((blocks) => blocks.map((b) => (b.id === id ? { ...b, ...patch } : b)))
+    },
+    [selectedId, updatePage],
   )
 
   // ── автосохранение ────────────────────────────────────────────
   useEffect(() => {
     if (!doc) return
-    const payload = JSON.stringify({ title, theme, doc: docSnapshot(doc) })
+    const payload = JSON.stringify({ title, theme, doc: docPayload(doc) })
     if (payload === lastSaved.current) return
     setSave('dirty')
     const t = setTimeout(() => {
       setSave('saving')
       api<{ layout: ServerLayout; savedAt: number }>(`/menu-layouts/${numericId}`, {
         method: 'PUT',
-        body: { title: title.trim() || 'Без названия', theme, doc: docSnapshot(doc) },
+        body: { title: title.trim() || 'Без названия', theme, doc: docPayload(doc) },
       })
         .then((res) => {
           lastSaved.current = payload
           setSave('saved')
           setSavedAt(res.savedAt)
           setDrift(res.layout.drift)
-          setServerStats(res.layout.stats)
         })
         .catch((e: unknown) => {
           setSave('error')
@@ -197,7 +230,6 @@ export default function MenuLayoutEditor() {
     setSave('dirty')
   }, [])
 
-  // Delete скрывает блок в макете; товар каталога остаётся на месте.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
@@ -211,41 +243,104 @@ export default function MenuLayoutEditor() {
         e.preventDefault()
         updatePage((blocks) => toggleHidden(blocks, selectedId))
       }
+      if (!selectedId) return
+      const step = e.shiftKey ? 5 : 0.5
+      const nudge: Record<string, [number, number]> = {
+        ArrowLeft: [-step, 0],
+        ArrowRight: [step, 0],
+        ArrowUp: [0, -step],
+        ArrowDown: [0, step],
+      }
+      const d = nudge[e.key]
+      if (d) {
+        e.preventDefault()
+        const b = page?.blocks.find((x) => x.id === selectedId)
+        if (b) patchBlock(clampRect(moveRect(b, d[0], d[1])), b.id)
+      }
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [selectedId, undo, updatePage])
+  }, [selectedId, undo, updatePage, patchBlock, page])
 
-  // ── действия ──────────────────────────────────────────────────
+  // ── перетаскивание и размер ────────────────────────────────────
+  const beginDrag = (e: ReactPointerEvent<HTMLDivElement>, id: string, mode: 'move' | 'resize', handle: ResizeHandle = 'se') => {
+    const block = page?.blocks.find((b) => b.id === id)
+    const sheet = sheetRef.current
+    if (!block || !sheet) return
+    const rect = sheet.getBoundingClientRect()
+    drag.current = {
+      id,
+      mode,
+      handle,
+      startX: e.clientX,
+      startY: e.clientY,
+      rect: { xPct: block.xPct, yPct: block.yPct, wPct: block.wPct, hPct: block.hPct },
+      w: rect.width,
+      h: rect.height,
+    }
+    setSelectedId(id)
+    updatePage((blocks) => (blocks.find((b) => b.id === id)?.zIndex === topZ(blocks) - 1 ? blocks : bringToFront(blocks, id)))
+    ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
+  }
+
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      const d = drag.current
+      if (!d) return
+      const dxPct = ((e.clientX - d.startX) / d.w) * 100
+      const dyPct = ((e.clientY - d.startY) / d.h) * 100
+      const next =
+        d.mode === 'move'
+          ? moveRect(d.rect, e.shiftKey && Math.abs(dxPct) < Math.abs(dyPct) ? 0 : dxPct, e.shiftKey && Math.abs(dyPct) <= Math.abs(dxPct) ? 0 : dyPct)
+          : resizeRect(d.rect, d.handle, dxPct, dyPct)
+      updatePage((blocks) => blocks.map((b) => (b.id === d.id ? { ...b, ...next } : b)))
+    }
+    const onUp = () => {
+      drag.current = null
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+    }
+  }, [updatePage])
+
+  // ── действия с блоками ────────────────────────────────────────
   const addProduct = (p: CatalogProduct) => {
+    const fresh = productBlock(p, {}, 0)
     updatePage((blocks) => {
-      // Позиция встаёт после последней позиции своей категории — как в каталоге, а не в конец листа.
-      let at = blocks.length
-      for (let i = blocks.length - 1; i >= 0; i--) {
-        const b = blocks[i]!
-        if (b.type === 'product' && b.categoryId === p.categoryId) {
-          at = i + 1
-          break
-        }
-      }
-      const next = [...blocks]
-      next.splice(at, 0, productBlock(p, at))
-      return reindex(next)
+      const rect = nextFreeRect(blocks, DEFAULT_RECT.product.w, DEFAULT_RECT.product.h)
+      return [...blocks, { ...fresh, ...rect, zIndex: topZ(blocks) }]
     })
-    setSave('dirty')
+    setSelectedId(fresh.id)
+    setRightTab('block')
     toast.push(`«${p.name}» добавлен на лист`)
   }
 
-  const addCategory = (categoryId: number, name: string) => {
+  const addBlock = (type: BlockType, extra: Partial<MenuBlock> = {}) => {
+    const fresh = newBlock(type, {}, extra)
     updatePage((blocks) => {
-      const exists = blocks.some((b) => b.type === 'category' && b.categoryId === categoryId)
-      if (exists) return blocks
-      return reindex([...blocks, newBlock('category', blocks.length, { categoryId, titleOverride: name })])
+      const rect = nextFreeRect(blocks, DEFAULT_RECT[type].w, DEFAULT_RECT[type].h)
+      return [...blocks, { ...fresh, ...rect, zIndex: topZ(blocks) }]
     })
+    setSelectedId(fresh.id)
+    setRightTab('block')
   }
 
-  const addExtraBlock = (type: BlockType) => {
-    updatePage((blocks) => reindex([...blocks, newBlock(type, blocks.length, type === 'note' ? { titleOverride: 'Хорошего дня!' } : {})]))
+  const uploadInto = async (file: File, apply: (url: string) => void) => {
+    setBusyUpload(true)
+    try {
+      const res = await uploadFile(file)
+      apply(res.url)
+      toast.push('Картинка загружена')
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Не удалось загрузить картинку', 'bad')
+    } finally {
+      setBusyUpload(false)
+    }
   }
 
   const seedFromCatalog = async () => {
@@ -257,7 +352,6 @@ export default function MenuLayoutEditor() {
       hydrated.current = res.layout.id
       setDoc(docSnapshot(res.layout.doc))
       setDrift(res.layout.drift)
-      setServerStats(res.layout.stats)
       lastSaved.current = JSON.stringify({ title: res.layout.title, theme: res.layout.theme, doc: docSnapshot(res.layout.doc) })
       toast.push(`Собрано из каталога: ${res.added} позиций`)
     } catch (e) {
@@ -267,7 +361,10 @@ export default function MenuLayoutEditor() {
 
   const syncPrices = async () => {
     try {
-      const res = await api<{ changed: unknown[]; layout: ServerLayout }>(`/menu-layouts/${numericId}/sync-prices`, { method: 'POST', body: {} })
+      const res = await api<{ changed: unknown[]; layout: ServerLayout }>(`/menu-layouts/${numericId}/sync-prices`, {
+        method: 'POST',
+        body: {},
+      })
       setDoc(docSnapshot(res.layout.doc))
       setDrift(res.layout.drift)
       lastSaved.current = JSON.stringify({ title: res.layout.title, theme: res.layout.theme, doc: docSnapshot(res.layout.doc) })
@@ -315,16 +412,19 @@ export default function MenuLayoutEditor() {
   })
 
   const saveLabel =
-    save === 'saving' ? 'Сохраняем…' : save === 'error' ? 'Не сохранено' : save === 'dirty' ? 'Есть изменения' : save === 'saved' ? 'Сохранено' : 'Сохранено'
+    save === 'saving' ? 'Сохраняем…' : save === 'error' ? 'Не сохранено' : save === 'dirty' ? 'Есть изменения' : 'Сохранено'
   const driftText = driftBanner(drift.length ? drift : liveDrift, priceMode)
+  const selectedType = selected ? effectiveType(selected) : null
 
-  const sheet = (opts: { interactive?: boolean; grid?: boolean; safe?: boolean } = {}) => (
-    <MenuSheet
+  const canvas = (opts: { interactive?: boolean; grid?: boolean; safe?: boolean } = {}) => (
+    <MenuCanvas
       page={previewPage}
       theme={theme}
       title={title}
       selectedId={opts.interactive ? selectedId : null}
       onSelect={opts.interactive ? setSelectedId : undefined}
+      onBlockPointerDown={opts.interactive ? (e, bid) => beginDrag(e, bid, 'move') : undefined}
+      onHandlePointerDown={opts.interactive ? (e, bid) => beginDrag(e, bid, 'resize', 'se') : undefined}
       showGrid={opts.grid}
       showSafe={opts.safe}
       index={pageIdx + 1}
@@ -332,10 +432,7 @@ export default function MenuLayoutEditor() {
     />
   )
 
-  const patchBlock = (patch: Partial<MenuBlock>) => {
-    if (!selectedId) return
-    updatePage((blocks) => blocks.map((b) => (b.id === selectedId ? { ...b, ...patch } : b)))
-  }
+  /* ── панели ── */
 
   const catalogPane = (
     <div className="flex h-full min-h-0 flex-col">
@@ -368,6 +465,13 @@ export default function MenuLayoutEditor() {
             </button>
           ))}
         </div>
+        <button
+          type="button"
+          onClick={() => void seedFromCatalog()}
+          className="mt-2 w-full rounded-lg border border-dashed border-line px-2 py-1.5 text-[12px] font-semibold text-brand hover:border-brand"
+        >
+          Собрать лист из каталога
+        </button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         {catalog.loading && !catalog.data && <Spinner label="Загрузка каталога…" />}
@@ -384,7 +488,7 @@ export default function MenuLayoutEditor() {
                   <img src={p.imageUrl} alt="" className="h-9 w-9 flex-none rounded-md bg-surface-2 object-cover" />
                 ) : (
                   <span className="grid h-9 w-9 flex-none place-items-center rounded-md bg-surface-2 text-ink-tertiary">
-                    <ImageIcon size={14} aria-hidden />
+                    <ImagePlus size={14} aria-hidden />
                   </span>
                 )}
                 <span className="min-w-0 flex-1">
@@ -399,32 +503,56 @@ export default function MenuLayoutEditor() {
             </li>
           ))}
         </ul>
-        {categories.length > 0 && (
-          <div className="mt-3 rounded-lg border border-dashed border-line p-2">
-            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-tertiary">Добавить заголовок категории</p>
-            <div className="flex flex-wrap gap-1">
-              {categories.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => addCategory(c.id, c.name)}
-                  className="rounded-full border border-line px-2 py-1 text-[11px] text-ink-secondary hover:border-brand hover:text-brand"
-                >
-                  {c.name}
-                </button>
-              ))}
-            </div>
+        <div className="mt-3 rounded-lg border border-dashed border-line p-2">
+          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-tertiary">Добавить на холст</p>
+          <div className="flex flex-wrap gap-1">
+            {(
+              [
+                ['text', 'Текст'],
+                ['image', 'Фото'],
+                ['logo', 'Лого'],
+                ['divider', 'Линия'],
+              ] as [BlockType, string][]
+            ).map(([t, label]) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => addBlock(t)}
+                className="rounded-full border border-line px-2.5 py-1 text-[11px] text-ink-secondary hover:border-brand hover:text-brand"
+              >
+                + {label}
+              </button>
+            ))}
           </div>
-        )}
+          {categories.length > 0 && (
+            <>
+              <p className="mt-2 mb-1 text-[11px] font-semibold uppercase tracking-wide text-ink-tertiary">Заголовок категории</p>
+              <div className="flex flex-wrap gap-1">
+                {categories.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => addBlock('category', { categoryId: c.id, titleOverride: c.name })}
+                    className="rounded-full border border-line px-2 py-1 text-[11px] text-ink-secondary hover:border-brand hover:text-brand"
+                  >
+                    {c.name}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </div>
   )
 
   const layersPane = (
     <div className="min-h-0 flex-1 overflow-y-auto p-2">
-      {page.blocks.length === 0 && <p className="p-2 text-[13px] text-ink-secondary">Лист пуст. Добавьте позиции из каталога.</p>}
+      {page.blocks.length === 0 && (
+        <p className="p-2 text-[13px] text-ink-secondary">Холст пуст. Добавьте позиции из каталога или текст.</p>
+      )}
       <ul className="space-y-0.5">
-        {page.blocks.map((b, i) => (
+        {byZ(page.blocks).map((b) => (
           <li
             key={b.id}
             className={cx(
@@ -434,21 +562,23 @@ export default function MenuLayoutEditor() {
             )}
           >
             <button type="button" onClick={() => setSelectedId(b.id)} className="min-w-0 flex-1 truncate text-left text-[12.5px]">
-              <span className="text-ink-tertiary">{i + 1}.</span> {blockLabel(b)}
+              <span className="text-ink-tertiary">{b.zIndex}.</span> {blockLabel(b)}
             </button>
             <button
               type="button"
-              onClick={() => updatePage((blocks) => moveBlock(blocks, b.id, -1))}
+              onClick={() => updatePage((blocks) => bringToFront(blocks, b.id))}
               className="grid h-6 w-6 place-items-center rounded text-ink-tertiary hover:text-brand"
-              aria-label="Выше"
+              aria-label="На передний план"
+              title="На передний план"
             >
               <ArrowUp size={13} />
             </button>
             <button
               type="button"
-              onClick={() => updatePage((blocks) => moveBlock(blocks, b.id, 1))}
+              onClick={() => updatePage((blocks) => sendToBack(blocks, b.id))}
               className="grid h-6 w-6 place-items-center rounded text-ink-tertiary hover:text-brand"
-              aria-label="Ниже"
+              aria-label="На задний план"
+              title="На задний план"
             >
               <ArrowDown size={13} />
             </button>
@@ -499,8 +629,7 @@ export default function MenuLayoutEditor() {
 
       <section className="border-b border-line px-3 py-3">
         <div className="mb-2 flex items-baseline justify-between">
-          <h3 className="text-[13px] font-semibold">Шрифты</h3>
-          <span className="text-[11px] text-ink-tertiary">2 семейства</span>
+          <h3 className="text-[13px] font-semibold">Шрифты и цвета</h3>
         </div>
         <Field label="Заголовки">
           <Select value={theme.fontHeading} onChange={(e) => setTheme({ ...theme, fontHeading: e.target.value as MenuTheme['fontHeading'] })}>
@@ -516,45 +645,14 @@ export default function MenuLayoutEditor() {
             </Select>
           </Field>
         </div>
-        <label className="mt-3 block text-[12px] text-ink-secondary">
-          Кегль заголовка · {theme.headingSize}
-          <input
-            type="range"
-            min={28}
-            max={72}
-            step={1}
-            value={theme.headingSize}
-            onChange={(e) => setTheme({ ...theme, headingSize: Number(e.target.value) })}
-            className="mt-1 w-full"
-          />
-        </label>
-        <label className="mt-2 block text-[12px] text-ink-secondary">
-          Кегль позиций · {theme.itemSize}
-          <input
-            type="range"
-            min={8}
-            max={16}
-            step={0.5}
-            value={theme.itemSize}
-            onChange={(e) => setTheme({ ...theme, itemSize: Number(e.target.value) })}
-            className="mt-1 w-full"
-          />
-        </label>
-      </section>
-
-      <section className="border-b border-line px-3 py-3">
-        <div className="mb-2 flex items-baseline justify-between">
-          <h3 className="text-[13px] font-semibold">Цвета</h3>
-          <span className="text-[11px] text-ink-tertiary">brand-safe</span>
-        </div>
         {(
           [
-            ['bg', 'Фон'],
+            ['bg', 'Фон листа'],
             ['text', 'Текст'],
             ['accent', 'Акцент'],
           ] as const
         ).map(([key, label]) => (
-          <label key={key} className="flex items-center gap-2 py-1 text-[12px] text-ink-secondary">
+          <label key={key} className="mt-2 flex items-center gap-2 text-[12px] text-ink-secondary">
             <span className="flex-1">{label}</span>
             <code className="text-[11px] text-ink-tertiary">{theme[key].toUpperCase()}</code>
             <input
@@ -570,133 +668,136 @@ export default function MenuLayoutEditor() {
 
       <section className="border-b border-line px-3 py-3">
         <div className="mb-2 flex items-baseline justify-between">
-          <h3 className="text-[13px] font-semibold">Сетка</h3>
-          <span className="text-[11px] text-ink-tertiary">лист</span>
+          <h3 className="text-[13px] font-semibold">Фон листа</h3>
+          <span className="text-[11px] text-ink-tertiary">картинка</span>
         </div>
-        <div className="flex gap-1" role="group" aria-label="Колонки">
-          {([1, 2, 3] as const).map((n) => (
-            <button
-              key={n}
-              type="button"
-              onClick={() => setTheme({ ...theme, columns: n })}
-              aria-pressed={theme.columns === n}
-              className={cx(
-                'min-h-8 min-w-9 rounded-md border px-2 text-[12px] font-semibold',
-                theme.columns === n ? 'border-brand bg-surface-2 text-brand' : 'border-line text-ink-secondary',
-              )}
-            >
-              {n}
+        <div className="flex items-center gap-2">
+          <label className="inline-flex min-h-8 cursor-pointer items-center gap-1 rounded-lg border border-line px-2 text-[12px] font-semibold text-brand">
+            <Upload size={13} /> Загрузить
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                if (f) void uploadInto(f, (url) => setTheme({ ...theme, backgroundImageUrl: url }))
+                e.target.value = ''
+              }}
+            />
+          </label>
+          <span className="text-[11px] text-ink-tertiary">или</span>
+          <Input
+            value={theme.backgroundImageUrl ?? ''}
+            placeholder="https://…"
+            onChange={(e) => setTheme({ ...theme, backgroundImageUrl: e.target.value.trim() || null })}
+            className="!h-8 flex-1 text-[12px]"
+          />
+          {theme.backgroundImageUrl && (
+            <button type="button" onClick={() => setTheme({ ...theme, backgroundImageUrl: null })} className="text-ink-tertiary hover:text-bad" aria-label="Убрать фон">
+              <X size={14} />
             </button>
-          ))}
+          )}
         </div>
-        <div className="mt-3">
-          <Field label="Логотип">
-            <Select value={theme.logoPosition} onChange={(e) => setTheme({ ...theme, logoPosition: e.target.value as MenuTheme['logoPosition'] })}>
-              <option value="left">Сверху слева</option>
-              <option value="top-right">Сверху справа</option>
-              <option value="footer">Снизу в подвале</option>
-            </Select>
-          </Field>
-        </div>
-        <div className="mt-3">
-          <span className="mb-1 block text-[12px] text-ink-secondary">Орнамент</span>
-          <div className="flex gap-1">
-            {(['line', 'beans', 'leaf', 'none'] as const).map((o) => (
-              <button
-                key={o}
-                type="button"
-                onClick={() => setTheme({ ...theme, ornament: o })}
-                aria-pressed={theme.ornament === o}
-                className={cx(
-                  'grid h-8 min-w-9 place-items-center rounded-md border px-2 text-[12px]',
-                  theme.ornament === o ? 'border-brand bg-surface-2 text-brand' : 'border-line text-ink-secondary',
-                )}
-                title={o === 'line' ? 'Линия' : o === 'beans' ? 'Зёрна' : o === 'leaf' ? 'Лист' : 'Без орнамента'}
-              >
-                {o === 'line' ? '—' : o === 'beans' ? '●●' : o === 'leaf' ? '◗' : '∅'}
-              </button>
-            ))}
-          </div>
-        </div>
-        <label className="mt-3 block text-[12px] text-ink-secondary">
-          Плотность
-          <Select
-            value={theme.density}
-            onChange={(e) => setTheme({ ...theme, density: e.target.value as MenuTheme['density'] })}
-            className="mt-1"
-          >
-            <option value="air">Воздушно</option>
-            <option value="normal">Обычно</option>
-            <option value="dense">Плотно</option>
-          </Select>
-        </label>
+        {theme.backgroundImageUrl && (
+          <label className="mt-2 block text-[12px] text-ink-secondary">
+            Затемнение · {theme.backgroundDim}%
+            <input
+              type="range"
+              min={0}
+              max={80}
+              value={theme.backgroundDim}
+              onChange={(e) => setTheme({ ...theme, backgroundDim: Number(e.target.value) })}
+              className="mt-1 w-full"
+            />
+          </label>
+        )}
       </section>
 
       <section className="px-3 py-3">
-        <h3 className="mb-2 text-[13px] font-semibold">Дополнительные блоки</h3>
-        <div className="flex flex-wrap gap-1">
-          {(
-            [
-              ['note', 'Заметка'],
-              ['photo', 'Фото'],
-              ['divider', 'Линия'],
-              ['text', 'Текст'],
-              ['qr', 'QR'],
-            ] as [BlockType, string][]
-          ).map(([t, label]) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => addExtraBlock(t)}
-              className="rounded-full border border-line px-2.5 py-1 text-[11px] text-ink-secondary hover:border-brand hover:text-brand"
-            >
-              + {label}
-            </button>
-          ))}
-        </div>
+        <h3 className="mb-2 text-[13px] font-semibold">Логотип в подвале</h3>
+        <Field label="Где рисовать 6.7">
+          <Select value={theme.logoPosition} onChange={(e) => setTheme({ ...theme, logoPosition: e.target.value as MenuTheme['logoPosition'] })}>
+            <option value="left">Не в подвале</option>
+            <option value="footer">В подвале</option>
+          </Select>
+        </Field>
       </section>
     </div>
   )
 
-  const layerPane = selected ? (
+  const blockPane = selected ? (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="flex items-start gap-2 border-b border-line px-3 py-3">
-        {selected.product?.imageUrl ? (
-          <img src={selected.product.imageUrl} alt="" className="h-12 w-12 rounded-lg object-cover" />
+        {selected.displayImageUrl ? (
+          <img src={selected.displayImageUrl} alt="" className="h-12 w-12 rounded-lg object-cover" />
         ) : (
           <span className="grid h-12 w-12 place-items-center rounded-lg bg-surface-2 text-ink-tertiary">
             <Type size={16} aria-hidden />
           </span>
         )}
         <div className="min-w-0">
-          <p className="text-[11px] uppercase tracking-wide text-ink-tertiary">{selected.type === 'product' ? 'Позиция' : 'Блок'}</p>
+          <p className="text-[11px] uppercase tracking-wide text-ink-tertiary">{selectedType === 'product' ? 'Позиция' : 'Блок'}</p>
           <p className="truncate text-[13px] font-semibold text-ink">{blockLabel(selected)}</p>
           <p className="truncate text-[11px] text-ink-tertiary">
-            {selected.productId ? `Каталог 6.7 · product_id ${selected.productId}` : 'Служебный блок макета'}
+            {selected.productId ? `Каталог 6.7 · product_id ${selected.productId}` : `z ${selected.zIndex}`}
           </p>
         </div>
       </div>
 
       <section className="border-b border-line px-3 py-3">
+        <h3 className="mb-2 text-[13px] font-semibold">Положение и размер</h3>
+        <div className="grid grid-cols-2 gap-2">
+          {(
+            [
+              ['xPct', 'X, %'],
+              ['yPct', 'Y, %'],
+              ['wPct', 'Ширина, %'],
+              ['hPct', 'Высота, %'],
+            ] as const
+          ).map(([key, label]) => (
+            <Field key={key} label={label}>
+              <Input
+                type="number"
+                step="0.5"
+                min={0}
+                max={100}
+                value={Math.round(selected[key] * 10) / 10}
+                onChange={(e) => {
+                  const v = Number(e.target.value)
+                  if (!Number.isFinite(v)) return
+                  patchBlock(clampRect({ ...selected, [key]: v }))
+                }}
+                className="!h-8 text-[12px]"
+              />
+            </Field>
+          ))}
+        </div>
+        <p className="mt-1.5 text-[11px] text-ink-tertiary">
+          Минимум {MIN_W}×{MIN_H} %. Стрелки двигают на 0,5 %, с Shift — на 5 %.
+        </p>
+      </section>
+
+      <section className="border-b border-line px-3 py-3">
         <h3 className="mb-2 text-[13px] font-semibold">Содержимое</h3>
-        <Field label="Название в макете">
-          <Input
-            value={selected.titleOverride ?? ''}
-            placeholder={selected.type === 'hero' ? 'Кофе и не только' : selected.type === 'header' ? 'весна / лето 2026' : 'Как в каталоге'}
-            onChange={(e) => patchBlock({ titleOverride: e.target.value || null })}
-          />
-        </Field>
-        {selected.type === 'product' && (
+        {(selectedType === 'product' || selectedType === 'category') && (
+          <Field label="Название в макете">
+            <Input
+              value={selected.titleOverride ?? ''}
+              placeholder={selected.displayName ?? 'Как в каталоге'}
+              onChange={(e) => patchBlock({ titleOverride: e.target.value || null })}
+            />
+          </Field>
+        )}
+        {selectedType === 'product' && (
           <>
             <div className="mt-2">
               <Field label="Цена в макете" hint="Пусто — из каталога. Можно «169 / 269».">
                 <Input
                   value={selected.priceText ?? ''}
-                  placeholder={selected.product ? String(selected.product.priceRub ?? '') : '169 / 269'}
+                  placeholder={selected.product?.priceRub != null ? String(selected.product.priceRub) : '169 / 269'}
                   onChange={(e) => {
                     const v = e.target.value.trim()
-                    const asNumber = /^\d+$/.test(v) ? Number(v) : null
-                    patchBlock({ priceText: v || null, priceRubOverride: asNumber })
+                    patchBlock({ priceText: v || null, priceRubOverride: /^\d+$/.test(v) ? Number(v) : null })
                   }}
                 />
               </Field>
@@ -711,19 +812,119 @@ export default function MenuLayoutEditor() {
                 </Select>
               </Field>
             </div>
-            <label className="mt-3 flex items-center gap-2 text-[13px]">
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <span className="text-[12px] text-ink-secondary">Своё фото позиции</span>
+              <label className={cx('inline-flex min-h-8 cursor-pointer items-center gap-1 rounded-lg border border-line px-2 text-[12px] font-semibold text-brand', busyUpload && 'opacity-50')}>
+                {busyUpload ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />} Загрузить
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0]
+                    if (f) void uploadInto(f, (url) => patchBlock({ photoUrlOverride: url, showPhoto: true }))
+                    e.target.value = ''
+                  }}
+                />
+              </label>
+            </div>
+            <Input
+              value={selected.photoUrlOverride ?? ''}
+              placeholder="или ссылка /uploads/…"
+              onChange={(e) => patchBlock({ photoUrlOverride: e.target.value.trim() || null })}
+              className="mt-1.5 !h-8 text-[12px]"
+            />
+            <label className="mt-2 flex items-center gap-2 text-[13px]">
               <input type="checkbox" checked={selected.showPhoto} onChange={(e) => patchBlock({ showPhoto: e.target.checked })} />
-              Показывать фото
+              Показывать фото в блоке
             </label>
           </>
         )}
-        {selected.type !== 'product' && selected.type !== 'category' && (
-          <div className="mt-2">
+
+        {selectedType === 'text' && (
+          <>
             <Field label="Текст">
-              <Input value={selected.text ?? ''} onChange={(e) => patchBlock({ text: e.target.value || null })} />
+              <textarea
+                value={selected.text ?? ''}
+                onChange={(e) => patchBlock({ text: e.target.value })}
+                rows={3}
+                className="w-full rounded-lg border border-line px-2 py-1.5 text-[13px] outline-none focus:border-brand"
+              />
             </Field>
-          </div>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <Field label="Кегль, pt">
+                <Input
+                  type="number"
+                  min={5}
+                  max={72}
+                  value={selected.fontSizePt}
+                  onChange={(e) => patchBlock({ fontSizePt: Number(e.target.value) || 10 })}
+                  className="!h-8 text-[12px]"
+                />
+              </Field>
+              <Field label="Выравнивание">
+                <Select value={selected.align} onChange={(e) => patchBlock({ align: e.target.value as MenuBlock['align'] })}>
+                  <option value="left">Слева</option>
+                  <option value="center">По центру</option>
+                  <option value="right">Справа</option>
+                </Select>
+              </Field>
+            </div>
+            <label className="mt-2 flex items-center gap-2 text-[13px]">
+              <input type="checkbox" checked={selected.bold} onChange={(e) => patchBlock({ bold: e.target.checked })} />
+              Жирный (Unbounded)
+            </label>
+          </>
         )}
+
+        {selectedType === 'image' && (
+          <>
+            <div className="flex items-center gap-2">
+              <label className={cx('inline-flex min-h-8 cursor-pointer items-center gap-1 rounded-lg border border-line px-2 text-[12px] font-semibold text-brand', busyUpload && 'opacity-50')}>
+                {busyUpload ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />} Загрузить
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0]
+                    if (f) void uploadInto(f, (url) => patchBlock({ url }))
+                    e.target.value = ''
+                  }}
+                />
+              </label>
+              <span className="text-[11px] text-ink-tertiary">или ссылка</span>
+            </div>
+            <Input
+              value={selected.url ?? ''}
+              placeholder="https://… /uploads/…"
+              onChange={(e) => patchBlock({ url: e.target.value.trim() || null })}
+              className="mt-1.5 !h-8 text-[12px]"
+            />
+            <div className="mt-2">
+              <Field label="Вписывание">
+                <Select value={selected.fit} onChange={(e) => patchBlock({ fit: e.target.value as MenuBlock['fit'] })}>
+                  <option value="cover">Заполнить (обрезать)</option>
+                  <option value="contain">Вписать целиком</option>
+                </Select>
+              </Field>
+            </div>
+            <div className="mt-2">
+              <Field label="Подпись (для скринридера)">
+                <Input value={selected.titleOverride ?? ''} onChange={(e) => patchBlock({ titleOverride: e.target.value || null })} className="!h-8 text-[12px]" />
+              </Field>
+            </div>
+          </>
+        )}
+
+        {selectedType === 'logo' && (
+          <Field label="Подпись справа (например, сезон)">
+            <Input value={selected.text ?? ''} onChange={(e) => patchBlock({ text: e.target.value || null })} placeholder="весна / лето 2026" />
+          </Field>
+        )}
+
+        {selectedType === 'divider' && <p className="text-[12px] text-ink-secondary">Линия-разделитель. Меняйте ширину и положение выше.</p>}
+
         <p className="mt-2 text-[11px] leading-4 text-ink-tertiary">
           Данные из каталога. Правки здесь меняют только макет — не кассу и не карточку товара.
         </p>
@@ -732,17 +933,17 @@ export default function MenuLayoutEditor() {
       <section className="px-3 py-3">
         <h3 className="mb-2 text-[13px] font-semibold">Действия</h3>
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant="secondary" icon={<ArrowUp size={14} />} onClick={() => updatePage((b) => moveBlock(b, selected.id, -1))}>
-            Выше
+          <Button size="sm" variant="secondary" icon={<Layers size={14} />} onClick={() => updatePage((bs) => bringToFront(bs, selected.id))}>
+            На передний
           </Button>
-          <Button size="sm" variant="secondary" icon={<ArrowDown size={14} />} onClick={() => updatePage((b) => moveBlock(b, selected.id, 1))}>
-            Ниже
+          <Button size="sm" variant="secondary" icon={<Layers size={14} />} onClick={() => updatePage((bs) => sendToBack(bs, selected.id))}>
+            На задний
           </Button>
           <Button
             size="sm"
             variant="secondary"
             icon={selected.hidden ? <Eye size={14} /> : <EyeOff size={14} />}
-            onClick={() => updatePage((b) => toggleHidden(b, selected.id))}
+            onClick={() => updatePage((bs) => toggleHidden(bs, selected.id))}
           >
             {selected.hidden ? 'Показать' : 'Скрыть'}
           </Button>
@@ -751,7 +952,7 @@ export default function MenuLayoutEditor() {
             variant="secondary"
             icon={<Trash2 size={14} />}
             onClick={() => {
-              updatePage((b) => b.filter((x) => x.id !== selected.id))
+              updatePage((bs) => bs.filter((x) => x.id !== selected.id))
               setSelectedId(null)
             }}
           >
@@ -761,7 +962,9 @@ export default function MenuLayoutEditor() {
       </section>
     </div>
   ) : (
-    <div className="p-3 text-[13px] text-ink-secondary">Выберите блок на листе или в списке слоёв.</div>
+    <div className="p-3 text-[13px] text-ink-secondary">
+      Выберите блок на холсте или в списке слоёв — здесь появятся его координаты и свойства.
+    </div>
   )
 
   return (
@@ -796,9 +999,7 @@ export default function MenuLayoutEditor() {
           </div>
           <p className="mt-0.5 truncate text-[12px] text-ink-secondary">
             {formatLabel(format)} · {data?.layout.formatHint.mm} · {doc.pages.length} стр. ·{' '}
-            {priceMode === 'frozen'
-              ? `цены зафиксированы${fmtFrozen(frozenAt)}`
-              : 'цены из каталога'}
+            {priceMode === 'frozen' ? `цены зафиксированы${fmtFrozen(frozenAt)}` : 'цены из каталога'}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
@@ -814,6 +1015,11 @@ export default function MenuLayoutEditor() {
         </div>
       </div>
 
+      <p className="mb-3 flex items-start gap-2 rounded-xl border border-line bg-surface-2 px-3 py-2 text-[12.5px] leading-4 text-ink-secondary">
+        <Layers size={14} className="mt-0.5 flex-none text-brand" aria-hidden />
+        Перетащите позицию на листе, тяните угол — блок меняет размер. Товары каталога при этом не удаляются и не меняются.
+      </p>
+
       {driftText && (
         <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-warn/40 bg-warn-soft px-3 py-2 text-[13px] text-warn">
           <RefreshCw size={15} className="flex-none" aria-hidden />
@@ -824,9 +1030,9 @@ export default function MenuLayoutEditor() {
         </div>
       )}
 
-      {serverStats && serverStats.warnings > 0 && save !== 'dirty' && (
+      {blockers.length > 0 && (
         <Banner tone="warn">
-          Замечаний перед печатью: {serverStats.warnings}. {blockers.length ? 'Откройте слой с красной точкой и поправьте цену или фото.' : ''}
+          Замечаний перед печатью: {blockers.length}. Откройте блок с красной меткой и поправьте цену или фото.
         </Banner>
       )}
 
@@ -857,8 +1063,8 @@ export default function MenuLayoutEditor() {
       </nav>
 
       {/* ── десктоп: три зоны ─────────────────────────────── */}
-      <div className="hidden gap-3 lg:grid" style={{ gridTemplateColumns: 'minmax(220px, 260px) minmax(0, 1fr) minmax(240px, 290px)' }}>
-        <aside className="flex max-h-[calc(100vh-210px)] min-h-[420px] flex-col overflow-hidden rounded-xl border border-line bg-white">
+      <div className="hidden gap-3 lg:grid" style={{ gridTemplateColumns: 'minmax(220px, 260px) minmax(0, 1fr) minmax(250px, 300px)' }}>
+        <aside className="flex max-h-[calc(100vh-230px)] min-h-[460px] flex-col overflow-hidden rounded-xl border border-line bg-white">
           <div className="flex border-b border-line">
             {(
               [
@@ -886,8 +1092,11 @@ export default function MenuLayoutEditor() {
         <section className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-white px-2 py-1.5">
             <div className="flex items-center gap-1.5 text-[12px] font-semibold text-ink-secondary">
-              <span className="rounded-md bg-surface-2 px-2 py-1">{data?.layout.formatHint.label} · {data?.layout.formatHint.mm}</span>
+              <span className="rounded-md bg-surface-2 px-2 py-1">
+                {data?.layout.formatHint.label} · {data?.layout.formatHint.mm}
+              </span>
               <Badge tone={status === 'ready' ? 'ok' : 'neutral'}>{status === 'ready' ? 'Готов' : 'Черновик'}</Badge>
+              <span className="text-[11px] font-normal text-ink-tertiary">{page.blocks.length} блоков</span>
             </div>
             <div className="flex items-center gap-1">
               <button
@@ -904,7 +1113,7 @@ export default function MenuLayoutEditor() {
                 onClick={() => setShowSafe((v) => !v)}
                 aria-pressed={showSafe}
                 className={cx('h-8 rounded-md px-2 text-[11px] font-semibold', showSafe ? 'bg-surface-2 text-brand' : 'text-ink-tertiary hover:text-brand')}
-                title="Безопасная зона"
+                title="Безопасная зона (поля)"
               >
                 поля
               </button>
@@ -921,13 +1130,17 @@ export default function MenuLayoutEditor() {
 
           <div className="flex-1 overflow-auto rounded-xl border border-line bg-[#e9ebef] p-4">
             <div
+              ref={sheetRef}
               className="mx-auto"
               style={{
                 width: `${Math.round(560 * zoom)}px`,
                 aspectRatio: String(LAYOUT_FORMATS.find((f) => f.id === format)?.ratio ?? 210 / 297),
               }}
+              onPointerDown={(e) => {
+                if (e.target === e.currentTarget) setSelectedId(null)
+              }}
             >
-              <div className="h-full w-full shadow-[0_10px_30px_rgba(16,24,40,.15)]">{sheet({ interactive: true, grid: showGrid, safe: showSafe })}</div>
+              <div className="h-full w-full shadow-[0_10px_30px_rgba(16,24,40,.15)]">{canvas({ interactive: true, grid: showGrid, safe: showSafe })}</div>
             </div>
           </div>
 
@@ -946,12 +1159,7 @@ export default function MenuLayoutEditor() {
                   {i + 1} <span className="text-[10px] text-ink-tertiary">{p.blocks.length}</span>
                 </button>
                 {doc.pages.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => removePage(i)}
-                    className="ml-0.5 grid h-6 w-6 place-items-center rounded text-ink-tertiary hover:text-bad"
-                    aria-label={`Удалить страницу ${i + 1}`}
-                  >
+                  <button type="button" onClick={() => removePage(i)} className="ml-0.5 grid h-6 w-6 place-items-center rounded text-ink-tertiary hover:text-bad" aria-label={`Удалить страницу ${i + 1}`}>
                     <X size={12} />
                   </button>
                 )}
@@ -972,12 +1180,12 @@ export default function MenuLayoutEditor() {
           </div>
         </section>
 
-        <aside className="flex max-h-[calc(100vh-210px)] min-h-[420px] flex-col overflow-hidden rounded-xl border border-line bg-white">
+        <aside className="flex max-h-[calc(100vh-230px)] min-h-[460px] flex-col overflow-hidden rounded-xl border border-line bg-white">
           <div className="flex border-b border-line">
             {(
               [
                 ['design', 'Оформление'],
-                ['layer', 'Слой'],
+                ['block', 'Блок'],
               ] as [RightTab, string][]
             ).map(([k, label]) => (
               <button
@@ -994,7 +1202,7 @@ export default function MenuLayoutEditor() {
               </button>
             ))}
           </div>
-          {rightTab === 'design' ? designPane : layerPane}
+          {rightTab === 'design' ? designPane : blockPane}
         </aside>
       </div>
 
@@ -1002,7 +1210,12 @@ export default function MenuLayoutEditor() {
       <div className="lg:hidden">
         {mobileTab === 'preview' && (
           <div className="rounded-xl border border-line bg-[#e9ebef] p-3">
-            <div className="mx-auto max-w-[360px] shadow-[0_10px_30px_rgba(16,24,40,.15)]">{sheet({ grid: showGrid, safe: showSafe })}</div>
+            <div
+              className="mx-auto max-w-[360px] shadow-[0_10px_30px_rgba(16,24,40,.15)]"
+              style={{ aspectRatio: String(LAYOUT_FORMATS.find((f) => f.id === format)?.ratio ?? 210 / 297) }}
+            >
+              {canvas({ interactive: true, grid: showGrid, safe: showSafe })}
+            </div>
             <div className="mt-2 flex items-center justify-center gap-2 text-[12px] text-ink-secondary">
               <button type="button" onClick={() => setPageIdx((i) => Math.max(0, i - 1))} disabled={pageIdx === 0} className="rounded-md border border-line px-2 py-1 disabled:opacity-40">
                 ← стр.
@@ -1019,6 +1232,40 @@ export default function MenuLayoutEditor() {
                 стр. →
               </button>
             </div>
+            {selected && (
+              <div className="mt-3 rounded-xl border border-line bg-white p-3">
+                <p className="mb-2 text-[12px] font-semibold text-ink-secondary">
+                  Блок: {blockLabel(selected)} · двигайте пальцем на листе
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {(
+                    [
+                      ['xPct', 'X, %'],
+                      ['yPct', 'Y, %'],
+                      ['wPct', 'Ширина, %'],
+                      ['hPct', 'Высота, %'],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <label key={key} className="text-[11px] text-ink-tertiary">
+                      {label}
+                      <input
+                        type="number"
+                        step="0.5"
+                        min={0}
+                        max={100}
+                        value={Math.round(selected[key] * 10) / 10}
+                        onChange={(e) => {
+                          const v = Number(e.target.value)
+                          if (!Number.isFinite(v)) return
+                          patchBlock(clampRect({ ...selected, [key]: v }))
+                        }}
+                        className="mt-0.5 w-full rounded-md border border-line px-2 py-1 text-[12px]"
+                      />
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1028,7 +1275,7 @@ export default function MenuLayoutEditor() {
               {(
                 [
                   ['catalog', 'Каталог'],
-                  ['layers', 'Содержание'],
+                  ['layers', 'Слои'],
                 ] as [LeftTab, string][]
               ).map(([k, label]) => (
                 <button
@@ -1046,7 +1293,7 @@ export default function MenuLayoutEditor() {
           </div>
         )}
 
-        {mobileTab === 'design' && <div className="overflow-hidden rounded-xl border border-line bg-white">{designPane}</div>}
+        {mobileTab === 'design' && <div className="overflow-hidden rounded-xl border border-line bg-white">{rightTab === 'design' ? designPane : blockPane}</div>}
 
         {mobileTab === 'export' && (
           <div className="rounded-xl border border-line bg-white p-3">
@@ -1056,10 +1303,10 @@ export default function MenuLayoutEditor() {
             </p>
             <ul className="mt-3 space-y-1.5 text-[12.5px]">
               <li className="flex items-start gap-2">
-                <Check size={14} className="mt-0.5 flex-none text-ok" aria-hidden /> <span>Текст — вектор, не картинка страницы</span>
+                <Check size={14} className="mt-0.5 flex-none text-ok" aria-hidden /> <span>Блоки печатаются на своих местах</span>
               </li>
               <li className="flex items-start gap-2">
-                <Check size={14} className="mt-0.5 flex-none text-ok" aria-hidden /> <span>Орнаменты векторные, поля под обрез 3 мм</span>
+                <Check size={14} className="mt-0.5 flex-none text-ok" aria-hidden /> <span>Поля под обрез 3 мм и метки реза</span>
               </li>
               {blockers.length > 0 && (
                 <li className="flex items-start gap-2 text-bad">
@@ -1070,7 +1317,6 @@ export default function MenuLayoutEditor() {
             <Button className="mt-3 w-full" icon={<Download size={15} />} onClick={() => setExportOpen(true)}>
               Настроить PDF
             </Button>
-            <p className="mt-2 text-[11px] text-ink-tertiary">Печатный PDF: 300 dpi, поля 3 мм. Экранный: RGB, без полей.</p>
           </div>
         )}
       </div>
@@ -1087,8 +1333,8 @@ export default function MenuLayoutEditor() {
                 <X size={18} />
               </button>
             </div>
-            <div className="shadow-2xl">
-              <MenuSheet page={previewPage} theme={theme} title={title} index={pageIdx + 1} total={doc.pages.length} />
+            <div className="shadow-2xl" style={{ aspectRatio: String(LAYOUT_FORMATS.find((f) => f.id === format)?.ratio ?? 210 / 297) }}>
+              {canvas()}
             </div>
             <div className="mt-3 flex justify-center gap-2">
               <Button size="sm" variant="secondary" onClick={() => setPageIdx((i) => Math.max(0, i - 1))} disabled={pageIdx === 0}>
@@ -1115,27 +1361,16 @@ export default function MenuLayoutEditor() {
         onGoToBlock={(blockId) => {
           setExportOpen(false)
           setSelectedId(blockId)
-          setRightTab('layer')
-          setMobileTab('content')
-          const blocks = doc.pages[pageIdx]?.blocks ?? []
-          if (!blocks.some((b) => b.id === blockId)) {
-            const idx = doc.pages.findIndex((p) => p.blocks.some((b) => b.id === blockId))
-            if (idx >= 0) setPageIdx(idx)
-          }
+          setRightTab('block')
+          setMobileTab('preview')
+          const idx = doc.pages.findIndex((p) => p.blocks.some((b) => b.id === blockId))
+          if (idx >= 0) setPageIdx(idx)
         }}
       />
-
-      <ConfirmDialog open={deleteOpen} title="Удалить макет?" confirmLabel="Удалить" danger onCancel={() => setDeleteOpen(false)} onConfirm={() => setDeleteOpen(false)}>
-        Черновик подтверждения.
-      </ConfirmDialog>
 
       <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-3 text-[12px] text-ink-secondary">
         <button type="button" onClick={() => setStatus((s) => (s === 'ready' ? 'draft' : 'ready'))} className="text-brand hover:underline">
           {status === 'ready' ? 'Вернуть в черновик' : 'Отметить готовым к печати'}
-        </button>
-        <span className="text-ink-tertiary">·</span>
-        <button type="button" onClick={() => void seedFromCatalog()} className="text-brand hover:underline">
-          Собрать из каталога
         </button>
         <span className="text-ink-tertiary">·</span>
         <button type="button" onClick={() => void setFrozen(priceMode === 'frozen' ? 'live' : 'frozen')} className="text-brand hover:underline">
@@ -1171,7 +1406,6 @@ export default function MenuLayoutEditor() {
           ))}
         </div>
       </Drawer>
-
     </>
   )
 }
@@ -1244,7 +1478,7 @@ function ExportModal({ open, onClose, layoutId, format, pages, blockers, onGoToB
           <div>
             <p className="text-[11px] uppercase tracking-wide text-ink-tertiary">Печать и экран</p>
             <h2 className="text-lg font-bold">Экспорт PDF</h2>
-            <p className="mt-0.5 text-[13px] text-ink-secondary">Соберите файл для типографии или отправьте гостю.</p>
+            <p className="mt-0.5 text-[13px] text-ink-secondary">Файл для типографии или отправки гостю.</p>
           </div>
           <button type="button" onClick={onClose} className="grid h-9 w-9 place-items-center rounded-full hover:bg-surface-2" aria-label="Закрыть">
             <X size={18} />
@@ -1289,10 +1523,10 @@ function ExportModal({ open, onClose, layoutId, format, pages, blockers, onGoToB
             <p className="mb-2 text-[12px] font-semibold text-ink-secondary">Что будет в файле</p>
             <ul className="space-y-1.5 text-[12.5px]">
               <li className="flex items-start gap-2">
-                <Check size={14} className="mt-0.5 flex-none text-ok" aria-hidden /> Текст — вектор (можно редактировать в типографии)
+                <Check size={14} className="mt-0.5 flex-none text-ok" aria-hidden /> Блоки печатаются на своих координатах
               </li>
               <li className="flex items-start gap-2">
-                <Check size={14} className="mt-0.5 flex-none text-ok" aria-hidden /> Шрифты Golos Text и Unbounded встроены
+                <Check size={14} className="mt-0.5 flex-none text-ok" aria-hidden /> Текст векторный, шрифты встроены
               </li>
               <li className="flex items-start gap-2">
                 <Check size={14} className="mt-0.5 flex-none text-ok" aria-hidden /> {pages} стр. · метки реза при полях
