@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useApi } from '../api/useApi'
 import { api, tokenStore } from '../api/client'
 import {
@@ -33,14 +34,38 @@ type SummaryRow = {
 const UNIT_LABEL: Record<string, string> = { g: 'г', ml: 'мл', pcs: 'шт' }
 const API = (import.meta as any).env?.VITE_API_URL ?? ''
 
+type TabKey = 'fill' | 'recipes' | 'summary'
+
 export default function Cost() {
-  const [tab, setTab] = useState<'ingredients' | 'recipes' | 'summary'>('ingredients')
+  const [params] = useSearchParams()
+  // ?focus=missing — из импорта техкарты и внешних ссылок: сразу режим дозаполнения.
+  const focusMissing = params.get('focus') === 'missing'
+  const [tab, setTab] = useState<TabKey>(focusMissing ? 'fill' : 'recipes')
   const cats = useApi<{ categories: Cat[] }>('/cost/categories')
   const ings = useApi<{ ingredients: Ing[] }>('/cost/ingredients')
   const recipes = useApi<{ recipes: Recipe[] }>('/cost/recipes')
   const summary = useApi<{ rows: SummaryRow[] }>(tab === 'summary' ? '/cost/summary' : null)
   const reloadAll = () => {
     cats.reload(); ings.reload(); recipes.reload(); summary.reload()
+  }
+
+  const ingredientList = ings.data?.ingredients || []
+  const missingCount = useMemo(() => ingredientList.filter((i) => !i.complete).length, [ingredientList])
+
+  // Первый ответ справочника: если есть незаполненные позиции — открываем «Дозаполнить»,
+  // но только пока кассир сам не выбрал другую вкладку.
+  const tabTouched = useRef(false)
+  const autoTabDone = useRef(false)
+  useEffect(() => {
+    if (autoTabDone.current || tabTouched.current || focusMissing) return
+    if (!ings.data) return
+    autoTabDone.current = true
+    if (missingCount > 0) setTab('fill')
+  }, [ings.data, missingCount, focusMissing])
+
+  const selectTab = (k: TabKey) => {
+    tabTouched.current = true
+    setTab(k)
   }
 
   return (
@@ -54,17 +79,17 @@ export default function Cost() {
       />
       <Tabs
         value={tab}
-        onChange={(v) => setTab(v as typeof tab)}
+        onChange={selectTab}
         items={[
-          { key: 'ingredients', label: 'Ингредиенты' },
+          { key: 'fill', label: 'Дозаполнить', count: missingCount || null },
           { key: 'recipes', label: 'Рецепты' },
           { key: 'summary', label: 'Сводка' },
         ]}
       />
-      {tab === 'ingredients' && (
-        <IngredientsTab
+      {tab === 'fill' && (
+        <FillTab
           cats={cats.data?.categories || []}
-          ings={ings.data?.ingredients || []}
+          ings={ingredientList}
           loading={ings.loading}
           error={ings.error}
           onChange={() => { ings.reload(); cats.reload(); recipes.reload() }}
@@ -86,7 +111,7 @@ export default function Cost() {
   )
 }
 
-function IngredientsTab({
+function FillTab({
   cats, ings, loading, error, onChange,
 }: {
   cats: Cat[]; ings: Ing[]; loading: boolean; error: string; onChange: () => void
@@ -584,7 +609,7 @@ function RecipesTab({
       </Card>
       <div className="space-y-3">
         {!current ? (
-          <EmptyState title="Выберите рецепт" text="Или импортируйте техкарту на вкладке «Ингредиенты»" />
+          <EmptyState title="Выберите рецепт" text="Или импортируйте техкарту кнопкой «Загрузить»" />
         ) : (
           <>
             <Card className="p-4 space-y-3">
