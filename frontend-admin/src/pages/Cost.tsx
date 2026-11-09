@@ -723,6 +723,8 @@ function RecipesTab({
   const [addIngId, setAddIngId] = useState('')
   const [addQty, setAddQty] = useState('1')
   const [addRole, setAddRole] = useState<'base' | 'optional'>('base')
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [busy, setBusy] = useState(false)
 
   const openRecipe = (r: Recipe) => {
     setSel(r.id)
@@ -748,6 +750,7 @@ function RecipesTab({
 
   const saveRecipe = async () => {
     if (!sel) return
+    setBusy(true)
     try {
       const res = await api<{ recipe: Recipe }>(`/cost/recipes/${sel}`, {
         method: 'PUT',
@@ -767,18 +770,24 @@ function RecipesTab({
       if (res.recipe) openRecipe(res.recipe)
     } catch (e) {
       toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+    } finally {
+      setBusy(false)
     }
   }
 
   const deleteRecipe = async () => {
-    if (!sel || !confirm('Удалить рецепт?')) return
+    if (!sel) return
+    setBusy(true)
     try {
       await api(`/cost/recipes/${sel}`, { method: 'DELETE' })
       setSel(null)
-      toast.push('Удалён')
+      toast.push('Рецепт удалён')
       onChange()
     } catch (e) {
       toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad')
+    } finally {
+      setBusy(false)
+      setConfirmDelete(false)
     }
   }
 
@@ -803,146 +812,187 @@ function RecipesTab({
   }
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[240px_1fr]">
-      <Card className="p-2 space-y-1 max-h-[70vh] overflow-auto">
-        <Button className="w-full mb-2" onClick={createRecipe}><Plus size={16} /> Рецепт</Button>
-        {loading && <Skeleton className="h-20" />}
-        {error && <ErrorBox message={error} />}
-        {recipes.map((r) => (
-          <button
-            key={r.id}
-            type="button"
-            onClick={() => openRecipe(r)}
-            className={cx(
-              'w-full text-left rounded-lg px-2 py-1.5 text-sm',
-              sel === r.id ? 'bg-brand-soft text-brand' : 'hover:bg-surface-2',
-              r.missingPrices && 'border-l-2 border-red-500',
-            )}
-          >
-            <div className="font-medium">{r.name}</div>
-            <div className="text-xs text-ink-secondary">
-              {r.costRub != null ? `${r.costRub.toFixed(2)} ₽` : 'себес —'}
-              {r.missingPrices ? ' · есть позиции без цены' : ''}
-            </div>
-          </button>
-        ))}
-        {!recipes.length && !loading && (
-          <EmptyState title="Нет рецептов" text="Импортируйте Excel или создайте вручную" />
-        )}
-      </Card>
-      <div className="space-y-3">
-        {!current ? (
-          <EmptyState title="Выберите рецепт" text="Или импортируйте техкарту кнопкой «Загрузить»" />
-        ) : (
-          <>
-            <Card className="p-4 space-y-3">
-              <Field label="Название"><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
-              <div className="grid grid-cols-2 gap-2">
-                <Field label="Наценка %"><Input value={markup} onChange={(e) => setMarkup(e.target.value)} /></Field>
-                <Field label="Розница ₽"><Input value={retail} onChange={(e) => setRetail(e.target.value)} placeholder="утверждённая" /></Field>
-              </div>
-              <div className="flex flex-wrap gap-3 text-sm">
-                <Badge tone="brand">Себес {current.costRub != null ? `${current.costRub.toFixed(2)} ₽` : '—'}</Badge>
-                <Badge tone="neutral">Расчёт {current.retailCalcRub != null ? `${current.retailCalcRub.toFixed(2)} ₽` : '—'}</Badge>
-                <Badge tone={current.marginPct != null && current.marginPct < 50 ? 'warn' : 'ok'}>
-                  Маржа {current.marginPct != null ? `${current.marginPct}%` : '—'}
-                </Badge>
-              </div>
-              {current.missingPrices && (
-                <div className="text-sm text-red-700 bg-red-50 rounded-lg px-3 py-2">
-                  Красные строки без цены закупки не входят в себестоимость. Укажите цену в справочнике ингредиентов.
-                </div>
+    <>
+      <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
+        {/* Телефон: сначала список на весь экран, редактор открывается отдельно. */}
+        <Card className={cx('space-y-1 p-2 lg:max-h-[70vh] lg:overflow-auto', sel !== null && 'hidden lg:block')}>
+          <Button className="mb-2 w-full" onClick={createRecipe}><Plus size={16} /> Рецепт</Button>
+          {loading && <Skeleton className="h-20" />}
+          {error && <ErrorBox message={error} />}
+          {recipes.map((r) => (
+            <button
+              key={r.id}
+              type="button"
+              onClick={() => openRecipe(r)}
+              className={cx(
+                'w-full rounded-xl px-3 py-2.5 text-left text-sm',
+                sel === r.id ? 'bg-brand-soft text-brand' : 'hover:bg-surface-2',
+                r.missingPrices && 'border-l-2 border-red-500',
               )}
-              <div className="flex gap-2">
-                <Button onClick={saveRecipe}>Сохранить</Button>
-                <Button variant="ghost" onClick={deleteRecipe}>Удалить рецепт</Button>
+            >
+              <div className="font-medium">{r.name}</div>
+              <div className="text-xs text-ink-secondary">
+                {r.costRub != null ? `${r.costRub.toFixed(2)} ₽` : 'себес —'}
+                {r.missingPrices && ' · есть позиции без цены'}
               </div>
-            </Card>
-            <Card className="p-4 space-y-2">
-              <div className="font-medium">Состав (напиток + стакан + крышка + …)</div>
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-ink-secondary">
-                    <th className="p-1">Ингредиент</th>
-                    <th className="p-1">Кол-во</th>
-                    <th className="p-1">Роль</th>
-                    <th className="p-1">Сумма</th>
-                    <th className="p-1"></th>
-                  </tr>
-                </thead>
-                <tbody>
+            </button>
+          ))}
+          {!recipes.length && !loading && (
+            <EmptyState title="Нет рецептов" text="Импортируйте Excel или создайте вручную" />
+          )}
+        </Card>
+
+        <div className={cx('space-y-3', sel === null && 'hidden lg:block')}>
+          {!current ? (
+            <EmptyState title="Выберите рецепт" text="Или импортируйте техкарту кнопкой «Загрузить»" />
+          ) : (
+            <>
+              <Button variant="ghost" className="lg:hidden" onClick={() => setSel(null)}>← К списку</Button>
+
+              <Card className="space-y-3 p-4">
+                <Field label="Название"><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
+                <div className="flex flex-wrap gap-2">
+                  <Badge tone="brand">Себес {current.costRub != null ? `${current.costRub.toFixed(2)} ₽` : '—'}</Badge>
+                  <Badge tone="neutral">Расчёт {current.retailCalcRub != null ? `${current.retailCalcRub.toFixed(2)} ₽` : '—'}</Badge>
+                  <Badge tone={current.marginPct != null && current.marginPct < 50 ? 'warn' : 'ok'}>
+                    Маржа {current.marginPct != null ? `${current.marginPct}%` : '—'}
+                  </Badge>
+                </div>
+                {current.missingPrices && (
+                  <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+                    Красные строки без цены закупки не входят в себестоимость — укажите цену в «Дозаполнить».
+                  </div>
+                )}
+                <Button variant="danger" className="w-full sm:w-auto" onClick={() => setConfirmDelete(true)} disabled={busy}>
+                  <Trash2 size={15} /> Удалить рецепт
+                </Button>
+              </Card>
+
+              <Card className="space-y-3 p-4">
+                <div className="font-medium">Состав (напиток + стакан + крышка + …)</div>
+                <div className="space-y-2">
                   {lines.map((l, idx) => {
                     const ing = ings.find((i) => i.id === l.ingredientId)
                     const incomplete = !(l.complete ?? ing?.complete)
+                    const sum = l.lineSumRub != null ? `${l.lineSumRub.toFixed(2)} ₽` : '—'
                     return (
-                      <tr key={idx} className={cx('border-t border-line', incomplete && 'bg-red-50 text-red-800')}>
-                        <td className="p-1">
-                          {l.ingredientName || ing?.name}
-                          {incomplete && <span className="ml-1 text-xs">нет цены</span>}
-                        </td>
-                        <td className="p-1">
-                          <Input
-                            className="w-20"
-                            value={String(l.qty)}
-                            onChange={(e) => {
-                              const next = [...lines]
-                              next[idx] = { ...l, qty: Number(e.target.value) || 0 }
-                              setLines(next)
-                            }}
-                          />{' '}
-                          {UNIT_LABEL[l.unit || ing?.unit || ''] || ''}
-                        </td>
-                        <td className="p-1">
-                          <Select
-                            value={l.lineRole}
-                            onChange={(e) => {
-                              const next = [...lines]
-                              next[idx] = { ...l, lineRole: e.target.value as 'base' | 'optional' }
-                              setLines(next)
-                            }}
+                      <div
+                        key={idx}
+                        className={cx('rounded-xl border border-line p-2.5', incomplete && 'border-red-300 !bg-red-50')}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className={cx('text-sm font-medium', incomplete && 'text-red-800')}>
+                              {l.ingredientName || ing?.name}
+                            </div>
+                            <div className="text-xs text-ink-secondary">
+                              {incomplete ? 'нет цены — не входит в себес' : sum}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            aria-label={`Убрать ${l.ingredientName || ing?.name || 'строку'}`}
+                            onClick={() => setLines(lines.filter((_, i) => i !== idx))}
                           >
-                            <option value="base">база</option>
-                            <option value="optional">по желанию</option>
-                          </Select>
-                        </td>
-                        <td className="p-1">{incomplete ? '—' : (l.lineSumRub != null ? `${l.lineSumRub.toFixed(2)} ₽` : '—')}</td>
-                        <td className="p-1">
-                          <button type="button" onClick={() => setLines(lines.filter((_, i) => i !== idx))}>
-                            <Trash2 size={14} />
+                            <Trash2 size={16} />
                           </button>
-                        </td>
-                      </tr>
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-end gap-2">
+                          <Field label="Кол-во">
+                            <Input
+                              className="w-24"
+                              inputMode="decimal"
+                              value={String(l.qty)}
+                              onChange={(e) => {
+                                const next = [...lines]
+                                next[idx] = { ...l, qty: Number(e.target.value) || 0 }
+                                setLines(next)
+                              }}
+                            />
+                            <span className="ml-1 text-xs text-ink-secondary">
+                              {UNIT_LABEL[l.unit || ing?.unit || ''] || ''}
+                            </span>
+                          </Field>
+                          <Field label="Роль">
+                            <Select
+                              value={l.lineRole}
+                              onChange={(e) => {
+                                const next = [...lines]
+                                next[idx] = { ...l, lineRole: e.target.value as 'base' | 'optional' }
+                                setLines(next)
+                              }}
+                            >
+                              <option value="base">база</option>
+                              <option value="optional">по желанию</option>
+                            </Select>
+                          </Field>
+                        </div>
+                      </div>
                     )
                   })}
-                </tbody>
-              </table>
-              <div className="flex flex-wrap gap-2 items-end">
-                <Field label="Ингредиент">
-                  <Select value={addIngId} onChange={(e) => setAddIngId(e.target.value)}>
-                    <option value="">—</option>
-                    {ings.map((i) => (
-                      <option key={i.id} value={i.id}>
-                        {i.name}{!i.complete ? ' (нет цены)' : ''}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-                <Field label="Кол-во"><Input className="w-24" value={addQty} onChange={(e) => setAddQty(e.target.value)} /></Field>
-                <Field label="Роль">
-                  <Select value={addRole} onChange={(e) => setAddRole(e.target.value as 'base' | 'optional')}>
-                    <option value="base">база</option>
-                    <option value="optional">по желанию</option>
-                  </Select>
-                </Field>
-                <Button variant="ghost" onClick={addLine}><Plus size={16} /> Строка</Button>
+                  {!lines.length && (
+                    <div className="rounded-xl bg-surface-2 px-3 py-3 text-sm text-ink-secondary">
+                      Состав пуст — добавьте молоко, кофе, стакан и крышку.
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-end gap-2 border-t border-line pt-3">
+                  <Field label="Ингредиент">
+                    <Select value={addIngId} onChange={(e) => setAddIngId(e.target.value)}>
+                      <option value="">—</option>
+                      {ings.map((i) => (
+                        <option key={i.id} value={i.id}>
+                          {i.name}{!i.complete ? ' (нет цены)' : ''}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                  <Field label="Кол-во">
+                    <Input className="w-24" inputMode="decimal" value={addQty} onChange={(e) => setAddQty(e.target.value)} />
+                  </Field>
+                  <Field label="Роль">
+                    <Select value={addRole} onChange={(e) => setAddRole(e.target.value as 'base' | 'optional')}>
+                      <option value="base">база</option>
+                      <option value="optional">по желанию</option>
+                    </Select>
+                  </Field>
+                  <Button variant="secondary" onClick={addLine}><Plus size={16} /> Строка</Button>
+                </div>
+              </Card>
+
+              {/* На телефоне панель сохранения липнет к низу: наценка и розница всегда под рукой. */}
+              <div className="sticky bottom-0 z-10 -mx-1 mt-1 rounded-t-2xl border-t border-line bg-[var(--page)]/95 px-1 pb-2 pt-2 backdrop-blur lg:static lg:rounded-none lg:border-0 lg:bg-transparent lg:p-0">
+                <div className="flex flex-wrap items-end gap-2">
+                  <Field label="Наценка %">
+                    <Input className="w-24" inputMode="decimal" value={markup} onChange={(e) => setMarkup(e.target.value)} />
+                  </Field>
+                  <Field label="Розница ₽">
+                    <Input className="w-28" inputMode="decimal" value={retail} onChange={(e) => setRetail(e.target.value)} placeholder="утверждённая" />
+                  </Field>
+                  <Button className="w-full sm:ml-auto sm:w-auto" onClick={saveRecipe} loading={busy}>Сохранить</Button>
+                </div>
               </div>
-            </Card>
-          </>
-        )}
+            </>
+          )}
+        </div>
       </div>
-    </div>
+
+      <ConfirmDialog
+        open={confirmDelete}
+        title={`Удалить рецепт «${name}»?`}
+        confirmLabel="Удалить"
+        danger
+        busy={busy}
+        onConfirm={() => void deleteRecipe()}
+        onCancel={() => setConfirmDelete(false)}
+      >
+        Рецепт исчезнет из сводки. Ингредиенты и их цены останутся в справочнике.
+      </ConfirmDialog>
+    </>
   )
 }
+
 
 function SummaryTab({ rows, loading, error }: { rows: SummaryRow[]; loading: boolean; error: string }) {
   const exportCsv = () => {
