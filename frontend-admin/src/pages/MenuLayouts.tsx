@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { Calculator, Copy, FileText, Info, LayoutTemplate, Plus, Trash2 } from 'lucide-react'
 import { api } from '../api/client'
 import { useApi } from '../api/useApi'
-import { ago, fmtDateTime } from '../lib/format'
+import { ago } from '../lib/format'
 import {
   DEFAULT_THEME,
   LAYOUT_FORMATS,
@@ -276,7 +276,6 @@ export default function MenuLayouts() {
       <p className="mt-5 flex items-start gap-2 text-[12px] leading-4 text-ink-tertiary">
         <Calculator size={14} className="mt-0.5 flex-none" aria-hidden />
         Себестоимость и наценка считаются отдельно — раздел «Себестоимость». Здесь только вёрстка листа.
-        <span className="sr-only">{fmtDateTime(Date.now())}</span>
       </p>
     </>
   )
