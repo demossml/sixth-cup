@@ -4,7 +4,7 @@ import { useApi } from '../api/useApi'
 import { api, tokenStore } from '../api/client'
 import {
   PageHeader, Card, EmptyState, Badge, Button, Input, Select, Field,
-  ErrorBox, Skeleton, Tabs, useToast, cx,
+  ErrorBox, Skeleton, Tabs, useToast, cx, DataTable, type Column,
 } from '../ui/kit'
 import { Plus, RefreshCw, Sparkles, Trash2, Upload, Pencil } from 'lucide-react'
 import { csvName, downloadCsv } from '../lib/csv'
@@ -162,6 +162,25 @@ export default function Cost() {
   )
 }
 
+/** Компактный чип-фильтр (дизайн §A3): «Без цены» / «Все» / категории. */
+function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cx(
+        'shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-sm transition',
+        active
+          ? 'border-brand bg-brand-soft font-semibold text-brand'
+          : 'border-line bg-card text-ink-secondary hover:bg-surface-2',
+      )}
+    >
+      {children}
+    </button>
+  )
+}
+
 function FillTab({
   cats, ings, loading, error, onChange, focusMissingSignal = 0,
 }: {
@@ -172,7 +191,7 @@ function FillTab({
   const toast = useToast()
   const [q, setQ] = useState('')
   const [catId, setCatId] = useState('')
-  const [onlyMissing, setOnlyMissing] = useState(false)
+  const [onlyMissing, setOnlyMissing] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
   const [form, setForm] = useState({
@@ -254,25 +273,77 @@ function FillTab({
     }
   }
 
+  const missingHere = useMemo(() => ings.filter((i) => !i.complete).length, [ings])
+  const withPrice = ings.length - missingHere
+
+  const columns: Column<Ing>[] = [
+    {
+      key: 'name',
+      header: 'Название',
+      primary: true,
+      render: (i) => (
+        <span className="flex flex-wrap items-center gap-2">
+          <span className="font-medium">{i.name}</span>
+          {!i.complete && <Badge tone="bad">нет цены</Badge>}
+        </span>
+      ),
+    },
+    { key: 'cat', header: 'Категория', render: (i) => i.categoryName },
+    { key: 'pack', header: 'Фасовка', render: (i) => `${i.packQty} ${UNIT_LABEL[i.unit] || i.unit}` },
+    {
+      key: 'price',
+      header: '₽/фас.',
+      align: 'right',
+      render: (i) => (i.packPriceRub != null ? i.packPriceRub : <span className="text-red-700">—</span>),
+    },
+    {
+      key: 'unit',
+      header: '₽/ед.',
+      align: 'right',
+      hideOnPhone: true,
+      render: (i) => (i.unitPriceRub != null ? i.unitPriceRub.toFixed(4) : '—'),
+    },
+    { key: 'status', header: 'Статус', hideOnPhone: true, render: (i) => <Badge tone={i.complete ? 'ok' : 'bad'}>{i.complete ? 'готов' : 'нет цены'}</Badge> },
+    {
+      key: 'act',
+      header: '',
+      hideOnPhone: true,
+      render: (i) => (
+        <span className="whitespace-nowrap">
+          <button type="button" className="mr-2" title="Изменить" onClick={(e) => { e.stopPropagation(); openEdit(i) }}><Pencil size={14} /></button>
+          <button type="button" title="Удалить" onClick={(e) => { e.stopPropagation(); void removeIng(i) }}><Trash2 size={14} /></button>
+        </span>
+      ),
+    },
+  ]
+
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap gap-2 items-end">
+      <div className="flex flex-wrap items-end gap-2">
         <Field label="Поиск"><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Молоко, стакан…" /></Field>
-        <Field label="Категория">
-          <Select value={catId} onChange={(e) => setCatId(e.target.value)}>
-            <option value="">Все</option>
-            {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </Select>
-        </Field>
-        <label className="flex items-center gap-2 text-sm pb-2">
-          <input type="checkbox" checked={onlyMissing} onChange={(e) => setOnlyMissing(e.target.checked)} />
-          Только без цены
-        </label>
-        <Button onClick={() => { setEditId(null); setForm({ name: '', categoryId: '', unit: 'ml', packQty: '1000', packPriceRub: '', comment: '' }); setShowForm(true) }}>
+        <Button
+          className="sm:ml-auto"
+          onClick={() => { setEditId(null); setForm({ name: '', categoryId: '', unit: 'ml', packQty: '1000', packPriceRub: '', comment: '' }); setShowForm(true) }}
+        >
           <Plus size={16} /> Ингредиент
         </Button>
       </div>
-      <Card className="p-3 flex flex-wrap gap-2 items-end">
+
+      {/* Липкие фильтры: на телефоне таблица не главный UI. */}
+      <div className="sticky top-0 z-10 -mx-1 space-y-2 bg-[var(--page)]/95 px-1 py-2 backdrop-blur">
+        <div className="flex flex-wrap gap-1.5">
+          <Chip active={onlyMissing} onClick={() => setOnlyMissing(true)}>Без цены {missingHere}</Chip>
+          <Chip active={!onlyMissing} onClick={() => setOnlyMissing(false)}>Все {ings.length}</Chip>
+        </div>
+        <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+          <Chip active={!catId} onClick={() => setCatId('')}>Все категории</Chip>
+          {cats.map((c) => (
+            <Chip key={c.id} active={catId === String(c.id)} onClick={() => setCatId(String(c.id))}>{c.name}</Chip>
+          ))}
+        </div>
+      </div>
+
+      <Card className="flex flex-wrap items-end gap-2 p-3">
         <Field label="Новая категория">
           <Input value={newCat} onChange={(e) => setNewCat(e.target.value)} placeholder="Напр. Маршмеллоу" />
         </Field>
@@ -282,46 +353,21 @@ function FillTab({
       {loading && !ings.length ? <Skeleton className="h-40" /> : null}
       {!loading && !filtered.length ? (
         <EmptyState
-          title="Справочник пуст"
-          text="Импортируйте Excel-техкарту или добавьте молоко, кофе, стаканы вручную."
+          title={onlyMissing ? 'Все цены заполнены' : 'Справочник пуст'}
+          text={
+            onlyMissing
+              ? `Позиций без цены нет — в себестоимость входят все ${withPrice} ингредиентов. Импортируйте техкарту кнопкой «Загрузить».`
+              : 'Импортируйте Excel-техкарту или добавьте молоко, кофе, стаканы вручную.'
+          }
         />
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-line">
-          <table className="w-full text-sm">
-            <thead className="bg-surface-2 text-left text-ink-secondary">
-              <tr>
-                <th className="p-2">Название</th>
-                <th className="p-2">Категория</th>
-                <th className="p-2">Фасовка</th>
-                <th className="p-2">₽/фас.</th>
-                <th className="p-2">₽/ед.</th>
-                <th className="p-2">Статус</th>
-                <th className="p-2"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((i) => (
-                <tr
-                  key={i.id}
-                  className={cx('border-t border-line', !i.complete && 'bg-red-50 text-red-800')}
-                >
-                  <td className="p-2 font-medium">{i.name}</td>
-                  <td className="p-2">{i.categoryName}</td>
-                  <td className="p-2">{i.packQty} {UNIT_LABEL[i.unit] || i.unit}</td>
-                  <td className="p-2">{i.packPriceRub ?? '—'}</td>
-                  <td className="p-2">{i.unitPriceRub != null ? i.unitPriceRub.toFixed(4) : '—'}</td>
-                  <td className="p-2">
-                    {i.complete ? <Badge tone="ok">готов</Badge> : <Badge tone="bad">нет цены</Badge>}
-                  </td>
-                  <td className="p-2 whitespace-nowrap">
-                    <button type="button" className="mr-2" title="Изменить" onClick={() => openEdit(i)}><Pencil size={14} /></button>
-                    <button type="button" title="Удалить" onClick={() => removeIng(i)}><Trash2 size={14} /></button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          rows={filtered}
+          columns={columns}
+          rowKey={(i) => i.id}
+          onRowClick={openEdit}
+          rowClassName={(i) => (i.complete ? undefined : '!bg-red-50')}
+        />
       )}
       {showForm && (
         <Card className="p-4 space-y-3 max-w-lg">

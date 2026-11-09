@@ -403,10 +403,12 @@ export type Column<T> = {
   sortKey?: string
 }
 export function DataTable<T>({
-  rows, columns, rowKey, onRowClick, selection, onSelectionChange, sort, onSort, empty,
+  rows, columns, rowKey, onRowClick, selection, onSelectionChange, sort, onSort, empty, rowClassName,
 }: {
   rows: T[]; columns: Column<T>[]; rowKey: (r: T) => string | number
   onRowClick?: (r: T) => void
+  /** Доп. классы строки (и карточки на телефоне): например, подсветка незаполненных позиций. */
+  rowClassName?: (r: T) => string | undefined
   selection?: Set<string | number>; onSelectionChange?: (s: Set<string | number>) => void
   sort?: { key: string; dir: 'asc' | 'desc' }; onSort?: (key: string) => void
   empty?: ReactNode
@@ -457,7 +459,7 @@ export function DataTable<T>({
                   onClick={onRowClick ? () => onRowClick(r) : undefined}
                   tabIndex={onRowClick ? 0 : undefined}
                   onKeyDown={onRowClick ? (e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onRowClick(r) } } : undefined}
-                  className={cx('border-t border-line', onRowClick && 'cursor-pointer hover:bg-brand-light focus-visible:bg-brand-light focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand-mid', selection?.has(k) && 'bg-brand-soft')}
+                  className={cx('border-t border-line', onRowClick && 'cursor-pointer hover:bg-brand-light focus-visible:bg-brand-light focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand-mid', selection?.has(k) && 'bg-brand-soft', rowClassName?.(r))}
                 >
                   {selectable && (
                     <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
@@ -483,7 +485,7 @@ export function DataTable<T>({
               onClick={onRowClick ? () => onRowClick(r) : undefined}
               tabIndex={onRowClick ? 0 : undefined}
               onKeyDown={onRowClick ? (e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onRowClick(r) } } : undefined}
-              className={cx('rounded-2xl border border-line bg-card p-3.5 shadow-card', onRowClick && 'cursor-pointer active:bg-brand-light', selection?.has(k) && 'border-brand bg-brand-soft')}
+              className={cx('rounded-2xl border border-line bg-card p-3.5 shadow-card', onRowClick && 'cursor-pointer active:bg-brand-light', selection?.has(k) && 'border-brand bg-brand-soft', rowClassName?.(r))}
             >
               <div className="flex items-start gap-2.5">
                 {selectable && (
