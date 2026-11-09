@@ -5,6 +5,7 @@ import App from './App'
 import './styles/fonts-audit.css'
 import './styles/coffee.css'
 import './styles.css'
+import './styles/menuLayout.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

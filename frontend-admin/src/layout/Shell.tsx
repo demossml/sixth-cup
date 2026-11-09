@@ -5,7 +5,7 @@ import {
   Activity, BarChart3, Bot, Box, LineChart, CalendarClock, Coffee, Gift, HelpCircle, 
   LayoutDashboard, LogOut, ClipboardList, Package, Search, Settings, Menu,
   Share2, Store, Users, X, MoreHorizontal, Milk, Ruler, Layers,
-  ListChecks, ClipboardCheck, Calculator,
+  ListChecks, ClipboardCheck, Calculator, LayoutTemplate,
 } from 'lucide-react'
 import { useApi } from '../api/useApi'
 import type { Health } from '../api/types'
@@ -33,6 +33,7 @@ const MANAGE: NavItem[] = [
   { to: '/cash', label: 'Касса', icon: <Store size={17} /> },
   { to: '/stock', label: 'Склад', icon: <Box size={17} /> },
   { to: '/cost', label: 'Себестоимость', icon: <Calculator size={17} /> },
+  { to: '/menu-layouts', label: 'Макет меню', icon: <LayoutTemplate size={17} /> },
   { to: '/purchases', label: 'Закупки', icon: <Package size={17} /> },
   { to: '/inventory', label: 'Инвентаризация', icon: <ClipboardList size={17} /> },
   { to: '/staff', label: 'Сотрудники', icon: <Users size={17} /> },
@@ -85,6 +86,7 @@ const TITLES: Record<string, string> = {
   '/cash': 'Касса',
   '/stock': 'Склад',
   '/cost': 'Себестоимость',
+  '/menu-layouts': 'Макет меню',
   '/purchases': 'Закупки',
   '/inventory': 'Инвентаризация',
   '/staff': 'Сотрудники',

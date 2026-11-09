@@ -78,6 +78,7 @@ import { adminAnalytics } from './analytics'
 import { adminAi } from './ai'
 import { adminStock } from './stock'
 import { adminCost } from './cost'
+import { adminMenuLayouts } from './menuLayouts'
 import { adminStudio } from './studio'
 import { getAiSettingsPublic } from '../../lib/aiSettings'
 
@@ -1992,4 +1993,5 @@ adminRoutes.route('/', adminConsole)
 adminRoutes.route('/', adminStudio) // before adminStock: /inventory/overview must win over /inventory/:id
 adminRoutes.route('/', adminStock)
 adminRoutes.route('/', adminCost)
+adminRoutes.route('/', adminMenuLayouts)
 adminRoutes.route('/', staffAdminRoutes)
