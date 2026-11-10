@@ -88,6 +88,44 @@ async function loadImage(url: string | null | undefined): Promise<Buffer | null>
   }
 }
 
+/**
+ * Кадрирование под рамку блока: считаем, какая часть исходника видна при `cover`
+ * и заданном зуме, и вырезаем её через sharp. Иначе PDFKit рисует центр картинки,
+ * и «фокус» на лице товара не совпадает с редактором.
+ */
+async function cropForBox(
+  url: string | null | undefined,
+  boxW: number,
+  boxH: number,
+  crop: { zoom: number; x: number; y: number } | null,
+): Promise<Buffer | null> {
+  if (!crop || boxW <= 0 || boxH <= 0) return null
+  const path = imagePathFor(url)
+  if (!path) return null
+  try {
+    const sharp = (await import('sharp')).default
+    const img = sharp(path)
+    const meta = await img.metadata()
+    const sw = meta.width ?? 0
+    const sh = meta.height ?? 0
+    if (!sw || !sh) return null
+    // При cover картинка масштабируется так, чтобы заполнить рамку целиком.
+    const coverScale = Math.max(boxW / sw, boxH / sh)
+    const visibleW = Math.min(sw, boxW / coverScale) / crop.zoom
+    const visibleH = Math.min(sh, boxH / coverScale) / crop.zoom
+    const left = Math.max(0, Math.min(sw - visibleW, crop.x * sw - visibleW / 2))
+    const top = Math.max(0, Math.min(sh - visibleH, crop.y * sh - visibleH / 2))
+    const dpi = 300 / 25.4
+    return await sharp(path)
+      .extract({ left: Math.round(left), top: Math.round(top), width: Math.max(1, Math.round(visibleW)), height: Math.max(1, Math.round(visibleH)) })
+      .resize({ width: Math.max(1, Math.round(boxW * dpi)), withoutEnlargement: false })
+      .png()
+      .toBuffer()
+  } catch {
+    return null
+  }
+}
+
 function imagePathFor(url: string | null | undefined): string | null {
   if (!url) return null
   const clean = url.split('?')[0]!
@@ -121,7 +159,14 @@ function drawBlock(
   doc: PdfDoc,
   block: RenderBlock,
   rect: Rect,
-  ctx: { theme: LayoutView['theme']; scale: number; muted: string; line: string; imageFor: (url: string | null | undefined) => Buffer | null },
+  ctx: {
+    theme: LayoutView['theme']
+    scale: number
+    muted: string
+    line: string
+    imageFor: (url: string | null | undefined) => Buffer | null
+    cropFor: (block: RenderBlock) => Buffer | null
+  },
 ) {
   const { theme, scale, muted, line, imageFor } = ctx
   const { x, y, w, h } = rect
@@ -170,7 +215,7 @@ function drawBlock(
       return
     }
     case 'image': {
-      const src = imageFor(block.displayImageUrl ?? block.url)
+      const src = ctx.cropFor(block) ?? imageFor(block.displayImageUrl ?? block.url)
       if (!src) {
         doc.strokeColor(line).lineWidth(0.8).rect(x, y, w, h).stroke()
         doc.font('body').fontSize(Math.max(5, 7 * scale)).fillColor(muted)
@@ -187,7 +232,7 @@ function drawBlock(
     }
     default: {
       // product
-      const thumbSrc = block.showPhoto ? imageFor(block.displayImageUrl) : null
+      const thumbSrc = block.showPhoto ? ctx.cropFor(block) ?? imageFor(block.displayImageUrl) : null
       const thumb = thumbSrc ? Math.min(h, w * 0.35) : 0
       const padX = thumb ? thumb + 4 * scale : 0
       const contentW = w - padX
@@ -304,6 +349,21 @@ export async function renderLayoutPdf(view: LayoutView, opts: PdfOptions): Promi
   await Promise.all([...urls].map(async (url) => void loaded.set(url, await loadImage(url))))
   const imageFor = (url: string | null | undefined): Buffer | null => (url ? loaded.get(url) ?? null : null)
 
+  // Кадрированные варианты считаем заранее: drawBlock синхронный.
+  const cropped = new Map<string, Buffer | null>()
+  await Promise.all(
+    pages.flatMap((page) =>
+      page.blocks
+        .filter((b) => b.photoCrop)
+        .map(async (b) => {
+          const rect = placeBlock(box, b)
+          const url = b.displayImageUrl ?? b.url
+          cropped.set(b.id, await cropForBox(url, rect.w, rect.h, b.photoCrop))
+        }),
+    ),
+  )
+  const cropFor = (block: RenderBlock): Buffer | null => cropped.get(block.id) ?? null
+
   for (let pi = 0; pi < pages.length; pi++) {
     const page = pages[pi]!
     doc.addPage({ size: [W, H], margin: 0 })
@@ -345,7 +405,7 @@ export async function renderLayoutPdf(view: LayoutView, opts: PdfOptions): Promi
         const cy = rect.y + rect.h / 2
         doc.rotate(block.rotationDeg, { origin: [cx, cy] })
       }
-      drawBlock(doc, block, rect, { theme, scale, muted, line, imageFor })
+      drawBlock(doc, block, rect, { theme, scale, muted, line, imageFor, cropFor })
       doc.fillOpacity(1)
       doc.restore()
     }

@@ -5,6 +5,7 @@ import {
   fitFontSize,
   groupBlocks,
   groupSelectionIds,
+  layoutColumns,
   ungroupBlocks,
   clampZoom,
   distributeBlocks,
@@ -152,5 +153,25 @@ describe('авто-фит текста', () => {
 
   it('оставляет кегль, если уже помещается', () => {
     expect(fitFontSize(() => true, 18)).toBe(18)
+  })
+})
+
+describe('раскладка по колонкам', () => {
+  it('в две колонки: половина блоков слева, половина справа, без наложений', () => {
+    const blocks = ['a', 'b', 'c', 'd'].map((id, i) => block(id, 0, i * 10, 40, 6))
+    const out = layoutColumns(blocks, ['a', 'b', 'c', 'd'], 2)
+    const left = out.filter((b) => b.xPct === Math.min(...out.map((x) => x.xPct)))
+    expect(left).toHaveLength(2)
+    const rights = new Set(out.map((b) => Math.round(b.xPct)))
+    expect(rights.size).toBe(2)
+    // блоки в колонке не пересекаются по вертикали
+    const sorted = [...out].sort((a, b) => a.xPct - b.xPct || a.yPct - b.yPct)
+    expect(sorted[1]!.yPct).toBeGreaterThanOrEqual(sorted[0]!.yPct + sorted[0]!.hPct)
+  })
+
+  it('заблокированный блок остаётся на месте', () => {
+    const blocks = [block('a', 0, 0, 40, 6), block('b', 0, 10, 40, 6, { locked: true })]
+    const out = layoutColumns(blocks, ['a', 'b'], 2)
+    expect(out.find((b) => b.id === 'b')!.xPct).toBe(0)
   })
 })

@@ -73,6 +73,8 @@ export type MenuBlock = {
   url: string | null
   /** image: как вписывать картинку в рамку. */
   fit: 'cover' | 'contain'
+  /** Кадрирование фото: масштаб 1–3 и точка фокуса (0…1 по осям). */
+  photoCrop: { zoom: number; x: number; y: number } | null
   /** text: кегль в pt, выравнивание, жирность, регистр. */
   fontSizePt: number
   align: 'left' | 'center' | 'right'
@@ -294,6 +296,11 @@ function normalizeBlock(raw: unknown, index: number): MenuBlock | null {
     text: str(b.text, 400),
     url: sanitizeUploads(str(b.url, 500)),
     fit: oneOf(b.fit, ['cover', 'contain'] as const, 'cover'),
+    photoCrop: (() => {
+      const c = (b.photoCrop && typeof b.photoCrop === 'object' ? b.photoCrop : null) as Record<string, unknown> | null
+      if (!c) return null
+      return { zoom: num(c.zoom, 1, 3, 1), x: num(c.x, 0, 1, 0.5), y: num(c.y, 0, 1, 0.5) }
+    })(),
     fontSizePt: num(b.fontSizePt, 5, 72, 10),
     align: oneOf(b.align, ['left', 'center', 'right'] as const, 'left'),
     bold: b.bold === true,

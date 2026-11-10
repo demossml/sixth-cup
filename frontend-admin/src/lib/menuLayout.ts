@@ -32,6 +32,8 @@ export type MenuBlock = {
   text: string | null
   url: string | null
   fit: 'cover' | 'contain'
+  /** Кадрирование фото: масштаб 1–3 и точка фокуса (0…1 по осям). */
+  photoCrop?: { zoom: number; x: number; y: number } | null
   fontSizePt: number
   align: 'left' | 'center' | 'right'
   bold: boolean
@@ -242,6 +244,7 @@ export function newBlock(type: BlockType, rect: Partial<Rect> = {}, extra: Parti
     text: null,
     url: null,
     fit: 'cover',
+    photoCrop: null,
     fontSizePt: 10,
     align: 'left',
     bold: false,
@@ -539,6 +542,7 @@ export const blockPayload = (b: MenuBlock): MenuBlock => ({
   text: b.text,
   url: b.url,
   fit: b.fit,
+  photoCrop: b.photoCrop ?? null,
   fontSizePt: b.fontSizePt,
   align: b.align,
   bold: b.bold,

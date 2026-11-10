@@ -109,6 +109,7 @@ export function flowSections({ sections, pinned, options }: FlowInput): FlowResu
     text: null,
     url: null,
     fit: 'cover',
+    photoCrop: null,
     fontSizePt: 10,
     align: 'left',
     bold: false,

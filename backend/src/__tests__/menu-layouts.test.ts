@@ -634,6 +634,7 @@ describe('поля блока: замок и капс', () => {
                   lineHeight: 1.4,
                   tracking: 60,
                   groupId: 'grp-1',
+                  photoCrop: { zoom: 1.8, x: 0.2, y: 0.8 },
                   zIndex: 0,
                 },
               ],
@@ -649,12 +650,14 @@ describe('поля блока: замок и капс', () => {
       lineHeight?: number
       tracking?: number
       groupId?: string | null
+      photoCrop?: { zoom: number; x: number; y: number } | null
     }
     expect(block.locked).toBe(true)
     expect(block.uppercase).toBe(true)
     expect(block.lineHeight).toBeCloseTo(1.4, 2)
     expect(block.tracking).toBe(60)
     expect(block.groupId).toBe('grp-1')
+    expect(block.photoCrop).toEqual({ zoom: 1.8, x: 0.2, y: 0.8 })
   })
 })
 

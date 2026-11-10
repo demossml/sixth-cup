@@ -256,3 +256,43 @@ export function domTextMeasurer(opts: {
     cleanup: () => probe.remove(),
   }
 }
+
+/**
+ * Раскладка выделенных блоков по колонкам: порядок — как читают (сверху вниз, слева направо),
+ * ширина колонки — общая ширина выделения, промежуток фиксированный.
+ */
+export function layoutColumns(
+  blocks: MenuBlock[],
+  ids: string[],
+  columns: 1 | 2 | 3,
+  gapPct = 4,
+): MenuBlock[] {
+  const set = new Set(ids)
+  const list = blocks.filter((b) => set.has(b.id) && !b.locked)
+  if (list.length === 0) return blocks
+
+  const totalW =
+    Math.max(...list.map((b) => b.xPct + b.wPct)) - Math.min(...list.map((b) => b.xPct))
+  const left = Math.min(...list.map((b) => b.xPct))
+  const top = Math.min(...list.map((b) => b.yPct))
+  const colW = Math.max(MIN_W, (totalW - gapPct * (columns - 1)) / columns)
+
+  // Читаем как в книге: сверху вниз, при равенстве — слева направо.
+  const ordered = [...list].sort((a, b) => a.yPct - b.yPct || a.xPct - b.xPct)
+  const perColumn = Math.ceil(ordered.length / columns)
+
+  const result = new Map<string, { xPct: number; yPct: number; wPct: number }>()
+  for (let col = 0; col < columns; col++) {
+    const column = ordered.slice(col * perColumn, (col + 1) * perColumn)
+    let y = top
+    for (const b of column) {
+      result.set(b.id, { xPct: left + col * (colW + gapPct), yPct: y, wPct: colW })
+      y += b.hPct + 1.2
+    }
+  }
+
+  return blocks.map((b) => {
+    const next = result.get(b.id)
+    return next ? { ...b, ...clampRect({ ...next, hPct: b.hPct }) } : b
+  })
+}

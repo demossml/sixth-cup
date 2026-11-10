@@ -149,7 +149,16 @@ function MenuCanvas({
             {type === 'image' && (
               <div className="mc-image">
                 {(b.displayImageUrl ?? b.url) ? (
-                  <img src={(b.displayImageUrl ?? b.url)!} alt={b.titleOverride ?? ''} style={{ objectFit: b.fit }} />
+                  <img
+                    src={(b.displayImageUrl ?? b.url)!}
+                    alt={b.titleOverride ?? ''}
+                    style={{
+                      objectFit: b.fit,
+                      objectPosition: b.photoCrop ? `${b.photoCrop.x * 100}% ${b.photoCrop.y * 100}%` : undefined,
+                      transform: b.photoCrop && b.photoCrop.zoom > 1 ? `scale(${b.photoCrop.zoom})` : undefined,
+                      transformOrigin: b.photoCrop ? `${b.photoCrop.x * 100}% ${b.photoCrop.y * 100}%` : undefined,
+                    }}
+                  />
                 ) : (
                   <span className="mc-image-empty">фото</span>
                 )}
@@ -163,7 +172,18 @@ function MenuCanvas({
               const twoLines = sizes.length > 1
               return (
                 <div className="mc-product">
-                  {b.showPhoto && b.displayImageUrl && <img className="mc-product-thumb" src={b.displayImageUrl} alt="" />}
+                  {b.showPhoto && b.displayImageUrl && (
+                    <img
+                      className="mc-product-thumb"
+                      src={b.displayImageUrl}
+                      alt=""
+                      style={{
+                        objectPosition: b.photoCrop ? `${b.photoCrop.x * 100}% ${b.photoCrop.y * 100}%` : undefined,
+                        transform: b.photoCrop && b.photoCrop.zoom > 1 ? `scale(${b.photoCrop.zoom})` : undefined,
+                        transformOrigin: b.photoCrop ? `${b.photoCrop.x * 100}% ${b.photoCrop.y * 100}%` : undefined,
+                      }}
+                    />
+                  )}
                   <div className="mc-product-body">
                     <div className="mc-product-row">
                       <span

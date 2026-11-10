@@ -66,7 +66,7 @@ import MenuCanvas from '../components/menuLayout/MenuCanvas'
 import ColorField from '../components/menuLayout/ColorField'
 import {
   alignBlocks, clampZoom, distributeBlocks, domTextMeasurer, effectiveDpi, fitFontSize, fitZoom, groupBlocks,
-  groupKeyOf, groupSelectionIds, rectsIntersect, sheetWidthMm, snapWithGuides, ungroupBlocks, zoomStep,
+  groupKeyOf, groupSelectionIds, layoutColumns, rectsIntersect, sheetWidthMm, snapWithGuides, ungroupBlocks, zoomStep,
   type AlignMode, type SnapGuides,
 } from '../lib/menuTools'
 import { typograph } from '../lib/typography'
@@ -473,6 +473,13 @@ export default function MenuLayoutEditor() {
   }
 
   /** Сгруппировать выделение: дальше блоки ходят вместе и выделяются одним кликом. */
+  /** Разложить выделение по колонкам: порядок — как читают. */
+  const columns = (n: 1 | 2 | 3) => {
+    if (!page || editableIds.length < 2) return
+    updatePage((blocks) => layoutColumns(blocks, editableIds, n))
+    toast.push(`Разложено в ${n === 1 ? 'одну колонку' : `${n} колонки`}`)
+  }
+
   const groupSelection = () => {
     if (!page || editableIds.length < 2) return
     updatePage((blocks) => groupBlocks(blocks, editableIds).blocks)
@@ -534,6 +541,57 @@ export default function MenuLayoutEditor() {
     measurer.cleanup()
     patchBlock({ fontSizePt: next }, id)
     toast.push(next < b.fontSizePt ? `Кегль уменьшен до ${next} pt — текст влез` : 'Текст уже помещается')
+  }
+
+  /** Кадр фото: масштаб и точка фокуса. Один и тот же блок настроек для фото и позиции. */
+  const cropControls = (block: MenuBlock) => {
+    const crop = block.photoCrop ?? { zoom: 1, x: 0.5, y: 0.5 }
+    const setCrop = (next: { zoom: number; x: number; y: number } | null) => patchBlock({ photoCrop: next }, block.id)
+    return (
+      <div className="mt-2 rounded-lg border border-line p-2">
+        <div className="mb-1 flex items-center justify-between">
+          <span className="text-[12px] text-ink-secondary">Кадрирование</span>
+          <button
+            type="button"
+            onClick={() => setCrop(null)}
+            className="text-[11px] text-ink-tertiary hover:text-brand"
+            disabled={!block.photoCrop}
+          >
+            сбросить
+          </button>
+        </div>
+        <label className="block text-[11px] text-ink-tertiary">
+          масштаб ×{crop.zoom.toFixed(1)}
+          <input
+            type="range"
+            min={1}
+            max={3}
+            step={0.1}
+            value={crop.zoom}
+            onChange={(e) => setCrop({ ...crop, zoom: Number(e.target.value) })}
+            className="mt-1 w-full"
+            aria-label="Масштаб кадра"
+          />
+        </label>
+        <div className="mt-1.5 grid w-[72px] grid-cols-3 gap-0.5" role="group" aria-label="Точка фокуса">
+          {[0, 0.5, 1].map((y) =>
+            [0, 0.5, 1].map((x) => (
+              <button
+                key={`${x}-${y}`}
+                type="button"
+                onClick={() => setCrop({ ...crop, x, y })}
+                aria-label={`Фокус ${Math.round(x * 100)}% / ${Math.round(y * 100)}%`}
+                aria-pressed={Math.abs(crop.x - x) < 0.01 && Math.abs(crop.y - y) < 0.01}
+                className={cx(
+                  'h-5 w-5 rounded-sm border',
+                  Math.abs(crop.x - x) < 0.01 && Math.abs(crop.y - y) < 0.01 ? 'border-brand bg-brand/20' : 'border-line hover:border-brand/50',
+                )}
+              />
+            )),
+          )}
+        </div>
+      </div>
+    )
   }
 
   const toggleLock = (id: string) => {
@@ -2074,6 +2132,7 @@ export default function MenuLayoutEditor() {
               <input type="checkbox" checked={selected.showPhoto} onChange={(e) => patchBlock({ showPhoto: e.target.checked })} />
               Показывать фото в блоке
             </label>
+            {selected.showPhoto && cropControls(selected)}
           </>
         )}
 
@@ -2180,6 +2239,7 @@ export default function MenuLayoutEditor() {
                 </Select>
               </Field>
             </div>
+            {cropControls(selected)}
             <div className="mt-2">
               <Field label="Подпись (для скринридера)">
                 <Input value={selected.titleOverride ?? ''} onChange={(e) => patchBlock({ titleOverride: e.target.value || null })} className="!h-8 text-[12px]" />
@@ -2487,6 +2547,16 @@ export default function MenuLayoutEditor() {
                   </button>
                   <button type="button" onClick={() => distribute('y')} className="h-8 rounded-md px-2 text-[11px] font-semibold text-ink-tertiary hover:bg-surface-2 hover:text-brand" title="Равные промежутки по вертикали">
                     ⇅
+                  </button>
+                  <span className="mx-1 h-5 w-px bg-line" />
+                  <button type="button" onClick={() => columns(1)} className="h-8 rounded-md px-2 text-[11px] font-semibold text-ink-tertiary hover:bg-surface-2 hover:text-brand" title="Разложить в одну колонку">
+                    1 кол.
+                  </button>
+                  <button type="button" onClick={() => columns(2)} className="h-8 rounded-md px-2 text-[11px] font-semibold text-ink-tertiary hover:bg-surface-2 hover:text-brand" title="Разложить в две колонки">
+                    2 кол.
+                  </button>
+                  <button type="button" onClick={() => columns(3)} className="h-8 rounded-md px-2 text-[11px] font-semibold text-ink-tertiary hover:bg-surface-2 hover:text-brand" title="Разложить в три колонки">
+                    3 кол.
                   </button>
                   <span className="mx-1 h-5 w-px bg-line" />
                   <button type="button" onClick={groupSelection} className="h-8 rounded-md px-2 text-[11px] font-semibold text-ink-tertiary hover:bg-surface-2 hover:text-brand" title="Сгруппировать выделенные блоки">

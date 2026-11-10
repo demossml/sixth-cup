@@ -88,6 +88,7 @@ export function emptyBlock(type: MenuBlock['type']): MenuBlock {
     text: null,
     url: null,
     fit: 'cover',
+    photoCrop: null,
     fontSizePt: 10,
     align: 'left',
     bold: false,
@@ -124,6 +125,7 @@ export function emptyDoc(): MenuDoc {
     text: null,
     url: null,
     fit: 'cover',
+    photoCrop: null,
     fontSizePt: 10,
     align: 'left',
     bold: false,
@@ -297,6 +299,10 @@ const blockZ = z.object({
   text: z.string().max(400).nullable().optional(),
   url: uploadUrlZ,
   fit: z.enum(['cover', 'contain']).optional(),
+  photoCrop: z
+    .object({ zoom: z.number().min(1).max(3), x: z.number().min(0).max(1), y: z.number().min(0).max(1) })
+    .nullable()
+    .optional(),
   fontSizePt: z.number().min(5).max(72).optional(),
   align: z.enum(['left', 'center', 'right']).optional(),
   bold: z.boolean().optional(),
