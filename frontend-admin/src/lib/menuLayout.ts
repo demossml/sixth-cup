@@ -111,6 +111,8 @@ export type MenuTheme = {
   logoPosition: 'left' | 'top-right' | 'footer'
   /** Недавние цвета: свои, не из палитры бренда. */
   recentColors?: string[]
+  /** Градиент фона листа; null — сплошной `bg`. */
+  gradient?: { from: string; to: string; angle: number } | null
 }
 
 /** Палитра бренда 6.7: шаблоны стартуют с неё, «выйти из бренда» — свободный выбор цвета. */
@@ -132,6 +134,7 @@ export const DEFAULT_THEME: MenuTheme = {
   fontHeading: 'Unbounded',
   fontBody: 'Golos Text',
   itemSize: 10.5,
+  gradient: null,
   ornament: 'line',
   logoPosition: 'left',
 }

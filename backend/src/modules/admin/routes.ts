@@ -79,6 +79,7 @@ import { adminAi } from './ai'
 import { adminStock } from './stock'
 import { adminCost } from './cost'
 import { adminMenuLayouts } from './menuLayouts'
+import { adminMenuAssets } from './menuAssets'
 import { adminStudio } from './studio'
 import { getAiSettingsPublic } from '../../lib/aiSettings'
 
@@ -1994,4 +1995,5 @@ adminRoutes.route('/', adminStudio) // before adminStock: /inventory/overview mu
 adminRoutes.route('/', adminStock)
 adminRoutes.route('/', adminCost)
 adminRoutes.route('/', adminMenuLayouts)
+adminRoutes.route('/', adminMenuAssets)
 adminRoutes.route('/', staffAdminRoutes)

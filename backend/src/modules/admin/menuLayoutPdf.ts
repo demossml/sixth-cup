@@ -304,7 +304,19 @@ export async function renderLayoutPdf(view: LayoutView, opts: PdfOptions): Promi
   for (let pi = 0; pi < pages.length; pi++) {
     const page = pages[pi]!
     doc.addPage({ size: [W, H], margin: 0 })
-    doc.rect(0, 0, W, H).fill(overWhite(theme.bg))
+    // Фон: сплошной цвет или градиент. Альфа смешивается с бумагой, как и у сплошного цвета.
+    if (theme.gradient) {
+      const rad = ((theme.gradient.angle - 90) * Math.PI) / 180
+      const cx = W / 2
+      const cy = H / 2
+      const len = Math.max(W, H)
+      const grad = doc
+        .linearGradient(cx - (Math.cos(rad) * len) / 2, cy - (Math.sin(rad) * len) / 2, cx + (Math.cos(rad) * len) / 2, cy + (Math.sin(rad) * len) / 2)
+      grad.stop(0, overWhite(theme.gradient.from)).stop(1, overWhite(theme.gradient.to))
+      doc.rect(0, 0, W, H).fill(grad)
+    } else {
+      doc.rect(0, 0, W, H).fill(overWhite(theme.bg))
+    }
 
     const bg = imageFor(theme.backgroundImageUrl)
     if (bg) {

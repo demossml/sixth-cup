@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router-dom'
 import {
   AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical,
   AlignStartHorizontal, AlignStartVertical, ArrowDown, ArrowLeft, ArrowUp, Check, Download,
-  Eye, EyeOff, Grid3x3, ImagePlus, Layers, ListTree, Loader2, Lock, LockOpen, Maximize2,
+  Eye, EyeOff, Grid3x3, History, ImagePlus, Layers, ListTree, Loader2, Lock, LockOpen, Maximize2,
   Minus, Palette, Plus, Redo2, RefreshCw, Search, Sparkles, Trash2, Type, Undo2, Upload, X,
 } from 'lucide-react'
 import { ApiError, api, tokenStore, uploadFile } from '../api/client'
@@ -139,6 +139,15 @@ export default function MenuLayoutEditor() {
   const [marquee, setMarquee] = useState<Rect | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; id: string } | null>(null)
   const [layerQuery, setLayerQuery] = useState('')
+  /** Палитры бренда на аккаунт: общие для всех макетов. */
+  const [palettes, setPalettes] = useState<{ id: number; name: string; colors: string[] }[]>([])
+  /** История версий макета: снимки документа и темы. */
+  const [versionsOpen, setVersionsOpen] = useState(false)
+  const [versions, setVersions] = useState<
+    { id: number; rev: number; title: string; note: string | null; createdAt: number; pages: number; blocks: number }[]
+  >([])
+  const [versionNote, setVersionNote] = useState('')
+  const [paletteName, setPaletteName] = useState('')
   /** Черновик из localStorage, если прошлая сессия оборвалась. */
   const [draftOffer, setDraftOffer] = useState<{ body: SaveBody; savedAt: number } | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
@@ -187,6 +196,99 @@ export default function MenuLayoutEditor() {
   useEffect(() => {
     perfInit()
   }, [])
+
+  const loadPalettes = useCallback(async () => {
+    try {
+      const res = await api<{ palettes: { id: number; name: string; colors: string[] }[] }>('/menu-palettes')
+      setPalettes(res.palettes)
+    } catch {
+      /* палитры — удобство: без них редактор работает */
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadPalettes()
+  }, [loadPalettes])
+
+  const savePalette = async () => {
+    const name = paletteName.trim() || `Палитра ${palettes.length + 1}`
+    try {
+      await api('/menu-palettes', {
+        method: 'POST',
+        body: { name, colors: [theme.bg, theme.text, theme.accent] },
+      })
+      setPaletteName('')
+      await loadPalettes()
+      toast.push(`Палитра «${name}» сохранена`)
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Не удалось сохранить палитру', 'bad')
+    }
+  }
+
+  const applyPalette = (colors: string[]) => {
+    const [bg, text, accent] = colors
+    setTheme((t) => ({ ...t, bg: bg ?? t.bg, text: text ?? t.text, accent: accent ?? t.accent }))
+    toast.push('Палитра применена к листу')
+  }
+
+  const loadVersions = useCallback(async () => {
+    if (!Number.isFinite(numericId)) return
+    try {
+      const res = await api<{ versions: typeof versions }>(`/menu-layouts/${numericId}/versions`)
+      setVersions(res.versions)
+    } catch {
+      /* история — удобство, без неё редактор работает */
+    }
+  }, [numericId])
+
+  useEffect(() => {
+    if (versionsOpen) void loadVersions()
+  }, [versionsOpen, loadVersions])
+
+  const saveVersion = async () => {
+    try {
+      await flush()
+      await api(`/menu-layouts/${numericId}/versions`, {
+        method: 'POST',
+        body: { note: versionNote.trim() || undefined },
+      })
+      setVersionNote('')
+      await loadVersions()
+      toast.push('Версия сохранена')
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Не удалось сохранить версию', 'bad')
+    }
+  }
+
+  const restoreVersion = async (vid: number) => {
+    try {
+      await api(`/menu-layouts/${numericId}/versions/${vid}/restore`, { method: 'POST', body: {} })
+      hydrated.current = null
+      setVersionsOpen(false)
+      await reload()
+      toast.push('Макет восстановлен из версии')
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Не удалось восстановить версию', 'bad')
+    }
+  }
+
+  const removeVersion = async (vid: number) => {
+    try {
+      await api(`/menu-layouts/${numericId}/versions/${vid}`, { method: 'DELETE' })
+      await loadVersions()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Не удалось удалить версию', 'bad')
+    }
+  }
+
+  const removePalette = async (id: number) => {
+    try {
+      await api(`/menu-palettes/${id}`, { method: 'DELETE' })
+      await loadPalettes()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Не удалось удалить палитру', 'bad')
+    }
+  }
 
   useEffect(() => {
     const isField = (el: EventTarget | null) => el instanceof HTMLElement && /input|textarea|select/i.test(el.tagName)
@@ -1563,6 +1665,98 @@ export default function MenuLayoutEditor() {
       </section>
 
       <section className="border-b border-line px-3 py-3">
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className="text-[13px] font-semibold">Градиент фона</h3>
+          <label className="flex items-center gap-1.5 text-[12px] text-ink-secondary">
+            <input
+              type="checkbox"
+              checked={!!theme.gradient}
+              onChange={(e) =>
+                setTheme({ ...theme, gradient: e.target.checked ? { from: theme.bg, to: '#FFFFFF', angle: 135 } : null })
+              }
+            />
+            включить
+          </label>
+        </div>
+        {theme.gradient && (
+          <>
+            <ColorField
+              label="От"
+              value={theme.gradient.from}
+              onChange={(next) => setTheme({ ...theme, gradient: { ...theme.gradient!, from: next } })}
+            />
+            <ColorField
+              label="До"
+              value={theme.gradient.to}
+              onChange={(next) => setTheme({ ...theme, gradient: { ...theme.gradient!, to: next } })}
+            />
+            <label className="mt-2 block text-[12px] text-ink-secondary">
+              Угол {theme.gradient.angle}°
+              <input
+                type="range"
+                min={0}
+                max={360}
+                step={15}
+                value={theme.gradient.angle}
+                onChange={(e) => setTheme({ ...theme, gradient: { ...theme.gradient!, angle: Number(e.target.value) } })}
+                className="mt-1 w-full"
+                aria-label="Угол градиента"
+              />
+            </label>
+            <p className="mt-1 text-[10.5px] text-ink-tertiary">Печатается в PDF так же, как на холсте.</p>
+          </>
+        )}
+      </section>
+
+      <section className="border-b border-line px-3 py-3">
+        <h3 className="mb-2 text-[13px] font-semibold">Палитры бренда</h3>
+        {palettes.length === 0 && (
+          <p className="text-[11.5px] text-ink-tertiary">
+            Пока нет сохранённых палитр. Настройте цвета выше и сохраните — они будут доступны во всех макетах.
+          </p>
+        )}
+        <ul className="space-y-1">
+          {palettes.map((p) => (
+            <li key={p.id} className="flex items-center gap-1 rounded-lg border border-line px-1.5 py-1">
+              <button
+                type="button"
+                onClick={() => applyPalette(p.colors)}
+                className="min-w-0 flex-1 truncate text-left text-[12.5px] hover:text-brand"
+                title="Применить палитру: фон, текст, акцент"
+              >
+                {p.name}
+              </button>
+              <span className="flex flex-none gap-0.5">
+                {p.colors.slice(0, 4).map((c) => (
+                  <i key={c} className="h-4 w-4 rounded border border-line" style={{ background: c }} />
+                ))}
+              </span>
+              <button
+                type="button"
+                onClick={() => void removePalette(p.id)}
+                className="grid h-6 w-6 flex-none place-items-center rounded text-ink-tertiary hover:text-bad"
+                aria-label={`Удалить палитру ${p.name}`}
+              >
+                <Trash2 size={13} />
+              </button>
+            </li>
+          ))}
+        </ul>
+        <div className="mt-2 flex gap-1">
+          <Input
+            value={paletteName}
+            onChange={(e) => setPaletteName(e.target.value)}
+            placeholder="Название палитры"
+            aria-label="Название новой палитры"
+            className="!h-8 text-[12px]"
+          />
+          <Button size="sm" variant="secondary" onClick={() => void savePalette()}>
+            Сохранить
+          </Button>
+        </div>
+      </section>
+
+      <section className="border-b border-line px-3 py-3">
         <div className="mb-2 flex items-baseline justify-between">
           <h3 className="text-[13px] font-semibold">Фон листа</h3>
           <span className="text-[11px] text-ink-tertiary">картинка</span>
@@ -1985,6 +2179,9 @@ export default function MenuLayoutEditor() {
           </Button>
           <Button size="sm" variant="secondary" icon={<Eye size={14} />} onClick={() => setPreviewOpen(true)}>
             Предпросмотр
+          </Button>
+          <Button size="sm" variant="secondary" icon={<History size={14} />} onClick={() => setVersionsOpen(true)}>
+            Версии
           </Button>
           <Button size="sm" icon={<Download size={14} />} onClick={() => setExportOpen(true)}>
             Экспорт PDF
@@ -2558,6 +2755,49 @@ export default function MenuLayoutEditor() {
           </div>
         </div>
       )}
+
+      <Drawer open={versionsOpen} onClose={() => setVersionsOpen(false)} title="Версии макета" layer={70}>
+        <p className="mb-3 text-[12.5px] text-ink-secondary">
+          Версия — снимок листа и оформления. Перед откатом текущее состояние сохраняется автоматически, поэтому
+          откат тоже можно отменить.
+        </p>
+        <div className="mb-3 flex gap-1">
+          <Input
+            value={versionNote}
+            onChange={(e) => setVersionNote(e.target.value)}
+            placeholder="Комментарий (необязательно)"
+            aria-label="Комментарий к версии"
+            className="!h-8 text-[12px]"
+          />
+          <Button size="sm" variant="secondary" onClick={() => void saveVersion()}>
+            Сохранить версию
+          </Button>
+        </div>
+        {versions.length === 0 && <p className="text-[12.5px] text-ink-tertiary">Версий пока нет.</p>}
+        <ul className="space-y-1">
+          {versions.map((v) => (
+            <li key={v.id} className="flex items-center gap-2 rounded-lg border border-line px-2 py-1.5">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[12.5px] font-semibold">{v.note || v.title}</p>
+                <p className="text-[11px] text-ink-tertiary">
+                  {new Date(v.createdAt).toLocaleString('ru-RU')} · ревизия {v.rev} · {v.pages} стр. · {v.blocks} блоков
+                </p>
+              </div>
+              <Button size="sm" variant="secondary" onClick={() => void restoreVersion(v.id)}>
+                Вернуть
+              </Button>
+              <button
+                type="button"
+                onClick={() => void removeVersion(v.id)}
+                className="grid h-7 w-7 place-items-center rounded text-ink-tertiary hover:text-bad"
+                aria-label="Удалить версию"
+              >
+                <Trash2 size={13} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      </Drawer>
 
       <ExportModal
         open={exportOpen}

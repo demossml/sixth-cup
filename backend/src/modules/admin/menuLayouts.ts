@@ -371,6 +371,11 @@ const themeZ = z.object({
   itemSize: z.number().min(8).max(16).optional(),
   ornament: z.enum(['none', 'line', 'beans', 'leaf']).optional(),
   logoPosition: z.enum(['left', 'top-right', 'footer']).optional(),
+  recentColors: z.array(z.string().max(9)).max(8).optional(),
+  gradient: z
+    .object({ from: z.string().max(9), to: z.string().max(9), angle: z.number().min(0).max(360) })
+    .nullable()
+    .optional(),
 })
 
 const requireWrite = (role: string | undefined) => {

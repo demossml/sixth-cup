@@ -6,6 +6,30 @@ import type Database from 'better-sqlite3'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 /**
+ * Каталог с .sql ищем по кандидатам: после сборки бандл лежит в `dist/`,
+ * и относительный путь `./migrations` может не совпасть с исходниками.
+ * Берём первый, где реально есть .sql-файлы, иначе миграции молча не применятся.
+ */
+function resolveMigrationsDir(): string {
+  const candidates = [
+    join(__dirname, 'migrations'),
+    join(__dirname, 'db', 'migrations'),
+    join(__dirname, '..', 'src', 'db', 'migrations'),
+    join(__dirname, '..', '..', 'src', 'db', 'migrations'),
+    join(process.cwd(), 'src', 'db', 'migrations'),
+    join(process.cwd(), 'backend', 'src', 'db', 'migrations'),
+  ]
+  for (const candidate of candidates) {
+    try {
+      if (readdirSync(candidate).some((f) => f.endsWith('.sql'))) return candidate
+    } catch {
+      /* каталога нет — пробуем следующий */
+    }
+  }
+  throw new Error(`Не найден каталог миграций (искали: ${candidates.join(', ')})`)
+}
+
+/**
  * Sequential SQL migrations. Applied once, tracked in schema_migrations.
  * Base tables still created via SCHEMA (CREATE IF NOT EXISTS); migrations are additive.
  */
@@ -17,7 +41,7 @@ export function runMigrations(db: Database.Database) {
     )
   `)
 
-  const dir = join(__dirname, 'migrations')
+  const dir = resolveMigrationsDir()
   const files = readdirSync(dir)
     .filter((f) => f.endsWith('.sql'))
     .sort()

@@ -11,7 +11,7 @@
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsup src/index.ts --format esm --clean",
+    "build": "tsup src/index.ts --format esm --clean && cp -R src/db/migrations dist/migrations",
     "start": "NODE_ENV=production node dist/index.js",
     "typecheck": "tsc --noEmit",
     "evotor:probe": "tsx scripts/evotor-probe.ts",

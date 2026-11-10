@@ -63,8 +63,9 @@ function MenuCanvas({
   const muted = theme.preset === 'dark' ? '#A5A39D' : theme.preset === 'season' ? '#76695B' : '#6E6A62'
   const line = theme.preset === 'dark' ? '#3B3F49' : theme.preset === 'season' ? '#D9C9B3' : '#D8D2C7'
 
+  const gradient = theme.gradient
   const style = {
-    '--mc-bg': theme.bg,
+    '--mc-bg': gradient ? `linear-gradient(${gradient.angle}deg, ${gradient.from}, ${gradient.to})` : theme.bg,
     '--mc-text': theme.text,
     '--mc-accent': theme.accent,
     '--mc-muted': muted,

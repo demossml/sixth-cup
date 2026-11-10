@@ -657,3 +657,83 @@ describe('поля блока: замок и капс', () => {
     expect(block.groupId).toBe('grp-1')
   })
 })
+
+describe('палитры бренда', () => {
+  it('создаются, читаются, обновляются и удаляются', async () => {
+    const created = await app.request('/api/admin/menu-palettes', {
+      method: 'POST',
+      headers: H,
+      body: JSON.stringify({ name: 'Бренд 6.7', colors: ['#002fa7', '#f6f3ee', '#1b1a17'] }),
+    })
+    expect(created.status).toBe(201)
+    const palette = ((await created.json()) as { palette: { id: number; colors: string[] } }).palette
+    // Цвета нормализуются в верхний регистр — иначе сравнение палитр «мигает».
+    expect(palette.colors).toEqual(['#002FA7', '#F6F3EE', '#1B1A17'])
+
+    const list = await app.request('/api/admin/menu-palettes', { headers: H })
+    const names = ((await list.json()) as { palettes: { name: string }[] }).palettes.map((p) => p.name)
+    expect(names).toContain('Бренд 6.7')
+
+    const updated = await app.request(`/api/admin/menu-palettes/${palette.id}`, {
+      method: 'PUT',
+      headers: H,
+      body: JSON.stringify({ name: 'Бренд 6.7 v2' }),
+    })
+    expect(updated.status).toBe(200)
+
+    const removed = await app.request(`/api/admin/menu-palettes/${palette.id}`, { method: 'DELETE', headers: H })
+    expect(removed.status).toBe(200)
+  })
+
+  it('невалидный цвет отклоняется', async () => {
+    const res = await app.request('/api/admin/menu-palettes', {
+      method: 'POST',
+      headers: H,
+      body: JSON.stringify({ name: 'Плохая', colors: ['red'] }),
+    })
+    expect(res.status).toBe(400)
+  })
+})
+
+describe('версии макета', () => {
+  it('снимок сохраняется и восстанавливается, текущее состояние не теряется', async () => {
+    const cat = mkCategory('Версии')
+    const pid = mkProduct('Флэт уайт', 210, cat)
+    const created = await createLayout('Версии макета')
+    // Версия 1: один блок.
+    await app.request(`/api/admin/menu-layouts/${created.id}`, {
+      method: 'PUT',
+      headers: H,
+      body: JSON.stringify({ doc: { pages: [{ id: 'page-1', blocks: [{ id: 'v1', type: 'text', text: 'Первая', ...rect }] }] } }),
+    })
+    const snap = await app.request(`/api/admin/menu-layouts/${created.id}/versions`, {
+      method: 'POST',
+      headers: H,
+      body: JSON.stringify({ note: 'до правок' }),
+    })
+    expect(snap.status).toBe(201)
+    const version = ((await snap.json()) as { version: { id: number; blocks: number } }).version
+    expect(version.blocks).toBe(1)
+
+    // Версия 2: другой документ.
+    await app.request(`/api/admin/menu-layouts/${created.id}`, {
+      method: 'PUT',
+      headers: H,
+      body: JSON.stringify({ doc: { pages: [{ id: 'page-1', blocks: [{ id: 'v2', type: 'product', productId: pid, ...rect }] }] } }),
+    })
+    expect((await getLayout(created.id)).doc.pages[0]!.blocks[0]!.id).toBe('v2')
+
+    const restored = await app.request(`/api/admin/menu-layouts/${created.id}/versions/${version.id}/restore`, {
+      method: 'POST',
+      headers: H,
+      body: JSON.stringify({}),
+    })
+    expect(restored.status).toBe(200)
+    expect((await getLayout(created.id)).doc.pages[0]!.blocks[0]!.id).toBe('v1')
+
+    // После отката в истории появился снимок «перед откатом».
+    const list = await app.request(`/api/admin/menu-layouts/${created.id}/versions`, { headers: H })
+    const notes = ((await list.json()) as { versions: { note: string | null }[] }).versions.map((v) => v.note)
+    expect(notes).toContain('перед откатом')
+  })
+})

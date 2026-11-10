@@ -156,6 +156,8 @@ export type MenuTheme = {
   logoPosition: 'left' | 'top-right' | 'footer'
   /** Недавние цвета пользователя — общие для макета, чтобы не подбирать заново. */
   recentColors?: string[]
+  /** Градиент фона листа. null — сплошной цвет `bg`. */
+  gradient: { from: string; to: string; angle: number } | null
 }
 
 export const THEME_PRESETS: Record<MenuTheme['preset'], Pick<MenuTheme, 'bg' | 'text' | 'accent'>> = {
@@ -172,6 +174,7 @@ export const DEFAULT_THEME: MenuTheme = {
   fontHeading: 'Unbounded',
   fontBody: 'Golos Text',
   itemSize: 10.5,
+  gradient: null,
   ornament: 'line',
   logoPosition: 'left',
 }
@@ -211,6 +214,14 @@ export function normalizeTheme(raw: unknown): MenuTheme {
     recentColors: Array.isArray(t.recentColors)
       ? t.recentColors.filter((c): c is string => typeof c === 'string' && HEX.test(c)).slice(0, 8)
       : [],
+    gradient: (() => {
+      const g = (t.gradient && typeof t.gradient === 'object' ? t.gradient : null) as Record<string, unknown> | null
+      if (!g) return null
+      const from = hex(g.from, '')
+      const to = hex(g.to, '')
+      if (!from || !to) return null
+      return { from, to, angle: num(g.angle, 0, 360, 135) }
+    })(),
   }
 }
 
