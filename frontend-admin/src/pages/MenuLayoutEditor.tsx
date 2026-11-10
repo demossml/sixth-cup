@@ -96,8 +96,8 @@ export default function MenuLayoutEditor() {
   const { data, error, loading, reload } = useApi<{ layout: ServerLayout }>(
     Number.isFinite(numericId) ? `/menu-layouts/${numericId}` : null,
   )
-  const catalog = useApi<{ products: CatalogProduct[] }>('/products')
-  const cats = useApi<{ categories: { id: number; name: string }[] }>('/categories')
+  // Лёгкий каталог макета: сразу с объёмами и ценами, без N+1 по /products.
+  const catalog = useApi<{ products: CatalogProduct[]; categories: { id: number; name: string }[] }>('/menu-layouts/catalog')
 
   const [doc, setDoc] = useState<MenuDoc | null>(null)
   const [theme, setTheme] = useState<MenuTheme>(DEFAULT_THEME)
@@ -165,7 +165,7 @@ export default function MenuLayoutEditor() {
   }, [data])
 
   const products = catalog.data?.products ?? []
-  const categories = cats.data?.categories ?? []
+  const categories = catalog.data?.categories ?? []
   const page = doc?.pages[Math.min(pageIdx, (doc?.pages.length ?? 1) - 1)] ?? null
   const previewDoc = useMemo(() => (doc ? resolvePreview(doc, products, priceMode) : null), [doc, products, priceMode])
   const previewPage = previewDoc?.pages[Math.min(pageIdx, (previewDoc.pages.length || 1) - 1)] ?? null

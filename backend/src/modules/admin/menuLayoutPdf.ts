@@ -149,7 +149,10 @@ function drawBlock(
           /* без фото */
         }
       }
-      const nameSize = Math.max(5, Math.min(h * 0.42, 11 * scale))
+      const sizes = block.displaySizes ?? []
+      // Позиция с объёмами занимает две строки: название, затем «250 · 350 · 450» и «169 · 219 · 269».
+      const twoLines = sizes.length > 1 && h > 14
+      const nameSize = Math.max(5, Math.min(twoLines ? h * 0.3 : h * 0.42, 11 * scale))
       const price = block.displayPrice ?? '—'
       doc.font('bodyBold').fontSize(nameSize).fillColor(theme.text)
       doc.text(clip(block.displayName ?? block.titleOverride ?? 'Позиция', 64), x + padX, y, {
@@ -159,8 +162,24 @@ function drawBlock(
         ellipsis: true,
       })
       doc.font('body').fontSize(nameSize).fillColor(theme.text)
-      doc.text(price, x + padX, y, { width: contentW, align: 'right', lineBreak: false })
-      const sub = block.product?.variantLabel
+      if (!twoLines) doc.text(price, x + padX, y, { width: contentW, align: 'right', lineBreak: false })
+
+      if (twoLines) {
+        const sizeSize = Math.max(4, nameSize * 0.78)
+        const labels = sizes.map((sz) => sz.label).join(' · ')
+        const prices = sizes.map((sz) => sz.price).join(' · ')
+        doc.font('body').fontSize(sizeSize).fillColor(muted)
+        doc.text(clip(labels, 64), x + padX, y + nameSize * 1.5, { width: contentW, lineBreak: false, ellipsis: true })
+        doc.fillColor(theme.text)
+        doc.text(clip(prices, 64), x + padX, y + nameSize * 1.5, {
+          width: contentW,
+          align: 'right',
+          lineBreak: false,
+          ellipsis: true,
+        })
+      }
+
+      const sub = twoLines ? null : block.product?.variantLabel
       if (sub && h > nameSize * 2) {
         doc.font('body').fontSize(Math.max(4, nameSize * 0.72)).fillColor(muted)
         doc.text(sub, x + padX, y + nameSize * 1.35, { width: contentW - 40 * scale, lineBreak: false, ellipsis: true })

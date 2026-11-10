@@ -212,6 +212,19 @@
   /* как в PDF: тонкая пунктирная линейка под позицией */
   border-bottom: 1px dotted var(--mc-line);
 }
+.mc-product-sizes {
+  display: flex;
+  justify-content: space-between;
+  gap: 1cqw;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--mc-muted);
+  letter-spacing: 0;
+}
+.mc-product-sizes > span:last-child {
+  color: var(--mc-text);
+  flex: none;
+}
 .mc-product-thumb {
   height: 100%;
   aspect-ratio: 1;

@@ -18,6 +18,8 @@ import {
   migrateDocToCanvas,
   normalizeDoc,
   normalizeTheme,
+  loadGroupSizes,
+  loadVolumeSizes,
   resolveDoc,
   type LayoutFormat,
   type MenuBlock,
@@ -88,6 +90,7 @@ export function emptyBlock(type: MenuBlock['type']): MenuBlock {
     snapshotPriceRub: null,
     snapshotName: null,
     snapshotImageUrl: null,
+    snapshotSizes: null,
     sortOrder: 0,
   }
 }
@@ -118,6 +121,7 @@ export function emptyDoc(): MenuDoc {
     snapshotPriceRub: null,
     snapshotName: null,
     snapshotImageUrl: null,
+    snapshotSizes: null,
     sortOrder: 0,
     ...over,
   })
@@ -220,7 +224,12 @@ export function snapshotDoc(doc: MenuDoc): { doc: MenuDoc; changed: { blockId: s
       if (b.snapshotPriceRub != null && b.snapshotPriceRub !== p.priceRub && b.priceRubOverride == null) {
         changed.push({ blockId: b.id, title: b.titleOverride ?? p.name, from: b.snapshotPriceRub, to: p.priceRub })
       }
-      return { ...b, snapshotPriceRub: p.priceRub, snapshotName: p.name, snapshotImageUrl: p.imageUrl }
+      // Снимок объёмов нужен frozen-режиму: иначе после правки каталога цены «поплывут».
+      const snapshotSizes =
+        p.sizes.length > 1 && b.priceRubOverride == null && b.priceText == null
+          ? p.sizes.map((sz) => ({ label: sz.label, price: sz.priceRub == null ? '' : String(sz.priceRub) }))
+          : b.snapshotSizes
+      return { ...b, snapshotPriceRub: p.priceRub, snapshotName: p.name, snapshotImageUrl: p.imageUrl, snapshotSizes }
     }),
   }))
   return { doc: { pages }, changed }
@@ -262,14 +271,49 @@ const blockZ = z.object({
   snapshotPriceRub: z.number().int().nullable().optional(),
   snapshotName: z.string().max(120).nullable().optional(),
   snapshotImageUrl: z.string().max(400).nullable().optional(),
+  snapshotSizes: z.array(z.object({ label: z.string().max(24), price: z.string().max(16) })).max(8).nullable().optional(),
+  itemId: z.string().max(64).nullable().optional(),
+  pinned: z.boolean().optional(),
+})
+
+const sizeZ = z.object({
+  label: z.string().min(1).max(24),
+  source: z.enum(['catalog', 'manual']),
+  productId: z.number().int().positive().nullable().optional(),
+  volumeItemId: z.number().int().positive().nullable().optional(),
+  priceRubOverride: z.number().int().min(0).max(1_000_000).nullable().optional(),
+})
+
+const itemZ = z.object({
+  id: z.string().min(1).max(64),
+  productId: z.number().int().positive().nullable().optional(),
+  groupId: z.number().int().positive().nullable().optional(),
+  titleOverride: z.string().max(120).nullable().optional(),
+  description: z.string().max(200).nullable().optional(),
+  badge: z.string().max(16).nullable().optional(),
+  showPhoto: z.boolean().optional(),
+  photoUrlOverride: uploadUrlZ,
+  sizes: z.array(sizeZ).max(8).optional(),
+  hidden: z.boolean().optional(),
+})
+
+const sectionZ = z.object({
+  id: z.string().min(1).max(64),
+  title: z.string().min(1).max(60),
+  categoryId: z.number().int().positive().nullable().optional(),
+  style: z.object({ showPhotos: z.boolean() }).partial().optional(),
+  items: z.array(itemZ).max(200).optional(),
 })
 
 const docZ = z.object({
+  schemaVersion: z.number().int().min(1).max(2).optional(),
   pages: z
     .array(
       z.object({
         id: z.string().min(1).max(64),
         blocks: z.array(blockZ).max(400),
+        sections: z.array(sectionZ).max(20).optional(),
+        template: z.string().max(40).nullable().optional(),
       }),
     )
     .min(1)
@@ -333,6 +377,50 @@ export const adminMenuLayouts = new Hono<Env>()
     const row = rowById(Number(info.lastInsertRowid))!
     c.set('audit', { entity: 'menu-layout', entityId: String(row.id), summary: `Макет меню «${title}» создан` })
     return c.json({ ok: true, layout: layoutView(row) }, 201)
+  })
+
+  /**
+   * Лёгкий каталог для пикера: только то, что нужно макету, с готовыми объёмами и ценами.
+   * Заменяет `/products` + `/categories` (там N+1 по объёмам и лишние поля).
+   */
+  .get('/menu-layouts/catalog', (c) => {
+    const rows = db
+      .prepare(
+        `SELECT p.id, p.name, p.price, p.image_url AS imageUrl, p.available,
+                p.category_id AS categoryId, c.name AS categoryName,
+                p.variant_label AS variantLabel, p.size_value AS sizeValue, p.size_unit AS sizeUnit,
+                p.group_id AS groupId
+           FROM products p LEFT JOIN categories c ON c.id = p.category_id
+          ORDER BY c.sort_order, p.sort_order, p.id`,
+      )
+      .all() as Array<{
+      id: number
+      name: string
+      price: number
+      imageUrl: string | null
+      available: number
+      categoryId: number | null
+      categoryName: string | null
+      variantLabel: string | null
+      sizeValue: number | null
+      sizeUnit: string | null
+      groupId: number | null
+    }>
+    const volumes = loadVolumeSizes(rows.map((r) => Number(r.id)))
+    const groups = loadGroupSizes(rows.map((r) => r.groupId).filter((n): n is number => n != null))
+    const products = rows.map((r) => ({
+      id: Number(r.id),
+      name: r.name,
+      price: Number(r.price) || 0,
+      imageUrl: r.imageUrl ?? null,
+      available: !!r.available,
+      categoryId: r.categoryId == null ? null : Number(r.categoryId),
+      categoryName: r.categoryName ?? null,
+      variantLabel: r.variantLabel ?? null,
+      prices: volumes.get(Number(r.id)) ?? (r.groupId != null ? groups.get(Number(r.groupId)) : null) ?? null,
+    }))
+    const categories = db.prepare('SELECT id, name FROM categories ORDER BY sort_order, id').all()
+    return c.json({ ok: true, products, categories })
   })
 
   .get('/menu-layouts/:id', (c) => {

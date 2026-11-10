@@ -133,23 +133,37 @@ function MenuCanvas({
               </div>
             )}
 
-            {type === 'product' && (
-              <div className="mc-product">
-                {b.showPhoto && b.displayImageUrl && <img className="mc-product-thumb" src={b.displayImageUrl} alt="" />}
-                <div className="mc-product-body">
-                  <div className="mc-product-row">
-                    <span className="mc-product-name" style={{ fontSize: `${ptToCqw(b.fontSizePt)}cqw` }}>
-                      {b.displayName ?? b.titleOverride ?? b.snapshotName ?? 'Позиция'}
-                    </span>
-                    <span className="mc-product-price" style={{ fontSize: `${ptToCqw(b.fontSizePt)}cqw` }}>
-                      {b.displayPrice ?? '—'}
-                    </span>
+            {type === 'product' && (() => {
+              const sizes = b.displaySizes ?? []
+              // Как в PDF: при двух и более объёмах цена уходит на вторую строку вместе с подписями.
+              const twoLines = sizes.length > 1 && b.hPct > 7
+              return (
+                <div className="mc-product">
+                  {b.showPhoto && b.displayImageUrl && <img className="mc-product-thumb" src={b.displayImageUrl} alt="" />}
+                  <div className="mc-product-body">
+                    <div className="mc-product-row">
+                      <span className="mc-product-name" style={{ fontSize: `${ptToCqw(b.fontSizePt)}cqw` }}>
+                        {b.displayName ?? b.titleOverride ?? b.snapshotName ?? 'Позиция'}
+                      </span>
+                      {!twoLines && (
+                        <span className="mc-product-price" style={{ fontSize: `${ptToCqw(b.fontSizePt)}cqw` }}>
+                          {b.displayPrice ?? '—'}
+                        </span>
+                      )}
+                    </div>
+                    {twoLines ? (
+                      <div className="mc-product-sizes" style={{ fontSize: `${ptToCqw(b.fontSizePt * 0.78)}cqw` }}>
+                        <span>{sizes.map((sz) => sz.label).join(' · ')}</span>
+                        <span>{sizes.map((sz) => sz.price).join(' · ')}</span>
+                      </div>
+                    ) : (
+                      b.product?.variantLabel && <span className="mc-product-sub">{b.product.variantLabel}</span>
+                    )}
+                    {b.badge && <span className="mc-badge">{b.badge}</span>}
                   </div>
-                  {b.product?.variantLabel && <span className="mc-product-sub">{b.product.variantLabel}</span>}
-                  {b.badge && <span className="mc-badge">{b.badge}</span>}
                 </div>
-              </div>
-            )}
+              )
+            })()}
 
             {selected && onHandlePointerDown && (
               <div

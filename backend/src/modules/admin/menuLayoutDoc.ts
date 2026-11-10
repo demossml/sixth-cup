@@ -80,11 +80,54 @@ export type MenuBlock = {
   snapshotPriceRub: number | null
   snapshotName: string | null
   snapshotImageUrl: string | null
+  /** Снимок объёмов на момент фиксации цен (frozen): label + цена. */
+  snapshotSizes: { label: string; price: string }[] | null
   sortOrder: number
+  /** Блок отрисован движком раскладки для позиции секции (v2). */
+  itemId?: string | null
+  /** true — блок поставил человек: раскладка его не двигает и не удаляет. */
+  pinned?: boolean
 }
 
-export type MenuPage = { id: string; blocks: MenuBlock[] }
-export type MenuDoc = { pages: MenuPage[] }
+/** Объём позиции: цена из каталога (объёмы/варианты группы) или задана руками. */
+export type ItemSize = {
+  label: string
+  source: 'catalog' | 'manual'
+  /** Вариант группы — это отдельный товар каталога. */
+  productId: number | null
+  /** Строка `volume_scheme_items`, к которой привязана цена. */
+  volumeItemId: number | null
+  priceRubOverride: number | null
+}
+
+/** Позиция семантического макета: один товар каталога и его объёмы. */
+export type MenuItem = {
+  id: string
+  productId: number | null
+  groupId: number | null
+  titleOverride: string | null
+  description: string | null
+  badge: string | null
+  showPhoto: boolean
+  photoUrlOverride: string | null
+  sizes: ItemSize[]
+  hidden: boolean
+}
+
+/** Секция листа: заголовок + позиции. Раскладка превращает её в блоки с координатами. */
+export type MenuSection = {
+  id: string
+  title: string
+  categoryId: number | null
+  items: MenuItem[]
+  style: { showPhotos: boolean }
+}
+
+export type MenuPage = { id: string; blocks: MenuBlock[]; sections?: MenuSection[]; template?: string | null }
+/** schemaVersion 2 добавляет секции и объёмы; блоки остаются языком рендера. */
+export type MenuDoc = { pages: MenuPage[]; schemaVersion?: number }
+
+export const DOC_SCHEMA_VERSION = 2
 
 export type MenuTheme = {
   preset: 'classic' | 'dark' | 'season'
@@ -177,6 +220,21 @@ const BLOCK_TYPES: readonly BlockType[] = [
 /** Внешние ссылки в макете не храним: только файлы из uploads админки. */
 const sanitizeUploads = (url: string | null): string | null => (url && isUploadsUrl(url) ? url : null)
 
+const normalizeSizes = (raw: unknown): { label: string; price: string }[] | null => {
+  if (!Array.isArray(raw)) return null
+  const out = raw
+    .map((x) => {
+      const o = (x && typeof x === 'object' ? x : null) as Record<string, unknown> | null
+      if (!o) return null
+      const label = str(o.label, 24)
+      if (!label) return null
+      return { label, price: str(o.price, 16) ?? '' }
+    })
+    .filter((x): x is { label: string; price: string } => x != null)
+    .slice(0, 8)
+  return out.length ? out : null
+}
+
 function normalizeBlock(raw: unknown, index: number): MenuBlock | null {
   const b = (raw && typeof raw === 'object' ? raw : null) as Record<string, unknown> | null
   if (!b) return null
@@ -215,6 +273,7 @@ function normalizeBlock(raw: unknown, index: number): MenuBlock | null {
     snapshotPriceRub: intOrNull(b.snapshotPriceRub),
     snapshotName: str(b.snapshotName, 120),
     snapshotImageUrl: str(b.snapshotImageUrl, 400),
+    snapshotSizes: normalizeSizes(b.snapshotSizes),
     sortOrder: Number.isFinite(Number(b.sortOrder)) ? Number(b.sortOrder) : index,
   }
 }
@@ -232,13 +291,69 @@ export function normalizeDoc(raw: unknown): MenuDoc {
       .map((b, bi) => normalizeBlock(b, bi))
       .filter((b): b is MenuBlock => !!b)
       .sort((a, b) => a.zIndex - b.zIndex || a.sortOrder - b.sortOrder)
+    const sections = Array.isArray(page.sections)
+      ? page.sections.map((x, si) => normalizeSection(x, si)).filter((x): x is MenuSection => !!x)
+      : undefined
     return {
       id: typeof page.id === 'string' && page.id.trim() ? page.id.trim().slice(0, 64) : `page-${pi + 1}`,
       blocks,
+      ...(sections ? { sections } : {}),
+      ...(typeof page.template === 'string' ? { template: page.template.slice(0, 40) } : {}),
     }
   })
   if (pages.length === 0) pages.push({ id: 'page-1', blocks: [] })
-  return { pages }
+  // v2: секции и объёмы живут рядом с блоками; блоки остаются языком рендера.
+  const hasSections = pages.some((p) => (p.sections?.length ?? 0) > 0)
+  const version = Number(d.schemaVersion) === 2 || hasSections ? DOC_SCHEMA_VERSION : 1
+  return { pages, schemaVersion: version }
+}
+
+/** Позиция секции: товар каталога + объёмы. */
+function normalizeSize(raw: unknown): ItemSize | null {
+  const o = (raw && typeof raw === 'object' ? raw : null) as Record<string, unknown> | null
+  if (!o) return null
+  const label = str(o.label, 24)
+  if (!label) return null
+  const source = oneOf(o.source, ['catalog', 'manual'] as const, 'catalog')
+  return {
+    label,
+    source,
+    productId: intOrNull(o.productId),
+    volumeItemId: intOrNull(o.volumeItemId),
+    priceRubOverride: intOrNull(o.priceRubOverride),
+  }
+}
+
+function normalizeItem(raw: unknown, index: number): MenuItem | null {
+  const o = (raw && typeof raw === 'object' ? raw : null) as Record<string, unknown> | null
+  if (!o) return null
+  const sizes = Array.isArray(o.sizes) ? o.sizes.map(normalizeSize).filter((x): x is ItemSize => !!x).slice(0, 8) : []
+  return {
+    id: typeof o.id === 'string' && o.id.trim() ? o.id.trim().slice(0, 64) : `it-${index + 1}`,
+    productId: intOrNull(o.productId),
+    groupId: intOrNull(o.groupId),
+    titleOverride: str(o.titleOverride, 120),
+    description: str(o.description, 200),
+    badge: str(o.badge, 16),
+    showPhoto: o.showPhoto !== false,
+    photoUrlOverride: sanitizeUploads(str(o.photoUrlOverride, 500)),
+    sizes,
+    hidden: o.hidden === true,
+  }
+}
+
+function normalizeSection(raw: unknown, index: number): MenuSection | null {
+  const o = (raw && typeof raw === 'object' ? raw : null) as Record<string, unknown> | null
+  if (!o) return null
+  const items = Array.isArray(o.items) ? o.items.map((x, i) => normalizeItem(x, i)).filter((x): x is MenuItem => !!x) : []
+  const style = (o.style && typeof o.style === 'object' ? o.style : {}) as Record<string, unknown>
+  return {
+    id: typeof o.id === 'string' && o.id.trim() ? o.id.trim().slice(0, 64) : `sec-${index + 1}`,
+    title: str(o.title, 60) ?? 'Без названия',
+    categoryId: intOrNull(o.categoryId),
+    items,
+    style: { showPhotos: style.showPhotos !== false },
+  }
 }
 
 /* ───────────── миграция старых flow-макетов в координаты ───────────── */
@@ -424,7 +539,12 @@ export type CatalogProduct = {
   variantLabel: string | null
   sizeValue: number | null
   sizeUnit: string | null
+  /** Объёмы и цены: из схемы объёмов, вариантов группы или один размер товара. */
+  sizes: ResolvedSize[]
 }
+
+/** Разрешённый объём позиции для печати и превью. */
+export type ResolvedSize = { label: string; priceRub: number | null; productId: number; volumeItemId: number | null }
 
 const UPLOADS_URL = /^\/uploads\/[A-Za-z0-9._-]+$/
 
@@ -449,7 +569,8 @@ export function loadCatalogProducts(ids: number[]): Map<number, CatalogProduct> 
     .prepare(
       `SELECT p.id, p.name, p.price, p.image_url AS imageUrl, p.available,
               p.category_id AS categoryId, c.name AS categoryName,
-              p.variant_label AS variantLabel, p.size_value AS sizeValue, p.size_unit AS sizeUnit
+              p.variant_label AS variantLabel, p.size_value AS sizeValue, p.size_unit AS sizeUnit,
+              p.volume_scheme_id AS volumeSchemeId, p.group_id AS groupId, p.variant_sort AS variantSort
          FROM products p LEFT JOIN categories c ON c.id = p.category_id
         WHERE p.id IN (${unique.map(() => '?').join(',')})`,
     )
@@ -464,7 +585,12 @@ export function loadCatalogProducts(ids: number[]): Map<number, CatalogProduct> 
       variantLabel: string | null
       sizeValue: number | null
       sizeUnit: string | null
+      volumeSchemeId: number | null
+      groupId: number | null
+      variantSort: number | null
     }>
+  const volumeSizes = loadVolumeSizes(unique)
+  const groupSizes = loadGroupSizes(rows.map((r) => r.groupId).filter((n): n is number => n != null))
   for (const r of rows) {
     out.set(Number(r.id), {
       id: Number(r.id),
@@ -477,7 +603,72 @@ export function loadCatalogProducts(ids: number[]): Map<number, CatalogProduct> 
       variantLabel: r.variantLabel ?? null,
       sizeValue: r.sizeValue == null ? null : Number(r.sizeValue),
       sizeUnit: r.sizeUnit ?? null,
+      sizes:
+        volumeSizes.get(Number(r.id)) ??
+        (r.groupId != null ? groupSizes.get(Number(r.groupId)) : undefined) ??
+        [
+          {
+            label: r.variantLabel ?? sizeLabel(r.sizeValue, r.sizeUnit),
+            priceRub: Number(r.price) || 0,
+            productId: Number(r.id),
+            volumeItemId: null,
+          },
+        ],
     })
+  }
+  return out
+}
+
+const sizeLabel = (value: number | null, unit: string | null): string =>
+  value != null && unit ? `${value} ${unit === 'ml' ? 'мл' : unit === 'g' ? 'г' : unit}` : 'цена'
+
+/**
+ * Объёмы из схемы: цена лежит в `product_volume_prices`, подпись — в `volume_scheme_items`.
+ * Это единственный источник для «250 / 350 / 450» — руками цену в макете не дублируем.
+ */
+export function loadVolumeSizes(productIds: number[]): Map<number, ResolvedSize[]> {
+  const out = new Map<number, ResolvedSize[]>()
+  if (productIds.length === 0) return out
+  const rows = db
+    .prepare(
+      `SELECT pvp.product_id AS productId, pvp.item_id AS volumeItemId, pvp.price,
+              v.label AS label, v.sort_order AS sortOrder
+         FROM product_volume_prices pvp
+         JOIN volume_scheme_items v ON v.id = pvp.item_id
+        WHERE pvp.product_id IN (${productIds.map(() => '?').join(',')})
+        ORDER BY v.sort_order, v.id`,
+    )
+    .all(...productIds) as { productId: number; volumeItemId: number; price: number; label: string; sortOrder: number }[]
+  for (const r of rows) {
+    const list = out.get(Number(r.productId)) ?? []
+    list.push({ label: r.label, priceRub: Number(r.price) || 0, productId: Number(r.productId), volumeItemId: Number(r.volumeItemId) })
+    out.set(Number(r.productId), list)
+  }
+  return out
+}
+
+/** Варианты группы («Капучино 250 / 350 / 450») — по одному размеру на товар-вариант. */
+export function loadGroupSizes(groupIds: number[]): Map<number, ResolvedSize[]> {
+  const unique = [...new Set(groupIds.filter((n) => Number.isInteger(n) && n > 0))]
+  const out = new Map<number, ResolvedSize[]>()
+  if (unique.length === 0) return out
+  const rows = db
+    .prepare(
+      `SELECT id, group_id AS groupId, price, variant_label AS variantLabel, size_value AS sizeValue, size_unit AS sizeUnit
+         FROM products
+        WHERE group_id IN (${unique.map(() => '?').join(',')}) AND available=1
+        ORDER BY variant_sort, id`,
+    )
+    .all(...unique) as { id: number; groupId: number; price: number; variantLabel: string | null; sizeValue: number | null; sizeUnit: string | null }[]
+  for (const r of rows) {
+    const list = out.get(Number(r.groupId)) ?? []
+    list.push({
+      label: r.variantLabel ?? sizeLabel(r.sizeValue, r.sizeUnit),
+      priceRub: Number(r.price) || 0,
+      productId: Number(r.id),
+      volumeItemId: null,
+    })
+    out.set(Number(r.groupId), list)
   }
   return out
 }
@@ -505,6 +696,8 @@ export type RenderBlock = MenuBlock & {
   catalogPriceRub?: number | null
   displayName?: string
   displayPrice?: string | null
+  /** Объёмы позиции с ценами: «250 мл — 169», «350 мл — 219». Пусто — один размер. */
+  displaySizes?: { label: string; price: string }[]
   displayCategory?: string | null
   /** Итоговый адрес картинки: своё фото → каталог → снапшот. */
   displayImageUrl?: string | null
@@ -562,6 +755,18 @@ export function resolveDoc(doc: MenuDoc, priceMode: PriceMode): ResolvedDoc {
         const displayName =
           b.titleOverride ?? (frozen ? b.snapshotName ?? live?.name ?? '' : live?.name ?? b.snapshotName ?? '')
         const displayImageUrl = b.photoUrlOverride ?? live?.imageUrl ?? (frozen ? b.snapshotImageUrl : null) ?? null
+        // Объёмы: у позиции может быть 250/350/450 — печатаем одной строкой, а не тремя блоками.
+        // Ручная цена в блоке сильнее объёмов каталога; frozen печатает снимок объёмов.
+        const catalogSizes = live?.sizes ?? []
+        const manualPrice = b.priceRubOverride != null || b.priceText != null
+        const sizeSource = frozen && b.snapshotSizes?.length ? b.snapshotSizes : null
+        const displaySizes = manualPrice
+          ? []
+          : sizeSource
+            ? sizeSource.map((sz) => ({ label: sz.label, price: sz.price }))
+            : catalogSizes.length > 1
+              ? catalogSizes.map((sz) => ({ label: sz.label, price: sz.priceRub == null ? '' : String(sz.priceRub) }))
+              : []
         if (b.showPhoto && !displayImageUrl) warnings.push('нет фото')
         else if (b.showPhoto && displayImageUrl && isUploadsUrl(displayImageUrl) && !uploadsFileExists(displayImageUrl)) {
           warnings.push('файл картинки не найден')
@@ -596,6 +801,7 @@ export function resolveDoc(doc: MenuDoc, priceMode: PriceMode): ResolvedDoc {
                 }
               : null,
           catalogPriceRub: live?.priceRub ?? null,
+          displaySizes,
           imageMissing: !!displayImageUrl && isUploadsUrl(displayImageUrl) && !uploadsFileExists(displayImageUrl),
           warnings,
           displayName,

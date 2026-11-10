@@ -240,6 +240,66 @@ describe('подписи форматов', () => {
   })
 })
 
+describe('объёмы позиции', () => {
+  const withSizes = [
+    {
+      id: 1,
+      name: 'Капучино',
+      price: 169,
+      imageUrl: null,
+      available: true,
+      categoryId: 10,
+      categoryName: 'Кофе',
+      variantLabel: null,
+      prices: [
+        { label: '250 мл', priceRub: 169 },
+        { label: '350 мл', priceRub: 219 },
+        { label: '450 мл', priceRub: 269 },
+      ],
+    },
+  ]
+
+  it('три объёма печатаются строкой, а не тремя блоками', () => {
+    const doc = { pages: [{ id: 'p', blocks: [b('product', 'p1', { productId: 1 })] }] }
+    const block = resolvePreview(doc, doc_sizes(), 'live').pages[0]!.blocks[0]!
+    expect(block.displaySizes).toEqual([
+      { label: '250 мл', price: '169' },
+      { label: '350 мл', price: '219' },
+      { label: '450 мл', price: '269' },
+    ])
+  })
+
+  it('ручная цена сильнее объёмов', () => {
+    const doc = { pages: [{ id: 'p', blocks: [b('product', 'p1', { productId: 1, priceRubOverride: 199 })] }] }
+    expect(resolvePreview(doc, doc_sizes(), 'live').pages[0]!.blocks[0]!.displaySizes).toEqual([])
+  })
+
+  it('frozen берёт снимок объёмов', () => {
+    const doc = {
+      pages: [
+        {
+          id: 'p',
+          blocks: [
+            b('product', 'p1', {
+              productId: 1,
+              snapshotSizes: [
+                { label: '250 мл', price: '160' },
+                { label: '350 мл', price: '210' },
+              ],
+            }),
+          ],
+        },
+      ],
+    }
+    expect(resolvePreview(doc, doc_sizes(), 'frozen').pages[0]!.blocks[0]!.displaySizes).toEqual([
+      { label: '250 мл', price: '160' },
+      { label: '350 мл', price: '210' },
+    ])
+  })
+
+  const doc_sizes = () => withSizes
+})
+
 describe('служебное', () => {
   it('баннер цен различает live и frozen', () => {
     const drift = [{ title: 'Капучино', from: 169, to: 179 }]

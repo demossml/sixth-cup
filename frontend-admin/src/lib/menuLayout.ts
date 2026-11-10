@@ -38,6 +38,8 @@ export type MenuBlock = {
   snapshotPriceRub: number | null
   snapshotName: string | null
   snapshotImageUrl: string | null
+  /** Снимок объёмов для frozen-режима. */
+  snapshotSizes: { label: string; price: string }[] | null
   sortOrder: number
   // поля резолва с сервера
   product?: { name: string; priceRub: number | null; imageUrl: string | null; available: boolean; variantLabel: string | null; categoryName: string | null } | null
@@ -45,6 +47,8 @@ export type MenuBlock = {
   displayPrice?: string | null
   displayCategory?: string | null
   displayImageUrl?: string | null
+  /** Объёмы с ценами: печатаются одной строкой, если их больше одного. */
+  displaySizes?: { label: string; price: string }[]
   /** Сервер не нашёл файл картинки на диске. */
   imageMissing?: boolean
   catalogPriceRub?: number | null
@@ -196,6 +200,7 @@ export function newBlock(type: BlockType, rect: Partial<Rect> = {}, extra: Parti
     snapshotPriceRub: null,
     snapshotName: null,
     snapshotImageUrl: null,
+    snapshotSizes: null,
     sortOrder: 0,
     ...extra,
   }
@@ -210,6 +215,8 @@ export type CatalogProduct = {
   categoryId: number | null
   categoryName: string | null
   variantLabel: string | null
+  /** Объёмы из каталога: «250 мл — 169». Один размер — null. */
+  prices?: { label: string; priceRub: number | null }[] | null
 }
 
 export function productBlock(product: CatalogProduct, rect: Partial<Rect>, z: number): MenuBlock {
@@ -352,6 +359,7 @@ export const blockPayload = (b: MenuBlock): MenuBlock => ({
   snapshotPriceRub: b.snapshotPriceRub,
   snapshotName: b.snapshotName,
   snapshotImageUrl: b.snapshotImageUrl,
+  snapshotSizes: b.snapshotSizes ?? null,
   sortOrder: b.sortOrder,
 })
 
@@ -441,6 +449,18 @@ export function resolvePreview(doc: MenuDoc, products: CatalogProduct[], mode: '
           b.titleOverride ?? (mode === 'frozen' ? b.snapshotName ?? live?.name ?? '' : live?.name ?? b.snapshotName ?? '')
         const displayImageUrl =
           b.photoUrlOverride ?? live?.imageUrl ?? (mode === 'frozen' ? b.snapshotImageUrl : null) ?? null
+        // Объёмы: «250 · 350 · 450» одной строкой. Ручная цена сильнее каталога, frozen берёт снимок.
+        const manualPrice = b.priceRubOverride != null || b.priceText != null
+        const sizeSource = mode === 'frozen' && b.snapshotSizes?.length ? b.snapshotSizes : null
+        const catalogSizes = live?.prices ?? []
+        const displaySizes = manualPrice
+          ? []
+          : sizeSource
+            ? sizeSource.map((sz) => ({ label: sz.label, price: sz.price }))
+            : catalogSizes.length > 1
+              ? catalogSizes.map((sz) => ({ label: sz.label, price: sz.priceRub == null ? '' : String(sz.priceRub) }))
+              : []
+
         const warnings: string[] = []
         if (b.productId != null && !live) warnings.push('позиции больше нет в каталоге')
         if (live && !live.available) warnings.push('не в продаже (выключена в каталоге)')
@@ -470,6 +490,7 @@ export function resolvePreview(doc: MenuDoc, products: CatalogProduct[], mode: '
                 }
               : null,
           catalogPriceRub: live?.price ?? null,
+          displaySizes,
           displayName,
           displayPrice,
           displayImageUrl,
