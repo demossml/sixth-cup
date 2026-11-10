@@ -5,7 +5,6 @@
   width: 100%;
   height: 100%;
   min-height: 100%;
-  padding: 4.4% 4.4% 6% 4.4%;
   background: var(--mc-bg);
   color: var(--mc-text);
   font-family: var(--font);
@@ -17,7 +16,17 @@
   box-sizing: border-box;
 }
 
-/* Безопасная область: блоки живут внутри неё (padding листа). */
+/*
+ * Безопасная область: блоки живут только внутри неё, поэтому проценты в doc_json
+ * совпадают с PDF. Координаты задаёт `safeAreaStyle` (src/lib/sheetGeometry.ts) в cqw.
+ */
+.mc-safe {
+  pointer-events: none;
+}
+.mc-safe > * {
+  pointer-events: auto;
+}
+
 .mc-block {
   position: absolute;
   cursor: grab;
@@ -42,10 +51,10 @@
 
 .mc-handle {
   position: absolute;
-  right: -0.55cqw;
-  bottom: -0.55cqw;
-  width: 1.5cqw;
-  height: 1.5cqw;
+  right: max(-6px, -0.55cqw);
+  bottom: max(-6px, -0.55cqw);
+  width: max(12px, 1.5cqw);
+  height: max(12px, 1.5cqw);
   border-radius: 2px;
   border: 1.5px solid #fff;
   background: var(--mc-accent);
@@ -249,9 +258,9 @@
 /* ── подвал и служебные слои ── */
 .mc-foot {
   position: absolute;
-  left: 4.4%;
-  right: 4.4%;
-  bottom: 2%;
+  left: 4.4cqw;
+  right: 4.4cqw;
+  bottom: 1.6cqw;
   display: flex;
   justify-content: space-between;
   gap: 1.5cqw;
@@ -270,7 +279,7 @@
 .mc-sheet.is-grid::before {
   content: '';
   position: absolute;
-  inset: 4.4%;
+  inset: 4.4cqw 4.4cqw 6cqw 4.4cqw;
   pointer-events: none;
   background-image: linear-gradient(rgba(0, 47, 167, 0.06) 1px, transparent 1px),
     linear-gradient(90deg, rgba(0, 47, 167, 0.06) 1px, transparent 1px);
@@ -280,7 +289,7 @@
 .mc-sheet.is-safe::after {
   content: '';
   position: absolute;
-  inset: 4.4% 4.4% 6% 4.4%;
+  inset: 4.4cqw 4.4cqw 6cqw 4.4cqw;
   border: 1px dashed rgba(0, 47, 167, 0.35);
   pointer-events: none;
   z-index: 9999;

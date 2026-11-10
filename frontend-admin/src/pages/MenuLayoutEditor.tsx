@@ -49,6 +49,7 @@ import {
 } from '../lib/menuLayout'
 import { Badge, Button, Banner, Drawer, cx, ErrorBox, Field, Input, Select, Spinner, useToast } from '../ui/kit'
 import MenuCanvas from '../components/menuLayout/MenuCanvas'
+import { safeBoxSize } from '../lib/sheetGeometry'
 
 type Blocker = { blockId: string; code: string; text: string; label: string; pageIdx: number }
 
@@ -285,7 +286,7 @@ export default function MenuLayoutEditor() {
     const block = page?.blocks.find((b) => b.id === id)
     const sheet = sheetRef.current
     if (!block || !sheet) return
-    const rect = sheet.getBoundingClientRect()
+    const safe = safeBoxSize(sheet.getBoundingClientRect())
     drag.current = {
       id,
       mode,
@@ -293,8 +294,9 @@ export default function MenuLayoutEditor() {
       startX: e.clientX,
       startY: e.clientY,
       rect: { xPct: block.xPct, yPct: block.yPct, wPct: block.wPct, hPct: block.hPct },
-      w: rect.width,
-      h: rect.height,
+      // Проценты в документе считаются от безопасной области, а не от края листа.
+      w: safe.w,
+      h: safe.h,
     }
     setSelectedId(id)
     updatePage((blocks) => (blocks.find((b) => b.id === id)?.zIndex === topZ(blocks) - 1 ? blocks : bringToFront(blocks, id)))

@@ -1,0 +1,100 @@
+{
+  "pages": [
+    {
+      "id": "page-1",
+      "blocks": [
+        {
+          "id": "h1",
+          "type": "header",
+          "text": "весна / лето 2026",
+          "sortOrder": 0
+        },
+        {
+          "id": "hero1",
+          "type": "hero",
+          "titleOverride": "Кофе и не только",
+          "text": "меню",
+          "sortOrder": 1
+        },
+        {
+          "id": "c1",
+          "type": "category",
+          "titleOverride": "Кофе",
+          "sortOrder": 2
+        },
+        {
+          "id": "p1",
+          "type": "product",
+          "productId": 100,
+          "sortOrder": 3
+        },
+        {
+          "id": "p2",
+          "type": "product",
+          "productId": 101,
+          "sortOrder": 4
+        },
+        {
+          "id": "p3",
+          "type": "product",
+          "productId": 102,
+          "sortOrder": 5
+        },
+        {
+          "id": "p4",
+          "type": "product",
+          "productId": 103,
+          "sortOrder": 6
+        },
+        {
+          "id": "p5",
+          "type": "product",
+          "productId": 104,
+          "sortOrder": 7
+        },
+        {
+          "id": "p6",
+          "type": "product",
+          "productId": 105,
+          "sortOrder": 8
+        },
+        {
+          "id": "c2",
+          "type": "category",
+          "titleOverride": "Добавки",
+          "sortOrder": 9
+        },
+        {
+          "id": "a1",
+          "type": "product",
+          "productId": 200,
+          "sortOrder": 10
+        },
+        {
+          "id": "a2",
+          "type": "product",
+          "productId": 201,
+          "sortOrder": 11
+        },
+        {
+          "id": "a3",
+          "type": "product",
+          "productId": 202,
+          "sortOrder": 12
+        },
+        {
+          "id": "a4",
+          "type": "product",
+          "productId": 203,
+          "sortOrder": 13
+        },
+        {
+          "id": "note1",
+          "type": "note",
+          "text": "Цены в рублях",
+          "sortOrder": 14
+        }
+      ]
+    }
+  ]
+}

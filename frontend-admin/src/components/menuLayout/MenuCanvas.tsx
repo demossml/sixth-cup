@@ -1,6 +1,7 @@
 import { memo } from 'react'
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
 import { effectiveType, type MenuBlock, type MenuPage, type MenuTheme, type ResizeHandle } from '../../lib/menuLayout'
+import { ptToWidthPct, safeAreaStyle } from '../../lib/sheetGeometry'
 
 type Props = {
   page: MenuPage
@@ -18,7 +19,7 @@ type Props = {
 }
 
 /** 1 pt на листе A4 (595 pt) = 0.168 % ширины — так кегль из данных совпадает с PDF. */
-const ptToCqw = (pt: number): number => Math.max(1.6, pt * 0.168)
+const ptToCqw = (pt: number): number => ptToWidthPct(pt)
 
 const wrapStyle = (b: MenuBlock): CSSProperties => ({
   position: 'absolute',
@@ -70,6 +71,7 @@ function MenuCanvas({
         </div>
       )}
 
+      <div className="mc-safe" style={safeAreaStyle}>
       {blocks.map((b) => {
         const type = effectiveType(b)
         const selected = b.id === selectedId
@@ -163,6 +165,7 @@ function MenuCanvas({
           </div>
         )
       })}
+      </div>
 
       <footer className="mc-foot">
         <span>

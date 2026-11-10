@@ -10,6 +10,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { config } from '../../config'
 import { formatMetrics, type RenderBlock } from './menuLayoutDoc'
+import { contentBox, footerBaselineY, placeBlock } from './sheetGeometry'
 import type { LayoutView } from './menuLayouts'
 
 const require = createRequire(import.meta.url)
@@ -201,9 +202,10 @@ export async function renderLayoutPdf(view: LayoutView, opts: PdfOptions): Promi
 
   const W = metrics.width
   const H = metrics.height
-  const pad = Math.round(26 * scale) + bleed
-  const cbW = W - pad * 2
-  const cbH = H - pad * 2
+  // Та же безопасная область, что у холста в редакторе: другой геометрии быть не должно.
+  const box = contentBox(W, H, bleed)
+  const padX = box.x
+  const cbW = box.w
   const muted = theme.preset === 'dark' ? '#A5A39D' : theme.preset === 'season' ? '#76695B' : '#6E6A62'
   const line = theme.preset === 'dark' ? '#3B3F49' : theme.preset === 'season' ? '#D9C9B3' : '#D8D2C7'
   const pages = view.doc.pages
@@ -242,12 +244,7 @@ export async function renderLayoutPdf(view: LayoutView, opts: PdfOptions): Promi
     }
 
     for (const block of page.blocks) {
-      const rect: Rect = {
-        x: pad + (block.xPct / 100) * cbW,
-        y: pad + (block.yPct / 100) * cbH,
-        w: (block.wPct / 100) * cbW,
-        h: (block.hPct / 100) * cbH,
-      }
+      const rect: Rect = placeBlock(box, block)
       doc.save()
       if (block.rotationDeg) {
         const cx = rect.x + rect.w / 2
@@ -259,12 +256,12 @@ export async function renderLayoutPdf(view: LayoutView, opts: PdfOptions): Promi
     }
 
     // Подвал вне безопасной области: номер страницы, название, режим цен.
-    const footY = H - pad * 0.62
+    const footY = footerBaselineY(H, W, bleed)
     doc.font('body').fontSize(Math.max(4.5, 5.5 * scale)).fillColor(muted)
-    doc.text(clip(view.title.toUpperCase(), 60), pad, footY, { width: cbW * 0.6, lineBreak: false })
+    doc.text(clip(view.title.toUpperCase(), 60), padX, footY, { width: cbW * 0.6, lineBreak: false })
     doc.text(
       `${metrics.label} · ${metrics.mm} · ${pi + 1}/${pages.length}${view.priceMode === 'frozen' ? ' · цены зафиксированы' : ''}`,
-      pad,
+      padX,
       footY,
       { width: cbW, align: 'right', lineBreak: false },
     )

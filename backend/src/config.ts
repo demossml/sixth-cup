@@ -21,6 +21,11 @@ export const config = {
   adminViewerToken: process.env.ADMIN_VIEWER_TOKEN || '',
   /** Read + content/analytics write, no reset/dangerous ops. */
   adminMarketerToken: process.env.ADMIN_MARKETER_TOKEN || '',
+  /**
+   * Макет меню v2 (семантические секции, объёмы, шаблоны, AI).
+   * Пока только флаг: v1-редактор работает как раньше, новые экраны включаются им.
+   */
+  menuLayoutV2: process.env.MENU_LAYOUT_V2 === '1',
   /** AI assistant master switch */
   aiAssistant: process.env.AI_ASSISTANT === '1',
   aiApiKey: process.env.AI_API_KEY || '',
