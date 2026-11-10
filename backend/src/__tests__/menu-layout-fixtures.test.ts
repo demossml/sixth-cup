@@ -363,3 +363,40 @@ describe('этап 1.4: версии и конфликты', () => {
     expect(body.layout.rev).toBe(2)
   })
 })
+
+describe('этап 6: производительность на 300 блоках', () => {
+  it('лист на 300 блоков собирается и печатается за разумное время', async () => {
+    const created = await app.request('/api/admin/menu-layouts', {
+      method: 'POST',
+      headers: H,
+      body: JSON.stringify({ title: 'Нагрузка', format: 'a3_portrait' }),
+    })
+    const { layout } = (await created.json()) as { layout: { id: number } }
+    const blocks = Array.from({ length: 300 }, (_, i) => ({
+      id: `b-${i}`,
+      type: 'text',
+      text: `Позиция ${i}`,
+      xPct: (i % 2) * 50,
+      yPct: (Math.floor(i / 2) % 40) * 2.2,
+      wPct: 46,
+      hPct: 2,
+      fontSizePt: 8,
+      zIndex: i,
+      sortOrder: i,
+    }))
+    const started = Date.now()
+    const put = await app.request(`/api/admin/menu-layouts/${layout.id}`, {
+      method: 'PUT',
+      headers: H,
+      body: JSON.stringify({ doc: { pages: [{ id: 'page-1', blocks }] } }),
+    })
+    expect(put.status).toBe(200)
+    const pdf = await app.request(`/api/admin/menu-layouts/${layout.id}/export.pdf?preset=screen&force=1`, { headers: H })
+    expect(pdf.status).toBe(200)
+    const bytes = (await pdf.arrayBuffer()).byteLength
+    const ms = Date.now() - started
+    expect(bytes).toBeGreaterThan(5000)
+    // 300 блоков на A3: сохранение + PDF должны укладываться в несколько секунд
+    expect(ms).toBeLessThan(8000)
+  })
+})
