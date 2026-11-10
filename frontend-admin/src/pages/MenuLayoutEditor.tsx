@@ -3,7 +3,7 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   ArrowDown, ArrowLeft, ArrowUp, Check, Download, Eye, EyeOff, Grid3x3, ImagePlus, Layers, ListTree, Loader2,
-  Minus, Palette, Plus, Redo2, RefreshCw, Search, Trash2, Type, Undo2, Upload, X,
+  Minus, Palette, Plus, Redo2, RefreshCw, Search, Sparkles, Trash2, Type, Undo2, Upload, X,
 } from 'lucide-react'
 import { ApiError, api, tokenStore, uploadFile } from '../api/client'
 import { canRedo, canUndo, emptyHistory, pushHistory, redoStep, undoStep, type DocHistory } from '../lib/docHistory'
@@ -127,6 +127,9 @@ export default function MenuLayoutEditor() {
   const [mobileTab, setMobileTab] = useState<MobileTab>('preview')
   const [search, setSearch] = useState('')
   const [showAllProducts, setShowAllProducts] = useState(false)
+  const [aiPrompt, setAiPrompt] = useState('')
+  const [aiPlan, setAiPlan] = useState<{ summary: string; ops: unknown[] } | null>(null)
+  const [aiBusy, setAiBusy] = useState(false)
   const [catFilter, setCatFilter] = useState<number | 'all'>('all')
   const [zoom, setZoom] = useState(1)
   const [showGrid, setShowGrid] = useState(false)
@@ -969,6 +972,48 @@ export default function MenuLayoutEditor() {
     }
   }
 
+  /** AI-помощник: предложение → подтверждение → применение. Модель документ не пишет. */
+  const runAi = async () => {
+    if (!aiPrompt.trim()) return
+    setAiBusy(true)
+    setAiPlan(null)
+    try {
+      const res = await api<{ plan: { summary: string; ops: unknown[] } }>(`/menu-layouts/${numericId}/ai/propose`, {
+        method: 'POST',
+        body: { prompt: aiPrompt.trim() },
+      })
+      if (res.plan.ops.length === 0) toast.push(res.plan.summary, 'bad')
+      else setAiPlan(res.plan)
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'AI не ответил', 'bad')
+    } finally {
+      setAiBusy(false)
+    }
+  }
+
+  const applyAiPlan = async () => {
+    if (!aiPlan) return
+    setAiBusy(true)
+    try {
+      await flush()
+      const res = await api<{ layout: ServerLayout; changed: number; dropped: number }>(`/menu-layouts/${numericId}/ai/apply`, {
+        method: 'POST',
+        body: { ops: aiPlan.ops, baseRev: revRef.current },
+      })
+      revRef.current = res.layout.rev
+      setDoc(docSnapshot(res.layout.doc))
+      setHistory(emptyHistory())
+      lastSaved.current = JSON.stringify({ title: res.layout.title, theme: res.layout.theme, doc: docSnapshot(res.layout.doc) })
+      setAiPlan(null)
+      setAiPrompt('')
+      toast.push(`Применено изменений: ${res.changed}`)
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Не удалось применить', 'bad')
+    } finally {
+      setAiBusy(false)
+    }
+  }
+
   /** «Места»: дерево секций и позиций — правим смысл, холст пересобирается сам. */
   const placesPane = (
     <div className="min-h-0 flex-1 overflow-y-auto p-2">
@@ -1489,6 +1534,38 @@ export default function MenuLayoutEditor() {
           <Button size="sm" variant="secondary" onClick={() => void syncPrices()}>
             {priceMode === 'frozen' ? 'Проверить' : 'Обновить с каталога'}
           </Button>
+        </div>
+      )}
+
+      {MENU_LAYOUT_V2 && (
+        <div className="mb-3 rounded-xl border border-line bg-surface-2 px-3 py-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Sparkles size={15} className="flex-none text-brand" aria-hidden />
+            <input
+              value={aiPrompt}
+              onChange={(e) => setAiPrompt(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && void runAi()}
+              placeholder="Опишите правку: «добавь напитки», «убери корицу», «переименуй добавки в топпинги»"
+              aria-label="Запрос к AI"
+              className="min-h-9 min-w-0 flex-1 rounded-lg border border-line bg-white px-2 text-[13px] outline-none"
+            />
+            <Button size="sm" variant="secondary" loading={aiBusy} onClick={() => void runAi()}>
+              Предложить
+            </Button>
+          </div>
+          {aiPlan && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[12.5px]">
+              <span className="min-w-0 flex-1">
+                {aiPlan.summary} · операций: {aiPlan.ops.length}. Запишем только после подтверждения.
+              </span>
+              <Button size="sm" onClick={() => void applyAiPlan()} loading={aiBusy}>
+                Применить
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => setAiPlan(null)} disabled={aiBusy}>
+                Отмена
+              </Button>
+            </div>
+          )}
         </div>
       )}
 

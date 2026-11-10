@@ -31,6 +31,7 @@ import {
 import { loadCatalogProducts } from './menuLayoutDoc'
 import { flowSections, relayoutDoc } from './menuLayoutFlow'
 import { MENU_TEMPLATES, findTemplate } from './menuTemplates'
+import { applyOps, proposeByRules } from './menuLayoutAi'
 import { renderLayoutPdf } from './menuLayoutPdf'
 
 type Row = {
@@ -546,6 +547,78 @@ export const adminMenuLayouts = new Hono<Env>()
     c.set('audit', { entity: 'menu-layout', entityId: String(id), summary: `Макет меню «${row.title}» удалён` })
     return c.json({ ok: true })
   })
+
+  /** AI: сначала предложение (операции над секциями), потом применение владельцем. */
+  .post(
+    '/menu-layouts/:id/ai/propose',
+    zValidator('json', z.object({ prompt: z.string().trim().min(3).max(500) })),
+    (c) => {
+      requireWrite(c.get('adminRole' as never) as string | undefined)
+      const row = rowById(Number(c.req.param('id')))
+      if (!row) throw bad('Макет не найден', 404)
+      const doc = normalizeDoc(jsonParse<unknown>(row.doc_json, emptyDoc()))
+      const plan = proposeByRules(c.req.valid('json').prompt, doc)
+      c.set('audit', { entity: 'menu-layout', entityId: String(row.id), summary: `AI-черновик: ${plan.summary}` })
+      return c.json({ ok: true, plan })
+    },
+  )
+
+  .post(
+    '/menu-layouts/:id/ai/apply',
+    zValidator(
+      'json',
+      z.object({
+        ops: z
+          .array(
+            z.discriminatedUnion('kind', [
+              z.object({
+                kind: z.literal('add-section'),
+                title: z.string().min(1).max(60),
+                categoryId: z.number().int().positive().nullable(),
+                productIds: z.array(z.number().int().positive()).max(40),
+              }),
+              z.object({
+                kind: z.literal('add-items'),
+                sectionId: z.string().max(64),
+                productIds: z.array(z.number().int().positive()).max(40),
+              }),
+              z.object({ kind: z.literal('hide-item'), sectionId: z.string().max(64), itemId: z.string().max(64) }),
+              z.object({ kind: z.literal('remove-item'), sectionId: z.string().max(64), itemId: z.string().max(64) }),
+              z.object({ kind: z.literal('rename-section'), sectionId: z.string().max(64), title: z.string().min(1).max(60) }),
+              z.object({
+                kind: z.literal('reorder-items'),
+                sectionId: z.string().max(64),
+                itemIds: z.array(z.string().max(64)).max(200),
+              }),
+            ]),
+          )
+          .min(1)
+          .max(20),
+        baseRev: z.number().int().min(0).optional(),
+      }),
+    ),
+    (c) => {
+      requireWrite(c.get('adminRole' as never) as string | undefined)
+      const id = Number(c.req.param('id'))
+      const row = rowById(id)
+      if (!row) throw bad('Макет не найден', 404)
+      const body = c.req.valid('json')
+      const currentRev = Number(row.rev) || 1
+      if (body.baseRev != null && body.baseRev !== currentRev) {
+        return c.json({ ok: false, error: 'rev_conflict', rev: currentRev, layout: layoutView(row) }, 409)
+      }
+      const doc = migrateDocToCanvas(normalizeDoc(jsonParse<unknown>(row.doc_json, emptyDoc())))
+      const { doc: next, changed } = applyOps(doc, body.ops)
+      const relaid = relayoutDoc(next)
+      db.prepare('UPDATE menu_layouts SET doc_json=?, updated_at=?, rev=rev+1 WHERE id=?').run(
+        JSON.stringify(relaid.doc),
+        Date.now(),
+        id,
+      )
+      c.set('audit', { entity: 'menu-layout', entityId: String(id), summary: `AI применён: изменений ${changed}` })
+      return c.json({ ok: true, changed, dropped: relaid.dropped, layout: layoutView(rowById(id)!) })
+    },
+  )
 
   /**
    * Пересобрать лист из секций (движок раскладки). Закреплённые блоки остаются,
