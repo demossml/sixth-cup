@@ -182,7 +182,7 @@ type LayoutView = {
   updatedAt: number
   /** Версия документа: клиент присылает baseRev, чтобы не затирать чужие правки. */
   rev: number
-  doc: ReturnType<typeof resolveDoc> & { styles?: MenuDoc['styles'] }
+  doc: ReturnType<typeof resolveDoc> & { styles?: MenuDoc['styles']; comments?: MenuDoc['comments'] }
   stats: { pages: number; products: number; warnings: number }
   drift: { blockId: string; pageId: string; title: string; from: number | null; to: number | null }[]
   blockers: { blockId: string; pageId: string; code: string; text: string }[]
@@ -226,6 +226,8 @@ function layoutView(row: Row): LayoutView {
       schemaVersion: doc.schemaVersion ?? 1,
       // Стили — часть документа: без них при открытии макета пропадала бы привязка блоков.
       ...(doc.styles?.length ? { styles: doc.styles } : {}),
+      // Замечания тоже: иначе они пропадали бы после перезагрузки редактора.
+      ...(doc.comments?.length ? { comments: doc.comments } : {}),
       pages: resolved.pages.map((p, i) => ({
         ...p,
         ...(doc.pages[i]?.sections ? { sections: doc.pages[i]!.sections } : {}),
@@ -365,10 +367,21 @@ const styleZ = z.object({
   uppercase: z.boolean(),
 })
 
+const commentZ = z.object({
+  id: z.string().min(1).max(64),
+  blockId: z.string().min(1).max(64),
+  text: z.string().min(1).max(500),
+  author: z.string().max(40).nullable().optional(),
+  createdAt: z.number().int().min(0).optional(),
+  resolved: z.boolean().optional(),
+})
+
 const docZ = z.object({
   schemaVersion: z.number().int().min(1).max(2).optional(),
   // Мастер-стили блоков: часть документа, иначе zod вырезал бы их при сохранении.
   styles: z.array(styleZ).max(40).optional(),
+  // Замечания к блокам: без этого zod терял бы их при сохранении.
+  comments: z.array(commentZ).max(500).optional(),
   pages: z
     .array(
       z.object({
@@ -924,11 +937,13 @@ export const adminMenuLayouts = new Hono<Env>()
     const force = c.req.query('force') === '1'
     // CMYK — для типографии: цвета текста и плашек в DeviceCMYK.
     const cmyk = c.req.query('cmyk') === '1'
+    // Замечания — аннотациями в PDF: правки видны прямо на листе.
+    const withNotes = c.req.query('notes') === '1'
     const blocking = layout.blockers.filter((b) => b.code !== 'notice')
     if (blocking.length > 0 && !force) {
       return c.json({ ok: false, error: 'has_blockers', blockers: layout.blockers, stats: layout.stats }, 409)
     }
-    const pdf = await renderLayoutPdf(layout, { preset, bleedMm: bleed, cmyk })
+    const pdf = await renderLayoutPdf(layout, { preset, bleedMm: bleed, cmyk, withNotes })
     const name = `menu-${layout.id}-${new Date().toISOString().slice(0, 10)}.pdf`
     c.set('audit', { entity: 'menu-layout', entityId: String(layout.id), summary: `Экспорт PDF макета «${layout.title}»` })
     return new Response(new Uint8Array(pdf), {

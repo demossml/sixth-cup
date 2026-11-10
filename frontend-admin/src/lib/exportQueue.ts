@@ -17,6 +17,8 @@ export type ExportRequest = {
   /** Поля под обрез, мм. Для экрана всегда 0. */
   bleed: number
   cmyk: boolean
+  /** Положить замечания к блокам в PDF аннотациями-стикерами. */
+  notes?: boolean
   /** Скачать, даже если в макете есть пустые позиции (409 на сервере). */
   force?: boolean
 }
@@ -60,6 +62,7 @@ export function exportQuery(req: ExportRequest): string {
     bleed: String(req.preset === 'print' ? req.bleed : 0),
   })
   if (req.cmyk) qs.set('cmyk', '1')
+  if (req.notes) qs.set('notes', '1')
   if (req.force) qs.set('force', '1')
   return qs.toString()
 }
@@ -67,7 +70,8 @@ export function exportQuery(req: ExportRequest): string {
 /** Человеческая подпись задачи — видно, что именно собирается. */
 export function exportLabel(req: ExportRequest): string {
   const mode = req.preset === 'print' ? `печать · поля ${req.bleed} мм` : 'экран'
-  return `PDF · ${mode}${req.cmyk ? ' · CMYK' : ''}`
+  const notes = req.notes ? ' · с замечаниями' : ''
+  return `PDF · ${mode}${req.cmyk ? ' · CMYK' : ''}${notes}`
 }
 
 /** Новый элемент очереди. */

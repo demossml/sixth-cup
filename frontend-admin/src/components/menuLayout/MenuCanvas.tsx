@@ -25,6 +25,8 @@ type Props = {
   /** Рамка выделения, которую сейчас тянут мышью. */
   marquee?: Rect | null
   onContextMenu?: (e: React.MouseEvent<HTMLDivElement>, id: string) => void
+  /** Открытые замечания по блокам: рисуем точку, чтобы правка не терялась. */
+  commentCounts?: Record<string, number>
   index?: number
   total?: number
 }
@@ -62,6 +64,7 @@ function MenuCanvas({
   guides,
   marquee,
   onContextMenu,
+  commentCounts,
   index = 1,
   total = 1,
 }: Props) {
@@ -157,6 +160,12 @@ function MenuCanvas({
             )}
 
             {type === 'divider' && <div className="mc-divider" />}
+
+            {commentCounts && commentCounts[b.id] > 0 && (
+              <span className="mc-note-dot" title={`Замечаний: ${commentCounts[b.id]}`} aria-label={`Замечаний: ${commentCounts[b.id]}`}>
+                {commentCounts[b.id]}
+              </span>
+            )}
 
             {type === 'image' && (
               <div className="mc-image">

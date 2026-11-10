@@ -156,7 +156,17 @@ export type BlockStyle = {
 }
 
 /** schemaVersion 2 добавляет секции и объёмы; блоки остаются языком рендера. */
-export type MenuDoc = { pages: MenuPage[]; styles?: BlockStyle[]; schemaVersion?: number }
+export type MenuDoc = { pages: MenuPage[]; styles?: BlockStyle[]; comments?: LayoutComment[]; schemaVersion?: number }
+
+/** Замечание к блоку: печатается в PDF стикером (`?notes=1`). */
+export type LayoutComment = {
+  id: string
+  blockId: string
+  text: string
+  author: string | null
+  createdAt: number
+  resolved: boolean
+}
 
 export const DOC_SCHEMA_VERSION = 2
 
@@ -357,6 +367,24 @@ function normalizeBlock(raw: unknown, index: number): MenuBlock | null {
 export const hasCanvasPosition = (b: MenuBlock): boolean =>
   Number.isFinite(b.xPct) && Number.isFinite(b.yPct)
 
+/** Замечание к блоку: обрезаем до пределов схемы, мусор не пропускаем. */
+function normalizeComment(raw: unknown, index: number): LayoutComment | null {
+  const c = (raw && typeof raw === 'object' ? raw : null) as Record<string, unknown> | null
+  if (!c) return null
+  const blockId = str(c.blockId, 64)
+  const text = str(c.text, 500)
+  if (!blockId || !text) return null
+  const created = Number(c.createdAt)
+  return {
+    id: typeof c.id === 'string' && c.id.trim() ? c.id.trim().slice(0, 64) : `note-${index + 1}`,
+    blockId,
+    text,
+    author: str(c.author, 40),
+    createdAt: Number.isFinite(created) ? Math.max(0, Math.round(created)) : Date.now(),
+    resolved: c.resolved === true,
+  }
+}
+
 /** Стиль блока: только текстовые свойства, геометрия и контент — у блока. */
 function normalizeStyle(raw: unknown, index: number): BlockStyle | null {
   const s = (raw && typeof raw === 'object' ? raw : null) as Record<string, unknown> | null
@@ -413,7 +441,20 @@ export function normalizeDoc(raw: unknown): MenuDoc {
     ...page,
     blocks: page.blocks.map((b) => (b.styleId && !known.has(b.styleId) ? { ...b, styleId: null } : b)),
   }))
-  return { pages: pagesClean, ...(styles.length ? { styles } : {}), schemaVersion: version }
+  // Замечания: без блока им негде висеть, дубли id не должны ломать список.
+  const blockIds = new Set(pagesClean.flatMap((p) => p.blocks.map((b) => b.id)))
+  const comments = Array.isArray(d.comments)
+    ? d.comments
+        .map((c, ci) => normalizeComment(c, ci))
+        .filter((c): c is LayoutComment => !!c && blockIds.has(c.blockId))
+        .filter((c, i, all) => all.findIndex((x) => x.id === c.id) === i)
+    : []
+  return {
+    pages: pagesClean,
+    ...(styles.length ? { styles } : {}),
+    ...(comments.length ? { comments } : {}),
+    schemaVersion: version,
+  }
 }
 
 /** Позиция секции: товар каталога + объёмы. */

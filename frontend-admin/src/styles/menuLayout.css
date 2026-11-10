@@ -449,3 +449,25 @@
 .mc-toolbar-scroll::-webkit-scrollbar {
   display: none;
 }
+
+/* Замечание к блоку: точка-бейдж в правом верхнем углу, видна на любом масштабе. */
+.mc-note-dot {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #f57c1f;
+  color: #fff;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.35);
+  pointer-events: none;
+}

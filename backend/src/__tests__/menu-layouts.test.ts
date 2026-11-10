@@ -68,7 +68,11 @@ type LayoutBody = {
       fontHeading: string
       fontBody: string
     }
-    doc: { pages: { id: string; blocks: Block[] }[]; styles?: { id: string; name: string; fontSizePt: number }[] }
+    doc: {
+      pages: { id: string; blocks: Block[] }[]
+      styles?: { id: string; name: string; fontSizePt: number }[]
+      comments?: { id: string; blockId: string; text: string; author?: string | null; createdAt?: number; resolved?: boolean }[]
+    }
   }
   changed?: { blockId: string; from: number | null; to: number | null }[]
   applied?: boolean
@@ -462,6 +466,36 @@ describe('макет меню: сборка из каталога и PDF', () =>
     expect(buf.includes(Buffer.from('ToUnicode'))).toBe(true)
     expect(buf.includes(Buffer.from('FontFile2'))).toBe(true)
     expect(buf.length).toBeGreaterThan(2000)
+  })
+
+  it('замечания сохраняются в документе и печатаются аннотациями', async () => {
+    const created = await createLayout()
+    await put(created.id, {
+      doc: {
+        ...docWith([{ id: 't-1', type: 'text', text: 'Заголовок', sortOrder: 0, ...rect }]),
+        comments: [
+          { id: 'c1', blockId: 't-1', text: 'Съехала строка', author: 'Аня', createdAt: 1_700_000_000_000 },
+          { id: 'c2', blockId: 't-1', text: 'Уже поправили', resolved: true },
+          // Замечание удалённого блока не должно попасть в документ.
+          { id: 'c3', blockId: 'ghost', text: 'Мусор' },
+        ],
+      },
+    })
+    const doc = (await getLayout(created.id)).doc
+    expect(doc.comments?.map((c) => c.id)).toEqual(['c1', 'c2'])
+
+    const without = await app.request(`/api/admin/menu-layouts/${created.id}/export.pdf?preset=print`, { headers: H })
+    const plain = Buffer.from(await without.arrayBuffer()).toString('latin1')
+    expect(plain).not.toContain('/Subtype /Text')
+
+    const withNotes = await app.request(`/api/admin/menu-layouts/${created.id}/export.pdf?preset=print&notes=1`, { headers: H })
+    expect(withNotes.status).toBe(200)
+    const annotated = Buffer.from(await withNotes.arrayBuffer()).toString('latin1')
+    // Аннотация-стикер: /Annots на странице и объект подтипа Text с текстом замечания.
+    expect(annotated).toContain('/Annots')
+    expect(annotated).toContain('/Subtype /Text')
+    // Решённое замечание в печать не идёт.
+    expect(annotated).not.toContain('Уже поправили')
   })
 
   it('картинки встраиваются в PDF, включая webp из админки', async () => {

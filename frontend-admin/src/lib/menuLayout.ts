@@ -115,7 +115,22 @@ export type BlockStyle = {
   uppercase: boolean
 }
 
-export type MenuDoc = { pages: MenuPage[]; styles?: BlockStyle[]; schemaVersion?: number }
+export type MenuDoc = { pages: MenuPage[]; styles?: BlockStyle[]; comments?: LayoutComment[]; schemaVersion?: number }
+
+/**
+ * Замечание к блоку (P2-4): правки от типографии и дизайнера живут в макете,
+ * а не в переписке. Попадают в PDF как аннотации-стикеры.
+ */
+export type LayoutComment = {
+  id: string
+  /** Блок, к которому относится замечание. */
+  blockId: string
+  text: string
+  author: string | null
+  createdAt: number
+  /** Решённые не мешают и не попадают в PDF, но остаются в истории. */
+  resolved: boolean
+}
 
 /** Семейства с кириллицей и знаком ₽: файлы лежат и в админке, и в PDF. */
 export const FONT_FAMILIES = ['Unbounded', 'Golos Text', 'Manrope', 'Montserrat', 'Lora', 'PT Serif', 'Oswald'] as const
@@ -601,6 +616,8 @@ export const docPayload = (doc: MenuDoc): MenuDoc => ({
   ...(doc.schemaVersion ? { schemaVersion: doc.schemaVersion } : {}),
   // Стили блоков живут в документе: без них привязка блоков терялась бы при сохранении.
   ...(doc.styles?.length ? { styles: doc.styles } : {}),
+  // Замечания — тоже часть макета: иначе они пропадали бы при каждом сохранении.
+  ...(doc.comments?.length ? { comments: doc.comments } : {}),
   pages: doc.pages.map((p) => ({
     id: p.id,
     blocks: p.blocks.map(blockPayload),

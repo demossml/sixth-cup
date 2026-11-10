@@ -5,6 +5,7 @@ import {
   AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical,
   AlignStartHorizontal, AlignStartVertical, ArrowDown, ArrowLeft, ArrowUp, Check, Download,
   ChevronDown, ChevronRight, Eye, EyeOff, Grid3x3, GripVertical, History, ImagePlus, Layers, ListTree, Loader2, Lock, LockOpen, Maximize2,
+  MessageSquare,
   Minus, Palette, Plus, Redo2, RefreshCw, Search, Sparkles, Trash2, Type, Undo2, Upload, X,
 } from 'lucide-react'
 import { ApiError, api, tokenStore, uploadFile, uploadMenuFont } from '../api/client'
@@ -76,6 +77,10 @@ import {
   bindBlocks, blockStyle, detachBlocks, mergeStylePatch, removeStyle, styleFromBlock, stylePropsOf,
   styleUsage, touchesStyle, updateStyle,
 } from '../lib/blockStyles'
+import {
+  addComment, commentsForBlock, createComment, dropOrphans, openCommentCounts, openComments, removeComment,
+  setResolved,
+} from '../lib/blockComments'
 import { typograph } from '../lib/typography'
 import { MENU_LAYOUT_V2 } from '../lib/featureFlags'
 import { mmToPct, pctToMm, safeBoxOffset, safeBoxSize, sheetMm } from '../lib/sheetGeometry'
@@ -183,6 +188,10 @@ export default function MenuLayoutEditor() {
   const [paletteName, setPaletteName] = useState('')
   /** Имя нового мастер-стиля блока (P2-2). */
   const [newStyleName, setNewStyleName] = useState('')
+  /** Текст нового замечания к выбранному блоку (P2-4). */
+  const [noteText, setNoteText] = useState('')
+  /** Шторка со всеми замечаниями макета. */
+  const [notesOpen, setNotesOpen] = useState(false)
   /** Черновик из localStorage, если прошлая сессия оборвалась. */
   const [draftOffer, setDraftOffer] = useState<{ body: SaveBody; savedAt: number } | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
@@ -779,6 +788,40 @@ export default function MenuLayoutEditor() {
   const styleTargets = selectedIds.length ? selectedIds : selectedId ? [selectedId] : []
   const styles = doc?.styles ?? []
   const boundStyle = doc ? blockStyle(doc, selected) : null
+
+  // ── замечания к блокам (P2-4) ─────────────────────────────────
+  const commentCounts = useMemo(() => (doc ? openCommentCounts(doc) : {}), [doc])
+  const blockNotes = doc ? commentsForBlock(doc, selectedId) : []
+  const openNotes = useMemo(() => (doc ? openComments(doc) : []), [doc])
+  /** Блок по id на любой странице: замечание может быть не на текущем листе. */
+  const blockById = (id: string) => doc?.pages.flatMap((p) => p.blocks).find((b) => b.id === id) ?? null
+  const pageIndexOfBlock = (id: string) => doc?.pages.findIndex((p) => p.blocks.some((b) => b.id === id)) ?? -1
+
+  const addNote = () => {
+    if (!doc || !selectedId) return
+    const comment = createComment(selectedId, noteText)
+    if (!comment) return
+    mutate(addComment(doc, comment))
+    setNoteText('')
+    toast.push('Замечание добавлено — попадёт в PDF стикером', 'ok')
+  }
+
+  const toggleNote = (id: string, resolved: boolean) => {
+    if (!doc) return
+    mutate(setResolved(doc, id, resolved))
+  }
+
+  const deleteNote = (id: string) => {
+    if (!doc) return
+    mutate(removeComment(doc, id))
+  }
+
+  /** Замечания удалённых блоков некуда показать — чистим при сохранении. */
+  const dropOrphanNotes = () => {
+    if (!doc) return
+    const next = dropOrphans(doc)
+    if (next !== doc) mutate(next)
+  }
 
   const bindSelectedToStyle = (styleId: string) => {
     if (!doc || styleTargets.length === 0) return
@@ -1597,6 +1640,7 @@ export default function MenuLayoutEditor() {
     { id: 'export', title: 'Экспорт PDF', hint: 'файл для типографии', run: () => setExportOpen(true) },
     { id: 'preview', title: 'Предпросмотр', run: () => setPreviewOpen(true) },
     { id: 'versions', title: 'Версии макета', run: () => setVersionsOpen(true) },
+    { id: 'notes', title: 'Замечания к блокам', hint: openNotes.length ? String(openNotes.length) : undefined, run: () => setNotesOpen(true) },
     { id: 'version-save', title: 'Сохранить версию', run: () => void saveVersion() },
     { id: 'grid', title: showGrid ? 'Выключить сетку' : 'Включить сетку', run: () => setShowGrid((v) => !v) },
     { id: 'fit', title: 'Вписать лист', run: () => setZoom(1) },
@@ -1636,6 +1680,8 @@ export default function MenuLayoutEditor() {
       showGrid={opts.grid}
       gridStepPct={gridStep}
       gridCols={gridCols}
+      // Метки замечаний только в живом холсте: в превью и миниатюрах они лишние.
+      commentCounts={opts.interactive ? commentCounts : undefined}
       showSafe={opts.safe}
       index={pageIdx + 1}
       total={doc.pages.length}
@@ -1923,6 +1969,14 @@ export default function MenuLayoutEditor() {
               >
                 <span className="text-ink-tertiary">{b.zIndex}.</span> {layerName(b)}
               </button>
+            )}
+            {commentCounts[b.id] > 0 && (
+              <span
+                className="grid h-5 min-w-5 flex-none place-items-center rounded-full bg-warn-soft px-1 text-[10px] font-bold text-warn"
+                title={`Замечаний: ${commentCounts[b.id]}`}
+              >
+                {commentCounts[b.id]}
+              </span>
             )}
             <button
               type="button"
@@ -2672,6 +2726,71 @@ export default function MenuLayoutEditor() {
       </section>
 
       <section className="border-b border-line px-3 py-3">
+        <div className="mb-2 flex items-baseline justify-between">
+          <h3 className="text-[13px] font-semibold">Замечания</h3>
+          <span className="text-[11px] text-ink-tertiary">
+            {blockNotes.filter((c) => !c.resolved).length > 0
+              ? `открытых: ${blockNotes.filter((c) => !c.resolved).length}`
+              : 'нет'}
+          </span>
+        </div>
+        {blockNotes.length === 0 ? (
+          <p className="text-[11.5px] text-ink-tertiary">
+            Правка от типографии или дизайнера: напишите — замечание повиснет на блоке и уйдёт в PDF стикером.
+          </p>
+        ) : (
+          <ul className="space-y-1.5">
+            {blockNotes.map((c) => (
+              <li key={c.id} className={cx('rounded-lg border px-2 py-1.5', c.resolved ? 'border-line bg-surface-2/60' : 'border-warn/40 bg-warn-soft/40')}>
+                <p className={cx('text-[12px] leading-4', c.resolved ? 'text-ink-tertiary line-through' : 'text-ink')}>
+                  {c.text}
+                </p>
+                <div className="mt-1 flex items-center gap-2 text-[10.5px] text-ink-tertiary">
+                  <span>{c.author ? `${c.author} · ` : ''}{ago(c.createdAt)}</span>
+                  <button
+                    type="button"
+                    onClick={() => toggleNote(c.id, !c.resolved)}
+                    className="ml-auto font-semibold text-brand hover:underline"
+                  >
+                    {c.resolved ? 'вернуть' : 'решено'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deleteNote(c.id)}
+                    className="text-ink-tertiary hover:text-bad"
+                    aria-label="Удалить замечание"
+                  >
+                    удалить
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="mt-2">
+          <textarea
+            value={noteText}
+            onChange={(e) => setNoteText(e.target.value)}
+            maxLength={500}
+            rows={2}
+            placeholder="Например: цена не совпадает с каталогом"
+            aria-label="Текст замечания"
+            className="w-full resize-none rounded-lg border border-line px-2 py-1.5 text-[12px] outline-none focus:border-brand"
+            onKeyDown={(e) => {
+              // Enter добавляет, Shift+Enter — перенос строки: как в мессенджерах.
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                addNote()
+              }
+            }}
+          />
+          <Button size="sm" variant="secondary" className="mt-1.5" onClick={addNote} disabled={!noteText.trim()}>
+            Добавить замечание
+          </Button>
+        </div>
+      </section>
+
+      <section className="border-b border-line px-3 py-3">
         <h3 className="mb-2 text-[13px] font-semibold">Содержимое</h3>
         {(selectedType === 'product' || selectedType === 'category') && (
           <Field label="Название в макете">
@@ -3011,6 +3130,14 @@ export default function MenuLayoutEditor() {
           </Button>
           <Button size="sm" variant="secondary" icon={<History size={14} />} onClick={() => setVersionsOpen(true)}>
             Версии
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={<MessageSquare size={14} />}
+            onClick={() => setNotesOpen(true)}
+          >
+            Замечания{openNotes.length > 0 ? ` · ${openNotes.length}` : ''}
           </Button>
           <Button size="sm" icon={<Download size={14} />} onClick={() => setExportOpen(true)}>
             Экспорт PDF
@@ -3777,6 +3904,56 @@ export default function MenuLayoutEditor() {
         </div>
       )}
 
+      <Drawer open={notesOpen} onClose={() => setNotesOpen(false)} title={`Замечания${openNotes.length ? ` · ${openNotes.length}` : ''}`} layer={64}>
+        {openNotes.length === 0 ? (
+          <p className="text-[12.5px] text-ink-secondary">
+            Открытых замечаний нет. Выберите блок на листе и напишите замечание в панели «Блок» — оно повиснет на
+            блоке и уйдёт в PDF стикером.
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {openNotes.map((c) => {
+              const block = blockById(c.blockId)
+              const pi = pageIndexOfBlock(c.blockId)
+              return (
+                <li key={c.id} className="rounded-lg border border-warn/40 bg-warn-soft/40 p-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNotesOpen(false)
+                      if (pi >= 0) goToBlock(c.blockId, pi)
+                    }}
+                    className="block w-full text-left"
+                  >
+                    <p className="truncate text-[12.5px] font-semibold text-ink">
+                      {block ? layerName(block) : 'Блок удалён'}
+                    </p>
+                    <p className="mt-0.5 text-[12px] text-ink-secondary">{c.text}</p>
+                    <p className="mt-0.5 text-[10.5px] text-ink-tertiary">
+                      {c.author ? `${c.author} · ` : ''}
+                      {ago(c.createdAt)} · {pi >= 0 ? `стр. ${pi + 1}` : 'нет на листе'}
+                    </p>
+                  </button>
+                  <div className="mt-1 flex gap-3 text-[11px] font-semibold">
+                    <button type="button" onClick={() => toggleNote(c.id, true)} className="text-brand hover:underline">
+                      решено
+                    </button>
+                    <button type="button" onClick={() => deleteNote(c.id)} className="text-ink-tertiary hover:text-bad">
+                      удалить
+                    </button>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+        {openNotes.some((c) => !blockById(c.blockId)) && (
+          <Button size="sm" variant="secondary" className="mt-3" onClick={dropOrphanNotes}>
+            Убрать замечания удалённых блоков
+          </Button>
+        )}
+      </Drawer>
+
       <Drawer open={versionsOpen} onClose={() => setVersionsOpen(false)} title="Версии макета" layer={70}>
         <p className="mb-3 text-[12.5px] text-ink-secondary">
           Версия — снимок листа и оформления. Перед откатом текущее состояние сохраняется автоматически, поэтому
@@ -3836,6 +4013,7 @@ export default function MenuLayoutEditor() {
               }))
         }
         onStart={enqueueExport}
+        notesCount={openNotes.length}
         onGoToBlock={(blockId, pageIdx) => {
           setExportOpen(false)
           goToBlock(blockId, pageIdx)
@@ -4079,6 +4257,8 @@ type ExportProps = {
   onGoToBlock: (blockId: string, pageIdx: number) => void
   /** Экспорт ставится в очередь: модалка закрывается сразу, прогресс — в панели задач. */
   onStart: (req: ExportRequest) => void
+  /** Сколько открытых замечаний: их можно положить в PDF стикерами. */
+  notesCount: number
 }
 
 /**
@@ -4141,10 +4321,18 @@ function PhotoDpiHint({ url, widthPct, ratio }: { url: string | null; widthPct: 
   )
 }
 
-function ExportModal({ open, onClose, layoutId, format, pages, blockers, onGoToBlock, onStart }: ExportProps) {
+function ExportModal({ open, onClose, layoutId, format, pages, blockers, onGoToBlock, onStart, notesCount }: ExportProps) {
   const [preset, setPreset] = useState<'print' | 'screen'>('print')
   const [bleed, setBleed] = useState(3)
   const [cmyk, setCmyk] = useState(false)
+  // Есть замечания — по умолчанию кладём их в PDF: в этом и смысл замечаний.
+  const [notes, setNotes] = useState(notesCount > 0)
+
+  // Модалка живёт между открытиями, поэтому состояние подтягиваем при каждом показе:
+  // иначе чекбокс «Замечания» оставался бы выключенным, если замечание добавили позже.
+  useEffect(() => {
+    if (open) setNotes(notesCount > 0)
+  }, [open, notesCount])
 
   if (!open) return null
 
@@ -4153,7 +4341,7 @@ function ExportModal({ open, onClose, layoutId, format, pages, blockers, onGoToB
    * прогресс и ссылка на файл показываются в панели задач (P2-9).
    */
   const submit = (force: boolean) => {
-    onStart({ layoutId, preset, bleed: preset === 'print' ? bleed : 0, cmyk, force })
+    onStart({ layoutId, preset, bleed: preset === 'print' ? bleed : 0, cmyk, notes: notes && notesCount > 0, force })
     onClose()
   }
 
@@ -4207,6 +4395,18 @@ function ExportModal({ open, onClose, layoutId, format, pages, blockers, onGoToB
               <label className="flex items-center gap-2 text-[12.5px] text-ink-secondary">
                 <input type="checkbox" checked={cmyk} onChange={(e) => setCmyk(e.target.checked)} />
                 Цвета в CMYK (для типографии)
+              </label>
+              <label className={cx('flex items-start gap-2 text-[12.5px]', notesCount > 0 ? 'text-ink-secondary' : 'text-ink-tertiary')}>
+                <input
+                  type="checkbox"
+                  checked={notes && notesCount > 0}
+                  disabled={notesCount === 0}
+                  onChange={(e) => setNotes(e.target.checked)}
+                />
+                <span>
+                  Замечания к блокам{notesCount > 0 ? ` (${notesCount})` : ''} — стикерами в PDF
+                  {notesCount === 0 ? ': открытых замечаний нет' : ''}
+                </span>
               </label>
             </div>
           </div>

@@ -77,6 +77,11 @@ export type PdfOptions = {
   bleedMm: number
   /** Печатать цвета в DeviceCMYK — типографии часто просят именно так. */
   cmyk?: boolean
+  /**
+   * Замечания к блокам: печатаем стикерами-аннотациями, чтобы правки от
+   * типографии были прямо на листе, а не в отдельном письме. Решённые не печатаем.
+   */
+  withNotes?: boolean
 }
 
 /** Цвет для PDF: строка RGB или массив CMYK. */
@@ -383,6 +388,17 @@ export async function renderLayoutPdf(view: LayoutView, opts: PdfOptions): Promi
   const line = theme.preset === 'dark' ? '#3B3F49' : theme.preset === 'season' ? '#D9C9B3' : '#D8D2C7'
   const pages = view.doc.pages
 
+  /** Замечания по блокам: только открытые, решённые в печать не идут. */
+  const notesByBlock = new Map<string, { text: string; author: string | null }[]>()
+  if (opts.withNotes) {
+    for (const c of view.doc.comments ?? []) {
+      if (c.resolved) continue
+      const list = notesByBlock.get(c.blockId) ?? []
+      list.push({ text: c.text, author: c.author })
+      notesByBlock.set(c.blockId, list)
+    }
+  }
+
   const urls = new Set<string>()
   if (theme.backgroundImageUrl) urls.add(theme.backgroundImageUrl)
   for (const page of pages) {
@@ -454,6 +470,26 @@ export async function renderLayoutPdf(view: LayoutView, opts: PdfOptions): Promi
       drawBlock(doc, block, rect, { theme, scale, muted, line, imageFor, cropFor, paint })
       doc.fillOpacity(1)
       doc.restore()
+    }
+
+    // Замечания — аннотации, а не рисунок: печатник видит стикер в программе вёрстки.
+    if (opts.withNotes) {
+      for (const block of page.blocks) {
+        const notes = notesByBlock.get(block.id)
+        if (!notes?.length) continue
+        const rect = placeBlock(box, block)
+        const text = notes.map((n) => (n.author ? `${n.author}: ${n.text}` : n.text)).join('\n')
+        // Стикер — в правом верхнем углу блока: не закрывает содержимое под ним.
+        const size = Math.max(10, 12 * scale)
+        doc.note(
+          Math.min(W - size - 1, rect.x + rect.w - size),
+          Math.max(0, rect.y),
+          size,
+          size,
+          text,
+          { color: [244, 137, 60] },
+        )
+      }
     }
 
     // Подвал вне безопасной области: номер страницы, название, режим цен.
