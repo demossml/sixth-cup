@@ -51,6 +51,7 @@ import {
 } from '../lib/menuLayout'
 import { Badge, Button, Banner, Drawer, cx, ErrorBox, Field, Input, Select, Spinner, useToast } from '../ui/kit'
 import MenuCanvas from '../components/menuLayout/MenuCanvas'
+import { MENU_LAYOUT_V2 } from '../lib/featureFlags'
 import { safeBoxSize } from '../lib/sheetGeometry'
 
 type SaveBody = { title: string; theme: MenuTheme; doc: MenuDoc }
@@ -67,6 +68,8 @@ type ServerLayout = {
   frozenAt: number | null
   updatedAt: number
   rev: number
+  sections: number
+  schemaVersion: number
   stats: { pages: number; products: number; warnings: number }
   drift: { blockId: string; title: string; from: number | null; to: number | null }[]
   blockers: { blockId: string; code: string; text: string }[]
@@ -578,6 +581,25 @@ export default function MenuLayoutEditor() {
       )
     } catch (e) {
       toast.push(e instanceof Error ? e.message : 'Не удалось собрать из каталога', 'bad')
+    }
+  }
+
+  /** Пересобрать лист из секций (движок раскладки): переносит позиции на новую страницу. */
+  const relayout = async () => {
+    try {
+      await flush()
+      const res = await api<{ layout: ServerLayout; dropped: number }>(`/menu-layouts/${numericId}/layout`, {
+        method: 'POST',
+        body: { baseRev: revRef.current },
+      })
+      revRef.current = res.layout.rev
+      setDoc(docSnapshot(res.layout.doc))
+      setHistory(emptyHistory())
+      setDrift(res.layout.drift)
+      lastSaved.current = JSON.stringify({ title: res.layout.title, theme: res.layout.theme, doc: docSnapshot(res.layout.doc) })
+      toast.push(res.dropped ? `Лист пересобран, не влезло позиций: ${res.dropped}` : 'Лист пересобран по секциям')
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Не удалось пересобрать лист', 'bad')
     }
   }
 
@@ -1683,6 +1705,14 @@ export default function MenuLayoutEditor() {
       />
 
       <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-3 text-[12px] text-ink-secondary">
+        {MENU_LAYOUT_V2 && (data?.layout.sections ?? 0) > 0 && (
+          <>
+            <button type="button" onClick={() => void relayout()} className="text-brand hover:underline">
+              Пересобрать лист
+            </button>
+            <span className="text-ink-tertiary">·</span>
+          </>
+        )}
         <button
           type="button"
           onClick={() => void setLayoutStatus(status === 'ready' ? 'draft' : 'ready')}

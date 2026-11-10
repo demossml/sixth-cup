@@ -24,10 +24,12 @@ import {
   type LayoutFormat,
   type MenuBlock,
   type MenuDoc,
+  type MenuSection,
   type MenuTheme,
   type PriceMode,
 } from './menuLayoutDoc'
 import { loadCatalogProducts } from './menuLayoutDoc'
+import { flowSections, relayoutDoc } from './menuLayoutFlow'
 import { renderLayoutPdf } from './menuLayoutPdf'
 
 type Row = {
@@ -170,6 +172,9 @@ type LayoutView = {
   drift: { blockId: string; pageId: string; title: string; from: number | null; to: number | null }[]
   blockers: { blockId: string; pageId: string; code: string; text: string }[]
   formatHint: { label: string; mm: string }
+  /** Сколько секций в документе (v2): нужно кнопке «Пересобрать лист». */
+  sections: number
+  schemaVersion: number
 }
 
 function layoutView(row: Row): LayoutView {
@@ -205,7 +210,14 @@ function layoutView(row: Row): LayoutView {
     drift,
     blockers: collectBlockers(resolved),
     formatHint: formatMetrics(row.format),
+    sections: doc.pages.reduce((n, p) => n + (p.sections?.length ?? 0), 0),
+    schemaVersion: doc.schemaVersion ?? 1,
   }
+}
+
+/** Объёмы и цены всех товаров пачкой: схемы объёмов + варианты групп, без N+1. */
+function loadCatalogSizes(productIds: number[]) {
+  return loadVolumeSizes(productIds)
 }
 
 /** Снапшот цен/названий/фото: нужен и для режима frozen, и для баннера «каталог изменился». */
@@ -523,6 +535,45 @@ export const adminMenuLayouts = new Hono<Env>()
     return c.json({ ok: true })
   })
 
+  /**
+   * Пересобрать лист из секций (движок раскладки). Закреплённые блоки остаются,
+   * каталог раскладывается заново — с переносом на следующую страницу.
+   */
+  .post(
+    '/menu-layouts/:id/layout',
+    zValidator(
+      'json',
+      z
+        .object({
+          columns: z.union([z.literal(1), z.literal(2)]).optional(),
+          baseRev: z.number().int().min(0).optional(),
+        })
+        .optional(),
+    ),
+    (c) => {
+      requireWrite(c.get('adminRole' as never) as string | undefined)
+      const id = Number(c.req.param('id'))
+      const row = rowById(id)
+      if (!row) throw bad('Макет не найден', 404)
+      const body = (c.req.valid('json') ?? {}) as { columns?: 1 | 2; baseRev?: number }
+      const currentRev = Number(row.rev) || 1
+      if (body.baseRev != null && body.baseRev !== currentRev) {
+        return c.json({ ok: false, error: 'rev_conflict', rev: currentRev, layout: layoutView(row) }, 409)
+      }
+      const doc = migrateDocToCanvas(normalizeDoc(jsonParse<unknown>(row.doc_json, emptyDoc())))
+      const hasSections = doc.pages.some((p) => (p.sections?.length ?? 0) > 0)
+      if (!hasSections) throw bad('В макете нет секций — сначала соберите его из каталога', 400)
+      const { doc: next, dropped } = relayoutDoc(doc, { columns: body.columns })
+      db.prepare('UPDATE menu_layouts SET doc_json=?, updated_at=?, rev=rev+1 WHERE id=?').run(
+        JSON.stringify(next),
+        Date.now(),
+        id,
+      )
+      c.set('audit', { entity: 'menu-layout', entityId: String(id), summary: `Раскладка секций макета «${row.title}»` })
+      return c.json({ ok: true, dropped, layout: layoutView(rowById(id)!) })
+    },
+  )
+
   .post('/menu-layouts/:id/duplicate', (c) => {
     requireWrite(c.get('adminRole' as never) as string | undefined)
     const row = rowById(Number(c.req.param('id')))
@@ -604,22 +655,10 @@ export const adminMenuLayouts = new Hono<Env>()
       const targetPage = body.pageId ? doc.pages.find((p) => p.id === body.pageId) : doc.pages[0]
       if (!targetPage) throw bad('Страница не найдена', 404)
 
-      // Сборка из каталога — не «поток», а сетка холста: две колонки, позиции встают по порядку.
-      const COLS = 2
-      const COL_W = 44
-      const COL_GAP = 6
-      const ROW_H = 6.2
-      const ROW_CAT = 6.5
-      const TOP = 22
       // replace сбрасывает каталог (категории и позиции), но оставляет оформление листа.
       const keep = body.replace
         ? targetPage.blocks.filter((b) => b.type === 'logo' || b.type === 'text' || b.type === 'image' || b.type === 'divider')
         : [...targetPage.blocks]
-      const blocks: MenuBlock[] = [...keep]
-      let z = blocks.reduce((m, b) => Math.max(m, b.zIndex), 0) + 1
-      let gridCol = 0
-      let gridRow = 0
-      let added = 0
       let skippedDuplicate = 0
 
       // Один productId — один блок на весь макет: повторная сборка не должна плодить «Капучино ×N».
@@ -631,63 +670,57 @@ export const adminMenuLayouts = new Hono<Env>()
         }
       }
 
-      const place = (b: MenuBlock) => {
-        b.zIndex = z++
-        b.sortOrder = blocks.length
-        blocks.push(b)
-      }
-
+      // Секции — семантический слой (schemaVersion 2), блоки получает движок раскладки.
+      const sizes = loadCatalogSizes(products.map((x) => Number(x.id)))
+      const sections: MenuSection[] = []
+      let added = 0
       for (const cat of categories) {
         if (wanted && !wanted.has(cat.id)) continue
-        const fresh = products.filter((p) => p.categoryId === cat.id && !usedProductIds.has(p.id))
-        skippedDuplicate += products.filter((p) => p.categoryId === cat.id && usedProductIds.has(p.id)).length
-        // Категория без новых позиций не нужна: иначе повторная сборка плодит пустые заголовки.
+        const all = products.filter((p) => p.categoryId === cat.id)
+        const fresh = all.filter((p) => !usedProductIds.has(p.id))
+        skippedDuplicate += all.length - fresh.length
         if (fresh.length === 0) continue
-        if (gridRow > 0) gridRow += 1
-        place({
-          ...emptyBlock('category'),
-          id: `cat-${cat.id}-${Math.random().toString(36).slice(2, 7)}`,
+        sections.push({
+          id: `sec-${cat.id}`,
+          title: cat.name,
           categoryId: cat.id,
-          xPct: gridCol * (COL_W + COL_GAP),
-          yPct: TOP + gridRow * ROW_H,
-          wPct: COL_W,
-          hPct: ROW_CAT - 1.5,
-          sortOrder: blocks.length,
+          style: { showPhotos: true },
+          items: fresh.map((p) => {
+            const list = sizes.get(Number(p.id)) ?? []
+            added += 1
+            usedProductIds.add(p.id)
+            return {
+              id: `it-${p.id}`,
+              productId: Number(p.id),
+              groupId: null,
+              titleOverride: null,
+              description: null,
+              badge: null,
+              showPhoto: !!p.imageUrl,
+              photoUrlOverride: null,
+              hidden: false,
+              sizes: list.map((sz) => ({
+                label: sz.label,
+                source: 'catalog' as const,
+                productId: sz.productId,
+                volumeItemId: sz.volumeItemId,
+                priceRubOverride: null,
+              })),
+            }
+          }),
         })
-        gridRow += 1
-        for (const p of fresh) {
-          // Колонка кончилась — переходим в следующую, как только упёрлись в низ листа.
-          if (TOP + (gridRow + 1) * ROW_H > 92 && gridCol < COLS - 1) {
-            gridCol += 1
-            gridRow = 0
-          }
-          place({
-            ...emptyBlock('product'),
-            id: `p-${p.id}-${Math.random().toString(36).slice(2, 7)}`,
-            productId: p.id,
-            categoryId: cat.id,
-            xPct: gridCol * (COL_W + COL_GAP),
-            yPct: TOP + gridRow * ROW_H,
-            wPct: COL_W,
-            hPct: ROW_H - 1.8,
-            snapshotPriceRub: p.price,
-            snapshotName: p.name,
-            snapshotImageUrl: p.imageUrl,
-            sortOrder: blocks.length,
-          })
-          gridRow += 1
-          usedProductIds.add(p.id)
-          added++
-        }
       }
-
-      if (added === 0 && skippedDuplicate === 0) throw bad('В каталоге нет доступных позиций для сборки', 400)
       // Нечего добавлять — не трогаем updated_at, чтобы «Изменён» не врал.
-      if (added === 0) return c.json({ ok: true, added: 0, skippedDuplicate, layout: layoutView(rowById(id)!) })
-
-      const nextDoc: MenuDoc = {
-        pages: doc.pages.map((p) => (p.id === targetPage.id ? { ...p, blocks } : p)),
+      if (added === 0) {
+        if (skippedDuplicate === 0) throw bad('В каталоге нет доступных позиций для сборки', 400)
+        return c.json({ ok: true, added: 0, skippedDuplicate, layout: layoutView(rowById(id)!) })
       }
+
+      const pinned = keep.map((b) => ({ ...b, pinned: true }))
+      const flowed = flowSections({ sections, pinned })
+      // Секции живут рядом с блоками первой страницы: по ним кнопка «Пересобрать лист» и этап 3.
+      const pages = flowed.pages.map((p, i) => (i === 0 ? { ...p, sections } : p))
+      const nextDoc: MenuDoc = { schemaVersion: 2, pages }
       db.prepare('UPDATE menu_layouts SET doc_json=?, updated_at=? WHERE id=?').run(JSON.stringify(nextDoc), Date.now(), id)
       c.set('audit', {
         entity: 'menu-layout',

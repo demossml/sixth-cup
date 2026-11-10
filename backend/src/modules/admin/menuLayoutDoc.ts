@@ -397,8 +397,7 @@ const ROW_CATEGORY = 7.5
  * Одинаковый вход → одинаковый результат, поэтому повторное чтение ничего не «двигает».
  */
 export function migrateDocToCanvas(doc: MenuDoc): MenuDoc {
-  return {
-    pages: doc.pages.map((page) => {
+  const migrated: MenuPage[] = doc.pages.map((page) => {
       if (page.blocks.length === 0) return page
       if (page.blocks.every(hasCanvasPosition)) return page
 
@@ -520,9 +519,10 @@ export function migrateDocToCanvas(doc: MenuDoc): MenuDoc {
         tailY += 10
       }
 
-      return { ...page, blocks: out }
-    }),
-  }
+    return { ...page, blocks: out }
+  })
+  // schemaVersion и sections переносим как есть: миграция касается только координат блоков.
+  return { ...doc, pages: migrated }
 }
 
 /* ───────────── каталог и резолв ───────────── */
