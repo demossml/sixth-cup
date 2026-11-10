@@ -549,11 +549,12 @@ export default function MenuLayoutEditor() {
     toast.push(`Убрано дублей: ${removed}`)
   }
 
-  const uploadInto = async (file: File, apply: (url: string) => void) => {
+  const uploadInto = async (file: File, apply: (url: string) => void, full = false) => {
     setBusyUpload(true)
     try {
       const res = await uploadFile(file)
-      apply(res.url)
+      // Для печати нужен максимум доступного разрешения: 480 px на поллиста — мыло.
+      apply(full ? res.urlFull ?? res.url : res.url)
       toast.push('Картинка загружена')
     } catch (e) {
       toast.push(e instanceof Error ? e.message : 'Не удалось загрузить картинку', 'bad')
@@ -1286,7 +1287,8 @@ export default function MenuLayoutEditor() {
                   className="hidden"
                   onChange={(e) => {
                     const f = e.target.files?.[0]
-                    if (f) void uploadInto(f, (url) => patchBlock({ photoUrlOverride: url, showPhoto: true }))
+                    // В макет берём полный размер (960), иначе на печати картинка мыльная.
+                    if (f) void uploadInto(f, (url) => patchBlock({ photoUrlOverride: url, showPhoto: true }), true)
                     e.target.value = ''
                   }}
                 />
@@ -1352,7 +1354,7 @@ export default function MenuLayoutEditor() {
                   className="hidden"
                   onChange={(e) => {
                     const f = e.target.files?.[0]
-                    if (f) void uploadInto(f, (url) => patchBlock({ url }))
+                    if (f) void uploadInto(f, (url) => patchBlock({ url }), true)
                     e.target.value = ''
                   }}
                 />

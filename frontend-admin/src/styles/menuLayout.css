@@ -366,3 +366,13 @@
     width: 104px;
   }
 }
+
+/* ── доступность: цели касания ≥ 44 px (этап 6) ── */
+@media (max-width: 1023px) {
+  .ml-cards button[aria-label],
+  .ml-card-actions button,
+  .ml-safe button[aria-label] {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
