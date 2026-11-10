@@ -515,6 +515,38 @@ describe('макет меню: сборка из каталога и PDF', () =>
     expect(raw).toContain('/Subtype /Image')
   })
 
+  it('спуск полос: 4 страницы на одном A3, 5 страниц — два листа', async () => {
+    const created = await createLayout()
+    const pages = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        id: `page-${i + 1}`,
+        blocks: [{ id: `t-${i + 1}`, type: 'text', text: `Стр. ${i + 1}`, sortOrder: 0, ...rect, hPct: 12 }],
+      }))
+
+    await put(created.id, { doc: { pages: pages(4) } })
+    const four = await app.request(`/api/admin/menu-layouts/${created.id}/export.pdf?preset=print&impose=a3-4`, {
+      headers: H,
+    })
+    expect(four.status).toBe(200)
+    expect(four.headers.get('x-impose-sheet')).toBe('a3')
+    expect(four.headers.get('x-impose-grid')).toBe('2x2')
+    const scale = Number(four.headers.get('x-impose-scale'))
+    expect(scale).toBeGreaterThan(0.5)
+    expect(scale).toBeLessThan(0.8)
+
+    const raw = Buffer.from(await four.arrayBuffer()).toString('latin1')
+    // Четыре страницы ужаты в один лист A3 (841.89 × 1190.55 pt).
+    expect((raw.match(/\/Type\s*\/Page[^s]/g) ?? []).length).toBe(1)
+    expect(raw).toMatch(/MediaBox \[0 0 841\.\d+ 1190\.\d+\]/)
+
+    await put(created.id, { doc: { pages: pages(5) } })
+    const five = await app.request(`/api/admin/menu-layouts/${created.id}/export.pdf?preset=print&impose=a3-4`, {
+      headers: H,
+    })
+    const fiveRaw = Buffer.from(await five.arrayBuffer()).toString('latin1')
+    expect((fiveRaw.match(/\/Type\s*\/Page[^s]/g) ?? []).length).toBe(2)
+  })
+
   it('multi-page: две страницы дают многостраничный PDF', async () => {
     const created = await createLayout()
     await put(created.id, {

@@ -34,6 +34,7 @@ import { flowSections, relayoutDoc } from './menuLayoutFlow'
 import { MENU_TEMPLATES, findTemplate } from './menuTemplates'
 import { applyOps, proposeByRules } from './menuLayoutAi'
 import { renderLayoutPdf } from './menuLayoutPdf'
+import { imposePlan as imposePlanFor, parseImpose } from './imposition'
 
 type Row = {
   id: number
@@ -939,11 +940,15 @@ export const adminMenuLayouts = new Hono<Env>()
     const cmyk = c.req.query('cmyk') === '1'
     // Замечания — аннотациями в PDF: правки видны прямо на листе.
     const withNotes = c.req.query('notes') === '1'
+    // Спуск полос: a3-2, a3-4, a2-4 — сетка страниц на печатном листе.
+    const impose = parseImpose(c.req.query('impose'))
+    const metricsForImpose = formatMetrics(layout.format)
+    const imposePlan = impose ? imposePlanFor(metricsForImpose.width, metricsForImpose.height, impose) : null
     const blocking = layout.blockers.filter((b) => b.code !== 'notice')
     if (blocking.length > 0 && !force) {
       return c.json({ ok: false, error: 'has_blockers', blockers: layout.blockers, stats: layout.stats }, 409)
     }
-    const pdf = await renderLayoutPdf(layout, { preset, bleedMm: bleed, cmyk, withNotes })
+    const pdf = await renderLayoutPdf(layout, { preset, bleedMm: bleed, cmyk, withNotes: withNotes && !impose, impose })
     const name = `menu-${layout.id}-${new Date().toISOString().slice(0, 10)}.pdf`
     c.set('audit', { entity: 'menu-layout', entityId: String(layout.id), summary: `Экспорт PDF макета «${layout.title}»` })
     return new Response(new Uint8Array(pdf), {
@@ -953,6 +958,14 @@ export const adminMenuLayouts = new Hono<Env>()
         'Content-Disposition': `attachment; filename="${name}"`,
         'Content-Length': String(pdf.length),
         'Cache-Control': 'no-store',
+        // Клиент показывает, что именно спущено и с каким масштабом.
+        ...(imposePlan
+          ? {
+              'X-Impose-Sheet': imposePlan.sheet,
+              'X-Impose-Grid': `${imposePlan.rows}x${imposePlan.cols}`,
+              'X-Impose-Scale': imposePlan.scale.toFixed(3),
+            }
+          : {}),
       },
     })
   })

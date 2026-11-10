@@ -14,6 +14,7 @@ import { formatMetrics, type RenderBlock } from './menuLayoutDoc'
 import { contentBox, footerBaselineY, placeBlock } from './sheetGeometry'
 import { typograph } from './typography'
 import { rgbToCmyk } from './cmyk'
+import { imposePlan, type ImposeSpec } from './imposition'
 import type { LayoutView } from './menuLayouts'
 
 const require = createRequire(import.meta.url)
@@ -82,6 +83,8 @@ export type PdfOptions = {
    * типографии были прямо на листе, а не в отдельном письме. Решённые не печатаем.
    */
   withNotes?: boolean
+  /** Спуск полос: сетка страниц на A3/A2. null/undefined — обычный экспорт. */
+  impose?: ImposeSpec | null
 }
 
 /** Цвет для PDF: строка RGB или массив CMYK. */
@@ -426,9 +429,11 @@ export async function renderLayoutPdf(view: LayoutView, opts: PdfOptions): Promi
   )
   const cropFor = (block: RenderBlock): Buffer | null => cropped.get(block.id) ?? null
 
-  for (let pi = 0; pi < pages.length; pi++) {
-    const page = pages[pi]!
-    doc.addPage({ size: [W, H], margin: 0 })
+  // Спуск полос: если задан, страницы раскладываются по сетке на большом листе.
+  const plan = opts.impose ? imposePlan(metrics.width, metrics.height, opts.impose) : null
+
+  /** Одна страница документа в текущей системе координат (0,0 = её левый верхний угол). */
+  const drawPage = (page: (typeof pages)[number], pi: number, withTrimMarks: boolean) => {
     // Фон: сплошной цвет или градиент. Альфа смешивается с бумагой, как и у сплошного цвета.
     if (theme.gradient) {
       const rad = ((theme.gradient.angle - 90) * Math.PI) / 180
@@ -473,7 +478,8 @@ export async function renderLayoutPdf(view: LayoutView, opts: PdfOptions): Promi
     }
 
     // Замечания — аннотации, а не рисунок: печатник видит стикер в программе вёрстки.
-    if (opts.withNotes) {
+    // При спуске полос не ставим: аннотация живёт в координатах страницы, а здесь они масштабированы.
+    if (opts.withNotes && !plan) {
       for (const block of page.blocks) {
         const notes = notesByBlock.get(block.id)
         if (!notes?.length) continue
@@ -503,7 +509,7 @@ export async function renderLayoutPdf(view: LayoutView, opts: PdfOptions): Promi
       { width: cbW, align: 'right', lineBreak: false },
     )
 
-    if (opts.preset === 'print' && bleed > 0) {
+    if (withTrimMarks && opts.preset === 'print' && bleed > 0) {
       const m = bleed
       doc.strokeColor(paint('#000000')).lineWidth(0.3)
       const marks = [
@@ -518,6 +524,42 @@ export async function renderLayoutPdf(view: LayoutView, opts: PdfOptions): Promi
       ]
       for (const [x1, y1, x2, y2] of marks) {
         doc.moveTo(x1!, y1!).lineTo(x2!, y2!).stroke()
+      }
+    }
+  }
+
+  if (!plan) {
+    // Обычный экспорт: одна страница макета — одна страница PDF.
+    for (let pi = 0; pi < pages.length; pi++) {
+      doc.addPage({ size: [W, H], margin: 0 })
+      drawPage(pages[pi]!, pi, true)
+    }
+  } else {
+    // Спуск полос: сетка на большом листе, страницы одного масштаба.
+    const perSheet = plan.rows * plan.cols
+    const sheets = Math.max(1, Math.ceil(pages.length / perSheet))
+    for (let s = 0; s < sheets; s++) {
+      doc.addPage({ size: [plan.sheetW, plan.sheetH], margin: 0 })
+      for (const cell of plan.cells) {
+        const page = pages[s * perSheet + cell.page]
+        if (!page) continue
+        // Тонкая рамка реза по границе содержимого: типографии видно, где резать.
+        doc.save()
+        doc.strokeColor(paint('#9aa0aa')).lineWidth(0.25)
+        doc.rect(cell.x, cell.y, cell.w, cell.h).stroke()
+        doc.restore()
+        doc.save()
+        if (plan.rotated) {
+          // Содержимое рисуется в своих координатах W×H, поэтому поворот вокруг
+          // левого верхнего угла ячейки требует сдвига на её ширину.
+          doc.translate(cell.x + cell.w, cell.y)
+          doc.rotate(90)
+        } else {
+          doc.translate(cell.x, cell.y)
+        }
+        doc.scale(plan.scale)
+        drawPage(page, s * perSheet + cell.page, false)
+        doc.restore()
       }
     }
   }

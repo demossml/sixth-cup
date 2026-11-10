@@ -40,6 +40,15 @@ describe('очередь экспорта PDF', () => {
     expect(exportLabel(req())).toBe('PDF · печать · поля 3 мм')
     expect(exportLabel(req({ preset: 'screen' }))).toBe('PDF · экран')
     expect(exportLabel(req({ cmyk: true }))).toBe('PDF · печать · поля 3 мм · CMYK')
+    expect(exportLabel(req({ impose: 'a3-4' }))).toBe('PDF · печать · поля 3 мм · 4 на A3 (2×2)')
+    // Для экрана спуск не имеет смысла — не упоминаем.
+    expect(exportLabel(req({ preset: 'screen', impose: 'a3-4' }))).toBe('PDF · экран')
+  })
+
+  it('спуск полос уходит в запрос только когда выбран', () => {
+    expect(exportQuery(req({ impose: 'off' }))).toBe('preset=print&bleed=3')
+    expect(exportQuery(req({ impose: 'a3-2' }))).toBe('preset=print&bleed=3&impose=a3-2')
+    expect(exportQuery(req({ impose: 'a2-4', cmyk: true }))).toBe('preset=print&bleed=3&cmyk=1&impose=a2-4')
   })
 
   it('прогресс не ломается, если сервер не прислал размер', () => {

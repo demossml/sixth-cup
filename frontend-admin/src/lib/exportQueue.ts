@@ -19,8 +19,20 @@ export type ExportRequest = {
   cmyk: boolean
   /** Положить замечания к блокам в PDF аннотациями-стикерами. */
   notes?: boolean
+  /** Спуск полос: сетка страниц на A3/A2. `off` — обычный экспорт. */
+  impose?: ImposePreset
   /** Скачать, даже если в макете есть пустые позиции (409 на сервере). */
   force?: boolean
+}
+
+export type ImposePreset = 'off' | 'a3-2' | 'a3-4' | 'a2-4'
+
+/** Подписи пресетов: те же, что у сервера в `/imposition.ts`. */
+export const IMPOSE_LABELS: Record<ImposePreset, string> = {
+  off: 'Не спускать',
+  'a3-2': '2 на A3 (2×1)',
+  'a3-4': '4 на A3 (2×2)',
+  'a2-4': '4 на A2 (2×2)',
 }
 
 export type ExportStatus = 'queued' | 'running' | 'done' | 'error' | 'blocked' | 'canceled'
@@ -63,6 +75,7 @@ export function exportQuery(req: ExportRequest): string {
   })
   if (req.cmyk) qs.set('cmyk', '1')
   if (req.notes) qs.set('notes', '1')
+  if (req.impose && req.impose !== 'off') qs.set('impose', req.impose)
   if (req.force) qs.set('force', '1')
   return qs.toString()
 }
@@ -71,7 +84,8 @@ export function exportQuery(req: ExportRequest): string {
 export function exportLabel(req: ExportRequest): string {
   const mode = req.preset === 'print' ? `печать · поля ${req.bleed} мм` : 'экран'
   const notes = req.notes ? ' · с замечаниями' : ''
-  return `PDF · ${mode}${req.cmyk ? ' · CMYK' : ''}${notes}`
+  const impose = req.preset === 'print' && req.impose && req.impose !== 'off' ? ` · ${IMPOSE_LABELS[req.impose]}` : ''
+  return `PDF · ${mode}${req.cmyk ? ' · CMYK' : ''}${notes}${impose}`
 }
 
 /** Новый элемент очереди. */

@@ -87,8 +87,8 @@ import { mmToPct, pctToMm, safeBoxOffset, safeBoxSize, sheetMm } from '../lib/sh
 import { perfDragEnd, perfDragStart, perfFrame, perfInit, perfPdf, perfTTI } from '../lib/perf'
 import {
   applyProgress, blockJob, cancelJob, createJob, exportQuery, failJob, finishJob, liveJobs, nextQueued,
-  progressText, startJob,
-  type ExportJob, type ExportRequest,
+  progressText, startJob, IMPOSE_LABELS,
+  type ExportJob, type ExportRequest, type ImposePreset,
 } from '../lib/exportQueue'
 
 type SaveBody = { title: string; theme: MenuTheme; doc: MenuDoc }
@@ -946,8 +946,11 @@ export default function MenuLayoutEditor() {
       const ms = performance.now() - started
       perfPdf(ms)
       done((j) => finishJob(j, url, blob.size))
+      // При спуске сервер сообщает масштаб страниц — показываем его в тосте.
+      const imposed = xhr.getResponseHeader('X-Impose-Scale')
+      const imposeText = imposed ? ` · спуск ${Math.round(Number(imposed) * 100)} %` : ''
       toast.push(
-        `PDF готов за ${(ms / 1000).toFixed(1)} с · ${Math.max(1, Math.round(blob.size / 1024))} КБ — файл можно скачать ещё раз из панели`,
+        `PDF готов за ${(ms / 1000).toFixed(1)} с · ${Math.max(1, Math.round(blob.size / 1024))} КБ${imposeText} — файл можно скачать ещё раз из панели`,
         'ok',
       )
     }
@@ -4325,23 +4328,41 @@ function ExportModal({ open, onClose, layoutId, format, pages, blockers, onGoToB
   const [preset, setPreset] = useState<'print' | 'screen'>('print')
   const [bleed, setBleed] = useState(3)
   const [cmyk, setCmyk] = useState(false)
+  /** Спуск полос: только для печати, для экрана бессмысленнен. */
+  const [impose, setImpose] = useState<ImposePreset>('off')
   // Есть замечания — по умолчанию кладём их в PDF: в этом и смысл замечаний.
   const [notes, setNotes] = useState(notesCount > 0)
 
   // Модалка живёт между открытиями, поэтому состояние подтягиваем при каждом показе:
   // иначе чекбокс «Замечания» оставался бы выключенным, если замечание добавили позже.
   useEffect(() => {
-    if (open) setNotes(notesCount > 0)
+    if (!open) return
+    setNotes(notesCount > 0)
+    setImpose('off')
   }, [open, notesCount])
 
   if (!open) return null
+
+  /** При спуске полос аннотации не ставятся: лист масштабирован, стикер уехал бы не туда. */
+  const notesAllowed = notesCount > 0 && impose === 'off'
+  /** Сколько листов выйдет при выбранном спуске. */
+  const perSheet = impose === 'a3-2' ? 2 : impose === 'off' ? 1 : 4
+  const sheets = Math.max(1, Math.ceil(pages / perSheet))
 
   /**
    * Экспорт — задача в очереди: модалка сразу закрывается, редактор остаётся живым,
    * прогресс и ссылка на файл показываются в панели задач (P2-9).
    */
   const submit = (force: boolean) => {
-    onStart({ layoutId, preset, bleed: preset === 'print' ? bleed : 0, cmyk, notes: notes && notesCount > 0, force })
+    onStart({
+      layoutId,
+      preset,
+      bleed: preset === 'print' ? bleed : 0,
+      cmyk,
+      notes: notes && notesAllowed,
+      impose: preset === 'print' ? impose : 'off',
+      force,
+    })
     onClose()
   }
 
@@ -4392,20 +4413,31 @@ function ExportModal({ open, onClose, layoutId, format, pages, blockers, onGoToB
                   <option value="5">5 мм</option>
                 </Select>
               </Field>
+              {preset === 'print' && (
+                <Field label="Спуск полос" hint={`${pages} стр. → ${sheets} л.`}>
+                  <Select value={impose} onChange={(e) => setImpose(e.target.value as ImposePreset)} aria-label="Спуск полос">
+                    {(Object.keys(IMPOSE_LABELS) as ImposePreset[]).map((k) => (
+                      <option key={k} value={k}>
+                        {IMPOSE_LABELS[k]}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              )}
               <label className="flex items-center gap-2 text-[12.5px] text-ink-secondary">
                 <input type="checkbox" checked={cmyk} onChange={(e) => setCmyk(e.target.checked)} />
                 Цвета в CMYK (для типографии)
               </label>
-              <label className={cx('flex items-start gap-2 text-[12.5px]', notesCount > 0 ? 'text-ink-secondary' : 'text-ink-tertiary')}>
+              <label className={cx('flex items-start gap-2 text-[12.5px]', notesCount > 0 && impose === 'off' ? 'text-ink-secondary' : 'text-ink-tertiary')}>
                 <input
                   type="checkbox"
-                  checked={notes && notesCount > 0}
-                  disabled={notesCount === 0}
+                  checked={notes && notesAllowed}
+                  disabled={!notesAllowed}
                   onChange={(e) => setNotes(e.target.checked)}
                 />
                 <span>
                   Замечания к блокам{notesCount > 0 ? ` (${notesCount})` : ''} — стикерами в PDF
-                  {notesCount === 0 ? ': открытых замечаний нет' : ''}
+                  {notesCount === 0 ? ': открытых замечаний нет' : impose !== 'off' ? ': при спуске полос не ставятся' : ''}
                 </span>
               </label>
             </div>
