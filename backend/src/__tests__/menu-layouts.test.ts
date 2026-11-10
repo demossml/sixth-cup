@@ -59,7 +59,14 @@ type LayoutBody = {
     stats: { pages: number; products: number; warnings: number }
     drift: { blockId: string; from: number | null; to: number | null }[]
     blockers: { code: string }[]
-    theme: { preset: string; itemSize: number; backgroundDim: number; backgroundImageUrl: string | null }
+    theme: {
+      preset: string
+      itemSize: number
+      backgroundDim: number
+      backgroundImageUrl: string | null
+      fontHeading: string
+      fontBody: string
+    }
     doc: { pages: { id: string; blocks: Block[] }[] }
   }
   changed?: { blockId: string; from: number | null; to: number | null }[]
@@ -766,5 +773,100 @@ describe('шрифты макета', () => {
     const theme = normalizeTheme({ fontHeading: 'Comic Sans', fontBody: 'Arial' })
     expect(theme.fontHeading).toBe('Unbounded')
     expect(theme.fontBody).toBe('Golos Text')
+  })
+})
+
+describe('цвет в PDF', () => {
+  it('RGB → CMYK считается предсказуемо', async () => {
+    const { rgbToCmyk } = await import('../modules/admin/cmyk')
+    expect(rgbToCmyk('#000000')).toEqual([0, 0, 0, 100])
+    expect(rgbToCmyk('#FFFFFF')).toEqual([0, 0, 0, 0])
+    const red = rgbToCmyk('#FF0000')
+    expect(red[0]).toBe(0)
+    expect(red[1]).toBe(100)
+    expect(red[2]).toBe(100)
+    expect(red[3]).toBe(0)
+  })
+
+  it('экспорт с cmyk=1 отдаёт PDF с DeviceCMYK', async () => {
+    const cat = mkCategory('CMYK')
+    mkProduct('Латте', 240, cat)
+    const created = await createLayout('CMYK макет')
+    await app.request(`/api/admin/menu-layouts/${created.id}/seed-from-catalog`, {
+      method: 'POST',
+      headers: H,
+      body: JSON.stringify({ categoryIds: [cat] }),
+    })
+    const res = await app.request(`/api/admin/menu-layouts/${created.id}/export.pdf?force=1&cmyk=1`, { headers: H })
+    expect(res.status).toBe(200)
+    const buf = Buffer.from(await res.arrayBuffer())
+    expect(buf.subarray(0, 5).toString()).toBe('%PDF-')
+
+    // Потоки сжаты: распаковываем и ищем оператор CMYK (`k`), а не RGB (`rg`).
+    const { inflateSync } = await import('node:zlib')
+    const raw = buf.toString('latin1')
+    let content = ''
+    const re = /stream\r?\n([\s\S]*?)\r?\nendstream/g
+    for (const m of raw.matchAll(re)) {
+      try {
+        content += inflateSync(Buffer.from(m[1]!, 'latin1')).toString('latin1')
+      } catch {
+        content += m[1]!
+      }
+    }
+    // PDFKit пишет набор через `/DeviceCMYK cs` + `scn`; RGB-набора быть не должно.
+    expect(content).toContain('/DeviceCMYK')
+    expect(content).not.toContain('/DeviceRGB')
+  })
+})
+
+describe('свои шрифты', () => {
+  it('загружается шрифт с кириллицей и попадает в тему и PDF', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const buf = readFileSync(join(process.cwd(), 'assets', 'fonts', 'manrope-400.woff'))
+
+    const fd = new FormData()
+    fd.append('file', new Blob([buf], { type: 'font/woff' }), 'manrope.woff')
+    const up = await app.request('/api/admin/menu-fonts', { method: 'POST', headers: { 'X-Admin-Token': 'test-admin' }, body: fd })
+    expect(up.status).toBe(201)
+    const font = ((await up.json()) as { font: { id: number; family: string; url: string } }).font
+    expect(font.family).toBe('Manrope')
+    expect(font.url).toMatch(/^\/uploads\//)
+
+    // повторная загрузка того же семейства — понятная ошибка, а не дубль
+    const again = await app.request('/api/admin/menu-fonts', {
+      method: 'POST',
+      headers: { 'X-Admin-Token': 'test-admin' },
+      body: (() => {
+        const f2 = new FormData()
+        f2.append('file', new Blob([buf], { type: 'font/woff' }), 'manrope.woff')
+        return f2
+      })(),
+    })
+    expect(again.status).toBe(409)
+
+    const created = await createLayout('Свой шрифт')
+    await app.request(`/api/admin/menu-layouts/${created.id}`, {
+      method: 'PUT',
+      headers: H,
+      body: JSON.stringify({ theme: { fontHeading: 'Manrope', fontBody: 'Manrope' } }),
+    })
+    const view = await getLayout(created.id)
+    expect(view.theme.fontHeading).toBe('Manrope')
+
+    const pdf = await app.request(`/api/admin/menu-layouts/${created.id}/export.pdf?force=1`, { headers: H })
+    expect(pdf.status).toBe(200)
+
+    const list = await app.request('/api/admin/menu-fonts', { headers: H })
+    const fonts = ((await list.json()) as { fonts: { family: string }[] }).fonts
+    expect(fonts.some((f) => f.family === 'Manrope')).toBe(true)
+  })
+
+  it('файл без кириллицы не принимается', async () => {
+    const fd = new FormData()
+    fd.append('file', new Blob([Buffer.from('not a font')], { type: 'font/ttf' }), 'bad.ttf')
+    const res = await app.request('/api/admin/menu-fonts', { method: 'POST', headers: { 'X-Admin-Token': 'test-admin' }, body: fd })
+    expect(res.status).toBe(400)
   })
 })

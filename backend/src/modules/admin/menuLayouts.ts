@@ -905,11 +905,13 @@ export const adminMenuLayouts = new Hono<Env>()
     const bleedRaw = Number(c.req.query('bleed') ?? (preset === 'print' ? 3 : 0))
     const bleed = Number.isFinite(bleedRaw) ? Math.max(0, Math.min(10, bleedRaw)) : 0
     const force = c.req.query('force') === '1'
+    // CMYK — для типографии: цвета текста и плашек в DeviceCMYK.
+    const cmyk = c.req.query('cmyk') === '1'
     const blocking = layout.blockers.filter((b) => b.code !== 'notice')
     if (blocking.length > 0 && !force) {
       return c.json({ ok: false, error: 'has_blockers', blockers: layout.blockers, stats: layout.stats }, 409)
     }
-    const pdf = await renderLayoutPdf(layout, { preset, bleedMm: bleed })
+    const pdf = await renderLayoutPdf(layout, { preset, bleedMm: bleed, cmyk })
     const name = `menu-${layout.id}-${new Date().toISOString().slice(0, 10)}.pdf`
     c.set('audit', { entity: 'menu-layout', entityId: String(layout.id), summary: `Экспорт PDF макета «${layout.title}»` })
     return new Response(new Uint8Array(pdf), {

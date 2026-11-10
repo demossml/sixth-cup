@@ -6,11 +6,17 @@
  * «не туда». Каталог, касса и меню гостя здесь не затрагиваются.
  */
 import { Hono } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import { normalizeDoc, normalizeTheme } from './menuLayoutDoc'
+import { createRequire } from 'node:module'
+import { randomBytes } from 'node:crypto'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { config } from '../../config'
 
 type Env = { Variables: { audit?: { entity: string; entityId: string; summary: string } } }
 
@@ -73,7 +79,103 @@ const versionMeta = (r: VersionRow) => {
   }
 }
 
+type FontRow = { id: number; family: string; regular_key: string; bold_key: string | null; created_at: number }
+
+const fontView = (r: FontRow) => ({
+  id: Number(r.id),
+  family: r.family,
+  url: `/uploads/${r.regular_key}`,
+  boldUrl: r.bold_key ? `/uploads/${r.bold_key}` : null,
+  createdAt: Number(r.created_at),
+})
+
+const FONT_MIME: Record<string, string> = {
+  'font/ttf': '.ttf',
+  'font/otf': '.otf',
+  'font/woff': '.woff',
+  'font/woff2': '.woff2',
+  'application/font-woff': '.woff',
+  'application/x-font-ttf': '.ttf',
+  'application/octet-stream': '', // тип может не прийти от браузера — проверим по сигнатуре
+}
+
+/** Проверка шрифта: парсится, есть кириллица и знак рубля, иначе в печати будут квадраты. */
+async function inspectFont(buf: Buffer): Promise<{ family: string; ext: string } | { error: string }> {
+  const head = buf.subarray(0, 4).toString('latin1')
+  const ext = head === 'wOFF' ? '.woff' : head === 'wOF2' ? '.woff2' : head === 'OTTO' ? '.otf' : '\u0000\u0001\u0000\u0000' === head ? '.ttf' : ''
+  const resolved = ext || (head.charCodeAt(0) === 0 && head.charCodeAt(1) === 1 ? '.ttf' : '')
+  if (!resolved) return { error: 'Это не файл шрифта (ожидается TTF, OTF, WOFF или WOFF2)' }
+  try {
+    // Через createRequire: у fontkit нет типов, а объявлять модуль глобально
+    // пришлось бы и для клиентских сборок, которые его не используют.
+    const fontkit = createRequire(import.meta.url)('fontkit') as {
+      create: (b: Buffer) => { familyName?: string; hasGlyphForCodePoint: (cp: number) => boolean }
+    }
+    const font = fontkit.create(buf)
+    const family = String(font.familyName ?? '').trim().slice(0, 60)
+    if (!family) return { error: 'В шрифте не указано имя семейства' }
+    const need = ['Ж', 'ё', '₽']
+    const missing = need.filter((ch) => !font.hasGlyphForCodePoint(ch.codePointAt(0)!))
+    if (missing.length) return { error: `В шрифте нет символов: ${missing.join(' ')} — нужна кириллица и ₽` }
+    return { family, ext: resolved }
+  } catch {
+    return { error: 'Не удалось разобрать шрифт — возможно, файл повреждён' }
+  }
+}
+
 export const adminMenuAssets = new Hono<Env>()
+  /* ── свои шрифты ──────────────────────────────────────────── */
+  .get('/menu-fonts', (c) => {
+    const rows = db.prepare('SELECT * FROM menu_fonts ORDER BY created_at DESC').all() as FontRow[]
+    return c.json({ ok: true, fonts: rows.map(fontView) })
+  })
+
+  .post('/menu-fonts', bodyLimit({ maxSize: 8 * 1024 * 1024, onError: (c) => c.json({ error: 'Файл больше 8 МБ' }, 413) }), async (c) => {
+    requireWrite(c.get('adminRole' as never) as string | undefined)
+    const body = await c.req.parseBody({ all: true })
+    const regular = body['file']
+    if (!regular || typeof regular === 'string') throw bad('Нужен файл шрифта в поле «file»', 400)
+    const bold = body['bold']
+    const regularBuf = Buffer.from(await (regular as File).arrayBuffer())
+    const checked = await inspectFont(regularBuf)
+    if ('error' in checked) throw bad(checked.error, 400)
+    if (regularBuf.length > 8 * 1024 * 1024) throw bad('Шрифт больше 8 МБ', 400)
+
+    const existing = db.prepare('SELECT * FROM menu_fonts WHERE family=?').get(checked.family) as FontRow | undefined
+    if (existing) throw bad(`Шрифт «${checked.family}» уже загружен`, 409)
+
+    mkdirSync(config.uploadsDir, { recursive: true })
+    const prefix = `${Date.now()}-${randomBytes(6).toString('hex')}`
+    const regularKey = `font-${prefix}${checked.ext}`
+    writeFileSync(join(config.uploadsDir, regularKey), regularBuf)
+
+    let boldKey: string | null = null
+    if (bold && typeof bold !== 'string') {
+      const boldBuf = Buffer.from(await (bold as File).arrayBuffer())
+      const boldChecked = await inspectFont(boldBuf)
+      if ('error' in boldChecked) throw bad(`Жирное начертание: ${boldChecked.error}`, 400)
+      boldKey = `font-${prefix}-bold${boldChecked.ext}`
+      writeFileSync(join(config.uploadsDir, boldKey), boldBuf)
+    }
+
+    const now = Date.now()
+    const info = db
+      .prepare('INSERT INTO menu_fonts(family, regular_key, bold_key, created_at) VALUES(?,?,?,?)')
+      .run(checked.family, regularKey, boldKey, now)
+    const row = db.prepare('SELECT * FROM menu_fonts WHERE id=?').get(Number(info.lastInsertRowid)) as FontRow
+    c.set('audit', { entity: 'menu-font', entityId: String(row.id), summary: `Загружен шрифт «${row.family}»` })
+    return c.json({ ok: true, font: fontView(row) }, 201)
+  })
+
+  .delete('/menu-fonts/:id', (c) => {
+    requireWrite(c.get('adminRole' as never) as string | undefined)
+    const id = Number(c.req.param('id'))
+    const row = db.prepare('SELECT * FROM menu_fonts WHERE id=?').get(id) as FontRow | undefined
+    if (!row) throw bad('Шрифт не найден', 404)
+    db.prepare('DELETE FROM menu_fonts WHERE id=?').run(id)
+    c.set('audit', { entity: 'menu-font', entityId: String(id), summary: `Шрифт «${row.family}» удалён` })
+    return c.json({ ok: true })
+  })
   /* ── палитры бренда ───────────────────────────────────────── */
   .get('/menu-palettes', (c) => {
     const rows = db.prepare('SELECT * FROM menu_palettes ORDER BY updated_at DESC').all() as PaletteRow[]

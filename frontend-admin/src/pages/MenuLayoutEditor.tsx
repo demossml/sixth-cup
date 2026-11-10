@@ -7,7 +7,7 @@ import {
   ChevronDown, ChevronRight, Eye, EyeOff, Grid3x3, History, ImagePlus, Layers, ListTree, Loader2, Lock, LockOpen, Maximize2,
   Minus, Palette, Plus, Redo2, RefreshCw, Search, Sparkles, Trash2, Type, Undo2, Upload, X,
 } from 'lucide-react'
-import { ApiError, api, tokenStore, uploadFile } from '../api/client'
+import { ApiError, api, tokenStore, uploadFile, uploadMenuFont } from '../api/client'
 import { canRedo, canUndo, emptyHistory, pushHistory, redoStep, undoStep, type DocHistory } from '../lib/docHistory'
 import { useApi } from '../api/useApi'
 import { ago } from '../lib/format'
@@ -143,6 +143,9 @@ export default function MenuLayoutEditor() {
   const [marquee, setMarquee] = useState<Rect | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; id: string } | null>(null)
   const [layerQuery, setLayerQuery] = useState('')
+  /** Свои шрифты аккаунта: файлы в uploads, семейство в теме. */
+  const [ownFonts, setOwnFonts] = useState<{ id: number; family: string; url: string; boldUrl: string | null }[]>([])
+  const [fontBusy, setFontBusy] = useState(false)
   /** Палитры бренда на аккаунт: общие для всех макетов. */
   const [palettes, setPalettes] = useState<{ id: number; name: string; colors: string[] }[]>([])
   /** История версий макета: снимки документа и темы. */
@@ -202,6 +205,60 @@ export default function MenuLayoutEditor() {
   useEffect(() => {
     perfInit()
   }, [])
+
+  const loadFonts = useCallback(async () => {
+    try {
+      const res = await api<{ fonts: { id: number; family: string; url: string; boldUrl: string | null }[] }>('/menu-fonts')
+      setOwnFonts(res.fonts ?? [])
+    } catch (e) {
+      // Шрифты — удобство: без них работает каталог встроенных, но ошибку видно в консоли.
+      console.warn('[menu-fonts] не удалось загрузить список', e)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadFonts()
+  }, [loadFonts])
+
+  // @font-face для загруженных шрифтов: тот же файл использует PDF на сервере.
+  useEffect(() => {
+    const id = 'menu-own-fonts'
+    let el = document.getElementById(id) as HTMLStyleElement | null
+    if (!el) {
+      el = document.createElement('style')
+      el.id = id
+      document.head.appendChild(el)
+    }
+    el.textContent = ownFonts
+      .map(
+        (f) => `@font-face{font-family:"${f.family}";font-style:normal;font-weight:400;font-display:swap;src:url("${f.url}");}
+@font-face{font-family:"${f.family}";font-style:normal;font-weight:700;font-display:swap;src:url("${f.boldUrl ?? f.url}");}`,
+      )
+      .join('\n')
+  }, [ownFonts])
+
+  const uploadFont = async (file: File, bold: File | null) => {
+    setFontBusy(true)
+    try {
+      const font = await uploadMenuFont(file, bold)
+      await loadFonts()
+      setTheme((t) => ({ ...t, fontHeading: font.family }))
+      toast.push(`Шрифт «${font.family}» загружен и выбран для заголовков`)
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Не удалось загрузить шрифт', 'bad')
+    } finally {
+      setFontBusy(false)
+    }
+  }
+
+  const removeFont = async (id: number) => {
+    try {
+      await api(`/menu-fonts/${id}`, { method: 'DELETE' })
+      await loadFonts()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Не удалось удалить шрифт', 'bad')
+    }
+  }
 
   const loadPalettes = useCallback(async () => {
     try {
@@ -1766,24 +1823,83 @@ export default function MenuLayoutEditor() {
           <h3 className="text-[13px] font-semibold">Шрифты и цвета</h3>
         </div>
         <Field label="Заголовки">
-          <Select value={theme.fontHeading} onChange={(e) => setTheme({ ...theme, fontHeading: e.target.value as MenuTheme['fontHeading'] })}>
-            {FONT_FAMILIES.map((f) => (
-              <option key={f} value={f}>
-                {FONT_LABELS[f]}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <div className="mt-2">
-          <Field label="Позиции и цены">
-            <Select value={theme.fontBody} onChange={(e) => setTheme({ ...theme, fontBody: e.target.value as MenuTheme['fontBody'] })}>
+          <Select value={theme.fontHeading} onChange={(e) => setTheme({ ...theme, fontHeading: e.target.value })}>
+            <optgroup label="Встроенные">
               {FONT_FAMILIES.map((f) => (
                 <option key={f} value={f}>
                   {FONT_LABELS[f]}
                 </option>
               ))}
+            </optgroup>
+            {ownFonts.length > 0 && (
+              <optgroup label="Свои">
+                {ownFonts.map((f) => (
+                  <option key={f.id} value={f.family}>
+                    {f.family}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+          </Select>
+        </Field>
+        <div className="mt-2">
+          <Field label="Позиции и цены">
+            <Select value={theme.fontBody} onChange={(e) => setTheme({ ...theme, fontBody: e.target.value })}>
+              <optgroup label="Встроенные">
+                {FONT_FAMILIES.map((f) => (
+                  <option key={f} value={f}>
+                    {FONT_LABELS[f]}
+                  </option>
+                ))}
+              </optgroup>
+              {ownFonts.length > 0 && (
+                <optgroup label="Свои">
+                  {ownFonts.map((f) => (
+                    <option key={f.id} value={f.family}>
+                      {f.family}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </Select>
           </Field>
+        </div>
+
+        <div className="mt-2 rounded-lg border border-line p-2">
+          <p className="text-[11.5px] text-ink-secondary">Свой шрифт</p>
+          <p className="mt-0.5 text-[10.5px] text-ink-tertiary">TTF, OTF, WOFF или WOFF2 с кириллицей и знаком ₽. До 8 МБ.</p>
+          <label className={cx('mt-1.5 inline-flex min-h-8 cursor-pointer items-center gap-1 rounded-lg border border-line px-2 text-[12px] font-semibold text-brand', fontBusy && 'opacity-50')}>
+            {fontBusy ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />} Загрузить
+            <input
+              type="file"
+              accept=".ttf,.otf,.woff,.woff2"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                if (f) void uploadFont(f, null)
+                e.target.value = ''
+              }}
+            />
+          </label>
+          {ownFonts.length > 0 && (
+            <ul className="mt-1.5 space-y-0.5">
+              {ownFonts.map((f) => (
+                <li key={f.id} className="flex items-center gap-1">
+                  <span className="min-w-0 flex-1 truncate text-[12px]" style={{ fontFamily: `"${f.family}", sans-serif` }}>
+                    {f.family}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void removeFont(f.id)}
+                    className="grid h-6 w-6 place-items-center rounded text-ink-tertiary hover:text-bad"
+                    aria-label={`Удалить шрифт ${f.family}`}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
         {(
           [
@@ -3192,6 +3308,7 @@ function ExportModal({ open, onClose, layoutId, format, pages, blockers, onGoToB
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [forced, setForced] = useState(false)
+  const [cmyk, setCmyk] = useState(false)
 
   useEffect(() => {
     if (!open) return
@@ -3207,6 +3324,7 @@ function ExportModal({ open, onClose, layoutId, format, pages, blockers, onGoToB
     const startedAt = performance.now()
     try {
       const qs = new URLSearchParams({ preset, bleed: String(preset === 'print' ? bleed : 0) })
+      if (cmyk) qs.set('cmyk', '1')
       if (force) qs.set('force', '1')
       const res = await fetch(`/api/admin/menu-layouts/${layoutId}/export.pdf?${qs.toString()}`, {
         headers: { 'X-Admin-Token': tokenStore.get() },
@@ -3282,6 +3400,10 @@ function ExportModal({ open, onClose, layoutId, format, pages, blockers, onGoToB
                   <option value="5">5 мм</option>
                 </Select>
               </Field>
+              <label className="flex items-center gap-2 text-[12.5px] text-ink-secondary">
+                <input type="checkbox" checked={cmyk} onChange={(e) => setCmyk(e.target.checked)} />
+                Цвета в CMYK (для типографии)
+              </label>
             </div>
           </div>
 
@@ -3297,9 +3419,11 @@ function ExportModal({ open, onClose, layoutId, format, pages, blockers, onGoToB
               <li className="flex items-start gap-2">
                 <Check size={14} className="mt-0.5 flex-none text-ok" aria-hidden /> {pages} стр. · метки реза при полях
               </li>
-              <li className="flex items-start gap-2 text-warn">
-                <span className="mt-[3px] flex-none text-[11px] font-bold">RGB</span>
-                Цвета в PDF — RGB. Для типографии согласуйте профиль или включите CMYK-вывод на сервере.
+              <li className={cx('flex items-start gap-2', cmyk ? 'text-ink-secondary' : 'text-warn')}>
+                <span className="mt-[3px] flex-none text-[11px] font-bold">{cmyk ? 'CMYK' : 'RGB'}</span>
+                {cmyk
+                  ? 'Цвета текста и плашек — Device CMYK. Фото остаются RGB, их конвертирует печатная машина.'
+                  : 'Цвета в PDF — RGB. Для типографии включите CMYK или согласуйте профиль.'}
               </li>
               {hard.length > 0 && (
                 <li className="flex items-start gap-2 text-bad">

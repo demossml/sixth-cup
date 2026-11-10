@@ -9,9 +9,11 @@ import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { config } from '../../config'
+import { db } from '../../db'
 import { formatMetrics, type RenderBlock } from './menuLayoutDoc'
 import { contentBox, footerBaselineY, placeBlock } from './sheetGeometry'
 import { typograph } from './typography'
+import { rgbToCmyk } from './cmyk'
 import type { LayoutView } from './menuLayouts'
 
 const require = createRequire(import.meta.url)
@@ -55,11 +57,30 @@ const FONTS = {
 
 /** Имя файла шрифта для семейства и начертания. Неизвестное семейство → Golos Text. */
 function fontFile(family: string, bold: boolean): string {
-  const files = FONT_FILES[family] ?? FONT_FILES['Golos Text']!
-  return files[bold ? 'bold' : 'regular']
+  const files = FONT_FILES[family]
+  if (files) return join(FONT_DIR, files[bold ? 'bold' : 'regular'])
+  // Загруженный пользователем шрифт лежит в uploads: ищем по имени семейства.
+  try {
+    const row = db
+      .prepare('SELECT regular_key AS regularKey, bold_key AS boldKey FROM menu_fonts WHERE family=?')
+      .get(family) as { regularKey: string; boldKey: string | null } | undefined
+    const key = row ? (bold ? row.boldKey ?? row.regularKey : row.regularKey) : null
+    if (key) return join(config.uploadsDir, key)
+  } catch {
+    /* таблицы нет — печатаем встроенным шрифтом */
+  }
+  return join(FONT_DIR, FONT_FILES['Golos Text']![bold ? 'bold' : 'regular'])
 }
 
-export type PdfOptions = { preset: 'print' | 'screen'; bleedMm: number }
+export type PdfOptions = {
+  preset: 'print' | 'screen'
+  bleedMm: number
+  /** Печатать цвета в DeviceCMYK — типографии часто просят именно так. */
+  cmyk?: boolean
+}
+
+/** Цвет для PDF: строка RGB или массив CMYK. */
+type Paint = string | number[]
 
 const MM_TO_PT = 72 / 25.4
 
@@ -155,7 +176,7 @@ function imagePathFor(url: string | null | undefined): string | null {
   return null
 }
 
-function drawBrand(doc: PdfDoc, x: number, y: number, size: number, color: string, accent: string) {
+function drawBrand(doc: PdfDoc, x: number, y: number, size: number, color: Paint, accent: Paint) {
   doc.fillColor(color)
   doc.font('displayBold').fontSize(size)
   doc.text('6', x, y, { lineBreak: false })
@@ -183,17 +204,18 @@ function drawBlock(
     line: string
     imageFor: (url: string | null | undefined) => Buffer | null
     cropFor: (block: RenderBlock) => Buffer | null
+    paint: (hex: string) => Paint
   },
 ) {
-  const { theme, scale, muted, line, imageFor } = ctx
+  const { theme, scale, muted, line, imageFor, paint } = ctx
   const { x, y, w, h } = rect
 
   switch (block.type) {
     case 'logo': {
       const size = Math.min(h * 0.9, 26 * scale)
-      drawBrand(doc, x, y + Math.max(0, (h - size) / 2), size, theme.text, theme.accent)
+      drawBrand(doc, x, y + Math.max(0, (h - size) / 2), size, paint(theme.text), paint(theme.accent))
       if (block.text) {
-        doc.font('body').fontSize(Math.max(5, Math.min(8 * scale, h * 0.35))).fillColor(muted)
+        doc.font('body').fontSize(Math.max(5, Math.min(8 * scale, h * 0.35))).fillColor(paint(muted))
         doc.text(block.text.toUpperCase(), x, y + h * 0.15, { width: w, align: 'right', lineBreak: false, ellipsis: true })
       }
       return
@@ -204,7 +226,7 @@ function drawBlock(
       if (!raw) return
       const content = typograph(block.uppercase ? raw.toUpperCase() : raw)
       const ink = splitHex(theme.text)
-      doc.font(block.bold ? 'displayBold' : 'body').fontSize(size).fillColor(ink.hex).fillOpacity(ink.alpha)
+      doc.font(block.bold ? 'displayBold' : 'body').fontSize(size).fillColor(paint(ink.hex)).fillOpacity(ink.alpha)
       doc.text(content, x, y, {
         width: w,
         height: h,
@@ -220,22 +242,22 @@ function drawBlock(
       const name = clip(block.titleOverride ?? block.displayCategory ?? 'Категория', 48)
       const size = Math.max(6, Math.min(h * 0.62, 15 * scale))
       const ink = splitHex(theme.accent)
-      doc.font(theme.fontHeading === 'Unbounded' ? 'displayBold' : 'bodyBold').fontSize(size).fillColor(ink.hex).fillOpacity(ink.alpha)
+      doc.font(theme.fontHeading === 'Unbounded' ? 'displayBold' : 'bodyBold').fontSize(size).fillColor(paint(ink.hex)).fillOpacity(ink.alpha)
       doc.text(name, x, y, { width: w, height: h, lineBreak: false, ellipsis: true })
       doc.fillOpacity(1)
-      doc.strokeColor(line).lineWidth(0.6).moveTo(x, y + h).lineTo(x + w, y + h).stroke()
+      doc.strokeColor(paint(line)).lineWidth(0.6).moveTo(x, y + h).lineTo(x + w, y + h).stroke()
       return
     }
     case 'divider': {
-      doc.strokeColor(block.warnings.length ? '#B4472C' : line).lineWidth(1)
+      doc.strokeColor(paint(block.warnings.length ? '#B4472C' : line)).lineWidth(1)
       doc.moveTo(x, y + h / 2).lineTo(x + w, y + h / 2).stroke()
       return
     }
     case 'image': {
       const src = ctx.cropFor(block) ?? imageFor(block.displayImageUrl ?? block.url)
       if (!src) {
-        doc.strokeColor(line).lineWidth(0.8).rect(x, y, w, h).stroke()
-        doc.font('body').fontSize(Math.max(5, 7 * scale)).fillColor(muted)
+        doc.strokeColor(paint(line)).lineWidth(0.8).rect(x, y, w, h).stroke()
+        doc.font('body').fontSize(Math.max(5, 7 * scale)).fillColor(paint(muted))
         doc.text('фото', x + 4, y + h / 2 - 4, { width: w - 8, align: 'center' })
         return
       }
@@ -272,7 +294,7 @@ function drawBlock(
           : clip(block.displayName ?? block.titleOverride ?? 'Позиция', 64),
       )
       const tracking = (block.tracking / 1000) * nameSize
-      doc.font('bodyBold').fontSize(nameSize).fillColor(theme.text)
+      doc.font('bodyBold').fontSize(nameSize).fillColor(paint(theme.text))
       doc.text(name, x + padX, y, {
         width: contentW - 40 * scale,
         height: h,
@@ -281,21 +303,21 @@ function drawBlock(
         lineGap: nameSize * (block.lineHeight - 1),
         characterSpacing: tracking,
       })
-      doc.font('body').fontSize(nameSize).fillColor(theme.text)
+      doc.font('body').fontSize(nameSize).fillColor(paint(theme.text))
       if (!twoLines) doc.text(price, x + padX, y, { width: contentW, align: 'right', lineBreak: false })
 
       if (twoLines) {
         const sizeSize = Math.max(4, nameSize * 0.78)
         const labels = typograph(sizes.map((sz) => sz.label).join(' · '))
         const prices = typograph(sizes.map((sz) => sz.price).join(' · '))
-        doc.font('body').fontSize(sizeSize).fillColor(muted)
+        doc.font('body').fontSize(sizeSize).fillColor(paint(muted))
         doc.text(clip(labels, 64), x + padX, y + nameSize * (block.lineHeight + 0.35), {
           width: contentW,
           lineBreak: false,
           ellipsis: true,
           characterSpacing: (block.tracking / 1000) * sizeSize,
         })
-        doc.fillColor(theme.text)
+        doc.fillColor(paint(theme.text))
         doc.text(clip(prices, 64), x + padX, y + nameSize * 1.5, {
           width: contentW,
           align: 'right',
@@ -306,14 +328,14 @@ function drawBlock(
 
       const sub = twoLines ? null : block.product?.variantLabel
       if (sub && h > nameSize * 2) {
-        doc.font('body').fontSize(Math.max(4, nameSize * 0.72)).fillColor(muted)
+        doc.font('body').fontSize(Math.max(4, nameSize * 0.72)).fillColor(paint(muted))
         doc.text(sub, x + padX, y + nameSize * 1.35, { width: contentW - 40 * scale, lineBreak: false, ellipsis: true })
       }
       if (block.badge && h > nameSize * 2.6) {
-        doc.font('bodyBold').fontSize(Math.max(4, nameSize * 0.5)).fillColor(theme.accent)
+        doc.font('bodyBold').fontSize(Math.max(4, nameSize * 0.5)).fillColor(paint(theme.accent))
         doc.text(block.badge.toUpperCase(), x + padX, y + h - nameSize * 0.9, { width: contentW, lineBreak: false })
       }
-      doc.strokeColor(line).lineWidth(0.4).dash(1, { space: 2 })
+      doc.strokeColor(paint(line)).lineWidth(0.4).dash(1, { space: 2 })
         .moveTo(x + padX, y + h).lineTo(x + w, y + h).stroke().undash()
     }
   }
@@ -341,11 +363,14 @@ export async function renderLayoutPdf(view: LayoutView, opts: PdfOptions): Promi
 
   // Имена body/bodyBold/display/displayBold означают «шрифт темы»: так весь рендер
   // ниже автоматически печатает выбранными семействами, без ветвлений в каждом блоке.
+  const cmyk = opts.cmyk === true
+  /** Один и тот же цвет в RGB или CMYK — в зависимости от режима экспорта. */
+  const paint = (hex: string): Paint => (cmyk ? rgbToCmyk(overWhite(hex)) : overWhite(hex))
   const registered = new Set<string>()
-  doc.registerFont('body', join(FONT_DIR, fontFile(theme.fontBody, false)))
-  doc.registerFont('bodyBold', join(FONT_DIR, fontFile(theme.fontBody, true)))
-  doc.registerFont('display', join(FONT_DIR, fontFile(theme.fontHeading, false)))
-  doc.registerFont('displayBold', join(FONT_DIR, fontFile(theme.fontHeading, true)))
+  doc.registerFont('body', fontFile(theme.fontBody, false))
+  doc.registerFont('bodyBold', fontFile(theme.fontBody, true))
+  doc.registerFont('display', fontFile(theme.fontHeading, false))
+  doc.registerFont('displayBold', fontFile(theme.fontHeading, true))
   registered.add('theme')
 
   const W = metrics.width
@@ -399,7 +424,7 @@ export async function renderLayoutPdf(view: LayoutView, opts: PdfOptions): Promi
       grad.stop(0, overWhite(theme.gradient.from)).stop(1, overWhite(theme.gradient.to))
       doc.rect(0, 0, W, H).fill(grad)
     } else {
-      doc.rect(0, 0, W, H).fill(overWhite(theme.bg))
+      doc.rect(0, 0, W, H).fill(paint(theme.bg))
     }
 
     const bg = imageFor(theme.backgroundImageUrl)
@@ -426,14 +451,14 @@ export async function renderLayoutPdf(view: LayoutView, opts: PdfOptions): Promi
         const cy = rect.y + rect.h / 2
         doc.rotate(block.rotationDeg, { origin: [cx, cy] })
       }
-      drawBlock(doc, block, rect, { theme, scale, muted, line, imageFor, cropFor })
+      drawBlock(doc, block, rect, { theme, scale, muted, line, imageFor, cropFor, paint })
       doc.fillOpacity(1)
       doc.restore()
     }
 
     // Подвал вне безопасной области: номер страницы, название, режим цен.
     const footY = footerBaselineY(H, W, bleed)
-    doc.font('body').fontSize(Math.max(4.5, 5.5 * scale)).fillColor(muted)
+    doc.font('body').fontSize(Math.max(4.5, 5.5 * scale)).fillColor(paint(muted))
     doc.text(clip(view.title.toUpperCase(), 60), padX, footY, { width: cbW * 0.6, lineBreak: false })
     doc.text(
       `${metrics.label} · ${metrics.mm} · ${pi + 1}/${pages.length}${view.priceMode === 'frozen' ? ' · цены зафиксированы' : ''}`,
@@ -444,7 +469,7 @@ export async function renderLayoutPdf(view: LayoutView, opts: PdfOptions): Promi
 
     if (opts.preset === 'print' && bleed > 0) {
       const m = bleed
-      doc.strokeColor('#000000').lineWidth(0.3)
+      doc.strokeColor(paint('#000000')).lineWidth(0.3)
       const marks = [
         [m, 0, m, 6],
         [0, m, 6, m],

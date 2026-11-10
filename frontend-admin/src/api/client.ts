@@ -99,3 +99,24 @@ export async function uploadFile(file: File): Promise<{ url: string; urlFull?: s
   if (!j.url) throw new ApiError('Нет url в ответе', 502)
   return { url: j.url, urlFull: j.urlFull }
 }
+
+
+/** Загрузка своего шрифта: сервер проверит кириллицу и знак ₽. */
+export async function uploadMenuFont(file: File, bold?: File | null): Promise<{ id: number; family: string; url: string; boldUrl: string | null }> {
+  const fd = new FormData()
+  fd.append('file', file)
+  if (bold) fd.append('bold', bold)
+  const res = await fetch(`${API}/api/admin/menu-fonts`, {
+    method: 'POST',
+    headers: { 'X-Admin-Token': tokenStore.get() },
+    body: fd,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    const message = errorText(err, res.statusText || `Ошибка ${res.status}`)
+    if (res.status === 403 && message === 'Forbidden') onUnauthorized?.()
+    throw new ApiError(message, res.status)
+  }
+  const j = (await res.json()) as { font: { id: number; family: string; url: string; boldUrl: string | null } }
+  return j.font
+}

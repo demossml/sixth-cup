@@ -121,8 +121,9 @@ export type MenuTheme = {
   accent: string
   backgroundImageUrl: string | null
   backgroundDim: number
-  fontHeading: FontFamily
-  fontBody: FontFamily
+  /** Встроенное семейство или имя загруженного шрифта. */
+  fontHeading: string
+  fontBody: string
   itemSize: number
   ornament: 'none' | 'line' | 'beans' | 'leaf'
   logoPosition: 'left' | 'top-right' | 'footer'
