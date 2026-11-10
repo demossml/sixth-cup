@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router-dom'
 import {
   AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical,
   AlignStartHorizontal, AlignStartVertical, ArrowDown, ArrowLeft, ArrowUp, Check, Download,
-  Eye, EyeOff, Grid3x3, History, ImagePlus, Layers, ListTree, Loader2, Lock, LockOpen, Maximize2,
+  ChevronDown, ChevronRight, Eye, EyeOff, Grid3x3, History, ImagePlus, Layers, ListTree, Loader2, Lock, LockOpen, Maximize2,
   Minus, Palette, Plus, Redo2, RefreshCw, Search, Sparkles, Trash2, Type, Undo2, Upload, X,
 } from 'lucide-react'
 import { ApiError, api, tokenStore, uploadFile } from '../api/client'
@@ -65,9 +65,11 @@ import { Badge, Button, Banner, Drawer, cx, ErrorBox, Field, Input, Select, Spin
 import MenuCanvas from '../components/menuLayout/MenuCanvas'
 import ColorField from '../components/menuLayout/ColorField'
 import {
-  alignBlocks, clampZoom, distributeBlocks, effectiveDpi, fitZoom, groupBlocks, groupKeyOf, groupSelectionIds,
-  rectsIntersect, sheetWidthMm, snapWithGuides, ungroupBlocks, zoomStep, type AlignMode, type SnapGuides,
+  alignBlocks, clampZoom, distributeBlocks, domTextMeasurer, effectiveDpi, fitFontSize, fitZoom, groupBlocks,
+  groupKeyOf, groupSelectionIds, rectsIntersect, sheetWidthMm, snapWithGuides, ungroupBlocks, zoomStep,
+  type AlignMode, type SnapGuides,
 } from '../lib/menuTools'
+import { typograph } from '../lib/typography'
 import { MENU_LAYOUT_V2 } from '../lib/featureFlags'
 import { safeBoxOffset, safeBoxSize } from '../lib/sheetGeometry'
 import { perfDragEnd, perfDragStart, perfFrame, perfInit, perfPdf, perfTTI } from '../lib/perf'
@@ -151,6 +153,8 @@ export default function MenuLayoutEditor() {
   /** Черновик из localStorage, если прошлая сессия оборвалась. */
   const [draftOffer, setDraftOffer] = useState<{ body: SaveBody; savedAt: number } | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
+  /** Свёрнутые группы в списке слоёв. */
+  const [collapsedGroups, setCollapsedGroups] = useState<string[]>([])
   const clipboard = useRef<MenuBlock | null>(null)
   const canvasBox = useRef<HTMLDivElement | null>(null)
   /** Пробел включает панорамирование листа, как в графических редакторах. */
@@ -504,6 +508,32 @@ export default function MenuLayoutEditor() {
     if (ids.length === 0) return
     updatePage((blocks) => blocks.map((b) => (ids.includes(b.id) ? { ...b, ...style } : b)))
     toast.push(`Стиль применён к блокам: ${ids.length}`)
+  }
+
+  /** «Вписать текст»: подбираем кегль, пока текст не помещается в рамку блока. */
+  const autofitText = (id: string) => {
+    const b = page?.blocks.find((x) => x.id === id)
+    if (!b) return
+    const text = typograph(b.displayName ?? b.titleOverride ?? b.text ?? b.snapshotName ?? '')
+    if (!text) {
+      toast.push('В блоке нет текста', 'bad')
+      return
+    }
+    const ratio = LAYOUT_FORMATS.find((f) => f.id === format)?.ratio ?? 210 / 297
+    const measurer = domTextMeasurer({
+      text,
+      widthPct: b.wPct,
+      heightPct: b.hPct,
+      fontFamily: b.bold ? 'Unbounded' : 'Golos Text',
+      bold: b.bold,
+      lineHeight: b.lineHeight ?? 1.15,
+      tracking: b.tracking ?? 0,
+      ratio,
+    })
+    const next = fitFontSize(measurer.fits, b.fontSizePt, 6, 0.5)
+    measurer.cleanup()
+    patchBlock({ fontSizePt: next }, id)
+    toast.push(next < b.fontSizePt ? `Кегль уменьшен до ${next} pt — текст влез` : 'Текст уже помещается')
   }
 
   const toggleLock = (id: string) => {
@@ -1296,8 +1326,67 @@ export default function MenuLayoutEditor() {
       {page.blocks.length > 0 && layerQuery && byZ(page.blocks).filter((b) => layerName(b).toLowerCase().includes(layerQuery.toLowerCase())).length === 0 && (
         <p className="p-2 text-[12.5px] text-ink-secondary">Ничего не найдено по «{layerQuery}».</p>
       )}
+      {(() => {
+        const groups = new Map<string, MenuBlock[]>()
+        for (const b of page.blocks) if (b.groupId) groups.set(b.groupId, [...(groups.get(b.groupId) ?? []), b])
+        if (groups.size === 0) return null
+        return (
+          <ul className="mb-2 space-y-1">
+            {[...groups.entries()].map(([gid, list]) => {
+              const open = !collapsedGroups.includes(gid)
+              return (
+                <li key={gid} className="rounded-lg border border-line">
+                  <div className="flex items-center gap-1 px-1.5 py-1">
+                    <button
+                      type="button"
+                      onClick={() => setCollapsedGroups((cur) => (cur.includes(gid) ? cur.filter((x) => x !== gid) : [...cur, gid]))}
+                      aria-expanded={open}
+                      className="grid h-6 w-6 place-items-center rounded text-ink-tertiary hover:text-brand"
+                      aria-label={open ? 'Свернуть группу' : 'Развернуть группу'}
+                    >
+                      {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedIds(list.map((b) => b.id))}
+                      className="min-w-0 flex-1 truncate text-left text-[12.5px] font-semibold"
+                    >
+                      Группа · {list.length}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => ungroupSelection()}
+                      className="rounded px-1 text-[11px] text-ink-tertiary hover:text-brand"
+                      title="Разгруппировать"
+                    >
+                      разбить
+                    </button>
+                  </div>
+                  {open && (
+                    <ul className="space-y-0.5 border-t border-line p-1">
+                      {byZ(list).map((b) => (
+                        <li key={b.id}>
+                          <button
+                            type="button"
+                            onClick={() => selectBlock(b.id)}
+                            className="w-full truncate rounded px-1 py-0.5 text-left text-[12px] text-ink-secondary hover:bg-surface-2 hover:text-brand"
+                          >
+                            {layerName(b)}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        )
+      })()}
+
       <ul className="space-y-0.5">
         {byZ(page.blocks)
+          .filter((b) => !b.groupId)
           .filter((b) => !layerQuery || layerName(b).toLowerCase().includes(layerQuery.toLowerCase()))
           .map((b) => (
           <li
@@ -1945,6 +2034,9 @@ export default function MenuLayoutEditor() {
                 />
               </Field>
             </div>
+            <Button size="sm" variant="secondary" className="mt-2 w-full" onClick={() => autofitText(selected.id)}>
+              Вписать название в блок
+            </Button>
             <div className="mt-2">
               <Field label="Бейдж">
                 <Select value={selected.badge ?? ''} onChange={(e) => patchBlock({ badge: e.target.value || null })}>
@@ -2050,6 +2142,9 @@ export default function MenuLayoutEditor() {
                 />
               </Field>
             </div>
+            <Button size="sm" variant="secondary" className="mt-2 w-full" onClick={() => autofitText(selected.id)}>
+              Вписать текст в блок
+            </Button>
           </>
         )}
 

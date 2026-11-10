@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { config } from '../../config'
 import { formatMetrics, type RenderBlock } from './menuLayoutDoc'
 import { contentBox, footerBaselineY, placeBlock } from './sheetGeometry'
+import { typograph } from './typography'
 import type { LayoutView } from './menuLayouts'
 
 const require = createRequire(import.meta.url)
@@ -139,7 +140,7 @@ function drawBlock(
       const size = Math.max(5, block.fontSizePt * scale)
       const raw = clip(block.text ?? block.titleOverride ?? '', 240)
       if (!raw) return
-      const content = block.uppercase ? raw.toUpperCase() : raw
+      const content = typograph(block.uppercase ? raw.toUpperCase() : raw)
       const ink = splitHex(theme.text)
       doc.font(block.bold ? 'displayBold' : 'body').fontSize(size).fillColor(ink.hex).fillOpacity(ink.alpha)
       doc.text(content, x, y, {
@@ -203,9 +204,11 @@ function drawBlock(
       const twoLines = sizes.length > 1 && h > 10
       const nameSize = Math.max(5, Math.min(twoLines ? h * 0.3 : h * 0.42, 11 * scale))
       const price = block.displayPrice ?? '—'
-      const name = block.uppercase
-        ? clip(block.displayName ?? block.titleOverride ?? 'Позиция', 64).toUpperCase()
-        : clip(block.displayName ?? block.titleOverride ?? 'Позиция', 64)
+      const name = typograph(
+        block.uppercase
+          ? clip(block.displayName ?? block.titleOverride ?? 'Позиция', 64).toUpperCase()
+          : clip(block.displayName ?? block.titleOverride ?? 'Позиция', 64),
+      )
       const tracking = (block.tracking / 1000) * nameSize
       doc.font('bodyBold').fontSize(nameSize).fillColor(theme.text)
       doc.text(name, x + padX, y, {
@@ -221,8 +224,8 @@ function drawBlock(
 
       if (twoLines) {
         const sizeSize = Math.max(4, nameSize * 0.78)
-        const labels = sizes.map((sz) => sz.label).join(' · ')
-        const prices = sizes.map((sz) => sz.price).join(' · ')
+        const labels = typograph(sizes.map((sz) => sz.label).join(' · '))
+        const prices = typograph(sizes.map((sz) => sz.price).join(' · '))
         doc.font('body').fontSize(sizeSize).fillColor(muted)
         doc.text(clip(labels, 64), x + padX, y + nameSize * (block.lineHeight + 0.35), {
           width: contentW,

@@ -185,3 +185,74 @@ export function groupBlocks(blocks: MenuBlock[], ids: string[]): { blocks: MenuB
 export function ungroupBlocks(blocks: MenuBlock[], ids: string[]): MenuBlock[] {
   return blocks.map((b) => (ids.includes(b.id) ? { ...b, groupId: null } : b))
 }
+
+/* ───────────── авто-фит текста ───────────── */
+
+/**
+ * Подбор кегля: уменьшаем шагом 0.5 pt, пока текст не перестанет вылезать из рамки.
+ * `fits` — внешняя проверка (в браузере — измерение скрытым блоком), поэтому функция
+ * чистая и проверяется тестом без DOM.
+ */
+export function fitFontSize(
+  fits: (pt: number) => boolean,
+  startPt: number,
+  minPt = 6,
+  step = 0.5,
+): number {
+  let pt = Math.max(minPt, startPt)
+  // Верхняя граница — 72 pt, как в схеме блока.
+  pt = Math.min(72, pt)
+  while (pt > minPt && !fits(pt)) pt = Math.round((pt - step) * 10) / 10
+  return pt
+}
+
+/** Ширина листа на экране, от которой считаются проценты (совпадает с редактором). */
+export const SHEET_PX = 560
+
+/** Кегль в pt → px при ширине листа SHEET_PX (1 pt = 0.168 % ширины A4). */
+export const ptToPx = (pt: number): number => (pt / 595.28) * 100 * (SHEET_PX / 100)
+
+/**
+ * Измерение в браузере: скрытый блок с теми же шрифтовыми настройками.
+ * Возвращает проверку «помещается ли текст при таком кегле» и функцию уборки.
+ */
+export function domTextMeasurer(opts: {
+  text: string
+  widthPct: number
+  heightPct: number
+  fontFamily: string
+  bold: boolean
+  lineHeight: number
+  tracking: number
+  ratio: number
+}): { fits: (pt: number) => boolean; cleanup: () => void } {
+  if (typeof document === 'undefined') return { fits: () => true, cleanup: () => {} }
+  const probe = document.createElement('div')
+  probe.style.position = 'fixed'
+  probe.style.left = '-10000px'
+  probe.style.top = '0'
+  probe.style.visibility = 'hidden'
+  probe.style.whiteSpace = 'pre-wrap'
+  probe.style.wordBreak = 'break-word'
+  probe.style.overflow = 'hidden'
+  probe.style.fontFamily = opts.fontFamily
+  probe.style.fontWeight = opts.bold ? '650' : '400'
+  probe.style.lineHeight = String(opts.lineHeight)
+  probe.style.letterSpacing = `${opts.tracking / 1000}em`
+  // Рамка как у блока: проценты считаются от безопасной области, а не от края листа
+  // (поля 4.4 % по бокам и сверху, 6 % снизу — как в sheetGeometry).
+  const sheetH = SHEET_PX / opts.ratio
+  const safeW = SHEET_PX - 2 * (SHEET_PX * 0.044)
+  const safeH = sheetH - SHEET_PX * 0.044 - SHEET_PX * 0.06
+  probe.style.width = `${(opts.widthPct / 100) * safeW}px`
+  probe.style.height = `${(opts.heightPct / 100) * safeH}px`
+  probe.textContent = opts.text
+  document.body.appendChild(probe)
+  return {
+    fits: (pt: number) => {
+      probe.style.fontSize = `${ptToPx(pt)}px`
+      return probe.scrollHeight <= probe.clientHeight + 0.5
+    },
+    cleanup: () => probe.remove(),
+  }
+}

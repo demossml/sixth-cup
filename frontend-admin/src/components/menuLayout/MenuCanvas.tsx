@@ -2,6 +2,7 @@ import { memo } from 'react'
 import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { effectiveType, type MenuBlock, type MenuPage, type MenuTheme, type Rect, type ResizeHandle } from '../../lib/menuLayout'
 import { ptToWidthPct, safeAreaStyle } from '../../lib/sheetGeometry'
+import { typograph } from '../../lib/typography'
 
 type Props = {
   page: MenuPage
@@ -132,7 +133,7 @@ function MenuCanvas({
                   fontFamily: b.bold ? 'var(--font-display)' : undefined,
                 }}
               >
-                {b.text ?? b.titleOverride ?? ''}
+                {typograph(b.text ?? b.titleOverride ?? '')}
               </div>
             )}
 
@@ -173,7 +174,7 @@ function MenuCanvas({
                           letterSpacing: `${(b.tracking ?? 0) / 1000}em`,
                         }}
                       >
-                        {b.displayName ?? b.titleOverride ?? b.snapshotName ?? 'Позиция'}
+                        {typograph(b.displayName ?? b.titleOverride ?? b.snapshotName ?? 'Позиция')}
                       </span>
                       {!twoLines && (
                         <span className="mc-product-price" style={{ fontSize: `${ptToCqw(b.fontSizePt)}cqw` }}>
@@ -183,8 +184,8 @@ function MenuCanvas({
                     </div>
                     {twoLines ? (
                       <div className="mc-product-sizes" style={{ fontSize: `${ptToCqw(b.fontSizePt * 0.78)}cqw` }}>
-                        <span>{sizes.map((sz) => sz.label).join(' · ')}</span>
-                        <span>{sizes.map((sz) => sz.price).join(' · ')}</span>
+                        <span>{typograph(sizes.map((sz) => sz.label).join(' · '))}</span>
+                        <span>{typograph(sizes.map((sz) => sz.price).join(' · '))}</span>
                       </div>
                     ) : (
                       b.product?.variantLabel && <span className="mc-product-sub">{b.product.variantLabel}</span>

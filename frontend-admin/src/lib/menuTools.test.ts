@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { newBlock, type MenuBlock } from './menuLayout'
 import {
   alignBlocks,
+  fitFontSize,
   groupBlocks,
   groupSelectionIds,
   ungroupBlocks,
@@ -136,5 +137,20 @@ describe('группы блоков', () => {
   it('один блок не группируется', () => {
     const blocks = [block('a', 0, 0)]
     expect(groupBlocks(blocks, ['a']).groupId).toBeNull()
+  })
+})
+
+describe('авто-фит текста', () => {
+  it('уменьшает кегль, пока текст не влезет', () => {
+    const fits = (pt: number) => pt <= 12
+    expect(fitFontSize(fits, 24, 6, 0.5)).toBe(12)
+  })
+
+  it('не опускается ниже минимума', () => {
+    expect(fitFontSize(() => false, 20, 6, 0.5)).toBe(6)
+  })
+
+  it('оставляет кегль, если уже помещается', () => {
+    expect(fitFontSize(() => true, 18)).toBe(18)
   })
 })
