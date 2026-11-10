@@ -740,3 +740,31 @@ describe('версии макета', () => {
     expect(notes).toContain('перед откатом')
   })
 })
+
+describe('шрифты макета', () => {
+  it('у каждого семейства из списка есть файл и в PDF, и в админке', async () => {
+    const { FONT_FILES } = await import('../modules/admin/menuLayoutPdf')
+    const { FONT_FAMILIES } = await import('../modules/admin/menuLayoutDoc')
+    const { existsSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const fontsDir = join(process.cwd(), 'assets', 'fonts')
+    const adminFonts = join(process.cwd(), '..', 'frontend-admin', 'public', 'fonts')
+    for (const family of FONT_FAMILIES) {
+      const files = FONT_FILES[family]
+      expect(files, `нет записи для ${family}`).toBeTruthy()
+      for (const file of [files!.regular, files!.bold]) {
+        expect(existsSync(join(fontsDir, file)), `нет ${file} в assets/fonts`).toBe(true)
+      }
+    }
+    // Новые семейства лежат ещё и в админке (иначе холст покажет другой шрифт).
+    for (const file of ['manrope-400.woff', 'montserrat-700.woff', 'lora-400.woff', 'ptserif-700.woff', 'oswald-600.woff']) {
+      expect(existsSync(join(adminFonts, file)), `нет ${file} в админке`).toBe(true)
+    }
+  })
+
+  it('неизвестное семейство в теме не ломает рендер', () => {
+    const theme = normalizeTheme({ fontHeading: 'Comic Sans', fontBody: 'Arial' })
+    expect(theme.fontHeading).toBe('Unbounded')
+    expect(theme.fontBody).toBe('Golos Text')
+  })
+})

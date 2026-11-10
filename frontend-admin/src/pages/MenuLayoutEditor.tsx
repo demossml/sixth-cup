@@ -14,6 +14,8 @@ import { ago } from '../lib/format'
 import {
   DEFAULT_RECT,
   DEFAULT_THEME,
+  FONT_FAMILIES,
+  FONT_LABELS,
   LAYOUT_FORMATS,
   MIN_H,
   MIN_W,
@@ -1765,15 +1767,21 @@ export default function MenuLayoutEditor() {
         </div>
         <Field label="Заголовки">
           <Select value={theme.fontHeading} onChange={(e) => setTheme({ ...theme, fontHeading: e.target.value as MenuTheme['fontHeading'] })}>
-            <option value="Unbounded">Unbounded</option>
-            <option value="Golos Text">Golos Text</option>
+            {FONT_FAMILIES.map((f) => (
+              <option key={f} value={f}>
+                {FONT_LABELS[f]}
+              </option>
+            ))}
           </Select>
         </Field>
         <div className="mt-2">
           <Field label="Позиции и цены">
             <Select value={theme.fontBody} onChange={(e) => setTheme({ ...theme, fontBody: e.target.value as MenuTheme['fontBody'] })}>
-              <option value="Golos Text">Golos Text</option>
-              <option value="Unbounded">Unbounded</option>
+              {FONT_FAMILIES.map((f) => (
+                <option key={f} value={f}>
+                  {FONT_LABELS[f]}
+                </option>
+              ))}
             </Select>
           </Field>
         </div>

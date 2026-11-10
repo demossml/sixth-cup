@@ -99,6 +99,21 @@ export type MenuSection = {
 export type MenuPage = { id: string; blocks: MenuBlock[]; sections?: MenuSection[]; template?: string | null }
 export type MenuDoc = { pages: MenuPage[]; schemaVersion?: number }
 
+/** Семейства с кириллицей и знаком ₽: файлы лежат и в админке, и в PDF. */
+export const FONT_FAMILIES = ['Unbounded', 'Golos Text', 'Manrope', 'Montserrat', 'Lora', 'PT Serif', 'Oswald'] as const
+export type FontFamily = (typeof FONT_FAMILIES)[number]
+
+/** Подписи для списков: где уместно — с намёком на характер шрифта. */
+export const FONT_LABELS: Record<FontFamily, string> = {
+  Unbounded: 'Unbounded — широкий гротеск',
+  'Golos Text': 'Golos Text — нейтральный',
+  Manrope: 'Manrope — геометрический',
+  Montserrat: 'Montserrat — витринный',
+  Lora: 'Lora — антиква',
+  'PT Serif': 'PT Serif — классическая антиква',
+  Oswald: 'Oswald — узкий, для заголовков',
+}
+
 export type MenuTheme = {
   preset: 'classic' | 'dark' | 'season'
   bg: string
@@ -106,8 +121,8 @@ export type MenuTheme = {
   accent: string
   backgroundImageUrl: string | null
   backgroundDim: number
-  fontHeading: 'Unbounded' | 'Golos Text'
-  fontBody: 'Golos Text' | 'Unbounded'
+  fontHeading: FontFamily
+  fontBody: FontFamily
   itemSize: number
   ornament: 'none' | 'line' | 'beans' | 'leaf'
   logoPosition: 'left' | 'top-right' | 'footer'

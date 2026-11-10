@@ -142,6 +142,10 @@ export type MenuDoc = { pages: MenuPage[]; schemaVersion?: number }
 
 export const DOC_SCHEMA_VERSION = 2
 
+/** Семейства, у которых есть файл и в админке, и в PDF (кириллица + ₽ проверены). */
+export const FONT_FAMILIES = ['Unbounded', 'Golos Text', 'Manrope', 'Montserrat', 'Lora', 'PT Serif', 'Oswald'] as const
+export type FontFamily = (typeof FONT_FAMILIES)[number]
+
 export type MenuTheme = {
   preset: 'classic' | 'dark' | 'season'
   bg: string
@@ -151,8 +155,8 @@ export type MenuTheme = {
   backgroundImageUrl: string | null
   /** Затемнение фона под картинкой, 0..80 %. */
   backgroundDim: number
-  fontHeading: 'Unbounded' | 'Golos Text'
-  fontBody: 'Golos Text' | 'Unbounded'
+  fontHeading: FontFamily
+  fontBody: FontFamily
   itemSize: number
   ornament: 'none' | 'line' | 'beans' | 'leaf'
   logoPosition: 'left' | 'top-right' | 'footer'
@@ -208,8 +212,8 @@ export function normalizeTheme(raw: unknown): MenuTheme {
     accent: hex(t.accent, base.accent),
     backgroundImageUrl: str(t.backgroundImageUrl, 500),
     backgroundDim: num(t.backgroundDim, 0, 80, 0),
-    fontHeading: oneOf(t.fontHeading, ['Unbounded', 'Golos Text'] as const, DEFAULT_THEME.fontHeading),
-    fontBody: oneOf(t.fontBody, ['Golos Text', 'Unbounded'] as const, DEFAULT_THEME.fontBody),
+    fontHeading: oneOf(t.fontHeading, FONT_FAMILIES, DEFAULT_THEME.fontHeading),
+    fontBody: oneOf(t.fontBody, FONT_FAMILIES, DEFAULT_THEME.fontBody),
     itemSize: num(t.itemSize, 8, 16, DEFAULT_THEME.itemSize),
     ornament: oneOf(t.ornament, ['none', 'line', 'beans', 'leaf'] as const, 'line'),
     logoPosition: oneOf(t.logoPosition, ['left', 'top-right', 'footer'] as const, 'left'),

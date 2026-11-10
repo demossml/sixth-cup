@@ -71,7 +71,7 @@ function MenuCanvas({
     '--mc-accent': theme.accent,
     '--mc-muted': muted,
     '--mc-line': line,
-    fontFamily: theme.fontBody === 'Unbounded' ? 'var(--font-display)' : 'var(--font)',
+    fontFamily: `"${theme.fontBody}", ui-sans-serif, sans-serif`,
   } as CSSProperties
 
   const blocks = [...page.blocks].sort((a, b) => a.zIndex - b.zIndex || a.sortOrder - b.sortOrder)
@@ -130,7 +130,7 @@ function MenuCanvas({
                   textTransform: b.uppercase ? 'uppercase' : undefined,
                   lineHeight: b.lineHeight ?? 1.15,
                   letterSpacing: `${(b.tracking ?? 0) / 1000}em`,
-                  fontFamily: b.bold ? 'var(--font-display)' : undefined,
+                  fontFamily: b.bold ? `"${theme.fontHeading}", serif` : undefined,
                 }}
               >
                 {typograph(b.text ?? b.titleOverride ?? '')}
@@ -139,7 +139,9 @@ function MenuCanvas({
 
             {type === 'category' && (
               <div className="mc-category">
-                <span className="mc-category-name">{b.titleOverride ?? b.displayCategory ?? 'Категория'}</span>
+                <span className="mc-category-name" style={{ fontFamily: `"${theme.fontHeading}", serif` }}>
+                  {b.titleOverride ?? b.displayCategory ?? 'Категория'}
+                </span>
                 <i />
               </div>
             )}

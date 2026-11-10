@@ -35,11 +35,28 @@ function resolveFontDir(): string {
 
 const FONT_DIR = resolveFontDir()
 
+/** Файлы шрифтов по семейству: TTF для старых, WOFF для новых (fontkit читает оба). */
+export const FONT_FILES: Record<string, { regular: string; bold: string }> = {
+  Unbounded: { regular: 'Unbounded-400.ttf', bold: 'Unbounded-600.ttf' },
+  'Golos Text': { regular: 'GolosText-400.ttf', bold: 'GolosText-600.ttf' },
+  Manrope: { regular: 'manrope-400.woff', bold: 'manrope-700.woff' },
+  Montserrat: { regular: 'montserrat-400.woff', bold: 'montserrat-700.woff' },
+  Lora: { regular: 'lora-400.woff', bold: 'lora-700.woff' },
+  'PT Serif': { regular: 'ptserif-400.woff', bold: 'ptserif-700.woff' },
+  Oswald: { regular: 'oswald-400.woff', bold: 'oswald-600.woff' },
+}
+
 const FONTS = {
   body: join(FONT_DIR, 'GolosText-400.ttf'),
   bodyBold: join(FONT_DIR, 'GolosText-600.ttf'),
   display: join(FONT_DIR, 'Unbounded-400.ttf'),
   displayBold: join(FONT_DIR, 'Unbounded-600.ttf'),
+}
+
+/** Имя файла шрифта для семейства и начертания. Неизвестное семейство → Golos Text. */
+function fontFile(family: string, bold: boolean): string {
+  const files = FONT_FILES[family] ?? FONT_FILES['Golos Text']!
+  return files[bold ? 'bold' : 'regular']
 }
 
 export type PdfOptions = { preset: 'print' | 'screen'; bleedMm: number }
@@ -322,10 +339,14 @@ export async function renderLayoutPdf(view: LayoutView, opts: PdfOptions): Promi
     },
   })
 
-  doc.registerFont('body', FONTS.body)
-  doc.registerFont('bodyBold', FONTS.bodyBold)
-  doc.registerFont('display', FONTS.display)
-  doc.registerFont('displayBold', FONTS.displayBold)
+  // Имена body/bodyBold/display/displayBold означают «шрифт темы»: так весь рендер
+  // ниже автоматически печатает выбранными семействами, без ветвлений в каждом блоке.
+  const registered = new Set<string>()
+  doc.registerFont('body', join(FONT_DIR, fontFile(theme.fontBody, false)))
+  doc.registerFont('bodyBold', join(FONT_DIR, fontFile(theme.fontBody, true)))
+  doc.registerFont('display', join(FONT_DIR, fontFile(theme.fontHeading, false)))
+  doc.registerFont('displayBold', join(FONT_DIR, fontFile(theme.fontHeading, true)))
+  registered.add('theme')
 
   const W = metrics.width
   const H = metrics.height

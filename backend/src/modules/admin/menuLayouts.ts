@@ -12,6 +12,7 @@ import { bad } from '../../lib/errors'
 import {
   DEFAULT_RECT,
   DEFAULT_THEME,
+  FONT_FAMILIES,
   collectBlockers,
   docStats,
   formatMetrics,
@@ -372,8 +373,8 @@ const themeZ = z.object({
   accent: z.string().max(9).optional(),
   backgroundImageUrl: z.string().max(500).nullable().optional(),
   backgroundDim: z.number().min(0).max(80).optional(),
-  fontHeading: z.enum(['Unbounded', 'Golos Text']).optional(),
-  fontBody: z.enum(['Golos Text', 'Unbounded']).optional(),
+  fontHeading: z.enum(FONT_FAMILIES).optional(),
+  fontBody: z.enum(FONT_FAMILIES).optional(),
   itemSize: z.number().min(8).max(16).optional(),
   ornament: z.enum(['none', 'line', 'beans', 'leaf']).optional(),
   logoPosition: z.enum(['left', 'top-right', 'footer']).optional(),
