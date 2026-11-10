@@ -182,7 +182,7 @@ type LayoutView = {
   updatedAt: number
   /** Версия документа: клиент присылает baseRev, чтобы не затирать чужие правки. */
   rev: number
-  doc: ReturnType<typeof resolveDoc>
+  doc: ReturnType<typeof resolveDoc> & { styles?: MenuDoc['styles'] }
   stats: { pages: number; products: number; warnings: number }
   drift: { blockId: string; pageId: string; title: string; from: number | null; to: number | null }[]
   blockers: { blockId: string; pageId: string; code: string; text: string }[]
@@ -224,6 +224,8 @@ function layoutView(row: Row): LayoutView {
     doc: {
       ...resolved,
       schemaVersion: doc.schemaVersion ?? 1,
+      // Стили — часть документа: без них при открытии макета пропадала бы привязка блоков.
+      ...(doc.styles?.length ? { styles: doc.styles } : {}),
       pages: resolved.pages.map((p, i) => ({
         ...p,
         ...(doc.pages[i]?.sections ? { sections: doc.pages[i]!.sections } : {}),
@@ -268,7 +270,7 @@ export function snapshotDoc(doc: MenuDoc): { doc: MenuDoc; changed: { blockId: s
       return { ...b, snapshotPriceRub: p.priceRub, snapshotName: p.name, snapshotImageUrl: p.imageUrl, snapshotSizes }
     }),
   }))
-  return { doc: { pages }, changed }
+  return { doc: { ...doc, pages }, changed }
 }
 
 /** Картинка блока — только файл из uploads админки: внешние URL не печатаются и тянут IP. */
@@ -311,6 +313,8 @@ const blockZ = z.object({
   tracking: z.number().min(-50).max(200).optional(),
   uppercase: z.boolean().optional(),
   locked: z.boolean().optional(),
+  // Привязка к мастер-стилю: без этого поля zod вырезал бы её при сохранении.
+  styleId: z.string().max(64).nullable().optional(),
   groupId: z.string().max(64).nullable().optional(),
   sortOrder: z.number().int().min(0).max(10_000).optional(),
   snapshotPriceRub: z.number().int().nullable().optional(),
@@ -350,8 +354,21 @@ const sectionZ = z.object({
   items: z.array(itemZ).max(200).optional(),
 })
 
+const styleZ = z.object({
+  id: z.string().min(1).max(64),
+  name: z.string().max(40),
+  fontSizePt: z.number().min(5).max(72),
+  bold: z.boolean(),
+  align: z.enum(['left', 'center', 'right']),
+  lineHeight: z.number().min(0.9).max(1.8),
+  tracking: z.number().min(-50).max(200),
+  uppercase: z.boolean(),
+})
+
 const docZ = z.object({
   schemaVersion: z.number().int().min(1).max(2).optional(),
+  // Мастер-стили блоков: часть документа, иначе zod вырезал бы их при сохранении.
+  styles: z.array(styleZ).max(40).optional(),
   pages: z
     .array(
       z.object({

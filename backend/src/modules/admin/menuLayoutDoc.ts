@@ -87,6 +87,8 @@ export type MenuBlock = {
   uppercase: boolean
   /** Замок: блок виден и печатается, но не двигается и не ресайзится мышью. */
   locked: boolean
+  /** Именованный стиль текста: правка стиля меняет все привязанные блоки. */
+  styleId?: string | null
   /** Группа блоков: выделяются и двигаются вместе. */
   groupId: string | null
   // ── снапшот каталога (frozen / баннер цен) ──
@@ -137,8 +139,24 @@ export type MenuSection = {
 }
 
 export type MenuPage = { id: string; blocks: MenuBlock[]; sections?: MenuSection[]; template?: string | null }
+
+/**
+ * Именованный стиль текста. Значения раскладываются в блоки ещё в редакторе,
+ * поэтому PDF печатает блок как есть и ничего не досчитывает.
+ */
+export type BlockStyle = {
+  id: string
+  name: string
+  fontSizePt: number
+  bold: boolean
+  align: 'left' | 'center' | 'right'
+  lineHeight: number
+  tracking: number
+  uppercase: boolean
+}
+
 /** schemaVersion 2 добавляет секции и объёмы; блоки остаются языком рендера. */
-export type MenuDoc = { pages: MenuPage[]; schemaVersion?: number }
+export type MenuDoc = { pages: MenuPage[]; styles?: BlockStyle[]; schemaVersion?: number }
 
 export const DOC_SCHEMA_VERSION = 2
 
@@ -326,6 +344,7 @@ function normalizeBlock(raw: unknown, index: number): MenuBlock | null {
     tracking: num(b.tracking, -50, 200, 0),
     uppercase: b.uppercase === true,
     locked: b.locked === true,
+    styleId: str(b.styleId, 64),
     groupId: str(b.groupId, 64),
     snapshotPriceRub: intOrNull(b.snapshotPriceRub),
     snapshotName: str(b.snapshotName, 120),
@@ -337,6 +356,24 @@ function normalizeBlock(raw: unknown, index: number): MenuBlock | null {
 
 export const hasCanvasPosition = (b: MenuBlock): boolean =>
   Number.isFinite(b.xPct) && Number.isFinite(b.yPct)
+
+/** Стиль блока: только текстовые свойства, геометрия и контент — у блока. */
+function normalizeStyle(raw: unknown, index: number): BlockStyle | null {
+  const s = (raw && typeof raw === 'object' ? raw : null) as Record<string, unknown> | null
+  if (!s) return null
+  const name = str(s.name, 40)
+  const id = typeof s.id === 'string' && s.id.trim() ? s.id.trim().slice(0, 64) : `style-${index + 1}`
+  return {
+    id,
+    name: name || 'Стиль',
+    fontSizePt: num(s.fontSizePt, 5, 72, 10),
+    bold: s.bold === true,
+    align: oneOf(s.align, ['left', 'center', 'right'] as const, 'left'),
+    lineHeight: num(s.lineHeight, 0.9, 1.8, 1.15),
+    tracking: num(s.tracking, -50, 200, 0),
+    uppercase: s.uppercase === true,
+  }
+}
 
 export function normalizeDoc(raw: unknown): MenuDoc {
   const d = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
@@ -362,7 +399,21 @@ export function normalizeDoc(raw: unknown): MenuDoc {
   // v2: секции и объёмы живут рядом с блоками; блоки остаются языком рендера.
   const hasSections = pages.some((p) => (p.sections?.length ?? 0) > 0)
   const version = Number(d.schemaVersion) === 2 || hasSections ? DOC_SCHEMA_VERSION : 1
-  return { pages, schemaVersion: version }
+  // Стили блоков: без них привязка блоков стиралась бы при каждом сохранении.
+  const styles = Array.isArray(d.styles)
+    ? d.styles
+        .map((s, si) => normalizeStyle(s, si))
+        .filter((s): s is BlockStyle => !!s)
+        // Один id — один стиль: дубли после ручных правок JSON не должны ломать привязку.
+        .filter((s, i, all) => all.findIndex((x) => x.id === s.id) === i)
+    : []
+  // Висячая привязка (стиль удалён, блок остался) — это не стиль, а мусор: снимаем.
+  const known = new Set(styles.map((s) => s.id))
+  const pagesClean = pages.map((page) => ({
+    ...page,
+    blocks: page.blocks.map((b) => (b.styleId && !known.has(b.styleId) ? { ...b, styleId: null } : b)),
+  }))
+  return { pages: pagesClean, ...(styles.length ? { styles } : {}), schemaVersion: version }
 }
 
 /** Позиция секции: товар каталога + объёмы. */

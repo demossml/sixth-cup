@@ -45,6 +45,8 @@ export type MenuBlock = {
   uppercase?: boolean
   /** Замок: блок не двигается и не тянется мышью, но печатается. */
   locked?: boolean
+  /** Именованный стиль текста: правка стиля меняет все привязанные блоки. */
+  styleId?: string | null
   /** Группа блоков: выделяются и двигаются вместе. */
   groupId?: string | null
   snapshotPriceRub: number | null
@@ -97,7 +99,23 @@ export type MenuSection = {
 }
 
 export type MenuPage = { id: string; blocks: MenuBlock[]; sections?: MenuSection[]; template?: string | null }
-export type MenuDoc = { pages: MenuPage[]; schemaVersion?: number }
+
+/**
+ * Именованный стиль текста. Хранится в документе макета, чтобы стили переезжали
+ * вместе с макетом и попадали в PDF уже развёрнутыми в конкретные значения блока.
+ */
+export type BlockStyle = {
+  id: string
+  name: string
+  fontSizePt: number
+  bold: boolean
+  align: 'left' | 'center' | 'right'
+  lineHeight: number
+  tracking: number
+  uppercase: boolean
+}
+
+export type MenuDoc = { pages: MenuPage[]; styles?: BlockStyle[]; schemaVersion?: number }
 
 /** Семейства с кириллицей и знаком ₽: файлы лежат и в админке, и в PDF. */
 export const FONT_FAMILIES = ['Unbounded', 'Golos Text', 'Manrope', 'Montserrat', 'Lora', 'PT Serif', 'Oswald'] as const
@@ -533,7 +551,8 @@ export function collapseDuplicateProducts(doc: MenuDoc): MenuDoc {
     }
     return { ...page, blocks: page.blocks.filter((b) => !dropped.has(b.id)) }
   })
-  return { pages }
+  // `...doc` — стили блоков и прочие поля документа должны пережить чистку дублей.
+  return { ...doc, pages }
 }
 
 /** Полный набор «чистых» полей блока — то, что уходит на сервер. */
@@ -566,6 +585,7 @@ export const blockPayload = (b: MenuBlock): MenuBlock => ({
   tracking: b.tracking ?? 0,
   uppercase: !!b.uppercase,
   locked: !!b.locked,
+  styleId: b.styleId ?? null,
   groupId: b.groupId ?? null,
   snapshotPriceRub: b.snapshotPriceRub,
   snapshotName: b.snapshotName,
@@ -579,6 +599,8 @@ const round2 = (v: number): number => Math.round(v * 100) / 100
 export const docPayload = (doc: MenuDoc): MenuDoc => ({
   // Секции — источник правды для «Мест»: без них сохранение с холста стирало бы раскладку.
   ...(doc.schemaVersion ? { schemaVersion: doc.schemaVersion } : {}),
+  // Стили блоков живут в документе: без них привязка блоков терялась бы при сохранении.
+  ...(doc.styles?.length ? { styles: doc.styles } : {}),
   pages: doc.pages.map((p) => ({
     id: p.id,
     blocks: p.blocks.map(blockPayload),

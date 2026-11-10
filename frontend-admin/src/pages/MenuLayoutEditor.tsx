@@ -72,6 +72,10 @@ import {
   snapWithGuides, ungroupBlocks, zoomStep,
   type AlignMode, type SnapGuides,
 } from '../lib/menuTools'
+import {
+  bindBlocks, blockStyle, detachBlocks, mergeStylePatch, removeStyle, styleFromBlock, stylePropsOf,
+  styleUsage, touchesStyle, updateStyle,
+} from '../lib/blockStyles'
 import { typograph } from '../lib/typography'
 import { MENU_LAYOUT_V2 } from '../lib/featureFlags'
 import { mmToPct, pctToMm, safeBoxOffset, safeBoxSize, sheetMm } from '../lib/sheetGeometry'
@@ -172,6 +176,8 @@ export default function MenuLayoutEditor() {
   >([])
   const [versionNote, setVersionNote] = useState('')
   const [paletteName, setPaletteName] = useState('')
+  /** Имя нового мастер-стиля блока (P2-2). */
+  const [newStyleName, setNewStyleName] = useState('')
   /** Черновик из localStorage, если прошлая сессия оборвалась. */
   const [draftOffer, setDraftOffer] = useState<{ body: SaveBody; savedAt: number } | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
@@ -495,7 +501,8 @@ export default function MenuLayoutEditor() {
       if (!doc) return
       const target = doc.pages[Math.min(pageIdx, doc.pages.length - 1)]
       if (!target) return
-      mutate({ pages: doc.pages.map((p) => (p.id === target.id ? { ...p, blocks: updater(p.blocks) } : p)) }, opts)
+      // `...doc` обязателен: иначе правка блоков стирала бы стили и прочие поля документа.
+      mutate({ ...doc, pages: doc.pages.map((p) => (p.id === target.id ? { ...p, blocks: updater(p.blocks) } : p)) }, opts)
     },
     [doc, pageIdx, mutate],
   )
@@ -503,9 +510,17 @@ export default function MenuLayoutEditor() {
   const patchBlock = useCallback(
     (patch: Partial<MenuBlock>, id: string | null = selectedId) => {
       if (!id) return
+      const block = doc?.pages.flatMap((p) => p.blocks).find((b) => b.id === id)
+      const style = doc ? blockStyle(doc, block) : null
+      // Мастер-стиль: правка кегля/жирности/выравнивания у привязанного блока меняет
+      // стиль и все блоки, которые за ним следуют, — иначе стиль был бы просто ярлыком.
+      if (doc && style && touchesStyle(patch)) {
+        mutate(updateStyle(doc, style.id, mergeStylePatch(patch)))
+        return
+      }
       updatePage((blocks) => blocks.map((b) => (b.id === id ? { ...b, ...patch } : b)))
     },
-    [selectedId, updatePage],
+    [doc, selectedId, updatePage, mutate],
   )
 
   // Удаление блока с листа (не товара каталога). Возврат — ⌘Z.
@@ -751,6 +766,59 @@ export default function MenuLayoutEditor() {
     },
     [page, updatePage, toast],
   )
+
+  // ── мастер-стили блоков (P2-2) ────────────────────────────────
+  /** Блоки, к которым применяется стиль: всё выделение или активный блок. */
+  const styleTargets = selectedIds.length ? selectedIds : selectedId ? [selectedId] : []
+  const styles = doc?.styles ?? []
+  const boundStyle = doc ? blockStyle(doc, selected) : null
+
+  const bindSelectedToStyle = (styleId: string) => {
+    if (!doc || styleTargets.length === 0) return
+    const style = styles.find((s) => s.id === styleId)
+    if (!style) return
+    mutate(bindBlocks(doc, styleTargets, styleId))
+    toast.push(
+      styleTargets.length > 1
+        ? `Стиль «${style.name}» применён к блокам: ${styleTargets.length}`
+        : `Стиль «${style.name}» применён`,
+    )
+  }
+
+  const detachSelectedFromStyle = () => {
+    if (!doc || styleTargets.length === 0) return
+    mutate(detachBlocks(doc, styleTargets))
+    toast.push('Блок больше не следует за стилем — значения остались')
+  }
+
+  /** Сохранить текущий вид блока как новый стиль и привязать к нему выделение. */
+  const createStyleFromBlock = () => {
+    if (!doc || !selected) return
+    const style = styleFromBlock(newStyleName || layerName(selected), selected)
+    const next = bindBlocks({ ...doc, styles: [...styles, style] }, styleTargets, style.id)
+    mutate(next)
+    setNewStyleName('')
+    toast.push(`Стиль «${style.name}» создан — блоков: ${styleTargets.length}`)
+  }
+
+  /** Обновить стиль по активному блоку: остальные привязанные блоки подтянутся. */
+  const refreshStyleFromBlock = () => {
+    if (!doc || !selected || !boundStyle) return
+    mutate(updateStyle(doc, boundStyle.id, stylePropsOf(selected)))
+    toast.push(`Стиль «${boundStyle.name}» обновлён: блоков ${styleUsage(doc, boundStyle.id)}`)
+  }
+
+  const deleteStyle = (styleId: string) => {
+    if (!doc) return
+    const style = styles.find((s) => s.id === styleId)
+    const used = styleUsage(doc, styleId)
+    mutate(removeStyle(doc, styleId))
+    toast.push(
+      used > 0
+        ? `Стиль «${style?.name ?? 'Стиль'}» удалён — ${used} блок(ов) остались со своими настройками`
+        : `Стиль «${style?.name ?? 'Стиль'}» удалён`,
+    )
+  }
 
   // ── автосохранение ────────────────────────────────────────────
   // Очередь из одного запроса: таймер, счётчик версий (устаревший ответ не перебивает новый)
@@ -1369,13 +1437,14 @@ export default function MenuLayoutEditor() {
 
   const addPage = () => {
     if (!doc) return
-    mutate({ pages: [...doc.pages, { id: `page-${Date.now().toString(36)}`, blocks: [] }] })
+    // `...doc` — чтобы стили блоков и прочие поля не терялись при работе со страницами.
+    mutate({ ...doc, pages: [...doc.pages, { id: `page-${Date.now().toString(36)}`, blocks: [] }] })
     setPageIdx(doc.pages.length)
   }
 
   const removePage = (idx: number) => {
     if (!doc || doc.pages.length <= 1) return
-    mutate({ pages: doc.pages.filter((_, i) => i !== idx) })
+    mutate({ ...doc, pages: doc.pages.filter((_, i) => i !== idx) })
     setPageIdx(Math.max(0, idx - 1))
   }
 
@@ -2023,6 +2092,51 @@ export default function MenuLayoutEditor() {
         </div>
       </section>
 
+      {styles.length > 0 && (
+        <section className="border-b border-line px-3 py-3">
+          <div className="mb-2 flex items-baseline justify-between">
+            <h3 className="text-[13px] font-semibold">Стили блоков</h3>
+            <span className="text-[11px] text-ink-tertiary">{styles.length}</span>
+          </div>
+          <ul className="space-y-1">
+            {styles.map((s) => {
+              const used = doc ? styleUsage(doc, s.id) : 0
+              return (
+                <li key={s.id} className="flex items-center gap-1.5 rounded-lg border border-line px-2 py-1">
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[12.5px] font-semibold text-ink">{s.name}</span>
+                    <span className="block text-[11px] text-ink-tertiary">
+                      {s.fontSizePt} pt{used > 0 ? ` · блоков: ${used}` : ' · не используется'}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => bindSelectedToStyle(s.id)}
+                    disabled={styleTargets.length === 0}
+                    className="h-7 rounded-md px-2 text-[11px] font-semibold text-ink-tertiary hover:bg-surface-2 hover:text-brand disabled:opacity-40"
+                    title="Применить стиль к выделенным блокам"
+                  >
+                    применить
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deleteStyle(s.id)}
+                    className="grid h-7 w-7 place-items-center rounded text-ink-tertiary hover:text-bad"
+                    aria-label={`Удалить стиль ${s.name}`}
+                    title="Удалить стиль"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+          <p className="mt-1.5 text-[11px] text-ink-tertiary">
+            Стиль создаётся из выбранного блока на вкладке «Блок». Удаление стиля оставляет блокам их настройки.
+          </p>
+        </section>
+      )}
+
       <section className="border-b border-line px-3 py-3">
         <div className="mb-2 flex items-baseline justify-between">
           <h3 className="text-[13px] font-semibold">Шрифты и цвета</h3>
@@ -2395,6 +2509,59 @@ export default function MenuLayoutEditor() {
           widthPct={selected.wPct}
           ratio={LAYOUT_FORMATS.find((f) => f.id === format)?.ratio ?? 210 / 297}
         />
+      </section>
+
+      <section className="border-b border-line px-3 py-3">
+        <div className="mb-2 flex items-baseline justify-between">
+          <h3 className="text-[13px] font-semibold">Стиль блока</h3>
+          {boundStyle && <span className="text-[11px] text-ink-tertiary">следует за стилем</span>}
+        </div>
+        <Field label="Стиль">
+          <Select
+            value={boundStyle?.id ?? ''}
+            onChange={(e) => (e.target.value ? bindSelectedToStyle(e.target.value) : detachSelectedFromStyle())}
+            aria-label="Стиль блока"
+          >
+            <option value="">Индивидуальный</option>
+            {styles.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name} · {s.fontSizePt} pt{doc ? ` · ${styleUsage(doc, s.id)} бл.` : ''}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        {boundStyle ? (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <Button size="sm" variant="secondary" onClick={refreshStyleFromBlock}>
+              Обновить стиль по блоку
+            </Button>
+            <Button size="sm" variant="secondary" onClick={detachSelectedFromStyle}>
+              Отвязать
+            </Button>
+          </div>
+        ) : (
+          <div className="mt-2 flex items-end gap-1.5">
+            <div className="min-w-0 flex-1">
+              <Field label="Новый стиль">
+                <Input
+                  value={newStyleName}
+                  onChange={(e) => setNewStyleName(e.target.value)}
+                  placeholder="Например, «Название»"
+                  maxLength={40}
+                  aria-label="Имя нового стиля"
+                  className="!h-8 text-[12px]"
+                />
+              </Field>
+            </div>
+            <Button size="sm" onClick={createStyleFromBlock}>
+              Создать
+            </Button>
+          </div>
+        )}
+        <p className="mt-1.5 text-[11px] text-ink-tertiary">
+          Стиль хранит кегль, жирность, выравнивание, интерлиньяж, трекинг и капс. Правка этих полей у привязанного
+          блока меняет все блоки стиля.
+        </p>
       </section>
 
       <section className="border-b border-line px-3 py-3">

@@ -46,6 +46,7 @@ type Block = {
   lineHeight?: number
   tracking?: number
   groupId?: string | null
+  styleId?: string | null
   warnings?: string[]
 }
 
@@ -67,7 +68,7 @@ type LayoutBody = {
       fontHeading: string
       fontBody: string
     }
-    doc: { pages: { id: string; blocks: Block[] }[] }
+    doc: { pages: { id: string; blocks: Block[] }[]; styles?: { id: string; name: string; fontSizePt: number }[] }
   }
   changed?: { blockId: string; from: number | null; to: number | null }[]
   applied?: boolean
@@ -214,6 +215,71 @@ describe('макет меню: CRUD и сохранение', () => {
     expect(byId['t-1']).toContain('текст мельче 7 pt')
     expect(byId['t-2']).not.toContain('текст мельче 7 pt')
     expect(byId['c-1']).toContain('текст мельче 7 pt')
+  })
+
+  it('мастер-стили блоков переживают сохранение', async () => {
+    const created = await createLayout()
+    await put(created.id, {
+      doc: {
+        ...docWith([
+          { id: 't-1', type: 'text', text: 'Название', styleId: 'style-name', sortOrder: 0, ...rect },
+          { id: 't-2', type: 'text', text: 'Цена', sortOrder: 1, ...rect, yPct: 20 },
+        ]),
+        styles: [
+          {
+            id: 'style-name',
+            name: 'Название',
+            fontSizePt: 24,
+            bold: true,
+            align: 'center',
+            lineHeight: 1.2,
+            tracking: 40,
+            uppercase: false,
+          },
+        ],
+      },
+    })
+    const doc = (await getLayout(created.id)).doc
+    expect(doc.styles).toEqual([
+      { id: 'style-name', name: 'Название', fontSizePt: 24, bold: true, align: 'center', lineHeight: 1.2, tracking: 40, uppercase: false },
+    ])
+    const byId = Object.fromEntries(doc.pages[0]!.blocks.map((b) => [b.id, b]))
+    expect(byId['t-1']!.styleId).toBe('style-name')
+    // Непривязанный блок остаётся свободным.
+    expect(byId['t-2']!.styleId).toBeNull()
+
+    // Удаление стиля из документа снимает привязку — блоки остаются на листе.
+    await put(created.id, { doc: docWith([{ id: 't-1', type: 'text', text: 'Название', styleId: 'style-name', sortOrder: 0, ...rect }]) })
+    const after = (await getLayout(created.id)).doc
+    expect(after.styles).toBeUndefined()
+    expect(after.pages[0]!.blocks[0]!.styleId).toBeNull()
+  })
+
+  it('нормализация стилей: диапазоны, имя по умолчанию и дубли id', async () => {
+    const { normalizeDoc: normalize } = await import('../modules/admin/menuLayoutDoc')
+    const doc = normalize({
+      pages: [{ id: 'p', blocks: [] }],
+      styles: [
+        // Старые или правленные руками данные: значения вне диапазонов.
+        { id: 'style-a', name: '  ', fontSizePt: 999, bold: true, align: 'center', lineHeight: 9, tracking: 900 },
+        // Дубль id не должен перебивать первый стиль.
+        { id: 'style-a', name: 'Дубль', fontSizePt: 20 },
+        { name: 'Без id', fontSizePt: 11 },
+      ],
+    })
+    expect(doc.styles).toHaveLength(2)
+    expect(doc.styles?.[0]).toEqual({
+      id: 'style-a',
+      name: 'Стиль',
+      fontSizePt: 72,
+      bold: true,
+      align: 'center',
+      lineHeight: 1.8,
+      tracking: 200,
+      uppercase: false,
+    })
+    expect(doc.styles?.[1]?.name).toBe('Без id')
+    expect(doc.styles?.[1]?.id).toBe('style-3')
   })
 
   it('дубликат и удаление', async () => {
