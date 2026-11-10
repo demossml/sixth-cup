@@ -80,6 +80,11 @@ import { typograph } from '../lib/typography'
 import { MENU_LAYOUT_V2 } from '../lib/featureFlags'
 import { mmToPct, pctToMm, safeBoxOffset, safeBoxSize, sheetMm } from '../lib/sheetGeometry'
 import { perfDragEnd, perfDragStart, perfFrame, perfInit, perfPdf, perfTTI } from '../lib/perf'
+import {
+  applyProgress, blockJob, cancelJob, createJob, exportQuery, failJob, finishJob, liveJobs, nextQueued,
+  progressText, startJob,
+  type ExportJob, type ExportRequest,
+} from '../lib/exportQueue'
 
 type SaveBody = { title: string; theme: MenuTheme; doc: MenuDoc }
 
@@ -213,6 +218,8 @@ export default function MenuLayoutEditor() {
   const [showSafe, setShowSafe] = useState(true)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
+  /** Очередь экспорта PDF: одна задача собирается, остальные ждут. */
+  const [jobs, setJobs] = useState<ExportJob[]>([])
   const [formatOpen, setFormatOpen] = useState(false)
   const [busyUpload, setBusyUpload] = useState(false)
 
@@ -819,6 +826,106 @@ export default function MenuLayoutEditor() {
         : `Стиль «${style?.name ?? 'Стиль'}» удалён`,
     )
   }
+
+  // ── экспорт PDF в фоне (P2-9) ─────────────────────────────────
+  /** Открытые object URL: их надо освобождать, иначе файл висит в памяти вкладки. */
+  const exportUrls = useRef<string[]>([])
+  const exportXhr = useRef<Map<string, XMLHttpRequest>>(new Map())
+  /** Задачи, по которым уже отправлен запрос: защита от двойного старта в StrictMode. */
+  const exportInFlight = useRef<Set<string>>(new Set())
+
+  const enqueueExport = useCallback(
+    (req: ExportRequest) => {
+      if (!numericId) return
+      setJobs((prev) => [...prev, createJob({ ...req, layoutId: numericId })])
+    },
+    [numericId],
+  )
+
+  const closeJob = useCallback((id: string) => {
+    setJobs((prev) => {
+      const job = prev.find((j) => j.id === id)
+      if (job?.url) URL.revokeObjectURL(job.url)
+      exportUrls.current = exportUrls.current.filter((u) => u !== job?.url)
+      return prev.filter((j) => j.id !== id)
+    })
+  }, [])
+
+  const cancelExport = useCallback((id: string) => {
+    exportXhr.current.get(id)?.abort()
+    exportXhr.current.delete(id)
+    exportInFlight.current.delete(id)
+    setJobs((prev) => prev.map((j) => (j.id === id && (j.status === 'queued' || j.status === 'running') ? cancelJob(j) : j)))
+  }, [])
+
+  /** Раннер очереди: одна задача за раз, прогресс берём из XHR (fetch его не отдаёт). */
+  useEffect(() => {
+    if (jobs.some((j) => j.status === 'running')) return
+    const next = nextQueued(jobs)
+    if (!next || exportInFlight.current.has(next.id)) return
+    exportInFlight.current.add(next.id)
+    const xhr = new XMLHttpRequest()
+    exportXhr.current.set(next.id, xhr)
+    const started = performance.now()
+    setJobs((prev) => prev.map((j) => (j.id === next.id ? startJob(j) : j)))
+    xhr.open('GET', `/api/admin/menu-layouts/${next.layoutId}/export.pdf?${exportQuery(next.request)}`)
+    xhr.setRequestHeader('X-Admin-Token', tokenStore.get())
+    xhr.responseType = 'blob'
+    xhr.onprogress = (e) => {
+      setJobs((prev) => prev.map((j) => (j.id === next.id ? applyProgress(j, e.loaded, e.total) : j)))
+    }
+    const done = (patch: (job: ExportJob) => ExportJob) => {
+      exportXhr.current.delete(next.id)
+      exportInFlight.current.delete(next.id)
+      setJobs((prev) => prev.map((j) => (j.id === next.id ? patch(j) : j)))
+    }
+    xhr.onload = () => {
+      if (xhr.status === 409) {
+        done((j) => blockJob(j, 'В макете есть незаполненные позиции'))
+        toast.push('PDF не собран: в макете есть незаполненные позиции', 'bad')
+        return
+      }
+      if (xhr.status !== 200) {
+        done((j) => failJob(j, `Сервер ответил ${xhr.status}`))
+        toast.push(`PDF не собран: сервер ответил ${xhr.status}`, 'bad')
+        return
+      }
+      const blob = xhr.response as Blob
+      const url = URL.createObjectURL(blob)
+      exportUrls.current.push(url)
+      // Скачиваем сразу — как раньше, но ссылка остаётся в панели экспорта.
+      const a = document.createElement('a')
+      a.href = url
+      a.download = next.filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      const ms = performance.now() - started
+      perfPdf(ms)
+      done((j) => finishJob(j, url, blob.size))
+      toast.push(
+        `PDF готов за ${(ms / 1000).toFixed(1)} с · ${Math.max(1, Math.round(blob.size / 1024))} КБ — файл можно скачать ещё раз из панели`,
+        'ok',
+      )
+    }
+    xhr.onerror = () => {
+      done((j) => failJob(j, 'сеть недоступна'))
+      toast.push('PDF не собран: сеть недоступна', 'bad')
+    }
+    xhr.onabort = () => done((j) => cancelJob(j))
+    xhr.send()
+  }, [jobs, toast])
+
+  // Уход со страницы: гасим запросы и освобождаем ссылки на файлы.
+  useEffect(
+    () => () => {
+      for (const xhr of exportXhr.current.values()) xhr.abort()
+      exportXhr.current.clear()
+      for (const url of exportUrls.current) URL.revokeObjectURL(url)
+      exportUrls.current = []
+    },
+    [],
+  )
 
   // ── автосохранение ────────────────────────────────────────────
   // Очередь из одного запроса: таймер, счётчик версий (устаревший ответ не перебивает новый)
@@ -3728,11 +3835,7 @@ export default function MenuLayoutEditor() {
                 pageIdx,
               }))
         }
-        onDone={(ok, message) => toast.push(message, ok ? 'ok' : 'bad')}
-        onBlocked={(message) => {
-          toast.push(message, 'bad')
-          setExportOpen(true)
-        }}
+        onStart={enqueueExport}
         onGoToBlock={(blockId, pageIdx) => {
           setExportOpen(false)
           goToBlock(blockId, pageIdx)
@@ -3814,6 +3917,17 @@ export default function MenuLayoutEditor() {
         </button>
       </div>
 
+      {/* ── панель задач экспорта ─────────────────────────── */}
+      {liveJobs(jobs).length > 0 && (
+        <ExportJobsPanel
+          // Держим на экране последние задачи: очередь длинная, а панель — компактная.
+          jobs={liveJobs(jobs).slice(-3)}
+          onCancel={cancelExport}
+          onClose={closeJob}
+          onForce={(req: ExportRequest) => enqueueExport({ ...req, force: true })}
+        />
+      )}
+
       <Drawer open={formatOpen} onClose={() => setFormatOpen(false)} title="Формат и шаблон" layer={65}>
         {MENU_LAYOUT_V2 && (data?.layout.sections ?? 0) > 0 && (
           <div className="mb-3 rounded-lg border border-line p-2">
@@ -3860,6 +3974,99 @@ export default function MenuLayoutEditor() {
   )
 }
 
+/* ───────────── панель задач экспорта ───────────── */
+
+/**
+ * Очередь экспорта в углу: видно, что собирается, сколько процентов и где скачать.
+ * Живёт поверх редактора, поэтому работа не блокируется (P2-9).
+ */
+function ExportJobsPanel({
+  jobs,
+  onCancel,
+  onClose,
+  onForce,
+}: {
+  jobs: ExportJob[]
+  onCancel: (id: string) => void
+  onClose: (id: string) => void
+  onForce: (req: ExportRequest) => void
+}) {
+  return (
+    <div className="fixed bottom-4 right-4 z-[70] w-[330px] max-w-[calc(100vw-2rem)] space-y-2" aria-live="polite">
+      {jobs.map((job) => (
+        <div key={job.id} className="rounded-xl border border-line bg-white p-3 shadow-soft">
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[12.5px] font-semibold text-ink">{job.label}</p>
+              <p className={cx('text-[11px]', job.status === 'error' || job.status === 'blocked' ? 'text-bad' : 'text-ink-tertiary')}>
+                {progressText(job)}
+                {job.error ? ` · ${job.error}` : ''}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => onClose(job.id)}
+              className="grid h-6 w-6 flex-none place-items-center rounded text-ink-tertiary hover:text-ink"
+              aria-label="Закрыть задачу экспорта"
+            >
+              <X size={13} />
+            </button>
+          </div>
+
+          {job.status === 'running' && (
+            <div
+              className="mt-2 h-1 overflow-hidden rounded bg-surface-2"
+              role="progressbar"
+              aria-label="Сборка PDF"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={job.progress == null ? undefined : Math.round(job.progress * 100)}
+            >
+              <div
+                className={cx('h-full bg-brand transition-all', job.progress == null && 'animate-pulse')}
+                style={{ width: `${Math.round((job.progress ?? 0.2) * 100)}%` }}
+              />
+            </div>
+          )}
+
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {job.status === 'done' && job.url && (
+              <a
+                href={job.url}
+                download={job.filename}
+                className="inline-flex h-7 items-center gap-1 rounded-md bg-brand px-2 text-[11.5px] font-semibold text-white hover:opacity-90"
+              >
+                <Download size={13} aria-hidden /> Скачать
+              </a>
+            )}
+            {job.status === 'running' && (
+              <button
+                type="button"
+                onClick={() => onCancel(job.id)}
+                className="h-7 rounded-md px-2 text-[11.5px] font-semibold text-ink-tertiary hover:bg-surface-2 hover:text-bad"
+              >
+                Отменить
+              </button>
+            )}
+            {job.status === 'blocked' && (
+              <button
+                type="button"
+                onClick={() => onForce(job.request)}
+                className="h-7 rounded-md px-2 text-[11.5px] font-semibold text-brand hover:bg-surface-2"
+              >
+                Скачать как есть
+              </button>
+            )}
+            {job.status === 'done' && job.durationMs != null && (
+              <span className="text-[11px] text-ink-tertiary">{(job.durationMs / 1000).toFixed(1)} с</span>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /* ───────────── экспорт PDF ───────────── */
 
 type ExportProps = {
@@ -3870,10 +4077,8 @@ type ExportProps = {
   pages: number
   blockers: Blocker[]
   onGoToBlock: (blockId: string, pageIdx: number) => void
-  /** Экспорт идёт в фоне: модалка закрывается сразу, итог приходит тостом. */
-  onDone: (ok: boolean, message: string) => void
-  /** 409: в макете есть дырки — просим владельца вернуться в модалку. */
-  onBlocked: (message: string) => void
+  /** Экспорт ставится в очередь: модалка закрывается сразу, прогресс — в панели задач. */
+  onStart: (req: ExportRequest) => void
 }
 
 /**
@@ -3936,63 +4141,20 @@ function PhotoDpiHint({ url, widthPct, ratio }: { url: string | null; widthPct: 
   )
 }
 
-function ExportModal({ open, onClose, layoutId, format, pages, blockers, onGoToBlock, onDone, onBlocked }: ExportProps) {
+function ExportModal({ open, onClose, layoutId, format, pages, blockers, onGoToBlock, onStart }: ExportProps) {
   const [preset, setPreset] = useState<'print' | 'screen'>('print')
   const [bleed, setBleed] = useState(3)
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState('')
-  const [forced, setForced] = useState(false)
   const [cmyk, setCmyk] = useState(false)
-
-  useEffect(() => {
-    if (!open) return
-    setErr('')
-    setForced(false)
-  }, [open])
 
   if (!open) return null
 
   /**
-   * Экспорт в фоне: закрываем модалку сразу после старта, чтобы можно было продолжать
-   * работать. Итог приходит тостом, файл скачивается сам.
+   * Экспорт — задача в очереди: модалка сразу закрывается, редактор остаётся живым,
+   * прогресс и ссылка на файл показываются в панели задач (P2-9).
    */
-  const download = (force: boolean) => {
-    setBusy(true)
-    setErr('')
-    const startedAt = performance.now()
-    const qs = new URLSearchParams({ preset, bleed: String(preset === 'print' ? bleed : 0) })
-    if (cmyk) qs.set('cmyk', '1')
-    if (force) qs.set('force', '1')
+  const submit = (force: boolean) => {
+    onStart({ layoutId, preset, bleed: preset === 'print' ? bleed : 0, cmyk, force })
     onClose()
-    void (async () => {
-      try {
-        const res = await fetch(`/api/admin/menu-layouts/${layoutId}/export.pdf?${qs.toString()}`, {
-          headers: { 'X-Admin-Token': tokenStore.get() },
-        })
-        if (res.status === 409) {
-          setForced(true)
-          onBlocked('В макете есть незаполненные позиции — PDF не собран. Можно скачать как есть.')
-          return
-        }
-        if (!res.ok) throw new Error(`Сервер ответил ${res.status}`)
-        const blob = await res.blob()
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = `menu-${layoutId}-${new Date().toISOString().slice(0, 10)}.pdf`
-        document.body.appendChild(a)
-        a.click()
-        a.remove()
-        setTimeout(() => URL.revokeObjectURL(url), 1000)
-        const ms = performance.now() - startedAt
-        perfPdf(ms)
-        onDone(true, `PDF готов за ${(ms / 1000).toFixed(1)} с · ${cmyk ? 'CMYK' : 'RGB'}, поля ${preset === 'print' ? bleed : 0} мм`)
-      } catch (e) {
-        onDone(false, e instanceof Error ? `PDF не собран: ${e.message}` : 'Не удалось скачать PDF')
-      } finally {
-        setBusy(false)
-      }
-    })()
   }
 
   const hard = blockers.filter((b) => b.code !== 'notice')
@@ -4087,20 +4249,20 @@ function ExportModal({ open, onClose, layoutId, format, pages, blockers, onGoToB
           </div>
         </div>
 
-        {err && <p className="mt-3 rounded-lg bg-bad-soft px-3 py-2 text-[12.5px] text-bad">{err}</p>}
-
         <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
-          <span className="text-[11px] text-ink-tertiary">PDF векторный: текст не растрируется.</span>
+          <span className="text-[11px] text-ink-tertiary">
+            PDF векторный: текст не растрируется. Сборка идёт в фоне — можно продолжать работать.
+          </span>
           <div className="flex gap-2">
-            <Button variant="secondary" onClick={onClose} disabled={busy}>
+            <Button variant="secondary" onClick={onClose}>
               Отмена
             </Button>
-            {forced ? (
-              <Button icon={<Download size={15} />} loading={busy} onClick={() => void download(true)}>
+            {hard.length > 0 ? (
+              <Button icon={<Download size={15} />} onClick={() => submit(true)}>
                 Всё равно скачать
               </Button>
             ) : (
-              <Button icon={<Download size={15} />} loading={busy} onClick={() => void download(false)}>
+              <Button icon={<Download size={15} />} onClick={() => submit(false)}>
                 Скачать PDF
               </Button>
             )}
