@@ -218,6 +218,7 @@
   gap: 1cqw;
   overflow: hidden;
   white-space: nowrap;
+  line-height: 1.15;
   color: var(--mc-muted);
   letter-spacing: 0;
 }

@@ -135,8 +135,9 @@ function MenuCanvas({
 
             {type === 'product' && (() => {
               const sizes = b.displaySizes ?? []
-              // Как в PDF: при двух и более объёмах цена уходит на вторую строку вместе с подписями.
-              const twoLines = sizes.length > 1 && b.hPct > 7
+              // Объёмы печатаем всегда, когда их больше одного: иначе гость видит одну цену.
+              // Порог по высоте касается только второй строки, а не самого факта объёмов.
+              const twoLines = sizes.length > 1
               return (
                 <div className="mc-product">
                   {b.showPhoto && b.displayImageUrl && <img className="mc-product-thumb" src={b.displayImageUrl} alt="" />}

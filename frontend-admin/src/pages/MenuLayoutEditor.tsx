@@ -27,6 +27,7 @@ import {
   docSnapshot,
   driftBanner,
   docSections,
+  findItemByProduct,
   duplicateProducts,
   effectiveType,
   itemCount,
@@ -182,6 +183,13 @@ export default function MenuLayoutEditor() {
 
   const products = catalog.data?.products ?? []
   const categories = catalog.data?.categories ?? []
+  const catalogName = (productId: number | null) =>
+    products.find((p) => p.id === productId)?.name ?? (productId ? `Товар #${productId}` : 'Без товара')
+
+  /** Имя для слоёв и свойств: товар из каталога, если в документе нет резолва. */
+  const layerName = (b: MenuBlock) =>
+    b.displayName ?? (b.type === 'product' ? catalogName(b.productId) : null) ?? blockLabel(b)
+
   const page = doc?.pages[Math.min(pageIdx, (doc?.pages.length ?? 1) - 1)] ?? null
   const previewDoc = useMemo(() => (doc ? resolvePreview(doc, products, priceMode) : null), [doc, products, priceMode])
   const previewPage = previewDoc?.pages[Math.min(pageIdx, (previewDoc.pages.length || 1) - 1)] ?? null
@@ -498,6 +506,14 @@ export default function MenuLayoutEditor() {
   /** Из каталога в выбранную секцию «Мест» (если секции есть и включён v2). */
   const addToPlaces = (p: CatalogProduct, sectionId: string | null) => {
     if (!doc) return
+    // Один товар — одна позиция: клик по уже добавленному не плодит дубль на печати.
+    const found = findItemByProduct(doc, p.id)
+    if (found) {
+      setLeftTab('places')
+      setSelectedId(`p-${found.item.id}`)
+      toast.push(`«${p.name}» уже в «Местах»`)
+      return
+    }
     void applySections(addItemToSection(doc, sectionId, p))
     toast.push(`«${p.name}» добавлен в «Места»`)
   }
@@ -871,7 +887,7 @@ export default function MenuLayoutEditor() {
             )}
           >
             <button type="button" onClick={() => setSelectedId(b.id)} className="min-w-0 flex-1 truncate text-left text-[12.5px]">
-              <span className="text-ink-tertiary">{b.zIndex}.</span> {blockLabel(b)}
+              <span className="text-ink-tertiary">{b.zIndex}.</span> {layerName(b)}
             </button>
             <button
               type="button"
@@ -937,7 +953,6 @@ export default function MenuLayoutEditor() {
       })
       revRef.current = res.layout.rev
       setDoc(docSnapshot(res.layout.doc))
-      setHistory(emptyHistory())
       setTheme({ ...DEFAULT_THEME, ...res.layout.theme })
       lastSaved.current = JSON.stringify({ title: res.layout.title, theme: res.layout.theme, doc: docSnapshot(res.layout.doc) })
       setFormatOpen(false)
@@ -949,9 +964,6 @@ export default function MenuLayoutEditor() {
 
   const sections = doc ? docSections(doc) : []
   const templates = templatesData.data?.templates ?? []
-  const catalogName = (productId: number | null) =>
-    products.find((p) => p.id === productId)?.name ?? (productId ? `Товар #${productId}` : 'Без товара')
-
   /** Любая правка «Мест» сразу пересобирает блоки на сервере — иначе лист разъедется с секциями. */
   const applySections = async (next: MenuDoc) => {
     mutate(next)
@@ -969,7 +981,6 @@ export default function MenuLayoutEditor() {
       })
       revRef.current = res.layout.rev
       setDoc(docSnapshot(res.layout.doc))
-      setHistory(emptyHistory())
       lastSaved.current = JSON.stringify({ title: res.layout.title, theme: res.layout.theme, doc: docSnapshot(res.layout.doc) })
       setSave('saved')
       setSavedAt(res.layout.updatedAt)
@@ -1009,7 +1020,6 @@ export default function MenuLayoutEditor() {
       })
       revRef.current = res.layout.rev
       setDoc(docSnapshot(res.layout.doc))
-      setHistory(emptyHistory())
       lastSaved.current = JSON.stringify({ title: res.layout.title, theme: res.layout.theme, doc: docSnapshot(res.layout.doc) })
       setAiPlan(null)
       setAiPrompt('')
@@ -1268,7 +1278,7 @@ export default function MenuLayoutEditor() {
         )}
         <div className="min-w-0">
           <p className="text-[11px] uppercase tracking-wide text-ink-tertiary">{selectedType === 'product' ? 'Позиция' : 'Блок'}</p>
-          <p className="truncate text-[13px] font-semibold text-ink">{blockLabel(selected)}</p>
+          <p className="truncate text-[13px] font-semibold text-ink">{layerName(selected)}</p>
           <p className="truncate text-[11px] text-ink-tertiary">
             {selected.productId ? `Каталог 6.7 · product_id ${selected.productId}` : `z ${selected.zIndex}`}
           </p>
@@ -1826,7 +1836,7 @@ export default function MenuLayoutEditor() {
             {selected && (
               <div className="mt-3 rounded-xl border border-line bg-white p-3">
                 <p className="mb-2 text-[12px] font-semibold text-ink-secondary">
-                  Блок: {blockLabel(selected)} · двигайте пальцем на листе
+                  Блок: {layerName(selected)} · двигайте пальцем на листе
                 </p>
                 <div className="grid grid-cols-2 gap-2">
                   {(

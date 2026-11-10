@@ -46,7 +46,7 @@ export default function MenuLayouts() {
   const templates = useApi<{ templates: { id: string; name: string; goal: string; options: { columns: number } }[] }>(
     '/menu-layouts/templates',
   )
-  const [title, setTitle] = useState('Новое меню')
+  const [title, setTitle] = useState('')
   const [format, setFormat] = useState<LayoutFormat>('a4_portrait')
   const [busy, setBusy] = useState(false)
   const [toDelete, setToDelete] = useState<LayoutRow | null>(null)
@@ -55,7 +55,8 @@ export default function MenuLayouts() {
 
   const create = async () => {
     if (!title.trim()) {
-      toast.push('Название макета не может быть пустым', 'bad')
+      // Раньше пустое поле молча превращалось в «Новое меню» — теперь просим название.
+      toast.push('Введите название макета, например «Летнее меню»', 'bad')
       return
     }
     setBusy(true)
@@ -104,7 +105,7 @@ export default function MenuLayouts() {
         title="Макет меню"
         subtitle="Соберите лист для гостя или типографии из товаров каталога — без вёрстки в Illustrator."
         actions={
-          <Button icon={<Plus size={16} />} onClick={() => setCreating(true)}>
+          <Button icon={<Plus size={16} />} onClick={() => { setTitle(''); setCreating(true) }}>
             Новый макет
           </Button>
         }
@@ -130,7 +131,7 @@ export default function MenuLayouts() {
             title="Макетов пока нет"
             text="Создайте лист A4 и нажмите «Собрать из каталога» — категории и позиции добавятся сами."
             action={
-              <Button icon={<Plus size={16} />} onClick={() => setCreating(true)}>
+              <Button icon={<Plus size={16} />} onClick={() => { setTitle(''); setCreating(true) }}>
                 Создать макет
               </Button>
             }
@@ -208,7 +209,7 @@ export default function MenuLayouts() {
 
           <button
             type="button"
-            onClick={() => setCreating(true)}
+            onClick={() => { setTitle(''); setCreating(true) }}
             className="ml-card grid place-items-center gap-2 border-dashed px-4 py-10 text-ink-secondary hover:border-brand hover:text-brand"
           >
             <span className="grid h-10 w-10 place-items-center rounded-full bg-surface-2">

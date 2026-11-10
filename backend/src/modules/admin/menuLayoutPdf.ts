@@ -151,7 +151,8 @@ function drawBlock(
       }
       const sizes = block.displaySizes ?? []
       // Позиция с объёмами занимает две строки: название, затем «250 · 350 · 450» и «169 · 219 · 269».
-      const twoLines = sizes.length > 1 && h > 14
+      // Порог по высоте — только чтобы вторая строка не наезжала; сами объёмы печатаем всегда.
+      const twoLines = sizes.length > 1 && h > 10
       const nameSize = Math.max(5, Math.min(twoLines ? h * 0.3 : h * 0.42, 11 * scale))
       const price = block.displayPrice ?? '—'
       doc.font('bodyBold').fontSize(nameSize).fillColor(theme.text)

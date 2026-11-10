@@ -4,6 +4,7 @@ import {
   docPayload,
   docSections,
   itemCount,
+  findItemByProduct,
   moveItem,
   removeItem,
   renameSection,
@@ -112,5 +113,29 @@ describe('прилипание (3.5)', () => {
     expect(res.rect.xPct).toBe(33)
     expect(res.snappedX).toBe(false)
     expect(res.snappedY).toBe(false)
+  })
+})
+
+describe('QA-регресс: дубли в «Местах» и объёмы', () => {
+  const product = {
+    id: 42,
+    name: 'Ваниль',
+    price: 40,
+    imageUrl: null,
+    available: true,
+    categoryId: 1,
+    categoryName: 'Добавки',
+    variantLabel: null,
+    prices: null,
+  }
+
+  it('findItemByProduct находит уже добавленный товар — по нему UI отсекает дубль', () => {
+    const once = addItemToSection(doc([section('s1', [])]), 's1', product)
+    const found = findItemByProduct(once, 42)
+    expect(found?.section.id).toBe('s1')
+    expect(found?.item.productId).toBe(42)
+    // скрытую позицию за дубль не считаем: её можно добавить заново
+    const hidden = toggleItemHidden(once, 's1', found!.item.id)
+    expect(findItemByProduct(hidden, 42)).toBeNull()
   })
 })

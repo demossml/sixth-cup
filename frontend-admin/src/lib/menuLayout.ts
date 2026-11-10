@@ -408,6 +408,17 @@ export function itemFromCatalog(product: CatalogProduct): MenuItem {
   }
 }
 
+/** Позиция с этим товаром уже в «Местах» (видимая) — повторно не добавляем. */
+export function findItemByProduct(doc: MenuDoc, productId: number): { section: MenuSection; item: MenuItem } | null {
+  for (const page of doc.pages) {
+    for (const section of page.sections ?? []) {
+      const item = section.items.find((it) => it.productId === productId && !it.hidden)
+      if (item) return { section, item }
+    }
+  }
+  return null
+}
+
 /** Добавить позицию в секцию (или создать секцию, если её нет). */
 export function addItemToSection(doc: MenuDoc, sectionId: string | null, product: CatalogProduct): MenuDoc {
   const item = itemFromCatalog(product)
