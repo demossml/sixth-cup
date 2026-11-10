@@ -493,12 +493,25 @@ export const adminMenuLayouts = new Hono<Env>()
       const ROW_H = 6.2
       const ROW_CAT = 6.5
       const TOP = 22
-      const keep = body.replace ? targetPage.blocks.filter((b) => b.type === 'logo' || b.type === 'text') : [...targetPage.blocks]
+      // replace сбрасывает каталог (категории и позиции), но оставляет оформление листа.
+      const keep = body.replace
+        ? targetPage.blocks.filter((b) => b.type === 'logo' || b.type === 'text' || b.type === 'image' || b.type === 'divider')
+        : [...targetPage.blocks]
       const blocks: MenuBlock[] = [...keep]
       let z = blocks.reduce((m, b) => Math.max(m, b.zIndex), 0) + 1
       let gridCol = 0
       let gridRow = 0
       let added = 0
+      let skippedDuplicate = 0
+
+      // Один productId — один блок на весь макет: повторная сборка не должна плодить «Капучино ×N».
+      const usedProductIds = new Set<number>()
+      for (const p of doc.pages) {
+        const pageBlocks = p.id === targetPage.id ? keep : p.blocks
+        for (const b of pageBlocks) {
+          if (b.type === 'product' && !b.hidden && b.productId != null) usedProductIds.add(b.productId)
+        }
+      }
 
       const place = (b: MenuBlock) => {
         b.zIndex = z++
@@ -508,8 +521,10 @@ export const adminMenuLayouts = new Hono<Env>()
 
       for (const cat of categories) {
         if (wanted && !wanted.has(cat.id)) continue
-        const items = products.filter((p) => p.categoryId === cat.id)
-        if (items.length === 0) continue
+        const fresh = products.filter((p) => p.categoryId === cat.id && !usedProductIds.has(p.id))
+        skippedDuplicate += products.filter((p) => p.categoryId === cat.id && usedProductIds.has(p.id)).length
+        // Категория без новых позиций не нужна: иначе повторная сборка плодит пустые заголовки.
+        if (fresh.length === 0) continue
         if (gridRow > 0) gridRow += 1
         place({
           ...emptyBlock('category'),
@@ -522,7 +537,7 @@ export const adminMenuLayouts = new Hono<Env>()
           sortOrder: blocks.length,
         })
         gridRow += 1
-        for (const p of items) {
+        for (const p of fresh) {
           // Колонка кончилась — переходим в следующую, как только упёрлись в низ листа.
           if (TOP + (gridRow + 1) * ROW_H > 92 && gridCol < COLS - 1) {
             gridCol += 1
@@ -543,17 +558,25 @@ export const adminMenuLayouts = new Hono<Env>()
             sortOrder: blocks.length,
           })
           gridRow += 1
+          usedProductIds.add(p.id)
           added++
         }
       }
-      if (added === 0) throw bad('В каталоге нет доступных позиций для сборки', 400)
+
+      if (added === 0 && skippedDuplicate === 0) throw bad('В каталоге нет доступных позиций для сборки', 400)
+      // Нечего добавлять — не трогаем updated_at, чтобы «Изменён» не врал.
+      if (added === 0) return c.json({ ok: true, added: 0, skippedDuplicate, layout: layoutView(rowById(id)!) })
 
       const nextDoc: MenuDoc = {
         pages: doc.pages.map((p) => (p.id === targetPage.id ? { ...p, blocks } : p)),
       }
       db.prepare('UPDATE menu_layouts SET doc_json=?, updated_at=? WHERE id=?').run(JSON.stringify(nextDoc), Date.now(), id)
-      c.set('audit', { entity: 'menu-layout', entityId: String(id), summary: `Макет собран из каталога: ${added} позиций` })
-      return c.json({ ok: true, added, layout: layoutView(rowById(id)!) })
+      c.set('audit', {
+        entity: 'menu-layout',
+        entityId: String(id),
+        summary: `Макет собран из каталога: +${added}, пропущено дублей ${skippedDuplicate}`,
+      })
+      return c.json({ ok: true, added, skippedDuplicate, layout: layoutView(rowById(id)!) })
     },
   )
 

@@ -5,9 +5,13 @@ import {
   bringToFront,
   byZ,
   clampRect,
+  collapseDuplicateProducts,
   docPayload,
   driftBanner,
+  duplicateProducts,
   effectiveType,
+  formatFull,
+  formatSize,
   formatRatio,
   localDrift,
   moveRect,
@@ -19,6 +23,7 @@ import {
   sendToBack,
   topZ,
   toggleHidden,
+  usedProductIds,
   type MenuBlock,
 } from './menuLayout'
 
@@ -184,6 +189,54 @@ describe('локальный резолв каталога', () => {
   it('localDrift показывает расхождение со снапшотом', () => {
     const doc = { pages: [{ id: 'p', blocks: [b('product', 'p1', { productId: 1, snapshotPriceRub: 159 })] }] }
     expect(localDrift(doc, catalog)).toEqual([{ blockId: 'p1', title: 'Капучино', from: 159, to: 169 }])
+  })
+})
+
+describe('один productId = один блок', () => {
+  const p = (id: string, productId: number, extra: Partial<MenuBlock> = {}) =>
+    b('product', id, { productId, sortOrder: 0, ...extra })
+
+  it('usedProductIds собирает позиции со всех страниц и игнорирует скрытые', () => {
+    const doc = {
+      pages: [
+        { id: 'p1', blocks: [p('a', 10), p('h', 20, { hidden: true })] },
+        { id: 'p2', blocks: [p('c', 30), b('text', 't')] },
+      ],
+    }
+    expect(usedProductIds(doc).sort()).toEqual([10, 30])
+  })
+
+  it('duplicateProducts находит только реальные дубли', () => {
+    const doc = {
+      pages: [
+        { id: 'p1', blocks: [p('a', 10), p('b', 10)] },
+        { id: 'p2', blocks: [p('c', 10), p('d', 30)] },
+      ],
+    }
+    expect(duplicateProducts(doc)).toEqual([{ productId: 10, blockIds: ['a', 'b', 'c'] }])
+  })
+
+  it('collapseDuplicateProducts оставляет первый по sortOrder и не трогает остальные типы', () => {
+    const doc = {
+      pages: [
+        { id: 'p1', blocks: [p('a', 10, { sortOrder: 2 }), b('text', 't'), p('b', 10, { sortOrder: 1 })] },
+        { id: 'p2', blocks: [p('c', 10, { sortOrder: 0 })] },
+      ],
+    }
+    const next = collapseDuplicateProducts(doc)
+    const ids = next.pages.flatMap((pg) => pg.blocks.map((x) => x.id))
+    expect(ids).toEqual(['t', 'b'])
+    expect(duplicateProducts(next)).toEqual([])
+  })
+})
+
+describe('подписи форматов', () => {
+  it('миллиметры только у бумаги, экран — пропорция', () => {
+    expect(formatSize('a4_portrait')).toBe('210 × 297 мм')
+    expect(formatSize('screen_16_9')).toBe('16:9')
+    expect(formatSize('screen_16_9')).not.toContain('мм')
+    expect(formatFull('a4_portrait')).toBe('A4 · 210 × 297 мм')
+    expect(formatFull('screen_16_9')).toBe('Экран · 16:9')
   })
 })
 

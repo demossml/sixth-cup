@@ -87,11 +87,12 @@ export const DEFAULT_THEME: MenuTheme = {
 }
 
 export const LAYOUT_FORMATS = [
-  { id: 'a4_portrait', label: 'A4', mm: '210 × 297', ratio: 210 / 297 },
-  { id: 'a4_landscape', label: 'A4 альбом', mm: '297 × 210', ratio: 297 / 210 },
-  { id: 'a3_portrait', label: 'A3', mm: '297 × 420', ratio: 297 / 420 },
-  { id: 'ratio_1_1', label: '1:1', mm: '210 × 210', ratio: 1 },
-  { id: 'screen_16_9', label: 'Экран', mm: '16:9', ratio: 16 / 9 },
+  { id: 'a4_portrait', label: 'A4', mm: '210 × 297', unit: 'мм', ratio: 210 / 297 },
+  { id: 'a4_landscape', label: 'A4 альбом', mm: '297 × 210', unit: 'мм', ratio: 297 / 210 },
+  { id: 'a3_portrait', label: 'A3', mm: '297 × 420', unit: 'мм', ratio: 297 / 420 },
+  { id: 'ratio_1_1', label: '1:1', mm: '210 × 210', unit: 'мм', ratio: 1 },
+  // Экран — это пропорция, а не физический размер: миллиметры здесь были бы ложью.
+  { id: 'screen_16_9', label: 'Экран', mm: '16:9', unit: 'пропорция', ratio: 16 / 9 },
 ] as const
 
 export type LayoutFormat = (typeof LAYOUT_FORMATS)[number]['id']
@@ -100,6 +101,19 @@ export const formatRatio = (format: string): number =>
   LAYOUT_FORMATS.find((f) => f.id === format)?.ratio ?? LAYOUT_FORMATS[0].ratio
 
 export const formatLabel = (format: string): string => LAYOUT_FORMATS.find((f) => f.id === format)?.label ?? 'A4'
+
+/** Размер листа словами: «210 × 297 мм» для бумаги, «16:9» для экрана. */
+export const formatSize = (format: string): string => {
+  const f = LAYOUT_FORMATS.find((x) => x.id === format)
+  if (!f) return ''
+  return f.unit === 'мм' ? `${f.mm} мм` : f.mm
+}
+
+/** Полная подпись: «A4 · 210 × 297 мм», «Экран · 16:9». */
+export const formatFull = (format: string): string => {
+  const size = formatSize(format)
+  return size ? `${formatLabel(format)} · ${size}` : formatLabel(format)
+}
 
 /* ───────────── геометрия холста ───────────── */
 
@@ -256,6 +270,54 @@ export function toggleHidden(blocks: MenuBlock[], id: string): MenuBlock[] {
   return blocks.map((b) => (b.id === id ? { ...b, hidden: !b.hidden } : b))
 }
 
+/* ───────────── один productId = один блок ───────────── */
+
+/** Все позиции каталога, уже стоящие на листе (скрытые блоки не считаются). */
+export function usedProductIds(doc: MenuDoc): number[] {
+  const ids = new Set<number>()
+  for (const page of doc.pages) {
+    for (const b of page.blocks) {
+      if (b.type === 'product' && !b.hidden && b.productId != null) ids.add(b.productId)
+    }
+  }
+  return [...ids]
+}
+
+/** Блоки-дубли: тот же productId встречается больше одного раза. */
+export function duplicateProducts(doc: MenuDoc): { productId: number; blockIds: string[] }[] {
+  const seen = new Map<number, string[]>()
+  for (const page of doc.pages) {
+    for (const b of page.blocks) {
+      if (b.type !== 'product' || b.hidden || b.productId == null) continue
+      const list = seen.get(b.productId) ?? []
+      list.push(b.id)
+      seen.set(b.productId, list)
+    }
+  }
+  return [...seen.entries()]
+    .filter(([, ids]) => ids.length > 1)
+    .map(([productId, blockIds]) => ({ productId, blockIds }))
+}
+
+/**
+ * Убирает дубли позиций: на каждый productId остаётся первый блок
+ * (минимальный sortOrder, затем zIndex), остальные удаляются из макета.
+ * Товары каталога не трогаются — это только лист.
+ */
+export function collapseDuplicateProducts(doc: MenuDoc): MenuDoc {
+  const keep = new Map<number, string>()
+  const pages = doc.pages.map((page) => {
+    const dropped = new Set<string>()
+    for (const b of [...page.blocks].sort((a, c) => a.sortOrder - c.sortOrder || a.zIndex - c.zIndex)) {
+      if (b.type !== 'product' || b.hidden || b.productId == null) continue
+      if (keep.has(b.productId)) dropped.add(b.id)
+      else keep.set(b.productId, b.id)
+    }
+    return { ...page, blocks: page.blocks.filter((b) => !dropped.has(b.id)) }
+  })
+  return { pages }
+}
+
 /** Полный набор «чистых» полей блока — то, что уходит на сервер. */
 export const blockPayload = (b: MenuBlock): MenuBlock => ({
   id: b.id,
@@ -373,7 +435,7 @@ export function resolvePreview(doc: MenuDoc, products: CatalogProduct[], mode: '
           b.photoUrlOverride ?? live?.imageUrl ?? (mode === 'frozen' ? b.snapshotImageUrl : null) ?? null
         const warnings: string[] = []
         if (b.productId != null && !live) warnings.push('позиции больше нет в каталоге')
-        if (live && !live.available) warnings.push('скрыта в каталоге')
+        if (live && !live.available) warnings.push('не в продаже (выключена в каталоге)')
         if (!displayPrice) warnings.push('нет цены')
         if (b.showPhoto && !displayImageUrl) warnings.push('нет фото')
 

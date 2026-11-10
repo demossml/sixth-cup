@@ -524,7 +524,7 @@ export function resolveDoc(doc: MenuDoc, priceMode: PriceMode): ResolvedDoc {
         const live = b.productId == null ? null : catalog.get(b.productId) ?? null
         const warnings: string[] = []
         if (b.productId != null && !live) warnings.push('позиции больше нет в каталоге')
-        if (live && !live.available) warnings.push('скрыта в каталоге')
+        if (live && !live.available) warnings.push('не в продаже (выключена в каталоге)')
 
         const frozen = priceMode === 'frozen'
         const priceFromCatalog = frozen ? b.snapshotPriceRub ?? live?.priceRub ?? null : live?.priceRub ?? null

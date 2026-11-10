@@ -271,6 +271,82 @@ describe('макет меню: сборка из каталога и PDF', () =>
     expect(types.filter((t) => t === 'product').length).toBeGreaterThanOrEqual(2)
   })
 
+  it('повторный seed не плодит позиции: дубли пропускаются', async () => {
+    const cat = mkCategory('Кофе')
+    mkProduct('Эспрессо', 120, cat)
+    mkProduct('Капучино', 169, cat)
+    const created = await createLayout()
+
+    const seed = async () => {
+      const res = await app.request(`/api/admin/menu-layouts/${created.id}/seed-from-catalog`, {
+        method: 'POST',
+        headers: H,
+        body: JSON.stringify({ categoryIds: [cat] }),
+      })
+      expect(res.status).toBe(200)
+      return (await res.json()) as LayoutBody & { added: number; skippedDuplicate: number }
+    }
+
+    const first = await seed()
+    expect(first.added).toBe(2)
+    expect(first.skippedDuplicate).toBe(0)
+    const blocksAfterFirst = first.layout.doc.pages[0]!.blocks
+
+    const second = await seed()
+    expect(second.added).toBe(0)
+    expect(second.skippedDuplicate).toBe(2)
+    const blocksAfterSecond = (await getLayout(created.id)).doc.pages[0]!.blocks
+    expect(blocksAfterSecond).toHaveLength(blocksAfterFirst.length)
+
+    const productIds = blocksAfterSecond.filter((b) => b.type === 'product').map((b) => b.productId)
+    expect(new Set(productIds).size).toBe(productIds.length)
+    expect(blocksAfterSecond.filter((b) => b.type === 'category')).toHaveLength(1)
+  })
+
+  it('seed добирает только новые позиции и не трогает блок, уже стоящий на листе', async () => {
+    const cat = mkCategory('Кофе')
+    const espresso = mkProduct('Эспрессо', 120, cat)
+    const created = await createLayout()
+    await put(created.id, {
+      doc: docWith([{ id: 'espresso', type: 'product', productId: espresso, xPct: 70, yPct: 40, wPct: 20, hPct: 6, sortOrder: 0 }]),
+    })
+    mkProduct('Капучино', 169, cat)
+
+    const res = await app.request(`/api/admin/menu-layouts/${created.id}/seed-from-catalog`, {
+      method: 'POST',
+      headers: H,
+      body: JSON.stringify({ categoryIds: [cat] }),
+    })
+    const body = (await res.json()) as LayoutBody & { added: number; skippedDuplicate: number }
+    expect(body.added).toBe(1)
+    expect(body.skippedDuplicate).toBe(1)
+    const kept = body.layout.doc.pages[0]!.blocks.find((b) => b.id === 'espresso')
+    expect(kept?.xPct).toBe(70)
+  })
+
+  it('replace сбрасывает каталог, но оставляет логотип и текст', async () => {
+    const cat = mkCategory('Кофе')
+    mkProduct('Эспрессо', 120, cat)
+    mkProduct('Капучино', 169, cat)
+    const created = await createLayout()
+    await put(created.id, {
+      doc: docWith([
+        { id: 'logo-1', type: 'logo', xPct: 0, yPct: 0, wPct: 32, hPct: 7, sortOrder: 0 },
+        { id: 'p-old', type: 'product', productId: 999999, xPct: 0, yPct: 20, wPct: 40, hPct: 6, sortOrder: 1 },
+      ]),
+    })
+    const res = await app.request(`/api/admin/menu-layouts/${created.id}/seed-from-catalog`, {
+      method: 'POST',
+      headers: H,
+      body: JSON.stringify({ replace: true, categoryIds: [cat] }),
+    })
+    const body = (await res.json()) as LayoutBody & { added: number }
+    const ids = body.layout.doc.pages[0]!.blocks.map((b) => b.id)
+    expect(ids).toContain('logo-1')
+    expect(ids).not.toContain('p-old')
+    expect(body.added).toBe(2)
+  })
+
   it('PDF отдаётся файлом с вектором текста (ToUnicode), а не растром', async () => {
     const productId = mkProduct('Капучино', 169, null)
     const created = await createLayout('Меню для печати')

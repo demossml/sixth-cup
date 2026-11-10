@@ -19,11 +19,15 @@ import {
   bringToFront,
   byZ,
   clampRect,
+  collapseDuplicateProducts,
   docPayload,
   docSnapshot,
   driftBanner,
+  duplicateProducts,
   effectiveType,
+  formatFull,
   formatLabel,
+  formatSize,
   localDrift,
   moveRect,
   newBlock,
@@ -45,6 +49,8 @@ import {
 } from '../lib/menuLayout'
 import { Badge, Button, Banner, Drawer, cx, ErrorBox, Field, Input, Select, Spinner, useToast } from '../ui/kit'
 import MenuCanvas from '../components/menuLayout/MenuCanvas'
+
+type Blocker = { blockId: string; code: string; text: string; label: string; pageIdx: number }
 
 type ServerLayout = {
   id: number
@@ -104,6 +110,7 @@ export default function MenuLayoutEditor() {
   const [rightTab, setRightTab] = useState<RightTab>('design')
   const [mobileTab, setMobileTab] = useState<MobileTab>('preview')
   const [search, setSearch] = useState('')
+  const [showAllProducts, setShowAllProducts] = useState(false)
   const [catFilter, setCatFilter] = useState<number | 'all'>('all')
   const [zoom, setZoom] = useState(1)
   const [showGrid, setShowGrid] = useState(false)
@@ -136,6 +143,7 @@ export default function MenuLayoutEditor() {
     setTheme({ ...DEFAULT_THEME, ...layout.theme })
     setTitle(layout.title)
     setStatus(layout.status)
+    setSavedAt(layout.updatedAt)
     setPriceMode(layout.priceMode)
     setFrozenAt(layout.frozenAt)
     setDrift(layout.drift)
@@ -152,21 +160,31 @@ export default function MenuLayoutEditor() {
   const liveDrift = useMemo(() => (doc ? localDrift(doc, products) : []), [doc, products])
 
   const blockers = useMemo(() => {
-    if (!previewDoc) return [] as { blockId: string; code: string; text: string }[]
-    const out: { blockId: string; code: string; text: string }[] = []
-    for (const p of previewDoc.pages) {
+    if (!previewDoc) return [] as Blocker[]
+    const out: Blocker[] = []
+    previewDoc.pages.forEach((p, pageIdx) => {
       for (const b of p.blocks) {
         for (const w of b.warnings ?? []) {
           out.push({
             blockId: b.id,
+            pageIdx,
+            label: blockLabel(b),
             code: w === 'нет цены' ? 'no_price' : w === 'позиции больше нет в каталоге' ? 'missing_product' : 'notice',
             text: w,
           })
         }
       }
-    }
+    })
     return out
   }, [previewDoc])
+
+  /** Показать блок из замечания: нужная страница + выделение. */
+  const goToBlock = (blockId: string, page?: number) => {
+    if (typeof page === 'number') setPageIdx(page)
+    setSelectedId(blockId)
+    setRightTab('block')
+    setMobileTab((tab) => (tab === 'content' ? 'content' : 'preview'))
+  }
 
   const mutate = useCallback((next: MenuDoc) => {
     setDoc((prev) => {
@@ -310,6 +328,16 @@ export default function MenuLayoutEditor() {
 
   // ── действия с блоками ────────────────────────────────────────
   const addProduct = (p: CatalogProduct) => {
+    // Один productId — один блок: повторное добавление не создаёт дубль, а подсвечивает существующий.
+    const existing = doc?.pages.flatMap((pg) => pg.blocks).find((b) => b.type === 'product' && b.productId === p.id && !b.hidden)
+    if (existing) {
+      setSelectedId(existing.id)
+      setRightTab('block')
+      const samePage = doc?.pages.findIndex((pg) => pg.blocks.some((b) => b.id === existing.id)) ?? -1
+      if (samePage >= 0) setPageIdx(samePage)
+      toast.push(`«${p.name}» уже на листе — выделил блок`)
+      return
+    }
     const fresh = productBlock(p, {}, 0)
     updatePage((blocks) => {
       const rect = nextFreeRect(blocks, DEFAULT_RECT.product.w, DEFAULT_RECT.product.h)
@@ -330,6 +358,18 @@ export default function MenuLayoutEditor() {
     setRightTab('block')
   }
 
+  const dupes = useMemo(() => (doc ? duplicateProducts(doc) : []), [doc])
+
+  const removeDuplicates = () => {
+    if (!doc) return
+    const next = collapseDuplicateProducts(doc)
+    const removed = doc.pages.reduce((n, p) => n + p.blocks.length, 0) - next.pages.reduce((n, p) => n + p.blocks.length, 0)
+    if (removed === 0) return
+    mutate(next)
+    setSelectedId(null)
+    toast.push(`Убрано дублей: ${removed}`)
+  }
+
   const uploadInto = async (file: File, apply: (url: string) => void) => {
     setBusyUpload(true)
     try {
@@ -343,17 +383,35 @@ export default function MenuLayoutEditor() {
     }
   }
 
+  /** Статус листа (черновик / готов к печати) — это поле макета, а не состояние сохранения. */
+  const setLayoutStatus = async (next: 'draft' | 'ready') => {
+    try {
+      const res = await api<{ layout: ServerLayout; savedAt?: number }>(`/menu-layouts/${numericId}`, {
+        method: 'PUT',
+        body: { status: next },
+      })
+      setStatus(res.layout.status)
+      if (res.savedAt) setSavedAt(res.savedAt)
+      toast.push(next === 'ready' ? 'Лист отмечен готовым к печати' : 'Лист снова черновик')
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Не удалось сменить статус', 'bad')
+    }
+  }
+
   const seedFromCatalog = async () => {
     try {
-      const res = await api<{ layout: ServerLayout; added: number }>(`/menu-layouts/${numericId}/seed-from-catalog`, {
-        method: 'POST',
-        body: { pageId: page?.id, replace: false },
-      })
+      const res = await api<{ layout: ServerLayout; added: number; skippedDuplicate?: number }>(
+        `/menu-layouts/${numericId}/seed-from-catalog`,
+        { method: 'POST', body: { pageId: page?.id, replace: false } },
+      )
       hydrated.current = res.layout.id
       setDoc(docSnapshot(res.layout.doc))
       setDrift(res.layout.drift)
       lastSaved.current = JSON.stringify({ title: res.layout.title, theme: res.layout.theme, doc: docSnapshot(res.layout.doc) })
-      toast.push(`Собрано из каталога: ${res.added} позиций`)
+      const skipped = res.skippedDuplicate ?? 0
+      toast.push(
+        `Добавлено ${res.added}${skipped ? `, пропущено дублей ${skipped}` : ''}`,
+      )
     } catch (e) {
       toast.push(e instanceof Error ? e.message : 'Не удалось собрать из каталога', 'bad')
     }
@@ -406,13 +464,24 @@ export default function MenuLayoutEditor() {
 
   const format = data?.layout.format ?? 'a4_portrait'
   const filtered = products.filter((p) => {
+    // По умолчанию в каталоге слева только то, что реально продаётся.
+    if (!showAllProducts && !p.available) return false
     if (catFilter !== 'all' && p.categoryId !== catFilter) return false
     if (!search.trim()) return true
     return p.name.toLowerCase().includes(search.trim().toLowerCase())
   })
 
-  const saveLabel =
-    save === 'saving' ? 'Сохраняем…' : save === 'error' ? 'Не сохранено' : save === 'dirty' ? 'Есть изменения' : 'Сохранено'
+  const statusLabel = status === 'ready' ? 'Готово к печати' : 'Черновик'
+  const saveStateText =
+    save === 'saving'
+      ? 'сохраняем…'
+      : save === 'error'
+        ? 'не сохранено'
+        : save === 'dirty'
+          ? 'есть несохранённые изменения'
+          : savedAt
+            ? `сохранено ${ago(savedAt)}`
+            : 'сохранено'
   const driftText = driftBanner(drift.length ? drift : liveDrift, priceMode)
   const selectedType = selected ? effectiveType(selected) : null
 
@@ -446,7 +515,31 @@ export default function MenuLayoutEditor() {
             className="w-full bg-transparent text-[13px] outline-none"
           />
         </label>
-        <div className="mt-2 flex flex-wrap gap-1">
+        <div className="mt-2 flex items-center gap-1 text-[11px] font-semibold">
+          <button
+            type="button"
+            onClick={() => setShowAllProducts(false)}
+            aria-pressed={!showAllProducts}
+            className={cx(
+              'rounded-full border px-2.5 py-1',
+              !showAllProducts ? 'border-brand bg-brand text-white' : 'border-line text-ink-secondary',
+            )}
+          >
+            Доступные
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowAllProducts(true)}
+            aria-pressed={showAllProducts}
+            className={cx(
+              'rounded-full border px-2.5 py-1',
+              showAllProducts ? 'border-brand bg-brand text-white' : 'border-line text-ink-secondary',
+            )}
+          >
+            Весь каталог
+          </button>
+        </div>
+        <div className="mt-1.5 flex flex-wrap gap-1">
           <button
             type="button"
             onClick={() => setCatFilter('all')}
@@ -495,7 +588,7 @@ export default function MenuLayoutEditor() {
                   <span className="block truncate text-[13px] font-semibold text-ink">{p.name}</span>
                   <span className="block truncate text-[11px] text-ink-tertiary">
                     {p.price} ₽{p.variantLabel ? ` · ${p.variantLabel}` : ''}
-                    {!p.available ? ' · скрыт в каталоге' : ''}
+                    {!p.available ? ' · не в продаже' : ''}
                   </span>
                 </span>
                 <Plus size={15} className="flex-none text-brand" aria-hidden />
@@ -593,6 +686,18 @@ export default function MenuLayoutEditor() {
           </li>
         ))}
       </ul>
+      {dupes.length > 0 && (
+        <div className="mt-2 rounded-lg border border-warn/40 bg-warn-soft p-2">
+          <p className="text-[12px] text-warn">Дублей позиций: {dupes.length}. На печати они повторятся.</p>
+          <button
+            type="button"
+            onClick={removeDuplicates}
+            className="mt-1 text-[12px] font-semibold text-brand hover:underline"
+          >
+            Убрать дубли
+          </button>
+        </div>
+      )}
     </div>
   )
 
@@ -988,17 +1093,17 @@ export default function MenuLayoutEditor() {
             />
             <span
               className={cx(
-                'inline-flex flex-none items-center gap-1 text-[11px] font-semibold',
-                save === 'error' ? 'text-bad' : save === 'saved' || save === 'idle' ? 'text-ok' : 'text-ink-tertiary',
+                'inline-flex flex-none items-center gap-1 whitespace-nowrap text-[11px] font-semibold',
+                save === 'error' ? 'text-bad' : save === 'dirty' || save === 'saving' ? 'text-ink-tertiary' : 'text-ok',
               )}
               aria-live="polite"
             >
               {save === 'saving' ? <Loader2 size={12} className="animate-spin" /> : <span className="h-1.5 w-1.5 rounded-full bg-current" />}
-              {saveLabel}
+              {statusLabel} · {saveStateText}
             </span>
           </div>
           <p className="mt-0.5 truncate text-[12px] text-ink-secondary">
-            {formatLabel(format)} · {data?.layout.formatHint.mm} · {doc.pages.length} стр. ·{' '}
+            {formatFull(format)} · {doc.pages.length} стр. ·{' '}
             {priceMode === 'frozen' ? `цены зафиксированы${fmtFrozen(frozenAt)}` : 'цены из каталога'}
           </p>
         </div>
@@ -1031,9 +1136,23 @@ export default function MenuLayoutEditor() {
       )}
 
       {blockers.length > 0 && (
-        <Banner tone="warn">
-          Замечаний перед печатью: {blockers.length}. Откройте блок с красной меткой и поправьте цену или фото.
-        </Banner>
+        <div className="mb-3 rounded-xl border border-warn/40 bg-warn-soft px-3 py-2">
+          <p className="text-[13px] font-semibold text-warn">Перед печатью: {blockers.length}</p>
+          <ul className="mt-1 space-y-0.5">
+            {blockers.slice(0, 8).map((b) => (
+              <li key={`${b.blockId}-${b.text}`}>
+                <button
+                  type="button"
+                  onClick={() => goToBlock(b.blockId, b.pageIdx)}
+                  className="text-left text-[12.5px] text-ink-secondary hover:text-brand hover:underline"
+                >
+                  {b.label} — {b.text}
+                </button>
+              </li>
+            ))}
+          </ul>
+          {blockers.length > 8 && <p className="mt-1 text-[12px] text-ink-tertiary">и ещё {blockers.length - 8}</p>}
+        </div>
       )}
 
       {/* ── мобильные вкладки ─────────────────────────────── */}
@@ -1093,7 +1212,7 @@ export default function MenuLayoutEditor() {
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-white px-2 py-1.5">
             <div className="flex items-center gap-1.5 text-[12px] font-semibold text-ink-secondary">
               <span className="rounded-md bg-surface-2 px-2 py-1">
-                {data?.layout.formatHint.label} · {data?.layout.formatHint.mm}
+                {data?.layout.formatHint.label} · {formatSize(format)}
               </span>
               <Badge tone={status === 'ready' ? 'ok' : 'neutral'}>{status === 'ready' ? 'Готов' : 'Черновик'}</Badge>
               <span className="text-[11px] font-normal text-ink-tertiary">{page.blocks.length} блоков</span>
@@ -1310,7 +1429,10 @@ export default function MenuLayoutEditor() {
               </li>
               {blockers.length > 0 && (
                 <li className="flex items-start gap-2 text-bad">
-                  <X size={14} className="mt-0.5 flex-none" aria-hidden /> <span>{blockers.length} замечани(й): {blockers.slice(0, 2).map((b) => b.text).join(', ')}</span>
+                  <X size={14} className="mt-0.5 flex-none" aria-hidden />{' '}
+                  <span>
+                    {blockers.length} замечани(й): {blockers.slice(0, 2).map((b) => `${b.label} — ${b.text}`).join(', ')}
+                  </span>
                 </li>
               )}
             </ul>
@@ -1357,19 +1479,27 @@ export default function MenuLayoutEditor() {
         layoutId={numericId}
         format={format}
         pages={doc.pages.length}
-        blockers={blockers.length ? blockers : data?.layout.blockers ?? []}
-        onGoToBlock={(blockId) => {
+        blockers={
+          blockers.length
+            ? blockers
+            : (data?.layout.blockers ?? []).map((b) => ({
+                ...b,
+                label: page.blocks.find((x) => x.id === b.blockId) ? blockLabel(page.blocks.find((x) => x.id === b.blockId)!) : 'Блок',
+                pageIdx,
+              }))
+        }
+        onGoToBlock={(blockId, pageIdx) => {
           setExportOpen(false)
-          setSelectedId(blockId)
-          setRightTab('block')
-          setMobileTab('preview')
-          const idx = doc.pages.findIndex((p) => p.blocks.some((b) => b.id === blockId))
-          if (idx >= 0) setPageIdx(idx)
+          goToBlock(blockId, pageIdx)
         }}
       />
 
       <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-3 text-[12px] text-ink-secondary">
-        <button type="button" onClick={() => setStatus((s) => (s === 'ready' ? 'draft' : 'ready'))} className="text-brand hover:underline">
+        <button
+          type="button"
+          onClick={() => void setLayoutStatus(status === 'ready' ? 'draft' : 'ready')}
+          className="text-brand hover:underline"
+        >
           {status === 'ready' ? 'Вернуть в черновик' : 'Отметить готовым к печати'}
         </button>
         <span className="text-ink-tertiary">·</span>
@@ -1382,7 +1512,7 @@ export default function MenuLayoutEditor() {
         </button>
       </div>
 
-      <Drawer open={formatOpen} onClose={() => setFormatOpen(false)} title="Формат листа">
+      <Drawer open={formatOpen} onClose={() => setFormatOpen(false)} title="Формат листа" layer={65}>
         <div className="space-y-2">
           {LAYOUT_FORMATS.map((f) => (
             <button
@@ -1401,7 +1531,7 @@ export default function MenuLayoutEditor() {
               className={cx('flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left', format === f.id ? 'border-brand bg-surface-2' : 'border-line')}
             >
               <span className="text-[13px] font-semibold">{f.label}</span>
-              <span className="text-[11px] text-ink-tertiary">{f.mm} мм</span>
+              <span className="text-[11px] text-ink-tertiary">{f.unit === 'мм' ? `${f.mm} мм` : f.mm}</span>
             </button>
           ))}
         </div>
@@ -1418,8 +1548,8 @@ type ExportProps = {
   layoutId: number
   format: LayoutFormat
   pages: number
-  blockers: { blockId: string; code: string; text: string }[]
-  onGoToBlock: (blockId: string) => void
+  blockers: Blocker[]
+  onGoToBlock: (blockId: string, pageIdx: number) => void
 }
 
 function ExportModal({ open, onClose, layoutId, format, pages, blockers, onGoToBlock }: ExportProps) {
@@ -1507,7 +1637,7 @@ function ExportModal({ open, onClose, layoutId, format, pages, blockers, onGoToB
             </div>
             <div className="mt-3 space-y-2">
               <Field label="Формат">
-                <Input value={`${formatLabel(format)} · ${LAYOUT_FORMATS.find((f) => f.id === format)?.mm ?? ''} мм`} readOnly />
+                <Input value={formatFull(format)} readOnly />
               </Field>
               <Field label="Поля под обрез">
                 <Select value={String(bleed)} onChange={(e) => setBleed(Number(e.target.value))} disabled={preset === 'screen'}>
@@ -1541,8 +1671,8 @@ function ExportModal({ open, onClose, layoutId, format, pages, blockers, onGoToB
               <ul className="mt-2 max-h-28 space-y-1 overflow-y-auto text-[12px]">
                 {hard.map((b) => (
                   <li key={`${b.blockId}-${b.text}`}>
-                    <button type="button" onClick={() => onGoToBlock(b.blockId)} className="text-left text-brand hover:underline">
-                      {b.text} → открыть блок
+                    <button type="button" onClick={() => onGoToBlock(b.blockId, b.pageIdx)} className="text-left text-brand hover:underline">
+                      {b.label} — {b.text} → открыть блок
                     </button>
                   </li>
                 ))}

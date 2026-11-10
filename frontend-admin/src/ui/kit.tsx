@@ -274,7 +274,13 @@ export function KpiTile({ label, value, sub, tone }: { label: string; value: Rea
 }
 
 /* ───────── Drawer (right panel on desktop, bottom sheet on phone) ───────── */
-export function Drawer({ open, onClose, title, children, footer, wide }: { open: boolean; onClose: () => void; title: string; children: ReactNode; footer?: ReactNode; wide?: boolean }) {
+export function Drawer({
+  open, onClose, title, children, footer, wide, layer = 50,
+}: {
+  open: boolean; onClose: () => void; title: string; children: ReactNode; footer?: ReactNode; wide?: boolean
+  /** z-index подложки: нужен выше фиксированных панелей страницы (мобильный бар, sheet), но ниже модалок. */
+  layer?: number
+}) {
   const ref = useRef<HTMLDivElement>(null)
   // Keep the latest onClose without re-running the effect: a parent re-render must not steal focus from a field.
   const closeRef = useRef(onClose)
@@ -304,7 +310,11 @@ export function Drawer({ open, onClose, title, children, footer, wide }: { open:
   }, [open])
   if (!open) return null
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-end bg-black/40 sm:items-stretch" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-end bg-black/40 sm:items-stretch"
+      style={{ zIndex: layer }}
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+    >
       <div
         ref={ref}
         tabIndex={-1}
