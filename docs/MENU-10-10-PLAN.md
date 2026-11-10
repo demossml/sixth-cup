@@ -7,7 +7,9 @@
 
 Промпты внешним агентам (они работают в других репозиториях/машинах):
 - касса APK → [`PROMPT-APK-PREORDER-QUEUE.md`](./PROMPT-APK-PREORDER-QUEUE.md);
-- выкладка и push на Mini → [`PROMPT-MINI-PUSH-DEPLOY.md`](./PROMPT-MINI-PUSH-DEPLOY.md).
+- выкладка и push на Mini → [`PROMPT-MINI-PUSH-DEPLOY.md`](./PROMPT-MINI-PUSH-DEPLOY.md);
+- браузерный аудит конструктора «Макет меню» (только UI, без кода) + план до «10 из 10» → [`PROMPT-MENU-BROWSER-AUDIT.md`](./PROMPT-MENU-BROWSER-AUDIT.md);
+- тот же аудит, раунд 2 (добор непроверенного, исправление ложных диагнозов) → [`PROMPT-MENU-BROWSER-AUDIT-v2.md`](./PROMPT-MENU-BROWSER-AUDIT-v2.md).
 
 ---
 
