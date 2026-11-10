@@ -101,6 +101,9 @@ export type MenuTheme = {
   logoPosition: 'left' | 'top-right' | 'footer'
 }
 
+/** Палитра бренда 6.7: шаблоны стартуют с неё, «выйти из бренда» — свободный выбор цвета. */
+export const BRAND_COLORS = ['#002FA7', '#001F6B', '#E6ECFF', '#F6F3EE', '#FFFFFF', '#1B1A17', '#C8A26E'] as const
+
 export const THEME_PRESETS: Record<MenuTheme['preset'], { bg: string; text: string; accent: string; label: string }> = {
   classic: { bg: '#F6F3EE', text: '#14171F', accent: '#002FA7', label: 'Классика' },
   dark: { bg: '#171A21', text: '#F4EFE6', accent: '#AEBFFF', label: 'Тёмный' },
@@ -124,6 +127,7 @@ export const DEFAULT_THEME: MenuTheme = {
 export const LAYOUT_FORMATS = [
   { id: 'a4_portrait', label: 'A4', mm: '210 × 297', unit: 'мм', ratio: 210 / 297 },
   { id: 'a4_landscape', label: 'A4 альбом', mm: '297 × 210', unit: 'мм', ratio: 297 / 210 },
+  { id: 'a5_portrait', label: 'A5', mm: '148 × 210', unit: 'мм', ratio: 148 / 210 },
   { id: 'a3_portrait', label: 'A3', mm: '297 × 420', unit: 'мм', ratio: 297 / 420 },
   { id: 'ratio_1_1', label: '1:1', mm: '210 × 210', unit: 'мм', ratio: 1 },
   // Экран — это пропорция, а не физический размер: миллиметры здесь были бы ложью.

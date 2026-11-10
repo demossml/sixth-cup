@@ -51,7 +51,7 @@ type Row = {
 /** Аудит пишется middleware на изменяющие вызовы: тип нужен, чтобы `c.set('audit', …)` прошёл проверку. */
 type Env = { Variables: { audit?: { entity: string; entityId: string; summary: string } } }
 
-const FORMATS = ['a4_portrait', 'a4_landscape', 'a3_portrait', 'ratio_1_1', 'screen_16_9'] as const
+const FORMATS = ['a4_portrait', 'a4_landscape', 'a5_portrait', 'a3_portrait', 'ratio_1_1', 'screen_16_9'] as const
 
 const jsonParse = <T>(raw: string, fallback: T): T => {
   try {

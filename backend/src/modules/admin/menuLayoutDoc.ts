@@ -11,13 +11,14 @@ import { join } from 'node:path'
 import { db } from '../../db'
 import { config } from '../../config'
 
-export type LayoutFormat = 'a4_portrait' | 'a4_landscape' | 'a3_portrait' | 'ratio_1_1' | 'screen_16_9'
+export type LayoutFormat = 'a4_portrait' | 'a4_landscape' | 'a5_portrait' | 'a3_portrait' | 'ratio_1_1' | 'screen_16_9'
 export type PriceMode = 'live' | 'frozen'
 export type LayoutStatus = 'draft' | 'ready'
 
 export const LAYOUT_FORMATS: { id: LayoutFormat; label: string; mm: string; pt: [number, number] }[] = [
   { id: 'a4_portrait', label: 'A4', mm: '210 × 297 мм', pt: [595.28, 841.89] },
   { id: 'a4_landscape', label: 'A4 альбом', mm: '297 × 210 мм', pt: [841.89, 595.28] },
+  { id: 'a5_portrait', label: 'A5', mm: '148 × 210 мм', pt: [419.53, 595.28] },
   { id: 'a3_portrait', label: 'A3', mm: '297 × 420 мм', pt: [841.89, 1190.55] },
   { id: 'ratio_1_1', label: '1:1', mm: '210 × 210 мм', pt: [595.28, 595.28] },
   { id: 'screen_16_9', label: 'Экран', mm: '16:9', pt: [640, 360] },

@@ -15,6 +15,7 @@ import {
   LAYOUT_FORMATS,
   MIN_H,
   MIN_W,
+  BRAND_COLORS,
   THEME_PRESETS,
   blockLabel,
   bringToFront,
@@ -1180,6 +1181,20 @@ export default function MenuLayoutEditor() {
             />
           </label>
         ))}
+        {/* Палитра бренда: шаблоны стартуют с неё, свободный цвет остаётся доступен. */}
+        <div className="mt-2 flex flex-wrap gap-1">
+          {BRAND_COLORS.map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => setTheme({ ...theme, accent: c })}
+              aria-label={`Акцент ${c}`}
+              title={`Акцент ${c}`}
+              style={{ background: c }}
+              className="h-6 w-6 rounded-full border border-line"
+            />
+          ))}
+        </div>
       </section>
 
       <section className="border-b border-line px-3 py-3">
