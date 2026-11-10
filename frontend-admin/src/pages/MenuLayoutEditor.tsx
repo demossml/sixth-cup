@@ -108,6 +108,7 @@ export default function MenuLayoutEditor() {
   )
   // Лёгкий каталог макета: сразу с объёмами и ценами, без N+1 по /products.
   const catalog = useApi<{ products: CatalogProduct[]; categories: { id: number; name: string }[] }>('/menu-layouts/catalog')
+  const templatesData = useApi<{ templates: { id: string; name: string }[] }>('/menu-layouts/templates')
 
   const [doc, setDoc] = useState<MenuDoc | null>(null)
   const [theme, setTheme] = useState<MenuTheme>(DEFAULT_THEME)
@@ -915,7 +916,28 @@ export default function MenuLayoutEditor() {
   )
 
   // Осторожно: это после ранних return'ов, поэтому без useMemo — только вычисление.
+  /** Сменить шаблон: раскладка пересобирается, позиции и секции остаются. */
+  const applyTemplate = async (templateId: string) => {
+    try {
+      await flush()
+      const res = await api<{ layout: ServerLayout; dropped: number }>(`/menu-layouts/${numericId}/layout`, {
+        method: 'POST',
+        body: { template: templateId, baseRev: revRef.current },
+      })
+      revRef.current = res.layout.rev
+      setDoc(docSnapshot(res.layout.doc))
+      setHistory(emptyHistory())
+      setTheme({ ...DEFAULT_THEME, ...res.layout.theme })
+      lastSaved.current = JSON.stringify({ title: res.layout.title, theme: res.layout.theme, doc: docSnapshot(res.layout.doc) })
+      setFormatOpen(false)
+      toast.push(`Шаблон применён: ${templates.find((t) => t.id === templateId)?.name ?? templateId}`)
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Не удалось применить шаблон', 'bad')
+    }
+  }
+
   const sections = doc ? docSections(doc) : []
+  const templates = templatesData.data?.templates ?? []
   const catalogName = (productId: number | null) =>
     products.find((p) => p.id === productId)?.name ?? (productId ? `Товар #${productId}` : 'Без товара')
 
@@ -1872,7 +1894,25 @@ export default function MenuLayoutEditor() {
         </button>
       </div>
 
-      <Drawer open={formatOpen} onClose={() => setFormatOpen(false)} title="Формат листа" layer={65}>
+      <Drawer open={formatOpen} onClose={() => setFormatOpen(false)} title="Формат и шаблон" layer={65}>
+        {MENU_LAYOUT_V2 && (data?.layout.sections ?? 0) > 0 && (
+          <div className="mb-3 rounded-lg border border-line p-2">
+            <p className="mb-1 text-[12px] font-semibold text-ink-secondary">Шаблон раскладки</p>
+            <div className="flex flex-wrap gap-1">
+              {templates.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => void applyTemplate(t.id)}
+                  className="rounded-full border border-line px-2.5 py-1 text-[11px] font-semibold text-ink-secondary hover:border-brand hover:text-brand"
+                >
+                  {t.name}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1 text-[11px] text-ink-tertiary">Шаблон меняет колонки и плотность, содержимое «Мест» остаётся.</p>
+          </div>
+        )}
         <div className="space-y-2">
           {LAYOUT_FORMATS.map((f) => (
             <button

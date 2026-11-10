@@ -12,7 +12,7 @@ import {
   type MenuBlock,
   type MenuTheme,
 } from '../lib/menuLayout'
-import { Badge, Button, Card, ConfirmDialog, cx, EmptyState, ErrorBox, Field, Input, PageHeader, Spinner, useToast } from '../ui/kit'
+import { Badge, Button, Card, ConfirmDialog, cx, EmptyState, ErrorBox, Field, Input, PageHeader, Select, Spinner, useToast } from '../ui/kit'
 import MenuCanvas from '../components/menuLayout/MenuCanvas'
 
 type LayoutRow = {
@@ -40,6 +40,12 @@ export default function MenuLayouts() {
   const toast = useToast()
   const { data, error, loading, reload } = useApi<ListBody>('/menu-layouts')
   const [creating, setCreating] = useState(false)
+  /** Мастер: с чего начать лист и по какому шаблону. */
+  const [source, setSource] = useState<'empty' | 'catalog'>('catalog')
+  const [template, setTemplate] = useState('classic-two-column')
+  const templates = useApi<{ templates: { id: string; name: string; goal: string; options: { columns: number } }[] }>(
+    '/menu-layouts/templates',
+  )
   const [title, setTitle] = useState('Новое меню')
   const [format, setFormat] = useState<LayoutFormat>('a4_portrait')
   const [busy, setBusy] = useState(false)
@@ -58,6 +64,10 @@ export default function MenuLayouts() {
         method: 'POST',
         body: { title: title.trim(), format },
       })
+      // Мастер: сразу собрать лист по шаблону, чтобы новичок увидел готовое меню, а не пустой холст.
+      if (source === 'catalog') {
+        await api(`/menu-layouts/${res.layout.id}/seed-from-catalog`, { method: 'POST', body: { template } })
+      }
       setCreating(false)
       nav(`/menu-layouts/${res.layout.id}`)
     } catch (e) {
@@ -246,6 +256,47 @@ export default function MenuLayouts() {
                 ))}
               </div>
             </div>
+            <div className="mt-4">
+              <span className="mb-2 block text-[13px] font-semibold text-ink-secondary">С чего начать</span>
+              <div className="flex gap-1 rounded-lg bg-surface-2 p-1">
+                {(
+                  [
+                    ['catalog', 'Собрать из каталога'],
+                    ['empty', 'Пустой лист'],
+                  ] as const
+                ).map(([k, label]) => (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => setSource(k)}
+                    aria-pressed={source === k}
+                    className={cx(
+                      'min-h-8 flex-1 rounded-md text-[12.5px] font-semibold',
+                      source === k ? 'bg-white text-brand shadow-sm' : 'text-ink-secondary',
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {source === 'catalog' && (
+              <div className="mt-3">
+                <Field label="Шаблон">
+                  <Select value={template} onChange={(e) => setTemplate(e.target.value)}>
+                    {(templates.data?.templates ?? []).map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} · {t.options.columns} кол.
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <p className="mt-1 text-[11px] text-ink-tertiary">
+                  {templates.data?.templates.find((t) => t.id === template)?.goal ??
+                    'Категории каталога станут секциями, позиции встанут по шаблону.'}
+                </p>
+              </div>
+            )}
             <div className="mt-5 flex justify-end gap-2">
               <Button variant="secondary" onClick={() => setCreating(false)} disabled={busy}>
                 Отмена

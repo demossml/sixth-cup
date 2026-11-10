@@ -30,6 +30,7 @@ import {
 } from './menuLayoutDoc'
 import { loadCatalogProducts } from './menuLayoutDoc'
 import { flowSections, relayoutDoc } from './menuLayoutFlow'
+import { MENU_TEMPLATES, findTemplate } from './menuTemplates'
 import { renderLayoutPdf } from './menuLayoutPdf'
 
 type Row = {
@@ -404,6 +405,8 @@ export const adminMenuLayouts = new Hono<Env>()
    * Лёгкий каталог для пикера: только то, что нужно макету, с готовыми объёмами и ценами.
    * Заменяет `/products` + `/categories` (там N+1 по объёмам и лишние поля).
    */
+  .get('/menu-layouts/templates', (c) => c.json({ ok: true, templates: MENU_TEMPLATES }))
+
   .get('/menu-layouts/catalog', (c) => {
     const rows = db
       .prepare(
@@ -555,6 +558,7 @@ export const adminMenuLayouts = new Hono<Env>()
       z
         .object({
           columns: z.union([z.literal(1), z.literal(2)]).optional(),
+          template: z.string().max(40).optional(),
           baseRev: z.number().int().min(0).optional(),
         })
         .optional(),
@@ -564,7 +568,7 @@ export const adminMenuLayouts = new Hono<Env>()
       const id = Number(c.req.param('id'))
       const row = rowById(id)
       if (!row) throw bad('Макет не найден', 404)
-      const body = (c.req.valid('json') ?? {}) as { columns?: 1 | 2; baseRev?: number }
+      const body = (c.req.valid('json') ?? {}) as { columns?: 1 | 2; template?: string; baseRev?: number }
       const currentRev = Number(row.rev) || 1
       if (body.baseRev != null && body.baseRev !== currentRev) {
         return c.json({ ok: false, error: 'rev_conflict', rev: currentRev, layout: layoutView(row) }, 409)
@@ -572,7 +576,8 @@ export const adminMenuLayouts = new Hono<Env>()
       const doc = migrateDocToCanvas(normalizeDoc(jsonParse<unknown>(row.doc_json, emptyDoc())))
       const hasSections = doc.pages.some((p) => (p.sections?.length ?? 0) > 0)
       if (!hasSections) throw bad('В макете нет секций — сначала соберите его из каталога', 400)
-      const { doc: next, dropped } = relayoutDoc(doc, { columns: body.columns })
+      const template = findTemplate(body.template)
+      const { doc: next, dropped } = relayoutDoc(doc, { ...(template?.options ?? {}), columns: body.columns ?? template?.options.columns })
       db.prepare('UPDATE menu_layouts SET doc_json=?, updated_at=?, rev=rev+1 WHERE id=?').run(
         JSON.stringify(next),
         Date.now(),
@@ -638,6 +643,7 @@ export const adminMenuLayouts = new Hono<Env>()
         .object({
           pageId: z.string().max(64).optional(),
           replace: z.boolean().optional(),
+          template: z.string().max(40).optional(),
           categoryIds: z.array(z.number().int().positive()).max(60).optional(),
         })
         .optional(),
@@ -647,7 +653,13 @@ export const adminMenuLayouts = new Hono<Env>()
       const id = Number(c.req.param('id'))
       const row = rowById(id)
       if (!row) throw bad('Макет не найден', 404)
-      const body = (c.req.valid('json') ?? {}) as { pageId?: string; replace?: boolean; categoryIds?: number[] }
+      const body = (c.req.valid('json') ?? {}) as {
+        pageId?: string
+        replace?: boolean
+        template?: string
+        categoryIds?: number[]
+      }
+      const template = findTemplate(body.template)
       const wanted = body.categoryIds?.length ? new Set(body.categoryIds) : null
 
       const categories = db
@@ -726,11 +738,17 @@ export const adminMenuLayouts = new Hono<Env>()
       }
 
       const pinned = keep.map((b) => ({ ...b, pinned: true }))
-      const flowed = flowSections({ sections, pinned })
+      const flowed = flowSections({ sections, pinned, options: template?.options })
       // Секции живут рядом с блоками первой страницы: по ним кнопка «Пересобрать лист» и этап 3.
-      const pages = flowed.pages.map((p, i) => (i === 0 ? { ...p, sections } : p))
+      const pages = flowed.pages.map((p, i) => (i === 0 ? { ...p, sections, ...(template ? { template: template.id } : {}) } : p))
       const nextDoc: MenuDoc = { schemaVersion: 2, pages }
-      db.prepare('UPDATE menu_layouts SET doc_json=?, updated_at=? WHERE id=?').run(JSON.stringify(nextDoc), Date.now(), id)
+      const themeJson = template ? JSON.stringify(normalizeTheme({ preset: template.theme })) : null
+      db.prepare('UPDATE menu_layouts SET doc_json=?, theme_json=COALESCE(?, theme_json), updated_at=?, rev=rev+1 WHERE id=?').run(
+        JSON.stringify(nextDoc),
+        themeJson,
+        Date.now(),
+        id,
+      )
       c.set('audit', {
         entity: 'menu-layout',
         entityId: String(id),

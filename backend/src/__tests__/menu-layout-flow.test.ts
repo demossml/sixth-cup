@@ -157,3 +157,41 @@ describe('seed создаёт секции, /layout пересобирает л�
     expect(res.status).toBe(400)
   })
 })
+
+describe('этап 3.4: шаблоны листа', () => {
+  it('GET /menu-layouts/templates отдаёт 6 шаблонов с правилами раскладки', async () => {
+    const { app } = await import('../app')
+    const H = { 'X-Admin-Token': 'test-admin', 'content-type': 'application/json' }
+    const res = await app.request('/api/admin/menu-layouts/templates', { headers: H })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { templates: { id: string; name: string; options: { columns: number } }[] }
+    expect(body.templates).toHaveLength(6)
+    expect(body.templates.some((t) => t.id === 'one-column-large' && t.options.columns === 1)).toBe(true)
+    expect(body.templates.some((t) => t.id === 'screen-16-9')).toBe(true)
+  })
+
+  it('seed с шаблоном меняет раскладку и ставит тему шаблона', async () => {
+    const { app } = await import('../app')
+    const { db } = await import('../db')
+    const H = { 'X-Admin-Token': 'test-admin', 'content-type': 'application/json' }
+    const cat = Number(
+      db.prepare('INSERT INTO categories(name, sort_order, available, created_at, updated_at) VALUES(?,?,1,?,?)').run('Шаблон', 0, Date.now(), Date.now()).lastInsertRowid,
+    )
+    for (let i = 0; i < 6; i++) {
+      db.prepare('INSERT INTO products(name, price, icon, available, category_id) VALUES(?,?,?,1,?)').run(`Блюдо ${i}`, 100, 'Coffee', cat)
+    }
+    const created = await app.request('/api/admin/menu-layouts', { method: 'POST', headers: H, body: JSON.stringify({ title: 'Шаблонный' }) })
+    const { layout } = (await created.json()) as { layout: { id: number } }
+    const res = await app.request(`/api/admin/menu-layouts/${layout.id}/seed-from-catalog`, {
+      method: 'POST',
+      headers: H,
+      body: JSON.stringify({ categoryIds: [cat], template: 'one-column-large' }),
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { layout: { theme: { preset: string }; doc: { pages: { template?: string; blocks: { type: string; xPct: number }[] }[] } } }
+    expect(body.layout.doc.pages[0]!.template).toBe('one-column-large')
+    // одна колонка — все позиции начинаются с x = 0
+    const products = body.layout.doc.pages[0]!.blocks.filter((b) => b.type === 'product')
+    expect(products.every((b) => b.xPct === 0)).toBe(true)
+  })
+})
