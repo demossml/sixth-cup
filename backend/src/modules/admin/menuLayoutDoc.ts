@@ -706,8 +706,9 @@ export type RenderBlock = MenuBlock & {
   warnings: string[]
 }
 
-export type ResolvedPage = { id: string; blocks: RenderBlock[] }
-export type ResolvedDoc = { pages: ResolvedPage[] }
+export type ResolvedPage = { id: string; blocks: RenderBlock[]; sections?: MenuSection[]; template?: string | null }
+/** Резолв каталога + секции v2: клиент редактирует и то, и другое. */
+export type ResolvedDoc = { pages: ResolvedPage[]; schemaVersion?: number }
 
 /**
  * Подставляет данные каталога в блоки.

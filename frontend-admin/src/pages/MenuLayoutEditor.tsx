@@ -20,12 +20,19 @@ import {
   bringToFront,
   byZ,
   clampRect,
+  addItemToSection,
   collapseDuplicateProducts,
   docPayload,
   docSnapshot,
   driftBanner,
+  docSections,
   duplicateProducts,
   effectiveType,
+  itemCount,
+  moveItem,
+  removeItem,
+  renameSection,
+  toggleItemHidden,
   formatFull,
   formatLabel,
   formatSize,
@@ -79,7 +86,7 @@ type ServerLayout = {
 
 type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error'
 type MobileTab = 'preview' | 'content' | 'design' | 'export'
-type LeftTab = 'catalog' | 'layers'
+type LeftTab = 'catalog' | 'places' | 'layers'
 type RightTab = 'design' | 'block'
 
 const AUTOSAVE_MS = 800
@@ -477,6 +484,13 @@ export default function MenuLayoutEditor() {
   }, [updatePage])
 
   // ── действия с блоками ────────────────────────────────────────
+  /** Из каталога в выбранную секцию «Мест» (если секции есть и включён v2). */
+  const addToPlaces = (p: CatalogProduct, sectionId: string | null) => {
+    if (!doc) return
+    void applySections(addItemToSection(doc, sectionId, p))
+    toast.push(`«${p.name}» добавлен в «Места»`)
+  }
+
   const addProduct = (p: CatalogProduct) => {
     // Один productId — один блок: повторное добавление не создаёт дубль, а подсвечивает существующий.
     const existing = doc?.pages.flatMap((pg) => pg.blocks).find((b) => b.type === 'product' && b.productId === p.id && !b.hidden)
@@ -764,7 +778,7 @@ export default function MenuLayoutEditor() {
             <li key={p.id}>
               <button
                 type="button"
-                onClick={() => addProduct(p)}
+                onClick={() => (MENU_LAYOUT_V2 && sections.length > 0 ? addToPlaces(p, sections[0]!.section.id) : addProduct(p))}
                 className="flex w-full items-center gap-2 rounded-lg border border-transparent px-1.5 py-1.5 text-left hover:border-line hover:bg-surface-2"
               >
                 {p.imageUrl ? (
@@ -896,6 +910,130 @@ export default function MenuLayoutEditor() {
             Убрать дубли
           </button>
         </div>
+      )}
+    </div>
+  )
+
+  // Осторожно: это после ранних return'ов, поэтому без useMemo — только вычисление.
+  const sections = doc ? docSections(doc) : []
+  const catalogName = (productId: number | null) =>
+    products.find((p) => p.id === productId)?.name ?? (productId ? `Товар #${productId}` : 'Без товара')
+
+  /** Любая правка «Мест» сразу пересобирает блоки на сервере — иначе лист разъедется с секциями. */
+  const applySections = async (next: MenuDoc) => {
+    mutate(next)
+    try {
+      // Сначала сохраняем секции, потом просим движок разложить их: /layout читает документ из БД.
+      const body: SaveBody = { title: title.trim() || 'Без названия', theme, doc: docPayload(next) }
+      const saved = await api<{ layout: ServerLayout; savedAt: number }>(`/menu-layouts/${numericId}`, {
+        method: 'PUT',
+        body: { ...body, baseRev: revRef.current },
+      })
+      revRef.current = saved.layout.rev
+      const res = await api<{ layout: ServerLayout; dropped: number }>(`/menu-layouts/${numericId}/layout`, {
+        method: 'POST',
+        body: { baseRev: revRef.current },
+      })
+      revRef.current = res.layout.rev
+      setDoc(docSnapshot(res.layout.doc))
+      setHistory(emptyHistory())
+      lastSaved.current = JSON.stringify({ title: res.layout.title, theme: res.layout.theme, doc: docSnapshot(res.layout.doc) })
+      setSave('saved')
+      setSavedAt(res.layout.updatedAt)
+      if (res.dropped) toast.push(`Не влезло на лист позиций: ${res.dropped} — уменьшите шрифт или добавьте страницу`, 'bad')
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Не удалось пересобрать лист', 'bad')
+    }
+  }
+
+  /** «Места»: дерево секций и позиций — правим смысл, холст пересобирается сам. */
+  const placesPane = (
+    <div className="min-h-0 flex-1 overflow-y-auto p-2">
+      {sections.length === 0 && (
+        <p className="p-2 text-[13px] text-ink-secondary">
+          Секций пока нет. Нажмите «Собрать лист из каталога» — категории станут секциями, а позиции можно будет
+          двигать списком.
+        </p>
+      )}
+      <ul className="space-y-2">
+        {sections.map(({ section }) => (
+          <li key={section.id} className="rounded-lg border border-line">
+            <div className="flex items-center gap-1 border-b border-line px-2 py-1.5">
+              <input
+                value={section.title}
+                onChange={(e) => void applySections(renameSection(doc!, section.id, e.target.value))}
+                aria-label={`Название секции ${section.title}`}
+                className="min-w-0 flex-1 truncate border-0 bg-transparent text-[13px] font-semibold outline-none focus:underline"
+              />
+              <span className="flex-none text-[11px] text-ink-tertiary">{itemCount(section)}</span>
+            </div>
+            <ul className="space-y-0.5 p-1">
+              {section.items.map((it, idx) => (
+                <li
+                  key={it.id}
+                  className={cx(
+                    'flex items-center gap-1 rounded px-1 py-0.5',
+                    selectedId === `p-${it.id}` ? 'bg-surface-2' : 'hover:bg-surface-2',
+                    it.hidden && 'opacity-50',
+                  )}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setSelectedId(`p-${it.id}`)}
+                    className="min-w-0 flex-1 truncate text-left text-[12.5px]"
+                  >
+                    {it.titleOverride ?? catalogName(it.productId)}
+                    {it.sizes.length > 1 && <span className="ml-1 text-ink-tertiary">· {it.sizes.length} объёма</span>}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void applySections(moveItem(doc!, section.id, it.id, -1))}
+                    disabled={idx === 0}
+                    className="grid h-6 w-6 place-items-center rounded text-ink-tertiary hover:text-brand disabled:opacity-30"
+                    aria-label="Выше"
+                  >
+                    <ArrowUp size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void applySections(moveItem(doc!, section.id, it.id, 1))}
+                    disabled={idx === section.items.length - 1}
+                    className="grid h-6 w-6 place-items-center rounded text-ink-tertiary hover:text-brand disabled:opacity-30"
+                    aria-label="Ниже"
+                  >
+                    <ArrowDown size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void applySections(toggleItemHidden(doc!, section.id, it.id))}
+                    className="grid h-6 w-6 place-items-center rounded text-ink-tertiary hover:text-brand"
+                    aria-label={it.hidden ? 'Вернуть в меню' : 'Убрать из меню'}
+                  >
+                    {it.hidden ? <EyeOff size={13} /> : <Eye size={13} />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void applySections(removeItem(doc!, section.id, it.id))}
+                    className="grid h-6 w-6 place-items-center rounded text-ink-tertiary hover:text-bad"
+                    aria-label="Удалить позицию"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </li>
+              ))}
+              {section.items.length === 0 && <li className="px-1 py-1 text-[12px] text-ink-tertiary">Пусто</li>}
+            </ul>
+          </li>
+        ))}
+      </ul>
+      {sections.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setLeftTab('catalog')}
+          className="mt-2 w-full rounded-lg border border-dashed border-line px-2 py-1.5 text-[12px] font-semibold text-brand hover:border-brand"
+        >
+          Добавить позицию из каталога
+        </button>
       )}
     </div>
   )
@@ -1398,6 +1536,7 @@ export default function MenuLayoutEditor() {
             {(
               [
                 ['catalog', 'Каталог'],
+                ...((data?.layout.sections ?? 0) > 0 ? ([['places', 'Места']] as [LeftTab, string][]) : []),
                 ['layers', 'Слои'],
               ] as [LeftTab, string][]
             ).map(([k, label]) => (
@@ -1415,7 +1554,7 @@ export default function MenuLayoutEditor() {
               </button>
             ))}
           </div>
-          {leftTab === 'catalog' ? catalogPane : layersPane}
+          {leftTab === 'catalog' ? catalogPane : leftTab === 'places' ? placesPane : layersPane}
         </aside>
 
         <section className="flex flex-col gap-2">
@@ -1604,6 +1743,7 @@ export default function MenuLayoutEditor() {
               {(
                 [
                   ['catalog', 'Каталог'],
+                  ...((data?.layout.sections ?? 0) > 0 ? ([['places', 'Места']] as [LeftTab, string][]) : []),
                   ['layers', 'Слои'],
                 ] as [LeftTab, string][]
               ).map(([k, label]) => (
@@ -1618,7 +1758,9 @@ export default function MenuLayoutEditor() {
                 </button>
               ))}
             </div>
-            <div className="max-h-[60vh] overflow-y-auto">{leftTab === 'catalog' ? catalogPane : layersPane}</div>
+            <div className="max-h-[60vh] overflow-y-auto">
+              {leftTab === 'catalog' ? catalogPane : leftTab === 'places' ? placesPane : layersPane}
+            </div>
           </div>
         )}
 

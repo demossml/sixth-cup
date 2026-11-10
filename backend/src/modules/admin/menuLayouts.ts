@@ -205,7 +205,16 @@ function layoutView(row: Row): LayoutView {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     rev: Number(row.rev) || 1,
-    doc: resolved,
+    // Клиент редактирует блоки и секции вместе: секции отдаём как есть, они не резолвятся.
+    doc: {
+      ...resolved,
+      schemaVersion: doc.schemaVersion ?? 1,
+      pages: resolved.pages.map((p, i) => ({
+        ...p,
+        ...(doc.pages[i]?.sections ? { sections: doc.pages[i]!.sections } : {}),
+        ...(doc.pages[i]?.template ? { template: doc.pages[i]!.template } : {}),
+      })),
+    },
     stats: docStats(resolved),
     drift,
     blockers: collectBlockers(resolved),

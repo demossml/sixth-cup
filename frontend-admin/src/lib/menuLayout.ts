@@ -55,8 +55,37 @@ export type MenuBlock = {
   warnings?: string[]
 }
 
-export type MenuPage = { id: string; blocks: MenuBlock[] }
-export type MenuDoc = { pages: MenuPage[] }
+export type ItemSize = {
+  label: string
+  source: 'catalog' | 'manual'
+  productId: number | null
+  volumeItemId: number | null
+  priceRubOverride: number | null
+}
+
+export type MenuItem = {
+  id: string
+  productId: number | null
+  groupId: number | null
+  titleOverride: string | null
+  description: string | null
+  badge: string | null
+  showPhoto: boolean
+  photoUrlOverride: string | null
+  sizes: ItemSize[]
+  hidden: boolean
+}
+
+export type MenuSection = {
+  id: string
+  title: string
+  categoryId: number | null
+  items: MenuItem[]
+  style: { showPhotos: boolean }
+}
+
+export type MenuPage = { id: string; blocks: MenuBlock[]; sections?: MenuSection[]; template?: string | null }
+export type MenuDoc = { pages: MenuPage[]; schemaVersion?: number }
 
 export type MenuTheme = {
   preset: 'classic' | 'dark' | 'season'
@@ -283,6 +312,98 @@ export function toggleHidden(blocks: MenuBlock[], id: string): MenuBlock[] {
 export const isUploadsUrl = (url: string | null | undefined): boolean =>
   !!url && /^\/uploads\/[A-Za-z0-9._-]+$/.test(url.split('?')[0]!)
 
+/* ───────────── секции «Места» (schemaVersion 2) ───────────── */
+
+export const docSections = (doc: MenuDoc): { section: MenuSection; pageIdx: number; index: number }[] =>
+  doc.pages.flatMap((p, pageIdx) => (p.sections ?? []).map((section, index) => ({ section, pageIdx, index })))
+
+export const itemCount = (section: MenuSection): number => section.items.filter((it) => !it.hidden).length
+
+/** Переставить позицию внутри секции (кнопки ↑↓; -1 вверх, +1 вниз). */
+export function moveItem(doc: MenuDoc, sectionId: string, itemId: string, dir: -1 | 1): MenuDoc {
+  return mapSections(doc, (s) => {
+    if (s.id !== sectionId) return s
+    const i = s.items.findIndex((it) => it.id === itemId)
+    const j = i + dir
+    if (i < 0 || j < 0 || j >= s.items.length) return s
+    const items = [...s.items]
+    ;[items[i], items[j]] = [items[j]!, items[i]!]
+    return { ...s, items }
+  })
+}
+
+export const toggleItemHidden = (doc: MenuDoc, sectionId: string, itemId: string): MenuDoc =>
+  mapSections(doc, (s) =>
+    s.id === sectionId ? { ...s, items: s.items.map((it) => (it.id === itemId ? { ...it, hidden: !it.hidden } : it)) } : s,
+  )
+
+export const removeItem = (doc: MenuDoc, sectionId: string, itemId: string): MenuDoc =>
+  mapSections(doc, (s) => (s.id === sectionId ? { ...s, items: s.items.filter((it) => it.id !== itemId) } : s))
+
+export const renameSection = (doc: MenuDoc, sectionId: string, title: string): MenuDoc =>
+  mapSections(doc, (s) => (s.id === sectionId ? { ...s, title: title.trim() || s.title } : s))
+
+function mapSections(doc: MenuDoc, fn: (s: MenuSection) => MenuSection): MenuDoc {
+  return {
+    ...doc,
+    pages: doc.pages.map((p) => (p.sections ? { ...p, sections: p.sections.map(fn) } : p)),
+  }
+}
+
+/** Позиция из каталога: объёмы идут из каталога, а не копируются руками. */
+export function itemFromCatalog(product: CatalogProduct): MenuItem {
+  const prices = product.prices ?? []
+  return {
+    id: `it-${product.id}-${Math.random().toString(36).slice(2, 7)}`,
+    productId: product.id,
+    groupId: null,
+    titleOverride: null,
+    description: null,
+    badge: null,
+    showPhoto: !!product.imageUrl,
+    photoUrlOverride: null,
+    sizes:
+      prices.length > 1
+        ? prices.map((sz) => ({
+            label: sz.label,
+            source: 'catalog' as const,
+            productId: product.id,
+            volumeItemId: null,
+            priceRubOverride: null,
+          }))
+        : [],
+    hidden: false,
+  }
+}
+
+/** Добавить позицию в секцию (или создать секцию, если её нет). */
+export function addItemToSection(doc: MenuDoc, sectionId: string | null, product: CatalogProduct): MenuDoc {
+  const item = itemFromCatalog(product)
+  if (!sectionId) {
+    return {
+      ...doc,
+      pages: doc.pages.map((p, i) =>
+        i === 0
+          ? {
+              ...p,
+              sections: [
+                ...(p.sections ?? []),
+                {
+                  id: `sec-${product.categoryId ?? 'new'}-${Math.random().toString(36).slice(2, 6)}`,
+                  title: product.categoryName ?? 'Новая секция',
+                  categoryId: product.categoryId,
+                  style: { showPhotos: true },
+                  items: [item],
+                },
+              ],
+            }
+          : p,
+      ),
+    }
+  }
+  return mapSections(doc, (s) => (s.id === sectionId ? { ...s, items: [...s.items, item] } : s))
+}
+
 /* ───────────── один productId = один блок ───────────── */
 
 /** Все позиции каталога, уже стоящие на листе (скрытые блоки не считаются). */
@@ -366,7 +487,14 @@ export const blockPayload = (b: MenuBlock): MenuBlock => ({
 const round2 = (v: number): number => Math.round(v * 100) / 100
 
 export const docPayload = (doc: MenuDoc): MenuDoc => ({
-  pages: doc.pages.map((p) => ({ id: p.id, blocks: p.blocks.map(blockPayload) })),
+  // Секции — источник правды для «Мест»: без них сохранение с холста стирало бы раскладку.
+  ...(doc.schemaVersion ? { schemaVersion: doc.schemaVersion } : {}),
+  pages: doc.pages.map((p) => ({
+    id: p.id,
+    blocks: p.blocks.map(blockPayload),
+    ...(p.sections ? { sections: p.sections } : {}),
+    ...(p.template ? { template: p.template } : {}),
+  })),
 })
 
 /** Копия документа для undo. */
