@@ -7,6 +7,7 @@ import {
   moveItem,
   removeItem,
   renameSection,
+  snapRect,
   toggleItemHidden,
   type MenuDoc,
   type MenuSection,
@@ -90,5 +91,26 @@ describe('секции «Места»', () => {
     const list = docSections(d)
     expect(list).toHaveLength(1)
     expect(itemCount(list[0]!.section)).toBe(1)
+  })
+})
+
+describe('прилипание (3.5)', () => {
+  it('притягивает к левому полю и к краю соседнего блока', () => {
+    const other = { xPct: 40, yPct: 20, wPct: 40, hPct: 10 }
+    const near = snapRect({ xPct: 0.6, yPct: 20.5, wPct: 40, hPct: 10 }, [other])
+    expect(near.rect.xPct).toBe(0)
+    expect(near.rect.yPct).toBeCloseTo(20, 5)
+    expect(near.snappedX).toBe(true)
+    expect(near.snappedY).toBe(true)
+
+    const toRight = snapRect({ xPct: 80.7, yPct: 60, wPct: 19, hPct: 8 }, [other])
+    expect(toRight.rect.xPct).toBe(81) // 100 - wPct: правый край листа
+  })
+
+  it('далеко от линий — не двигает', () => {
+    const res = snapRect({ xPct: 33, yPct: 44, wPct: 20, hPct: 8 }, [])
+    expect(res.rect.xPct).toBe(33)
+    expect(res.snappedX).toBe(false)
+    expect(res.snappedY).toBe(false)
   })
 })

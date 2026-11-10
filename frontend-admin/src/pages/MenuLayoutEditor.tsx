@@ -43,6 +43,7 @@ import {
   nextFreeRect,
   productBlock,
   resizeRect,
+  snapRect,
   resolvePreview,
   sendToBack,
   toggleHidden,
@@ -467,10 +468,15 @@ export default function MenuLayoutEditor() {
       if (!d) return
       const dxPct = ((e.clientX - d.startX) / d.w) * 100
       const dyPct = ((e.clientY - d.startY) / d.h) * 100
-      const next =
+      let next: Rect =
         d.mode === 'move'
           ? moveRect(d.rect, e.shiftKey && Math.abs(dxPct) < Math.abs(dyPct) ? 0 : dxPct, e.shiftKey && Math.abs(dyPct) <= Math.abs(dxPct) ? 0 : dyPct)
           : resizeRect(d.rect, d.handle, dxPct, dyPct)
+      // Прилипание к полям и соседям: Alt отключает, чтобы можно было поставить «как хочу».
+      if (d.mode === 'move' && !e.altKey) {
+        const others = (page?.blocks ?? []).filter((b) => b.id !== d.id && !b.hidden)
+        next = snapRect(next, others, 0.8).rect
+      }
       updatePage((blocks) => blocks.map((b) => (b.id === d.id ? { ...b, ...next } : b)), { history: !d.pushed })
       d.pushed = true
     }
@@ -1523,7 +1529,8 @@ export default function MenuLayoutEditor() {
 
       <p className="mb-3 flex items-start gap-2 rounded-xl border border-line bg-surface-2 px-3 py-2 text-[12.5px] leading-4 text-ink-secondary">
         <Layers size={14} className="mt-0.5 flex-none text-brand" aria-hidden />
-        Перетащите позицию на листе, тяните угол — блок меняет размер. Товары каталога при этом не удаляются и не меняются.
+        Перетащите позицию на листе, тяните угол — блок меняет размер; края прилипают к полям и соседям
+        (Alt — без прилипания). Товары каталога при этом не удаляются и не меняются.
         На телефоне сначала коснитесь блока, потом двигайте.
       </p>
 

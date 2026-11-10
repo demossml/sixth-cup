@@ -312,6 +312,34 @@ export function toggleHidden(blocks: MenuBlock[], id: string): MenuBlock[] {
 export const isUploadsUrl = (url: string | null | undefined): boolean =>
   !!url && /^\/uploads\/[A-Za-z0-9._-]+$/.test(url.split('?')[0]!)
 
+/** Прилипание блоков друг к другу и к полям листа (этап 3.5). */
+export function snapRect(r: Rect, others: Rect[], threshold = 1): { rect: Rect; snappedX: boolean; snappedY: boolean } {
+  const near = (value: number, target: number) => Math.abs(value - target) <= threshold
+  const xs = [0, 100 - r.wPct, (100 - r.wPct) / 2]
+  const ys = [0, 100 - r.hPct, (100 - r.hPct) / 2]
+  for (const o of others) {
+    xs.push(o.xPct, o.xPct + o.wPct - r.wPct, o.xPct + o.wPct, o.xPct - r.wPct)
+    ys.push(o.yPct, o.yPct + o.hPct - r.hPct, o.yPct + o.hPct, o.yPct - r.hPct)
+  }
+
+  let x = r.xPct
+  let y = r.yPct
+  let snappedX = false
+  let snappedY = false
+  // ближайшая цель выигрывает: иначе блок «дёргается» между линиями
+  const bestX = xs.filter((t) => near(r.xPct, t)).sort((a, b) => Math.abs(r.xPct - a) - Math.abs(r.xPct - b))[0]
+  const bestY = ys.filter((t) => near(r.yPct, t)).sort((a, b) => Math.abs(r.yPct - a) - Math.abs(r.yPct - b))[0]
+  if (bestX != null) {
+    x = bestX
+    snappedX = true
+  }
+  if (bestY != null) {
+    y = bestY
+    snappedY = true
+  }
+  return { rect: clampRect({ ...r, xPct: x, yPct: y }), snappedX, snappedY }
+}
+
 /* ───────────── секции «Места» (schemaVersion 2) ───────────── */
 
 export const docSections = (doc: MenuDoc): { section: MenuSection; pageIdx: number; index: number }[] =>
