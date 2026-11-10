@@ -45,6 +45,8 @@ export type MenuBlock = {
   displayPrice?: string | null
   displayCategory?: string | null
   displayImageUrl?: string | null
+  /** Сервер не нашёл файл картинки на диске. */
+  imageMissing?: boolean
   catalogPriceRub?: number | null
   warnings?: string[]
 }
@@ -270,6 +272,10 @@ export function toggleHidden(blocks: MenuBlock[], id: string): MenuBlock[] {
   return blocks.map((b) => (b.id === id ? { ...b, hidden: !b.hidden } : b))
 }
 
+/** Картинки макета живут только в uploads админки — внешние ссылки не печатаются. */
+export const isUploadsUrl = (url: string | null | undefined): boolean =>
+  !!url && /^\/uploads\/[A-Za-z0-9._-]+$/.test(url.split('?')[0]!)
+
 /* ───────────── один productId = один блок ───────────── */
 
 /** Все позиции каталога, уже стоящие на листе (скрытые блоки не считаются). */
@@ -421,7 +427,9 @@ export function resolvePreview(doc: MenuDoc, products: CatalogProduct[], mode: '
           return { ...b, displayCategory: name, warnings: name ? [] : ['категория не найдена'] }
         }
         if (effectiveType(b) !== 'product') {
-          const warnings = effectiveType(b) === 'image' && !b.url && !b.displayImageUrl ? ['нет картинки'] : []
+          const warnings: string[] = []
+          if (effectiveType(b) === 'image' && !b.url && !b.displayImageUrl) warnings.push('нет картинки')
+          else if (b.imageMissing) warnings.push('файл картинки не найден')
           return { ...b, warnings }
         }
 
@@ -438,6 +446,7 @@ export function resolvePreview(doc: MenuDoc, products: CatalogProduct[], mode: '
         if (live && !live.available) warnings.push('не в продаже (выключена в каталоге)')
         if (!displayPrice) warnings.push('нет цены')
         if (b.showPhoto && !displayImageUrl) warnings.push('нет фото')
+        else if (b.imageMissing) warnings.push('файл картинки не найден')
 
         return {
           ...b,

@@ -239,3 +239,127 @@ describe('этап 1.1: превью = PDF', () => {
     expect(xs.some((x) => Math.abs(x - (box.x + box.w * 0.1)) < 1.5)).toBe(true)
   })
 })
+
+describe('этап 1.5: картинки только из uploads', () => {
+  const mkLayout = async () => {
+    const created = await app.request('/api/admin/menu-layouts', {
+      method: 'POST',
+      headers: H,
+      body: JSON.stringify({ title: 'Фото' }),
+    })
+    const { layout } = (await created.json()) as { layout: { id: number } }
+    return layout.id
+  }
+
+  it('внешняя ссылка не проходит валидацию', async () => {
+    const id = await mkLayout()
+    const res = await app.request(`/api/admin/menu-layouts/${id}`, {
+      method: 'PUT',
+      headers: H,
+      body: JSON.stringify({
+        doc: {
+          pages: [
+            {
+              id: 'page-1',
+              blocks: [{ id: 'img', type: 'image', url: 'https://evil.example/x.png', xPct: 0, yPct: 0, wPct: 20, hPct: 20 }],
+            },
+          ],
+        },
+      }),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('старый макет с внешним URL чистится, а пропавший файл даёт блокер image_unreadable', async () => {
+    const id = await mkLayout()
+    const now = Date.now()
+    db.prepare(
+      `UPDATE menu_layouts SET doc_json=?, updated_at=? WHERE id=?`,
+    ).run(
+      JSON.stringify({
+        pages: [
+          {
+            id: 'page-1',
+            blocks: [
+              { id: 'ext', type: 'image', url: 'https://evil.example/x.png', xPct: 0, yPct: 0, wPct: 20, hPct: 20, zIndex: 0, sortOrder: 0 },
+              { id: 'gone', type: 'image', url: '/uploads/missing-file.png', xPct: 30, yPct: 0, wPct: 20, hPct: 20, zIndex: 1, sortOrder: 1 },
+            ],
+          },
+        ],
+      }),
+      now,
+      id,
+    )
+    const got = await app.request(`/api/admin/menu-layouts/${id}`, { headers: H })
+    const body = (await got.json()) as {
+      layout: {
+        doc: { pages: { blocks: { id: string; url: string | null; imageMissing?: boolean }[] }[] }
+        blockers: { blockId: string; code: string }[]
+      }
+    }
+    const blocks = body.layout.doc.pages[0]!.blocks
+    // внешняя ссылка не сохраняется в документе
+    expect(blocks.find((b) => b.id === 'ext')!.url).toBeNull()
+    // а отсутствующий файл — блокер печати
+    expect(blocks.find((b) => b.id === 'gone')!.imageMissing).toBe(true)
+    expect(body.layout.blockers.some((b) => b.blockId === 'gone' && b.code === 'image_unreadable')).toBe(true)
+  })
+})
+
+describe('этап 1.4: версии и конфликты', () => {
+  const mkLayout = async () => {
+    const created = await app.request('/api/admin/menu-layouts', {
+      method: 'POST',
+      headers: H,
+      body: JSON.stringify({ title: 'Версии' }),
+    })
+    const { layout } = (await created.json()) as { layout: { id: number; rev: number } }
+    return layout
+  }
+
+  it('rev растёт на каждом сохранении', async () => {
+    const layout = await mkLayout()
+    expect(layout.rev).toBe(1)
+    const put = await app.request(`/api/admin/menu-layouts/${layout.id}`, {
+      method: 'PUT',
+      headers: H,
+      body: JSON.stringify({ title: 'Версии 2', baseRev: 1 }),
+    })
+    expect(put.status).toBe(200)
+    const body = (await put.json()) as { layout: { rev: number } }
+    expect(body.layout.rev).toBe(2)
+  })
+
+  it('устаревший baseRev даёт 409 rev_conflict с актуальным документом', async () => {
+    const layout = await mkLayout()
+    await app.request(`/api/admin/menu-layouts/${layout.id}`, {
+      method: 'PUT',
+      headers: H,
+      body: JSON.stringify({ title: 'Правка с десктопа', baseRev: 1 }),
+    })
+    const stale = await app.request(`/api/admin/menu-layouts/${layout.id}`, {
+      method: 'PUT',
+      headers: H,
+      body: JSON.stringify({ title: 'Правка с телефона', baseRev: 1 }),
+    })
+    expect(stale.status).toBe(409)
+    const body = (await stale.json()) as { error: string; rev: number; layout: { title: string; rev: number } }
+    expect(body.error).toBe('rev_conflict')
+    expect(body.rev).toBe(2)
+    // клиенту возвращается актуальная версия, чтобы он мог показать разницу
+    expect(body.layout.title).toBe('Правка с десктопа')
+    expect(body.layout.rev).toBe(2)
+  })
+
+  it('без baseRev сохранение разрешено (старые клиенты) и тоже поднимает rev', async () => {
+    const layout = await mkLayout()
+    const res = await app.request(`/api/admin/menu-layouts/${layout.id}`, {
+      method: 'PUT',
+      headers: H,
+      body: JSON.stringify({ title: 'Без версии' }),
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { layout: { rev: number } }
+    expect(body.layout.rev).toBe(2)
+  })
+})

@@ -39,6 +39,7 @@ type Row = {
   frozen_at: number | null
   created_at: number
   updated_at: number
+  rev: number
 }
 
 /** Аудит пишется middleware на изменяющие вызовы: тип нужен, чтобы `c.set('audit', …)` прошёл проверку. */
@@ -158,6 +159,8 @@ type LayoutView = {
   frozenAt: number | null
   createdAt: number
   updatedAt: number
+  /** Версия документа: клиент присылает baseRev, чтобы не затирать чужие правки. */
+  rev: number
   doc: ReturnType<typeof resolveDoc>
   stats: { pages: number; products: number; warnings: number }
   drift: { blockId: string; pageId: string; title: string; from: number | null; to: number | null }[]
@@ -192,6 +195,7 @@ function layoutView(row: Row): LayoutView {
     frozenAt: row.frozen_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    rev: Number(row.rev) || 1,
     doc: resolved,
     stats: docStats(resolved),
     drift,
@@ -222,6 +226,14 @@ export function snapshotDoc(doc: MenuDoc): { doc: MenuDoc; changed: { blockId: s
   return { doc: { pages }, changed }
 }
 
+/** Картинка блока — только файл из uploads админки: внешние URL не печатаются и тянут IP. */
+const uploadUrlZ = z
+  .string()
+  .max(500)
+  .regex(/^\/uploads\/[A-Za-z0-9._-]+$/, 'Картинка должна быть загружена в админку (/uploads/…)')
+  .nullable()
+  .optional()
+
 const blockZ = z.object({
   id: z.string().min(1).max(64),
   type: z.enum(['product', 'category', 'text', 'image', 'logo', 'divider', 'header', 'hero', 'note', 'photo', 'qr']),
@@ -238,10 +250,10 @@ const blockZ = z.object({
   priceRubOverride: z.number().int().min(0).max(1_000_000).nullable().optional(),
   priceText: z.string().max(40).nullable().optional(),
   showPhoto: z.boolean().optional(),
-  photoUrlOverride: z.string().max(500).nullable().optional(),
+  photoUrlOverride: uploadUrlZ,
   badge: z.string().max(16).nullable().optional(),
   text: z.string().max(400).nullable().optional(),
-  url: z.string().max(500).nullable().optional(),
+  url: uploadUrlZ,
   fit: z.enum(['cover', 'contain']).optional(),
   fontSizePt: z.number().min(5).max(72).optional(),
   align: z.enum(['left', 'center', 'right']).optional(),
@@ -301,6 +313,7 @@ export const adminMenuLayouts = new Hono<Env>()
           drift: v.drift.length,
           blockers: v.blockers.length,
           // Превью-миниатюра в списке рисуется по теме и первым блокам, без второго запроса.
+          rev: v.rev,
           preview: { theme: v.theme, firstPage: v.doc.pages[0]?.blocks.slice(0, 40) ?? [] },
         }
       }),
@@ -339,6 +352,8 @@ export const adminMenuLayouts = new Hono<Env>()
         status: z.enum(['draft', 'ready']).optional(),
         priceMode: z.enum(['live', 'frozen']).optional(),
         format: z.enum(FORMATS).optional(),
+        /** Версия, которую видел клиент. Не совпала — 409 rev_conflict. Без поля — «старый клиент», разрешаем. */
+        baseRev: z.number().int().min(0).optional(),
       }),
     ),
     (c) => {
@@ -348,6 +363,20 @@ export const adminMenuLayouts = new Hono<Env>()
       if (!row) throw bad('Макет не найден', 404)
       const body = c.req.valid('json')
       const now = Date.now()
+      const currentRev = Number(row.rev) || 1
+      // Два окна правят один макет: не даём молча затереть чужое сохранение.
+      if (body.baseRev != null && body.baseRev !== currentRev) {
+        return c.json(
+          {
+            ok: false,
+            error: 'rev_conflict',
+            rev: currentRev,
+            layout: layoutView(row),
+            message: 'Макет уже изменили в другом окне — обновите или перезапишите',
+          },
+          409,
+        )
+      }
 
       let doc = body.doc ? migrateDocToCanvas(normalizeDoc(body.doc)) : undefined
       let priceMode: PriceMode = body.priceMode ?? (row.price_mode === 'frozen' ? 'frozen' : 'live')
@@ -376,7 +405,8 @@ export const adminMenuLayouts = new Hono<Env>()
            doc_json = COALESCE(?, doc_json),
            price_mode = ?,
            frozen_at = ?,
-           updated_at = ?
+           updated_at = ?,
+           rev = rev + 1
          WHERE id = ?`,
       ).run(
         body.title ?? null,

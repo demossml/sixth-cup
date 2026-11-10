@@ -6,7 +6,10 @@
  * Старые макеты, сохранённые потоковой вёрсткой, при чтении детерминированно раскладываются
  * в сетку координат (`migrateDocToCanvas`), поэтому ничего не теряется и не ломается.
  */
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { db } from '../../db'
+import { config } from '../../config'
 
 export type LayoutFormat = 'a4_portrait' | 'a4_landscape' | 'a3_portrait' | 'ratio_1_1' | 'screen_16_9'
 export type PriceMode = 'live' | 'frozen'
@@ -171,6 +174,9 @@ const BLOCK_TYPES: readonly BlockType[] = [
   'product', 'category', 'text', 'image', 'logo', 'divider', 'header', 'hero', 'note', 'photo', 'qr',
 ]
 
+/** Внешние ссылки в макете не храним: только файлы из uploads админки. */
+const sanitizeUploads = (url: string | null): string | null => (url && isUploadsUrl(url) ? url : null)
+
 function normalizeBlock(raw: unknown, index: number): MenuBlock | null {
   const b = (raw && typeof raw === 'object' ? raw : null) as Record<string, unknown> | null
   if (!b) return null
@@ -198,10 +204,10 @@ function normalizeBlock(raw: unknown, index: number): MenuBlock | null {
     priceRubOverride: intOrNull(b.priceRubOverride),
     priceText: str(b.priceText, 40),
     showPhoto: b.showPhoto === true,
-    photoUrlOverride: str(b.photoUrlOverride, 500),
+    photoUrlOverride: sanitizeUploads(str(b.photoUrlOverride, 500)),
     badge: str(b.badge, 16),
     text: str(b.text, 400),
-    url: str(b.url, 500),
+    url: sanitizeUploads(str(b.url, 500)),
     fit: oneOf(b.fit, ['cover', 'contain'] as const, 'cover'),
     fontSizePt: num(b.fontSizePt, 5, 72, 10),
     align: oneOf(b.align, ['left', 'center', 'right'] as const, 'left'),
@@ -420,6 +426,21 @@ export type CatalogProduct = {
   sizeUnit: string | null
 }
 
+const UPLOADS_URL = /^\/uploads\/[A-Za-z0-9._-]+$/
+
+/** Картинка макета живёт только в uploads админки: внешние URL не тянем (IP-утечка и пустой PDF). */
+export function isUploadsUrl(url: string | null | undefined): boolean {
+  return !!url && UPLOADS_URL.test(url.split('?')[0]!)
+}
+
+/** Файл по `/uploads/...` реально существует на диске. */
+export function uploadsFileExists(url: string | null | undefined): boolean {
+  if (!isUploadsUrl(url)) return false
+  const file = url!.split('?')[0]!.slice('/uploads/'.length)
+  if (!/^[A-Za-z0-9._-]+$/.test(file)) return false
+  return existsSync(join(config.uploadsDir, file))
+}
+
 export function loadCatalogProducts(ids: number[]): Map<number, CatalogProduct> {
   const unique = [...new Set(ids.filter((n) => Number.isInteger(n) && n > 0))]
   const out = new Map<number, CatalogProduct>()
@@ -487,6 +508,8 @@ export type RenderBlock = MenuBlock & {
   displayCategory?: string | null
   /** Итоговый адрес картинки: своё фото → каталог → снапшот. */
   displayImageUrl?: string | null
+  /** Картинки нет на диске — блокер печати, а не только предупреждение. */
+  imageMissing?: boolean
   warnings: string[]
 }
 
@@ -517,8 +540,12 @@ export function resolveDoc(doc: MenuDoc, priceMode: PriceMode): ResolvedDoc {
         }
         if (b.type !== 'product') {
           const warnings: string[] = []
-          if (b.type === 'image' && !b.url) warnings.push('нет картинки')
-          return { ...b, warnings }
+          const missing = b.type === 'image' && !!b.url && !uploadsFileExists(b.url)
+          if (b.type === 'image') {
+            if (!b.url) warnings.push('нет картинки')
+            else if (missing) warnings.push('файл картинки не найден')
+          }
+          return { ...b, warnings, imageMissing: missing }
         }
 
         const live = b.productId == null ? null : catalog.get(b.productId) ?? null
@@ -536,6 +563,11 @@ export function resolveDoc(doc: MenuDoc, priceMode: PriceMode): ResolvedDoc {
           b.titleOverride ?? (frozen ? b.snapshotName ?? live?.name ?? '' : live?.name ?? b.snapshotName ?? '')
         const displayImageUrl = b.photoUrlOverride ?? live?.imageUrl ?? (frozen ? b.snapshotImageUrl : null) ?? null
         if (b.showPhoto && !displayImageUrl) warnings.push('нет фото')
+        else if (b.showPhoto && displayImageUrl && isUploadsUrl(displayImageUrl) && !uploadsFileExists(displayImageUrl)) {
+          warnings.push('файл картинки не найден')
+        }
+        // Внешняя ссылка (например, из старого каталога) в PDF не попадает — честно помечаем.
+        if (displayImageUrl && !isUploadsUrl(displayImageUrl)) warnings.push('внешняя ссылка на фото не печатается')
 
         const sizeLabel = live
           ? live.variantLabel ??
@@ -564,6 +596,7 @@ export function resolveDoc(doc: MenuDoc, priceMode: PriceMode): ResolvedDoc {
                 }
               : null,
           catalogPriceRub: live?.priceRub ?? null,
+          imageMissing: !!displayImageUrl && isUploadsUrl(displayImageUrl) && !uploadsFileExists(displayImageUrl),
           warnings,
           displayName,
           displayPrice: priceText,
@@ -587,9 +620,11 @@ export function collectBlockers(resolved: ResolvedDoc): { blockId: string; pageI
             ? 'no_price'
             : w === 'позиции больше нет в каталоге'
               ? 'missing_product'
-              : w === 'нет картинки' || w === 'нет фото'
-                ? 'no_image'
-                : 'notice'
+              : w === 'файл картинки не найден'
+                ? 'image_unreadable'
+                : w === 'нет картинки' || w === 'нет фото'
+                  ? 'no_image'
+                  : 'notice'
         out.push({ blockId: b.id, pageId: page.id, code, text: w })
       }
     }

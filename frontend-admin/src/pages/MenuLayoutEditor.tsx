@@ -3,9 +3,10 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   ArrowDown, ArrowLeft, ArrowUp, Check, Download, Eye, EyeOff, Grid3x3, ImagePlus, Layers, ListTree, Loader2,
-  Minus, Palette, Plus, RefreshCw, Search, Trash2, Type, Undo2, Upload, X,
+  Minus, Palette, Plus, Redo2, RefreshCw, Search, Trash2, Type, Undo2, Upload, X,
 } from 'lucide-react'
-import { api, tokenStore, uploadFile } from '../api/client'
+import { ApiError, api, tokenStore, uploadFile } from '../api/client'
+import { canRedo, canUndo, emptyHistory, pushHistory, redoStep, undoStep, type DocHistory } from '../lib/docHistory'
 import { useApi } from '../api/useApi'
 import { ago } from '../lib/format'
 import {
@@ -28,6 +29,7 @@ import {
   formatFull,
   formatLabel,
   formatSize,
+  isUploadsUrl,
   localDrift,
   moveRect,
   newBlock,
@@ -51,6 +53,8 @@ import { Badge, Button, Banner, Drawer, cx, ErrorBox, Field, Input, Select, Spin
 import MenuCanvas from '../components/menuLayout/MenuCanvas'
 import { safeBoxSize } from '../lib/sheetGeometry'
 
+type SaveBody = { title: string; theme: MenuTheme; doc: MenuDoc }
+
 type Blocker = { blockId: string; code: string; text: string; label: string; pageIdx: number }
 
 type ServerLayout = {
@@ -62,6 +66,7 @@ type ServerLayout = {
   priceMode: 'live' | 'frozen'
   frozenAt: number | null
   updatedAt: number
+  rev: number
   stats: { pages: number; products: number; warnings: number }
   drift: { blockId: string; title: string; from: number | null; to: number | null }[]
   blockers: { blockId: string; code: string; text: string }[]
@@ -75,7 +80,6 @@ type LeftTab = 'catalog' | 'layers'
 type RightTab = 'design' | 'block'
 
 const AUTOSAVE_MS = 800
-const UNDO_LIMIT = 12
 
 const fmtFrozen = (ms: number | null): string =>
   ms ? ` с ${new Date(ms).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}` : ''
@@ -121,7 +125,10 @@ export default function MenuLayoutEditor() {
   const [formatOpen, setFormatOpen] = useState(false)
   const [busyUpload, setBusyUpload] = useState(false)
 
-  const undoStack = useRef<MenuDoc[]>([])
+  const [history, setHistory] = useState<DocHistory>(emptyHistory)
+  /** Версия документа, которую видит это окно. Расхождение с сервером = конфликт. */
+  const revRef = useRef(1)
+  const [conflict, setConflict] = useState<{ rev: number } | null>(null)
   const hydrated = useRef<number | null>(null)
   const lastSaved = useRef('')
   const sheetRef = useRef<HTMLDivElement | null>(null)
@@ -134,6 +141,8 @@ export default function MenuLayoutEditor() {
     rect: Rect
     w: number
     h: number
+    /** Снимок «до жеста» уже в истории — дальше кадры жеста её не трогают. */
+    pushed: boolean
   } | null>(null)
 
   useEffect(() => {
@@ -141,6 +150,9 @@ export default function MenuLayoutEditor() {
     if (!layout || hydrated.current === layout.id) return
     hydrated.current = layout.id
     setDoc(docSnapshot(layout.doc))
+    setHistory(emptyHistory())
+    revRef.current = layout.rev
+    setConflict(null)
     setTheme({ ...DEFAULT_THEME, ...layout.theme })
     setTitle(layout.title)
     setStatus(layout.status)
@@ -187,23 +199,22 @@ export default function MenuLayoutEditor() {
     setMobileTab((tab) => (tab === 'content' ? 'content' : 'preview'))
   }
 
-  const mutate = useCallback((next: MenuDoc) => {
-    setDoc((prev) => {
-      if (prev) {
-        undoStack.current.push(docSnapshot(prev))
-        if (undoStack.current.length > UNDO_LIMIT) undoStack.current.shift()
-      }
-      return next
-    })
-    setSave('dirty')
-  }, [])
+  const mutate = useCallback(
+    (next: MenuDoc, opts: { history?: boolean } = {}) => {
+      // Один шаг истории на осмысленное действие; кадры перетаскивания идут без него.
+      if (opts.history !== false && doc) setHistory((h) => pushHistory(h, doc))
+      setDoc(next)
+      setSave('dirty')
+    },
+    [doc],
+  )
 
   const updatePage = useCallback(
-    (updater: (blocks: MenuBlock[]) => MenuBlock[]) => {
+    (updater: (blocks: MenuBlock[]) => MenuBlock[], opts: { history?: boolean } = {}) => {
       if (!doc) return
       const target = doc.pages[Math.min(pageIdx, doc.pages.length - 1)]
       if (!target) return
-      mutate({ pages: doc.pages.map((p) => (p.id === target.id ? { ...p, blocks: updater(p.blocks) } : p)) })
+      mutate({ pages: doc.pages.map((p) => (p.id === target.id ? { ...p, blocks: updater(p.blocks) } : p)) }, opts)
     },
     [doc, pageIdx, mutate],
   )
@@ -216,51 +227,183 @@ export default function MenuLayoutEditor() {
     [selectedId, updatePage],
   )
 
+  // Удаление блока с листа (не товара каталога). Возврат — ⌘Z.
+  const deleteBlock = useCallback(
+    (id: string) => {
+      const block = doc?.pages.flatMap((p) => p.blocks).find((b) => b.id === id)
+      if (!block) return
+      updatePage((bs) => bs.filter((x) => x.id !== id))
+      setSelectedId((cur) => (cur === id ? null : cur))
+      toast.push(`«${blockLabel(block)}» убран с листа — ⌘Z вернёт`)
+    },
+    [doc, updatePage, toast],
+  )
+
   // ── автосохранение ────────────────────────────────────────────
-  useEffect(() => {
-    if (!doc) return
-    const payload = JSON.stringify({ title, theme, doc: docPayload(doc) })
-    if (payload === lastSaved.current) return
-    setSave('dirty')
-    const t = setTimeout(() => {
+  // Очередь из одного запроса: таймер, счётчик версий (устаревший ответ не перебивает новый)
+  // и flush() перед серверными операциями, которые перезаписывают документ.
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const saveSeq = useRef(0)
+  const pending = useRef<{ payload: string; body: SaveBody } | null>(null)
+  const latest = useRef<{ body: SaveBody; payload: string } | null>(null)
+
+  const persist = useCallback(
+    (payload: string, body: SaveBody) => {
+      const seq = ++saveSeq.current
       setSave('saving')
-      api<{ layout: ServerLayout; savedAt: number }>(`/menu-layouts/${numericId}`, {
+      return api<{ layout: ServerLayout; savedAt: number }>(`/menu-layouts/${numericId}`, {
         method: 'PUT',
-        body: { title: title.trim() || 'Без названия', theme, doc: docPayload(doc) },
+        body: { ...body, baseRev: revRef.current },
       })
         .then((res) => {
+          if (seq !== saveSeq.current) return
+          revRef.current = res.layout.rev
+          setConflict(null)
           lastSaved.current = payload
+          pending.current = null
           setSave('saved')
           setSavedAt(res.savedAt)
           setDrift(res.layout.drift)
         })
         .catch((e: unknown) => {
+          if (seq !== saveSeq.current) return
           setSave('error')
+          if (e instanceof ApiError && e.status === 409) {
+            // Кто-то сохранил раньше: показываем выбор, а не молча затираем.
+            setConflict({ rev: revRef.current })
+            toast.push('Макет изменили в другом окне — выберите, чью версию оставить', 'bad')
+            return
+          }
           toast.push(e instanceof Error ? e.message : 'Не удалось сохранить макет', 'bad')
         })
+    },
+    [numericId, toast],
+  )
+
+  /** Дослать несохранённое немедленно: перед seed/sync/freeze и при уходе со страницы. */
+  const flush = useCallback(async () => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current)
+      saveTimer.current = null
+    }
+    const job = pending.current
+    if (!job) return
+    if (job.payload === lastSaved.current) {
+      pending.current = null
+      return
+    }
+    await persist(job.payload, job.body)
+  }, [persist])
+
+  /** Владелец выбрал «моя версия главнее»: берём актуальный rev и перезаписываем. */
+  const overwriteMine = useCallback(async () => {
+    try {
+      const fresh = await api<{ layout: ServerLayout }>(`/menu-layouts/${numericId}`)
+      revRef.current = fresh.layout.rev
+      setConflict(null)
+      const job = pending.current ?? latest.current
+      if (job) await persist(job.payload, job.body)
+      else setSave('saved')
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Не удалось перезаписать макет', 'bad')
+    }
+  }, [numericId, persist, toast])
+
+  /** «Взять серверную»: принудительно перечитываем макет (hydrate не сработает сам — id тот же). */
+  const takeServerVersion = useCallback(() => {
+    hydrated.current = null
+    setConflict(null)
+    reload()
+  }, [reload])
+
+  useEffect(() => {
+    if (!doc) return
+    if (conflict) return // пока владелец не выбрал версию, ничего не пишем
+    const body: SaveBody = { title: title.trim() || 'Без названия', theme, doc: docPayload(doc) }
+    const payload = JSON.stringify(body)
+    latest.current = { body, payload }
+    if (payload === lastSaved.current) {
+      pending.current = null
+      return
+    }
+    setSave('dirty')
+    pending.current = { payload, body }
+    if (saveTimer.current) clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(() => {
+      saveTimer.current = null
+      const job = pending.current
+      if (job && job.payload !== lastSaved.current) void persist(job.payload, job.body)
     }, AUTOSAVE_MS)
-    return () => clearTimeout(t)
-  }, [doc, theme, title, numericId, toast])
+  }, [doc, theme, title, numericId, persist, conflict])
+
+  // Ушёл со страницы или свернул вкладку — правки последних 0,8 с не должны пропасть.
+  useEffect(() => {
+    const flushOnHide = () => {
+      const job = pending.current
+      if (!job || job.payload === lastSaved.current) return
+      try {
+        fetch(`/api/admin/menu-layouts/${numericId}`, {
+          method: 'PUT',
+          keepalive: true,
+          headers: { 'Content-Type': 'application/json', 'X-Admin-Token': tokenStore.get() },
+          body: JSON.stringify(job.body),
+        }).catch(() => {})
+        lastSaved.current = job.payload
+      } catch {
+        /* страница уже уходит — молча */
+      }
+    }
+    const onHidden = () => {
+      if (document.visibilityState === 'hidden') flushOnHide()
+    }
+    window.addEventListener('pagehide', flushOnHide)
+    document.addEventListener('visibilitychange', onHidden)
+    return () => {
+      window.removeEventListener('pagehide', flushOnHide)
+      document.removeEventListener('visibilitychange', onHidden)
+      flushOnHide()
+    }
+  }, [numericId])
 
   const undo = useCallback(() => {
-    const prev = undoStack.current.pop()
-    if (!prev) return
-    setDoc(prev)
+    if (!doc) return
+    const step = undoStep(history, doc)
+    if (!step) return
+    setHistory(step.history)
+    setDoc(step.doc)
     setSave('dirty')
-  }, [])
+  }, [doc, history])
+
+  const redo = useCallback(() => {
+    if (!doc) return
+    const step = redoStep(history, doc)
+    if (!step) return
+    setHistory(step.history)
+    setDoc(step.doc)
+    setSave('dirty')
+  }, [doc, history])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
       if (target && /input|textarea|select/i.test(target.tagName)) return
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+      const mod = e.metaKey || e.ctrlKey
+      if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault()
-        undo()
+        if (e.shiftKey) redo()
+        else undo()
+        return
+      }
+      if (mod && e.key.toLowerCase() === 'y') {
+        e.preventDefault()
+        redo()
         return
       }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
         e.preventDefault()
-        updatePage((blocks) => toggleHidden(blocks, selectedId))
+        if (e.altKey) updatePage((blocks) => toggleHidden(blocks, selectedId))
+        else deleteBlock(selectedId)
+        return
       }
       if (!selectedId) return
       const step = e.shiftKey ? 5 : 0.5
@@ -279,7 +422,7 @@ export default function MenuLayoutEditor() {
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [selectedId, undo, updatePage, patchBlock, page])
+  }, [selectedId, undo, redo, updatePage, patchBlock, page, deleteBlock])
 
   // ── перетаскивание и размер ────────────────────────────────────
   const beginDrag = (e: ReactPointerEvent<HTMLDivElement>, id: string, mode: 'move' | 'resize', handle: ResizeHandle = 'se') => {
@@ -297,6 +440,7 @@ export default function MenuLayoutEditor() {
       // Проценты в документе считаются от безопасной области, а не от края листа.
       w: safe.w,
       h: safe.h,
+      pushed: false,
     }
     setSelectedId(id)
     updatePage((blocks) => (blocks.find((b) => b.id === id)?.zIndex === topZ(blocks) - 1 ? blocks : bringToFront(blocks, id)))
@@ -313,7 +457,8 @@ export default function MenuLayoutEditor() {
         d.mode === 'move'
           ? moveRect(d.rect, e.shiftKey && Math.abs(dxPct) < Math.abs(dyPct) ? 0 : dxPct, e.shiftKey && Math.abs(dyPct) <= Math.abs(dxPct) ? 0 : dyPct)
           : resizeRect(d.rect, d.handle, dxPct, dyPct)
-      updatePage((blocks) => blocks.map((b) => (b.id === d.id ? { ...b, ...next } : b)))
+      updatePage((blocks) => blocks.map((b) => (b.id === d.id ? { ...b, ...next } : b)), { history: !d.pushed })
+      d.pushed = true
     }
     const onUp = () => {
       drag.current = null
@@ -360,6 +505,20 @@ export default function MenuLayoutEditor() {
     setRightTab('block')
   }
 
+  /** Картинка блока — только файл из админки: внешние ссылки сервер не примет. */
+  const setImageUrl = (value: string, field: 'url' | 'photoUrlOverride') => {
+    const v = value.trim()
+    if (!v) {
+      patchBlock({ [field]: null } as Partial<MenuBlock>)
+      return
+    }
+    if (!isUploadsUrl(v)) {
+      toast.push('Только файл из админки: загрузите картинку кнопкой «Загрузить»', 'bad')
+      return
+    }
+    patchBlock({ [field]: v } as Partial<MenuBlock>)
+  }
+
   const dupes = useMemo(() => (doc ? duplicateProducts(doc) : []), [doc])
 
   const removeDuplicates = () => {
@@ -402,12 +561,15 @@ export default function MenuLayoutEditor() {
 
   const seedFromCatalog = async () => {
     try {
+      // Сначала досылаем свои правки: сервер вернёт документ и перезапишет локальный.
+      await flush()
       const res = await api<{ layout: ServerLayout; added: number; skippedDuplicate?: number }>(
         `/menu-layouts/${numericId}/seed-from-catalog`,
         { method: 'POST', body: { pageId: page?.id, replace: false } },
       )
       hydrated.current = res.layout.id
       setDoc(docSnapshot(res.layout.doc))
+      setHistory(emptyHistory())
       setDrift(res.layout.drift)
       lastSaved.current = JSON.stringify({ title: res.layout.title, theme: res.layout.theme, doc: docSnapshot(res.layout.doc) })
       const skipped = res.skippedDuplicate ?? 0
@@ -421,11 +583,13 @@ export default function MenuLayoutEditor() {
 
   const syncPrices = async () => {
     try {
+      await flush()
       const res = await api<{ changed: unknown[]; layout: ServerLayout }>(`/menu-layouts/${numericId}/sync-prices`, {
         method: 'POST',
         body: {},
       })
       setDoc(docSnapshot(res.layout.doc))
+      setHistory(emptyHistory())
       setDrift(res.layout.drift)
       lastSaved.current = JSON.stringify({ title: res.layout.title, theme: res.layout.theme, doc: docSnapshot(res.layout.doc) })
       toast.push(res.changed.length ? `Обновлено цен: ${res.changed.length}` : 'Цены уже совпадают с каталогом')
@@ -436,8 +600,10 @@ export default function MenuLayoutEditor() {
 
   const setFrozen = async (mode: 'live' | 'frozen') => {
     try {
+      await flush()
       const res = await api<{ layout: ServerLayout }>(`/menu-layouts/${numericId}`, { method: 'PUT', body: { priceMode: mode } })
       setDoc(docSnapshot(res.layout.doc))
+      setHistory(emptyHistory())
       setPriceMode(res.layout.priceMode)
       setFrozenAt(res.layout.frozenAt)
       setDrift(res.layout.drift)
@@ -684,6 +850,15 @@ export default function MenuLayoutEditor() {
               aria-label={b.hidden ? 'Показать' : 'Скрыть'}
             >
               {b.hidden ? <EyeOff size={13} /> : <Eye size={13} />}
+            </button>
+            <button
+              type="button"
+              onClick={() => deleteBlock(b.id)}
+              className="grid h-6 w-6 place-items-center rounded text-ink-tertiary hover:text-bad"
+              aria-label={`Удалить «${blockLabel(b)}» с листа`}
+              title="Удалить с листа"
+            >
+              <Trash2 size={13} />
             </button>
           </li>
         ))}
@@ -937,8 +1112,8 @@ export default function MenuLayoutEditor() {
             </div>
             <Input
               value={selected.photoUrlOverride ?? ''}
-              placeholder="или ссылка /uploads/…"
-              onChange={(e) => patchBlock({ photoUrlOverride: e.target.value.trim() || null })}
+              placeholder="/uploads/… или загрузите файл"
+              onChange={(e) => setImageUrl(e.target.value, 'photoUrlOverride')}
               className="mt-1.5 !h-8 text-[12px]"
             />
             <label className="mt-2 flex items-center gap-2 text-[13px]">
@@ -1004,8 +1179,8 @@ export default function MenuLayoutEditor() {
             </div>
             <Input
               value={selected.url ?? ''}
-              placeholder="https://… /uploads/…"
-              onChange={(e) => patchBlock({ url: e.target.value.trim() || null })}
+              placeholder="/uploads/… или загрузите файл"
+              onChange={(e) => setImageUrl(e.target.value, 'url')}
               className="mt-1.5 !h-8 text-[12px]"
             />
             <div className="mt-2">
@@ -1054,16 +1229,8 @@ export default function MenuLayoutEditor() {
           >
             {selected.hidden ? 'Показать' : 'Скрыть'}
           </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            icon={<Trash2 size={14} />}
-            onClick={() => {
-              updatePage((bs) => bs.filter((x) => x.id !== selected.id))
-              setSelectedId(null)
-            }}
-          >
-            Убрать с листа
+          <Button size="sm" variant="secondary" icon={<Trash2 size={14} />} onClick={() => deleteBlock(selected.id)}>
+            Удалить блок
           </Button>
         </div>
       </section>
@@ -1110,8 +1277,11 @@ export default function MenuLayoutEditor() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
-          <Button size="sm" variant="secondary" icon={<Undo2 size={14} />} onClick={undo} disabled={undoStack.current.length === 0}>
+          <Button size="sm" variant="secondary" icon={<Undo2 size={14} />} onClick={undo} disabled={!canUndo(history)}>
             Отменить
+          </Button>
+          <Button size="sm" variant="secondary" icon={<Redo2 size={14} />} onClick={redo} disabled={!canRedo(history)}>
+            Вернуть
           </Button>
           <Button size="sm" variant="secondary" icon={<Eye size={14} />} onClick={() => setPreviewOpen(true)}>
             Предпросмотр
@@ -1125,6 +1295,7 @@ export default function MenuLayoutEditor() {
       <p className="mb-3 flex items-start gap-2 rounded-xl border border-line bg-surface-2 px-3 py-2 text-[12.5px] leading-4 text-ink-secondary">
         <Layers size={14} className="mt-0.5 flex-none text-brand" aria-hidden />
         Перетащите позицию на листе, тяните угол — блок меняет размер. Товары каталога при этом не удаляются и не меняются.
+        На телефоне сначала коснитесь блока, потом двигайте.
       </p>
 
       {driftText && (
@@ -1133,6 +1304,21 @@ export default function MenuLayoutEditor() {
           <span className="min-w-0 flex-1">{driftText}</span>
           <Button size="sm" variant="secondary" onClick={() => void syncPrices()}>
             {priceMode === 'frozen' ? 'Проверить' : 'Обновить с каталога'}
+          </Button>
+        </div>
+      )}
+
+      {conflict && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-bad/40 bg-bad-soft px-3 py-2 text-[13px] text-bad">
+          <RefreshCw size={15} className="flex-none" aria-hidden />
+          <span className="min-w-0 flex-1">
+            Макет изменили в другом окне. Ваши правки ещё не сохранены — выберите, чью версию оставить.
+          </span>
+          <Button size="sm" variant="secondary" onClick={takeServerVersion}>
+            Взять серверную
+          </Button>
+          <Button size="sm" onClick={() => void overwriteMine()}>
+            Перезаписать своей
           </Button>
         </div>
       )}
@@ -1296,7 +1482,7 @@ export default function MenuLayoutEditor() {
               <Plus size={13} />
             </button>
             <span className="ml-auto text-[11px] text-ink-tertiary">
-              {savedAt ? `сохранено ${ago(savedAt)}` : 'автосохранение'} · Delete скрывает блок
+              {savedAt ? `сохранено ${ago(savedAt)}` : 'автосохранение'} · ⌘Z отменяет, Delete убирает блок с листа
             </span>
           </div>
         </section>

@@ -30,13 +30,15 @@
 .mc-block {
   position: absolute;
   cursor: grab;
-  touch-action: none;
+  /* До выделения палец листает страницу, после — двигает блок. */
+  touch-action: pan-x pan-y;
   outline: 1px solid transparent;
   border-radius: 2px;
 }
 .mc-block.is-selected {
   outline: 1.5px solid var(--mc-accent);
   outline-offset: 2px;
+  touch-action: none;
 }
 .mc-block.has-warn::after {
   content: '';
@@ -55,11 +57,18 @@
   bottom: max(-6px, -0.55cqw);
   width: max(12px, 1.5cqw);
   height: max(12px, 1.5cqw);
+  /* Зона касания 44 px: сам квадратик маленький, палец попадает в псевдоэлемент. */
   border-radius: 2px;
   border: 1.5px solid #fff;
   background: var(--mc-accent);
   cursor: nwse-resize;
   touch-action: none;
+}
+.mc-handle::after {
+  content: '';
+  position: absolute;
+  inset: -16px;
+  border-radius: 50%;
 }
 
 .mc-bg-image {
