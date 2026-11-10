@@ -439,3 +439,13 @@
 .mc-block:focus-visible {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--mc-accent) 45%, transparent);
 }
+
+/* Тулбар массовых операций на планшете: одна строка с прокруткой, без видимого скроллбара. */
+.mc-toolbar-scroll {
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.mc-toolbar-scroll::-webkit-scrollbar {
+  display: none;
+}

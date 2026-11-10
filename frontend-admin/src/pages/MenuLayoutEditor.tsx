@@ -67,7 +67,7 @@ import { Badge, Button, Banner, Drawer, cx, ErrorBox, Field, Input, Select, Spin
 import MenuCanvas from '../components/menuLayout/MenuCanvas'
 import ColorField from '../components/menuLayout/ColorField'
 import {
-  alignBlocks, clampZoom, distributeBlocks, domTextMeasurer, effectiveDpi, fitFontSize, fitZoom, groupBlocks,
+  alignBlocks, clampZoom, distributeBlocks, domTextMeasurer, editorMode, effectiveDpi, fitFontSize, fitZoom, groupBlocks,
   groupKeyOf, groupSelectionIds, layoutColumns, rectsIntersect, reorderBlocks, sheetWidthMm, snapToGrid,
   snapWithGuides, ungroupBlocks, zoomStep,
   type AlignMode, type SnapGuides,
@@ -184,6 +184,15 @@ export default function MenuLayoutEditor() {
   const [leftTab, setLeftTab] = useState<LeftTab>('catalog')
   const [rightTab, setRightTab] = useState<RightTab>('design')
   const [mobileTab, setMobileTab] = useState<MobileTab>('preview')
+  /**
+   * Раскладка зависит от ширины самого редактора, а не окна: в админке слева
+   * рейл 244 px, поэтому на iPad 1024 редактору достаётся ~730 px и брейкпоинт
+   * `lg` его ошибочно отправлял в мобильный режим.
+   */
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const [mode, setMode] = useState<'narrow' | 'medium' | 'wide'>('wide')
+  /** На средней ширине левая панель уезжает в шторку, чтобы лист не сжимался. */
+  const [drawerOpen, setDrawerOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [showAllProducts, setShowAllProducts] = useState(false)
   const [aiPrompt, setAiPrompt] = useState('')
@@ -994,6 +1003,52 @@ export default function MenuLayoutEditor() {
     return () => document.removeEventListener('keydown', onKey)
   }, [selectedId, selectedIds, undo, redo, updatePage, patchBlock, page, deleteBlock, duplicateBlocks, toast])
 
+  // Панели: три зоны от 940 px, две зоны от 620 px (планшет), ниже — мобильные вкладки.
+  // Ширину меряем у самого редактора: в админке слева рейл 244 px, поэтому на iPad
+  // 1024 редактору достаётся ~730 px и брейкпоинт `lg` отправлял его в мобильный режим.
+  const widthObserver = useRef<ResizeObserver | null>(null)
+  const measureWidth = useCallback((node: HTMLElement | null) => {
+    if (!node) return
+    const width = node.getBoundingClientRect().width
+    // Ноль бывает у отсоединённого узла — такую ширину не считаем раскладкой.
+    if (width <= 0) return
+    setMode(editorMode(width))
+    if (width >= 940) setDrawerOpen(false)
+  }, [])
+  /** Ref-callback, а не эффект: узел пересоздаётся (скелетон → редактор, HMR). */
+  const attachRoot = useCallback(
+    (node: HTMLDivElement | null) => {
+      widthObserver.current?.disconnect()
+      widthObserver.current = null
+      rootRef.current = node
+      if (!node) return
+      measureWidth(node)
+      if (typeof ResizeObserver === 'undefined') return
+      const ro = new ResizeObserver((entries) => {
+        const width = entries[0]?.contentRect.width ?? 0
+        if (width > 0) measureWidth(node)
+      })
+      ro.observe(node)
+      widthObserver.current = ro
+    },
+    [measureWidth],
+  )
+  useEffect(() => {
+    const onResize = () => measureWidth(rootRef.current)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [measureWidth])
+
+  // Esc закрывает шторку с левой панелью.
+  useEffect(() => {
+    if (!drawerOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setDrawerOpen(false)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [drawerOpen])
+
   // Локальный черновик: пишем раз в полсекунды, чтобы падение вкладки не съело правки.
   useEffect(() => {
     if (!doc || !numericId) return
@@ -1326,7 +1381,14 @@ export default function MenuLayoutEditor() {
 
   if (loading && !data) return <EditorSkeleton />
   if (error) return <ErrorBox message={error} onRetry={reload} />
-  if (!doc || !previewPage || !page) return <EditorSkeleton />
+  if (!doc || !previewPage || !page) {
+    // Скелетон тоже внутри измерителя: иначе ширина станет известна только после загрузки.
+    return (
+      <div ref={attachRoot}>
+        <EditorSkeleton />
+      </div>
+    )
+  }
 
   const format = data?.layout.format ?? 'a4_portrait'
   const ratio = LAYOUT_FORMATS.find((f) => f.id === format)?.ratio ?? 210 / 297
@@ -2590,8 +2652,37 @@ export default function MenuLayoutEditor() {
     </div>
   )
 
+  /** Левая панель: на широком экране стоит в сетке, на среднем — в шторке. */
+  const leftAside = (
+    <aside className="flex h-full max-h-[calc(100vh-230px)] min-h-[320px] flex-col overflow-hidden rounded-xl border border-line bg-white">
+      <div className="flex border-b border-line">
+        {(
+          [
+            ['catalog', 'Каталог'],
+            ...((data?.layout.sections ?? 0) > 0 ? ([['places', 'Места']] as [LeftTab, string][]) : []),
+            ['layers', 'Слои'],
+          ] as [LeftTab, string][]
+        ).map(([k, label]) => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => setLeftTab(k)}
+            aria-pressed={leftTab === k}
+            className={cx(
+              'min-h-10 flex-1 border-b-2 px-2 text-[13px] font-semibold',
+              leftTab === k ? 'border-brand text-brand' : 'border-transparent text-ink-secondary',
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {leftTab === 'catalog' ? catalogPane : leftTab === 'places' ? placesPane : layersPane}
+    </aside>
+  )
+
   return (
-    <>
+    <div ref={attachRoot}>
       {/* Клавиатура: Tab по панелям длинный, поэтому лист доступен сразу. */}
       <button
         type="button"
@@ -2608,18 +2699,19 @@ export default function MenuLayoutEditor() {
         >
           <ArrowLeft size={16} /> Все макеты
         </Link>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+        <div className={cx('min-w-0', mode === 'wide' ? 'flex-1' : 'w-full')}>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               maxLength={120}
               aria-label="Название макета"
-              className="min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-[19px] font-bold text-ink outline-none focus:underline"
+              className="min-w-[7rem] flex-1 truncate border-0 bg-transparent p-0 text-[19px] font-bold text-ink outline-none focus:underline"
             />
             <span
               className={cx(
-                'inline-flex flex-none items-center gap-1 whitespace-nowrap text-[11px] font-semibold',
+                // Статус не должен наезжать на кнопки: он сжимается и уходит на свою строку.
+                'inline-flex min-w-0 items-center gap-1 truncate text-[11px] font-semibold',
                 save === 'error' ? 'text-bad' : save === 'dirty' || save === 'saving' ? 'text-ink-tertiary' : 'text-ok',
               )}
               aria-live="polite"
@@ -2779,7 +2871,13 @@ export default function MenuLayoutEditor() {
       )}
 
       {/* ── мобильные вкладки ─────────────────────────────── */}
-      <nav className="mb-3 flex gap-1 rounded-xl border border-line bg-surface-2 p-1 lg:hidden" aria-label="Разделы редактора">
+      <nav
+        className={cx(
+          'mb-3 gap-1 rounded-xl border border-line bg-surface-2 p-1',
+          mode === 'narrow' ? 'flex' : 'hidden',
+        )}
+        aria-label="Разделы редактора"
+      >
         {(
           [
             ['preview', 'Превью', <Eye size={14} key="p" />],
@@ -2804,44 +2902,46 @@ export default function MenuLayoutEditor() {
         ))}
       </nav>
 
-      {/* ── десктоп: три зоны ─────────────────────────────── */}
-      <div className="hidden gap-3 lg:grid" style={{ gridTemplateColumns: 'minmax(220px, 260px) minmax(0, 1fr) minmax(250px, 300px)' }}>
-        <aside className="flex max-h-[calc(100vh-230px)] min-h-[460px] flex-col overflow-hidden rounded-xl border border-line bg-white">
-          <div className="flex border-b border-line">
-            {(
-              [
-                ['catalog', 'Каталог'],
-                ...((data?.layout.sections ?? 0) > 0 ? ([['places', 'Места']] as [LeftTab, string][]) : []),
-                ['layers', 'Слои'],
-              ] as [LeftTab, string][]
-            ).map(([k, label]) => (
-              <button
-                key={k}
-                type="button"
-                onClick={() => setLeftTab(k)}
-                aria-pressed={leftTab === k}
-                className={cx(
-                  'min-h-10 flex-1 border-b-2 px-2 text-[13px] font-semibold',
-                  leftTab === k ? 'border-brand text-brand' : 'border-transparent text-ink-secondary',
-                )}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          {leftTab === 'catalog' ? catalogPane : leftTab === 'places' ? placesPane : layersPane}
-        </aside>
+      {/* ── десктоп и планшет: две-три зоны ───────────────── */}
+      <div
+        className={cx('gap-3', mode === 'narrow' ? 'hidden' : 'grid')}
+        style={{
+          // На средней ширине левая панель живёт в шторке — лист получает её место.
+          gridTemplateColumns:
+            mode === 'wide'
+              ? 'minmax(220px, 260px) minmax(0, 1fr) minmax(250px, 300px)'
+              : 'minmax(0, 1fr) minmax(238px, 290px)',
+        }}
+      >
+        {mode === 'wide' && leftAside}
 
         <section className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-white px-2 py-1.5">
             <div className="flex items-center gap-1.5 text-[12px] font-semibold text-ink-secondary">
+              {mode === 'medium' && (
+                <button
+                  type="button"
+                  onClick={() => setDrawerOpen(true)}
+                  className="inline-flex h-8 flex-none items-center gap-1 rounded-md border border-line px-2 text-[12px] font-semibold text-ink-secondary hover:border-brand hover:text-brand"
+                  aria-label="Открыть каталог и слои"
+                >
+                  <ListTree size={14} aria-hidden /> Состав
+                </button>
+              )}
               <span className="rounded-md bg-surface-2 px-2 py-1">
                 {data?.layout.formatHint.label} · {formatSize(format)}
               </span>
               <Badge tone={status === 'ready' ? 'ok' : 'neutral'}>{status === 'ready' ? 'Готов' : 'Черновик'}</Badge>
               <span className="text-[11px] font-normal text-ink-tertiary">{page.blocks.length} блоков</span>
             </div>
-            <div className="flex min-w-0 flex-wrap items-center justify-end gap-1">
+            <div
+              className={cx(
+                'flex min-w-0 basis-full items-center gap-1 sm:basis-auto',
+                // На планшете кнопок много: держим одну строку с прокруткой, чтобы
+                // панель не занимала пол-экрана по высоте.
+                mode === 'wide' ? 'flex-wrap justify-end' : 'mc-toolbar-scroll flex-nowrap justify-start',
+              )}
+            >
               {selectedIds.length > 0 && editableIds.length <= 1 && (
                 <>
                   <button type="button" onClick={takeStyle} className="h-8 rounded-md px-2 text-[11px] font-semibold text-ink-tertiary hover:bg-surface-2 hover:text-brand" title="Скопировать стиль блока">
@@ -3053,6 +3153,8 @@ export default function MenuLayoutEditor() {
               aria-label="Лист макета"
               style={{
                 width: `${Math.round(560 * zoom)}px`,
+                // На планшете колонка уже 560 px: лист ужимается по ней, а не уезжает под панель.
+                maxWidth: '100%',
                 aspectRatio: String(LAYOUT_FORMATS.find((f) => f.id === format)?.ratio ?? 210 / 297),
               }}
               onPointerDown={(e) => {
@@ -3165,8 +3267,32 @@ export default function MenuLayoutEditor() {
         </aside>
       </div>
 
+      {/* ── планшет: каталог и слои в шторке ──────────────── */}
+      {mode === 'medium' && drawerOpen && (
+        <div
+          className="fixed inset-0 z-[75] bg-black/40"
+          onMouseDown={(e) => e.target === e.currentTarget && setDrawerOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Каталог и слои"
+            className="absolute inset-y-0 left-0 flex w-[320px] max-w-[88vw] flex-col gap-2 bg-[#f6f8fb] p-2 shadow-2xl"
+          >
+            <button
+              type="button"
+              onClick={() => setDrawerOpen(false)}
+              className="ml-auto inline-flex h-8 items-center gap-1 rounded-md bg-white px-2 text-[12px] font-semibold text-ink-secondary hover:text-brand"
+            >
+              <X size={14} aria-hidden /> Закрыть
+            </button>
+            <div className="min-h-0 flex-1">{leftAside}</div>
+          </div>
+        </div>
+      )}
+
       {/* ── мобильный режим ───────────────────────────────── */}
-      <div className="lg:hidden">
+      <div className={mode === 'narrow' ? '' : 'hidden'}>
         {mobileTab === 'preview' && (
           <div className="rounded-xl border border-line bg-[#e9ebef] p-3">
             <div
@@ -3563,7 +3689,7 @@ export default function MenuLayoutEditor() {
           ))}
         </div>
       </Drawer>
-    </>
+    </div>
   )
 }
 

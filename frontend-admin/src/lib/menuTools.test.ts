@@ -9,6 +9,7 @@ import {
   ungroupBlocks,
   clampZoom,
   distributeBlocks,
+  editorMode,
   fitZoom,
   groupKeyOf,
   rectsIntersect,
@@ -217,5 +218,23 @@ describe('порядок слоёв', () => {
   it('перетаскивание на себя ничего не меняет', () => {
     const blocks = [mk('a', 0), mk('b', 1)]
     expect(reorderBlocks(blocks, 'b', 'b')).toBe(blocks)
+  })
+})
+
+describe('раскладка редактора', () => {
+  it('ширина контейнера, а не окна: iPad с рейлом всё равно получает панели', () => {
+    // 1024 окно − 244 рейла − поля ≈ 730 px: две зоны, а не мобильные вкладки
+    expect(editorMode(730)).toBe('medium')
+    expect(editorMode(620)).toBe('medium')
+    expect(editorMode(1144)).toBe('wide')
+    expect(editorMode(940)).toBe('wide')
+  })
+
+  it('узкая ширина и мусорные значения дают мобильные вкладки', () => {
+    expect(editorMode(619)).toBe('narrow')
+    expect(editorMode(402)).toBe('narrow')
+    // отсоединённый узел меряется нулём — раскладку по нему не меняем
+    expect(editorMode(0)).toBe('narrow')
+    expect(editorMode(Number.NaN)).toBe('narrow')
   })
 })

@@ -32,7 +32,6 @@ export function reorderBlocks(blocks: MenuBlock[], dragId: string, targetId: str
 
 /** Шаг сетки и колонок: попадание в сетку важнее прилипания к соседям. */
 export type GridSpec = { stepPct: number; cols: number }
-
 /** Ближайшая линия сетки (шаг + правые границы колонок) для левого/верхнего края. */
 export function snapToGrid(rect: Rect, grid: GridSpec): Rect {
   const step = grid.stepPct > 0 ? grid.stepPct : 0
@@ -57,6 +56,21 @@ export function snapToGrid(rect: Rect, grid: GridSpec): Rect {
     return bestDist <= Math.max(0.5, step / 2) ? best : value
   }
   return clampRect({ ...rect, xPct: pick(rect.xPct), yPct: pick(rect.yPct) })
+}
+
+/** Раскладка редактора по его собственной ширине, а не по ширине окна. */
+export type EditorMode = 'narrow' | 'medium' | 'wide'
+
+/**
+ * В админке слева рейл 244 px, поэтому на iPad 1024 редактору достаётся ~730 px и
+ * брейкпоинт `lg` ошибочно включал мобильные вкладки. Пороги считаем от контейнера:
+ * 940 px — три зоны, 620 px — лист и свойства (каталог в шторке), ниже — вкладки.
+ */
+export function editorMode(width: number): EditorMode {
+  if (!Number.isFinite(width) || width <= 0) return 'narrow'
+  if (width >= 940) return 'wide'
+  if (width >= 620) return 'medium'
+  return 'narrow'
 }
 
 export type AlignMode = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom'
