@@ -112,6 +112,8 @@ export function flowSections({ sections, pinned, options }: FlowInput): FlowResu
     fontSizePt: 10,
     align: 'left',
     bold: false,
+    uppercase: false,
+    locked: false,
     snapshotPriceRub: null,
     snapshotName: null,
     snapshotImageUrl: null,

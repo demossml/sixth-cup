@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
-  ArrowDown, ArrowLeft, ArrowUp, Check, Download, Eye, EyeOff, Grid3x3, ImagePlus, Layers, ListTree, Loader2,
+  AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical,
+  AlignStartHorizontal, AlignStartVertical, ArrowDown, ArrowLeft, ArrowUp, Check, Download,
+  Eye, EyeOff, Grid3x3, ImagePlus, Layers, ListTree, Loader2, Lock, LockOpen, Maximize2,
   Minus, Palette, Plus, Redo2, RefreshCw, Search, Sparkles, Trash2, Type, Undo2, Upload, X,
 } from 'lucide-react'
 import { ApiError, api, tokenStore, uploadFile } from '../api/client'
@@ -61,8 +63,14 @@ import {
 } from '../lib/menuLayout'
 import { Badge, Button, Banner, Drawer, cx, ErrorBox, Field, Input, Select, Spinner, useToast } from '../ui/kit'
 import MenuCanvas from '../components/menuLayout/MenuCanvas'
+import ColorField from '../components/menuLayout/ColorField'
+import {
+  alignBlocks, clampZoom, distributeBlocks, effectiveDpi, fitZoom, groupKeyOf, rectsIntersect, sheetWidthMm,
+  snapWithGuides, zoomStep, type AlignMode, type SnapGuides,
+} from '../lib/menuTools'
 import { MENU_LAYOUT_V2 } from '../lib/featureFlags'
-import { safeBoxSize } from '../lib/sheetGeometry'
+import { safeBoxOffset, safeBoxSize } from '../lib/sheetGeometry'
+import { perfDragEnd, perfDragStart, perfFrame, perfInit, perfPdf, perfTTI } from '../lib/perf'
 
 type SaveBody = { title: string; theme: MenuTheme; doc: MenuDoc }
 
@@ -125,6 +133,15 @@ export default function MenuLayoutEditor() {
 
   const [pageIdx, setPageIdx] = useState(0)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  /** Мультивыбор: Shift+клик и рамка. Основной блок остаётся в `selectedId`. */
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [guides, setGuides] = useState<SnapGuides>({ x: [], y: [] })
+  const [marquee, setMarquee] = useState<Rect | null>(null)
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; id: string } | null>(null)
+  const [layerQuery, setLayerQuery] = useState('')
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const clipboard = useRef<MenuBlock | null>(null)
+  const canvasBox = useRef<HTMLDivElement | null>(null)
   const [leftTab, setLeftTab] = useState<LeftTab>('catalog')
   const [rightTab, setRightTab] = useState<RightTab>('design')
   const [mobileTab, setMobileTab] = useState<MobileTab>('preview')
@@ -155,12 +172,21 @@ export default function MenuLayoutEditor() {
     handle: ResizeHandle
     startX: number
     startY: number
-    rect: Rect
+    /** Рамки всех двигаемых блоков: мультивыбор тянется целиком. */
+    rects: { id: string; rect: Rect; locked: boolean }[]
     w: number
     h: number
     /** Снимок «до жеста» уже в истории — дальше кадры жеста её не трогают. */
     pushed: boolean
   } | null>(null)
+
+  useEffect(() => {
+    perfInit()
+  }, [])
+
+  useEffect(() => {
+    if (doc) perfTTI()
+  }, [doc])
 
   useEffect(() => {
     const layout = data?.layout
@@ -261,6 +287,71 @@ export default function MenuLayoutEditor() {
       toast.push(`«${blockLabel(block)}» убран с листа — ⌘Z вернёт`)
     },
     [doc, updatePage, toast],
+  )
+
+  /** Выделение: обычный клик — один блок, Shift+клик — добавить/убрать из выделения. */
+  const selectBlock = useCallback(
+    (id: string, e?: ReactPointerEvent<HTMLDivElement>) => {
+      setCtxMenu(null)
+      if (e && (e.shiftKey || e.metaKey || e.ctrlKey)) {
+        setSelectedIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]))
+        setSelectedId(id)
+        return
+      }
+      setSelectedIds([id])
+      setSelectedId(id)
+      // Выбрал блок — сразу показываем его свойства, а не общее оформление.
+      setRightTab('block')
+    },
+    [],
+  )
+
+  /** Двигать/выравнивать — только незаблокированные блоки. */
+  const editableIds = useMemo(
+    () => (page?.blocks ?? []).filter((b) => selectedIds.includes(b.id) && !b.locked).map((b) => b.id),
+    [page, selectedIds],
+  )
+
+  /** Цвет применяется сразу и попадает в «недавние», если это не цвет бренда. */
+  const applyThemeColor = (key: 'bg' | 'text' | 'accent', next: string) => {
+    const known = (BRAND_COLORS as readonly string[]).includes(next.toUpperCase())
+    const recent = known ? theme.recentColors ?? [] : [next, ...(theme.recentColors ?? []).filter((c) => c !== next)].slice(0, 8)
+    setTheme({ ...theme, [key]: next, recentColors: recent })
+  }
+
+  const align = (mode: AlignMode) => {
+    if (!page) return
+    updatePage((blocks) => alignBlocks(blocks, editableIds, mode))
+  }
+  const distribute = (axis: 'x' | 'y') => {
+    if (!page) return
+    updatePage((blocks) => distributeBlocks(blocks, editableIds, axis))
+  }
+
+  const toggleLock = (id: string) => {
+    const b = page?.blocks.find((x) => x.id === id)
+    if (!b) return
+    patchBlock({ locked: !b.locked }, id)
+    toast.push(!b.locked ? `«${layerName(b)}» закреплён` : `«${layerName(b)}» снова можно двигать`)
+  }
+
+  /** Копия блока со смещением — так работает ⌘D и ⌘C/⌘V. */
+  const duplicateBlocks = useCallback(
+    (ids: string[], offset = 2) => {
+      if (!page || ids.length === 0) return
+      const source = page.blocks.filter((b) => ids.includes(b.id))
+      if (source.length === 0) return
+      const copies = source.map((b) => ({
+        ...b,
+        id: `${b.type}-${Math.random().toString(36).slice(2, 9)}`,
+        ...clampRect({ xPct: b.xPct + offset, yPct: b.yPct + offset, wPct: b.wPct, hPct: b.hPct }),
+      }))
+      updatePage((blocks) => [...blocks, ...copies.map((c) => ({ ...c, zIndex: topZ(blocks) + 1 }))])
+      setSelectedIds(copies.map((c) => c.id))
+      setSelectedId(copies[0]!.id)
+      toast.push(copies.length > 1 ? `Дублировано блоков: ${copies.length}` : 'Блок продублирован')
+    },
+    [page, updatePage, toast],
   )
 
   // ── автосохранение ────────────────────────────────────────────
@@ -423,10 +514,53 @@ export default function MenuLayoutEditor() {
         redo()
         return
       }
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
+      if (e.key === 'Escape') {
+        setCtxMenu(null)
+        setRenamingId(null)
+        return
+      }
+      if (mod && e.key.toLowerCase() === 'c' && selectedIds.length) {
+        const b = page?.blocks.find((x) => x.id === selectedId) ?? page?.blocks.find((x) => x.id === selectedIds[0])
+        if (b) clipboard.current = b
         e.preventDefault()
-        if (e.altKey) updatePage((blocks) => toggleHidden(blocks, selectedId))
-        else deleteBlock(selectedId)
+        return
+      }
+      if (mod && e.key.toLowerCase() === 'v' && clipboard.current) {
+        e.preventDefault()
+        const src = clipboard.current
+        const copy = {
+          ...src,
+          id: `${src.type}-${Math.random().toString(36).slice(2, 9)}`,
+          ...clampRect({ xPct: src.xPct + 2, yPct: src.yPct + 2, wPct: src.wPct, hPct: src.hPct }),
+        }
+        updatePage((blocks) => [...blocks, { ...copy, zIndex: topZ(blocks) + 1 }])
+        setSelectedId(copy.id)
+        setSelectedIds([copy.id])
+        toast.push('Блок вставлен')
+        return
+      }
+      if (mod && e.key.toLowerCase() === 'd' && selectedIds.length) {
+        e.preventDefault()
+        duplicateBlocks(selectedIds.length ? selectedIds : selectedId ? [selectedId] : [])
+        return
+      }
+      if (mod && e.key.toLowerCase() === 'a' && page) {
+        e.preventDefault()
+        const all = page.blocks.map((b) => b.id)
+        setSelectedIds(all)
+        setSelectedId(all[0] ?? null)
+        return
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.length) {
+        e.preventDefault()
+        if (e.altKey) updatePage((blocks) => blocks.map((b) => (selectedIds.includes(b.id) ? { ...b, hidden: !b.hidden } : b)))
+        else {
+          const ids = [...selectedIds]
+          updatePage((blocks) => blocks.filter((b) => !ids.includes(b.id)))
+          setSelectedIds([])
+          setSelectedId(null)
+          toast.push(ids.length > 1 ? `Убрано блоков: ${ids.length} — ⌘Z вернёт` : 'Блок убран с листа — ⌘Z вернёт')
+        }
         return
       }
       if (!selectedId) return
@@ -440,31 +574,46 @@ export default function MenuLayoutEditor() {
       const d = nudge[e.key]
       if (d) {
         e.preventDefault()
-        const b = page?.blocks.find((x) => x.id === selectedId)
-        if (b) patchBlock(clampRect(moveRect(b, d[0], d[1])), b.id)
+        const ids = selectedIds.length ? selectedIds : [selectedId]
+        updatePage((blocks) =>
+          blocks.map((b) => (ids.includes(b.id) && !b.locked ? { ...b, ...clampRect(moveRect(b, d[0], d[1])) } : b)),
+        )
       }
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [selectedId, undo, redo, updatePage, patchBlock, page, deleteBlock])
+  }, [selectedId, selectedIds, undo, redo, updatePage, patchBlock, page, deleteBlock, duplicateBlocks, toast])
 
   // ── перетаскивание и размер ────────────────────────────────────
   const beginDrag = (e: ReactPointerEvent<HTMLDivElement>, id: string, mode: 'move' | 'resize', handle: ResizeHandle = 'se') => {
     const block = page?.blocks.find((b) => b.id === id)
     const sheet = sheetRef.current
     if (!block || !sheet) return
+    // Замок: блок выделяется, но жест не начинается.
+    if (block.locked) return
     const safe = safeBoxSize(sheet.getBoundingClientRect())
+    // Тянем всё выделение, но только незаблокированные блоки.
+    const ids = mode === 'move' && selectedIds.includes(id) ? selectedIds : [id]
+    const rects = (page?.blocks ?? [])
+      .filter((b) => ids.includes(b.id) && !b.locked)
+      .map((b) => ({ id: b.id, rect: { xPct: b.xPct, yPct: b.yPct, wPct: b.wPct, hPct: b.hPct }, locked: !!b.locked }))
     drag.current = {
       id,
       mode,
       handle,
       startX: e.clientX,
       startY: e.clientY,
-      rect: { xPct: block.xPct, yPct: block.yPct, wPct: block.wPct, hPct: block.hPct },
+      rects: rects.length ? rects : [{ id, rect: { xPct: block.xPct, yPct: block.yPct, wPct: block.wPct, hPct: block.hPct }, locked: false }],
       // Проценты в документе считаются от безопасной области, а не от края листа.
       w: safe.w,
       h: safe.h,
       pushed: false,
+    }
+    setCtxMenu(null)
+    perfDragStart()
+    // Shift/⌘ добавляют блок к выделению и не сбрасывают остальные.
+    if (!(e.shiftKey || e.metaKey || e.ctrlKey)) {
+      setSelectedIds((cur) => (cur.length === 1 && cur[0] === id ? cur : [id]))
     }
     setSelectedId(id)
     updatePage((blocks) => (blocks.find((b) => b.id === id)?.zIndex === topZ(blocks) - 1 ? blocks : bringToFront(blocks, id)))
@@ -475,22 +624,40 @@ export default function MenuLayoutEditor() {
     const onMove = (e: PointerEvent) => {
       const d = drag.current
       if (!d) return
+      perfFrame()
       const dxPct = ((e.clientX - d.startX) / d.w) * 100
       const dyPct = ((e.clientY - d.startY) / d.h) * 100
+      const primary = d.rects.find((r) => r.id === d.id)?.rect ?? d.rects[0]!.rect
+      const others = (page?.blocks ?? []).filter((b) => !d.rects.some((r) => r.id === b.id) && !b.hidden)
       let next: Rect =
         d.mode === 'move'
-          ? moveRect(d.rect, e.shiftKey && Math.abs(dxPct) < Math.abs(dyPct) ? 0 : dxPct, e.shiftKey && Math.abs(dyPct) <= Math.abs(dxPct) ? 0 : dyPct)
-          : resizeRect(d.rect, d.handle, dxPct, dyPct)
+          ? moveRect(primary, e.shiftKey && Math.abs(dxPct) < Math.abs(dyPct) ? 0 : dxPct, e.shiftKey && Math.abs(dyPct) <= Math.abs(dxPct) ? 0 : dyPct)
+          : resizeRect(primary, d.handle, dxPct, dyPct)
       // Прилипание к полям и соседям: Alt отключает, чтобы можно было поставить «как хочу».
       if (d.mode === 'move' && !e.altKey) {
-        const others = (page?.blocks ?? []).filter((b) => b.id !== d.id && !b.hidden)
-        next = snapRect(next, others, 0.8).rect
+        const snapped = snapWithGuides(next, others, 0.8)
+        next = snapped.rect
+        setGuides(e.metaKey || e.ctrlKey ? snapped.guides : snapped.guides)
       }
-      updatePage((blocks) => blocks.map((b) => (b.id === d.id ? { ...b, ...next } : b)), { history: !d.pushed })
+      const shiftX = next.xPct - primary.xPct
+      const shiftY = next.yPct - primary.yPct
+      updatePage(
+        (blocks) =>
+          blocks.map((b) => {
+            const item = d.rects.find((r) => r.id === b.id)
+            if (!item) return b
+            if (b.id === d.id) return { ...b, ...next }
+            // Остальные блоки выделения едут тем же сдвигом.
+            return { ...b, ...clampRect({ xPct: item.rect.xPct + shiftX, yPct: item.rect.yPct + shiftY, wPct: b.wPct, hPct: b.hPct }) }
+          }),
+        { history: !d.pushed },
+      )
       d.pushed = true
     }
     const onUp = () => {
+      if (drag.current) perfDragEnd()
       drag.current = null
+      setGuides({ x: [], y: [] })
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
@@ -519,17 +686,30 @@ export default function MenuLayoutEditor() {
   }
 
   const addProduct = (p: CatalogProduct) => {
-    // Один productId — один блок: повторное добавление не создаёт дубль, а подсвечивает существующий.
-    const existing = doc?.pages.flatMap((pg) => pg.blocks).find((b) => b.type === 'product' && b.productId === p.id && !b.hidden)
+    // Одна позиция — один блок. Объёмы (250/350/400) в каталоге — отдельные товары
+    // с общим groupId, на листе это одна позиция, поэтому ищем и по группе.
+    const key = groupKeyOf(p)
+    const sameKey = (b: MenuBlock) => {
+      if (b.type !== 'product' || b.hidden || b.productId == null) return false
+      if (b.productId === p.id) return true
+      if (!p.groupId) return false
+      const other = products.find((x) => x.id === b.productId)
+      return !!other && groupKeyOf(other) === key
+    }
+    const existing = doc?.pages.flatMap((pg) => pg.blocks).find(sameKey)
     if (existing) {
       setSelectedId(existing.id)
+      setSelectedIds([existing.id])
       setRightTab('block')
       const samePage = doc?.pages.findIndex((pg) => pg.blocks.some((b) => b.id === existing.id)) ?? -1
       if (samePage >= 0) setPageIdx(samePage)
       toast.push(`«${p.name}» уже на листе — выделил блок`)
       return
     }
-    const fresh = productBlock(p, {}, 0)
+    // В блок кладём вариант с младшим объёмом: название и объёмы берутся из каталога.
+    const group = p.groupId ? products.filter((x) => groupKeyOf(x) === key) : [p]
+    const primary = group.find((x) => x.available) ?? group[0] ?? p
+    const fresh = productBlock(primary, {}, 0)
     updatePage((blocks) => {
       const rect = nextFreeRect(blocks, DEFAULT_RECT.product.w, DEFAULT_RECT.product.h)
       return [...blocks, { ...fresh, ...rect, zIndex: topZ(blocks) }]
@@ -723,9 +903,13 @@ export default function MenuLayoutEditor() {
       theme={theme}
       title={title}
       selectedId={opts.interactive ? selectedId : null}
-      onSelect={opts.interactive ? setSelectedId : undefined}
+      selectedIds={opts.interactive ? selectedIds : undefined}
+      guides={opts.interactive ? guides : undefined}
+      marquee={opts.interactive ? marquee : null}
+      onSelect={opts.interactive ? selectBlock : undefined}
       onBlockPointerDown={opts.interactive ? (e, bid) => beginDrag(e, bid, 'move') : undefined}
       onHandlePointerDown={opts.interactive ? (e, bid) => beginDrag(e, bid, 'resize', 'se') : undefined}
+      onContextMenu={opts.interactive ? (e, bid) => setCtxMenu({ x: e.clientX, y: e.clientY, id: bid }) : undefined}
       showGrid={opts.grid}
       showSafe={opts.safe}
       index={pageIdx + 1}
@@ -872,22 +1056,80 @@ export default function MenuLayoutEditor() {
   )
 
   const layersPane = (
-    <div className="min-h-0 flex-1 overflow-y-auto p-2">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="border-b border-line px-2 py-2">
+        <label className="flex min-h-8 items-center gap-2 rounded-lg border border-line bg-white px-2">
+          <Search size={13} className="text-ink-tertiary" aria-hidden />
+          <input
+            value={layerQuery}
+            onChange={(e) => setLayerQuery(e.target.value)}
+            placeholder="Найти слой"
+            aria-label="Поиск по слоям"
+            className="min-w-0 flex-1 border-0 bg-transparent text-[12.5px] outline-none"
+          />
+          {layerQuery && (
+            <button type="button" onClick={() => setLayerQuery('')} aria-label="Очистить поиск" className="text-ink-tertiary hover:text-brand">
+              <X size={13} />
+            </button>
+          )}
+        </label>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-2">
       {page.blocks.length === 0 && (
         <p className="p-2 text-[13px] text-ink-secondary">Холст пуст. Добавьте позиции из каталога или текст.</p>
       )}
+      {page.blocks.length > 0 && layerQuery && byZ(page.blocks).filter((b) => layerName(b).toLowerCase().includes(layerQuery.toLowerCase())).length === 0 && (
+        <p className="p-2 text-[12.5px] text-ink-secondary">Ничего не найдено по «{layerQuery}».</p>
+      )}
       <ul className="space-y-0.5">
-        {byZ(page.blocks).map((b) => (
+        {byZ(page.blocks)
+          .filter((b) => !layerQuery || layerName(b).toLowerCase().includes(layerQuery.toLowerCase()))
+          .map((b) => (
           <li
             key={b.id}
             className={cx(
               'flex items-center gap-1 rounded-lg border px-1.5 py-1',
-              selectedId === b.id ? 'border-brand bg-surface-2' : 'border-transparent hover:bg-surface-2',
+              selectedIds.includes(b.id) ? 'border-brand bg-surface-2' : 'border-transparent hover:bg-surface-2',
               b.hidden && 'opacity-50',
             )}
           >
-            <button type="button" onClick={() => setSelectedId(b.id)} className="min-w-0 flex-1 truncate text-left text-[12.5px]">
-              <span className="text-ink-tertiary">{b.zIndex}.</span> {layerName(b)}
+            {renamingId === b.id ? (
+              <input
+                autoFocus
+                defaultValue={b.titleOverride ?? layerName(b)}
+                onClick={(e) => e.stopPropagation()}
+                onBlur={(e) => {
+                  const v = e.target.value.trim()
+                  if (v) patchBlock({ titleOverride: v }, b.id)
+                  setRenamingId(null)
+                }}
+                onKeyDown={(e) => {
+                  e.stopPropagation()
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                  if (e.key === 'Escape') setRenamingId(null)
+                }}
+                aria-label="Новое имя слоя"
+                className="min-w-0 flex-1 rounded border border-brand px-1 text-[12.5px] outline-none"
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={(e) => selectBlock(b.id, e as unknown as ReactPointerEvent<HTMLDivElement>)}
+                onDoubleClick={() => setRenamingId(b.id)}
+                title="Двойной клик — переименовать (меняет и подпись на печати)"
+                className="min-w-0 flex-1 truncate text-left text-[12.5px]"
+              >
+                <span className="text-ink-tertiary">{b.zIndex}.</span> {layerName(b)}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => toggleLock(b.id)}
+              className={cx('grid h-6 w-6 place-items-center rounded', b.locked ? 'text-brand' : 'text-ink-tertiary hover:text-brand')}
+              aria-label={b.locked ? 'Снять замок' : 'Закрепить блок'}
+              title={b.locked ? 'Снять замок' : 'Закрепить блок'}
+            >
+              {b.locked ? <Lock size={13} /> : <LockOpen size={13} />}
             </button>
             <button
               type="button"
@@ -939,6 +1181,7 @@ export default function MenuLayoutEditor() {
           </button>
         </div>
       )}
+      </div>
     </div>
   )
 
@@ -1174,34 +1417,33 @@ export default function MenuLayoutEditor() {
         </div>
         {(
           [
-            ['bg', 'Фон листа'],
-            ['text', 'Текст'],
-            ['accent', 'Акцент'],
+            ['bg', 'Фон листа', undefined],
+            ['text', 'Текст', theme.bg],
+            ['accent', 'Акцент', theme.bg],
           ] as const
-        ).map(([key, label]) => (
-          <label key={key} className="mt-2 flex items-center gap-2 text-[12px] text-ink-secondary">
-            <span className="flex-1">{label}</span>
-            <code className="text-[11px] text-ink-tertiary">{theme[key].toUpperCase()}</code>
-            <input
-              type="color"
-              value={theme[key]}
-              onChange={(e) => setTheme({ ...theme, [key]: e.target.value.toUpperCase() })}
-              className="h-6 w-6 rounded border border-line bg-transparent p-0"
-              aria-label={label}
-            />
-          </label>
+        ).map(([key, label, pair]) => (
+          <ColorField
+            key={key}
+            label={label}
+            value={theme[key]}
+            contrastWith={pair}
+            swatches={BRAND_COLORS}
+            onChange={(next) => applyThemeColor(key, next)}
+          />
         ))}
-        {/* Палитра бренда: шаблоны стартуют с неё, свободный цвет остаётся доступен. */}
         <div className="mt-2 flex flex-wrap gap-1">
-          {BRAND_COLORS.map((c) => (
+          {theme.recentColors && theme.recentColors.length > 0 && (
+            <p className="w-full text-[10.5px] uppercase tracking-wide text-ink-tertiary">недавние</p>
+          )}
+          {(theme.recentColors ?? []).map((c) => (
             <button
               key={c}
               type="button"
-              onClick={() => setTheme({ ...theme, accent: c })}
-              aria-label={`Акцент ${c}`}
-              title={`Акцент ${c}`}
+              onClick={() => applyThemeColor('accent', c)}
+              aria-label={`Недавний цвет ${c}`}
+              title={c}
               style={{ background: c }}
-              className="h-6 w-6 rounded-full border border-line"
+              className="h-5 w-5 rounded-full border border-line"
             />
           ))}
         </div>
@@ -1280,9 +1522,25 @@ export default function MenuLayoutEditor() {
           <p className="text-[11px] uppercase tracking-wide text-ink-tertiary">{selectedType === 'product' ? 'Позиция' : 'Блок'}</p>
           <p className="truncate text-[13px] font-semibold text-ink">{layerName(selected)}</p>
           <p className="truncate text-[11px] text-ink-tertiary">
-            {selected.productId ? `Каталог 6.7 · product_id ${selected.productId}` : `z ${selected.zIndex}`}
+            {selected.productId
+              ? [selected.displayCategory ?? 'Каталог 6.7', selected.displaySizes && selected.displaySizes.length > 1
+                  ? `${selected.displaySizes.length} объёма`
+                  : selected.product?.variantLabel ?? null]
+                  .filter(Boolean)
+                  .join(' · ')
+              : `слой ${selected.zIndex}`}
           </p>
         </div>
+        <button
+          type="button"
+          onClick={() => toggleLock(selected.id)}
+          className={cx('grid h-7 w-7 shrink-0 place-items-center rounded-md', selected.locked ? 'bg-surface-2 text-brand' : 'text-ink-tertiary hover:text-brand')}
+          aria-pressed={!!selected.locked}
+          aria-label={selected.locked ? 'Снять замок' : 'Закрепить блок'}
+          title={selected.locked ? 'Снять замок' : 'Закрепить блок'}
+        >
+          {selected.locked ? <Lock size={14} /> : <LockOpen size={14} />}
+        </button>
       </div>
 
       <section className="border-b border-line px-3 py-3">
@@ -1316,6 +1574,11 @@ export default function MenuLayoutEditor() {
         <p className="mt-1.5 text-[11px] text-ink-tertiary">
           Минимум {MIN_W}×{MIN_H} %. Стрелки двигают на 0,5 %, с Shift — на 5 %.
         </p>
+        <PhotoDpiHint
+          url={selected.displayImageUrl ?? selected.url ?? null}
+          widthPct={selected.wPct}
+          ratio={LAYOUT_FORMATS.find((f) => f.id === format)?.ratio ?? 210 / 297}
+        />
       </section>
 
       <section className="border-b border-line px-3 py-3">
@@ -1343,6 +1606,10 @@ export default function MenuLayoutEditor() {
                 />
               </Field>
             </div>
+            <label className="mt-2 flex items-center gap-2 text-[13px]">
+              <input type="checkbox" checked={!!selected.uppercase} onChange={(e) => patchBlock({ uppercase: e.target.checked })} />
+              Название капсом
+            </label>
             <div className="mt-2">
               <Field label="Бейдж">
                 <Select value={selected.badge ?? ''} onChange={(e) => patchBlock({ badge: e.target.value || null })}>
@@ -1415,6 +1682,10 @@ export default function MenuLayoutEditor() {
             <label className="mt-2 flex items-center gap-2 text-[13px]">
               <input type="checkbox" checked={selected.bold} onChange={(e) => patchBlock({ bold: e.target.checked })} />
               Жирный (Unbounded)
+            </label>
+            <label className="mt-1 flex items-center gap-2 text-[13px]">
+              <input type="checkbox" checked={!!selected.uppercase} onChange={(e) => patchBlock({ uppercase: e.target.checked })} />
+              Капсом (заглавными)
             </label>
           </>
         )}
@@ -1700,6 +1971,39 @@ export default function MenuLayoutEditor() {
               <span className="text-[11px] font-normal text-ink-tertiary">{page.blocks.length} блоков</span>
             </div>
             <div className="flex items-center gap-1">
+              {editableIds.length > 1 && (
+                <>
+                  <span className="mr-1 text-[11px] font-semibold text-ink-tertiary">выбрано {selectedIds.length}</span>
+                  {(
+                    [
+                      ['left', AlignStartVertical, 'По левому краю'],
+                      ['center', AlignCenterVertical, 'По центру'],
+                      ['right', AlignEndVertical, 'По правому краю'],
+                      ['top', AlignStartHorizontal, 'По верхнему краю'],
+                      ['middle', AlignCenterHorizontal, 'По середине'],
+                      ['bottom', AlignEndHorizontal, 'По нижнему краю'],
+                    ] as const
+                  ).map(([mode, Icon, title]) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => align(mode)}
+                      className="grid h-8 w-8 place-items-center rounded-md text-ink-tertiary hover:bg-surface-2 hover:text-brand"
+                      aria-label={title}
+                      title={title}
+                    >
+                      <Icon size={15} />
+                    </button>
+                  ))}
+                  <button type="button" onClick={() => distribute('x')} className="h-8 rounded-md px-2 text-[11px] font-semibold text-ink-tertiary hover:bg-surface-2 hover:text-brand" title="Равные промежутки по горизонтали">
+                    ⇿
+                  </button>
+                  <button type="button" onClick={() => distribute('y')} className="h-8 rounded-md px-2 text-[11px] font-semibold text-ink-tertiary hover:bg-surface-2 hover:text-brand" title="Равные промежутки по вертикали">
+                    ⇅
+                  </button>
+                  <span className="mx-1 h-5 w-px bg-line" />
+                </>
+              )}
               <button
                 type="button"
                 onClick={() => setShowGrid((v) => !v)}
@@ -1719,17 +2023,47 @@ export default function MenuLayoutEditor() {
                 поля
               </button>
               <span className="mx-1 h-5 w-px bg-line" />
-              <button type="button" onClick={() => setZoom((z) => Math.max(0.6, +(z - 0.1).toFixed(2)))} className="grid h-8 w-8 place-items-center rounded-md text-ink-tertiary hover:text-brand" aria-label="Уменьшить">
+              <button type="button" onClick={() => setZoom((z) => zoomStep(z, -1))} className="grid h-8 w-8 place-items-center rounded-md text-ink-tertiary hover:text-brand" aria-label="Уменьшить" title="Уменьшить (Ctrl + колесо)">
                 <Minus size={15} />
               </button>
-              <span className="w-10 text-center text-[11px] font-semibold tabular-nums text-ink-secondary">{Math.round(zoom * 100)}%</span>
-              <button type="button" onClick={() => setZoom((z) => Math.min(1.6, +(z + 0.1).toFixed(2)))} className="grid h-8 w-8 place-items-center rounded-md text-ink-tertiary hover:text-brand" aria-label="Увеличить">
+              <button
+                type="button"
+                onClick={() => setZoom(1)}
+                className="w-12 rounded-md text-center text-[11px] font-semibold tabular-nums text-ink-secondary hover:bg-surface-2"
+                title="Сбросить масштаб до 100 %"
+              >
+                {Math.round(zoom * 100)}%
+              </button>
+              <button type="button" onClick={() => setZoom((z) => zoomStep(z, 1))} className="grid h-8 w-8 place-items-center rounded-md text-ink-tertiary hover:text-brand" aria-label="Увеличить" title="Увеличить (Ctrl + колесо)">
                 <Plus size={15} />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const box = canvasBox.current
+                  if (!box) return
+                  const ratio = LAYOUT_FORMATS.find((f) => f.id === format)?.ratio ?? 210 / 297
+                  setZoom(fitZoom(box.clientWidth, box.clientHeight, ratio, 560))
+                }}
+                className="grid h-8 w-8 place-items-center rounded-md text-ink-tertiary hover:text-brand"
+                aria-label="Вписать лист"
+                title="Вписать лист целиком"
+              >
+                <Maximize2 size={15} />
               </button>
             </div>
           </div>
 
-          <div className="flex-1 overflow-auto rounded-xl border border-line bg-[#e9ebef] p-4">
+          <div
+            ref={canvasBox}
+            className="flex-1 overflow-auto rounded-xl border border-line bg-[#e9ebef] p-4"
+            onWheel={(e) => {
+              // Ctrl/⌘ + колесо — зум как в редакторах; обычное колесо листает.
+              if (!e.ctrlKey && !e.metaKey) return
+              e.preventDefault()
+              setZoom((z) => clampZoom(z * (e.deltaY < 0 ? 1.1 : 0.9)))
+            }}
+          >
             <div
               ref={sheetRef}
               className="mx-auto"
@@ -1738,7 +2072,47 @@ export default function MenuLayoutEditor() {
                 aspectRatio: String(LAYOUT_FORMATS.find((f) => f.id === format)?.ratio ?? 210 / 297),
               }}
               onPointerDown={(e) => {
-                if (e.target === e.currentTarget) setSelectedId(null)
+                const target = e.target as HTMLElement
+                const empty = target === e.currentTarget || !!target.closest('.mc-safe')
+                if (target === e.currentTarget) {
+                  setSelectedId(null)
+                  setSelectedIds([])
+                }
+                // Рамка выделения: тянем по пустому месту безопасной области.
+                if (!empty || (target !== e.currentTarget && target.closest('.mc-block'))) return
+                const sheet = sheetRef.current
+                if (!sheet) return
+                const box = sheet.getBoundingClientRect()
+                const off = safeBoxOffset(box)
+                const size = safeBoxSize(box)
+                const toPct = (clientX: number, clientY: number) => ({
+                  x: ((clientX - box.left - off.left) / size.w) * 100,
+                  y: ((clientY - box.top - off.top) / size.h) * 100,
+                })
+                const start = toPct(e.clientX, e.clientY)
+                setMarquee(null)
+                const move = (ev: PointerEvent) => {
+                  const cur = toPct(ev.clientX, ev.clientY)
+                  const rect = {
+                    xPct: Math.max(0, Math.min(start.x, cur.x)),
+                    yPct: Math.max(0, Math.min(start.y, cur.y)),
+                    wPct: Math.abs(cur.x - start.x),
+                    hPct: Math.abs(cur.y - start.y),
+                  }
+                  setMarquee(rect)
+                  const hit = (page?.blocks ?? [])
+                    .filter((b) => !b.hidden && rectsIntersect(rect, b))
+                    .map((b) => b.id)
+                  setSelectedIds(hit)
+                  setSelectedId(hit[0] ?? null)
+                }
+                const up = () => {
+                  setMarquee(null)
+                  window.removeEventListener('pointermove', move)
+                  window.removeEventListener('pointerup', up)
+                }
+                window.addEventListener('pointermove', move)
+                window.addEventListener('pointerup', up)
               }}
             >
               <div className="h-full w-full shadow-[0_10px_30px_rgba(16,24,40,.15)]">{canvas({ interactive: true, grid: showGrid, safe: showSafe })}</div>
@@ -1979,6 +2353,55 @@ export default function MenuLayoutEditor() {
         }}
       />
 
+      {ctxMenu && (() => {
+        const target = page.blocks.find((b) => b.id === ctxMenu.id)
+        const item = (label: string, action: () => void, hint?: string, danger?: boolean) => (
+          <button
+            key={label}
+            type="button"
+            onClick={() => {
+              action()
+              setCtxMenu(null)
+            }}
+            className={cx(
+              'flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-[12.5px] hover:bg-surface-2',
+              danger ? 'text-bad' : 'text-ink',
+            )}
+          >
+            <span>{label}</span>
+            {hint && <span className="text-[10.5px] text-ink-tertiary">{hint}</span>}
+          </button>
+        )
+        return (
+          <>
+            <div className="fixed inset-0 z-[85]" onPointerDown={() => setCtxMenu(null)} aria-hidden />
+            <div
+              role="menu"
+              aria-label="Действия с блоком"
+              className="fixed z-[86] w-56 overflow-hidden rounded-xl border border-line bg-white py-1 shadow-soft"
+              style={{ left: Math.min(ctxMenu.x, window.innerWidth - 240), top: Math.min(ctxMenu.y, window.innerHeight - 300) }}
+            >
+              <p className="truncate px-3 py-1 text-[11px] uppercase tracking-wide text-ink-tertiary">
+                {target ? layerName(target) : 'Блок'}
+              </p>
+              {item('Дублировать', () => duplicateBlocks([ctxMenu.id]), '⌘D')}
+              {item('Копировать', () => {
+                if (target) clipboard.current = target
+                toast.push('Блок скопирован — ⌘V вставит')
+              }, '⌘C')}
+              {item(target?.locked ? 'Снять замок' : 'Закрепить', () => toggleLock(ctxMenu.id))}
+              {item(target?.hidden ? 'Показать' : 'Скрыть', () => patchBlock({ hidden: !target?.hidden }, ctxMenu.id), 'Alt+Del')}
+              <div className="my-1 h-px bg-line" />
+              {item('На передний план', () => updatePage((blocks) => bringToFront(blocks, ctxMenu.id)))}
+              {item('На задний план', () => updatePage((blocks) => sendToBack(blocks, ctxMenu.id)))}
+              <div className="my-1 h-px bg-line" />
+              {item('Переименовать', () => setRenamingId(ctxMenu.id))}
+              {item('Удалить с листа', () => deleteBlock(ctxMenu.id), 'Del', true)}
+            </div>
+          </>
+        )
+      })()}
+
       <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-3 text-[12px] text-ink-secondary">
         {MENU_LAYOUT_V2 && (data?.layout.sections ?? 0) > 0 && (
           <>
@@ -2063,6 +2486,39 @@ type ExportProps = {
   onGoToBlock: (blockId: string, pageIdx: number) => void
 }
 
+/**
+ * Подсказка о разрешении фото: 300×300 px в рамке 12 см дадут ~64 dpi и «мыло» на печати.
+ * Ничего не блокирует — просто честно предупреждает до отправки в типографию.
+ */
+function PhotoDpiHint({ url, widthPct, ratio }: { url: string | null; widthPct: number; ratio: number }) {
+  const [dpi, setDpi] = useState<number | null>(null)
+  useEffect(() => {
+    if (!url) {
+      setDpi(null)
+      return
+    }
+    let alive = true
+    const img = new Image()
+    img.onload = () => {
+      if (alive) setDpi(effectiveDpi(img.naturalWidth, widthPct, sheetWidthMm(ratio)))
+    }
+    img.onerror = () => {
+      if (alive) setDpi(null)
+    }
+    img.src = url
+    return () => {
+      alive = false
+    }
+  }, [url, widthPct, ratio])
+
+  if (dpi == null || dpi >= 200) return null
+  return (
+    <p className="mt-1 text-[11px] text-warn">
+      фото ≈ {dpi} dpi при этой ширине — на печати будет мыло (нужно ≥ 200)
+    </p>
+  )
+}
+
 function ExportModal({ open, onClose, layoutId, format, pages, blockers, onGoToBlock }: ExportProps) {
   const [preset, setPreset] = useState<'print' | 'screen'>('print')
   const [bleed, setBleed] = useState(3)
@@ -2081,6 +2537,7 @@ function ExportModal({ open, onClose, layoutId, format, pages, blockers, onGoToB
   const download = async (force: boolean) => {
     setBusy(true)
     setErr('')
+    const startedAt = performance.now()
     try {
       const qs = new URLSearchParams({ preset, bleed: String(preset === 'print' ? bleed : 0) })
       if (force) qs.set('force', '1')
@@ -2102,6 +2559,7 @@ function ExportModal({ open, onClose, layoutId, format, pages, blockers, onGoToB
       a.click()
       a.remove()
       setTimeout(() => URL.revokeObjectURL(url), 1000)
+      perfPdf(performance.now() - startedAt)
       onClose()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Не удалось скачать PDF')
@@ -2171,6 +2629,10 @@ function ExportModal({ open, onClose, layoutId, format, pages, blockers, onGoToB
               </li>
               <li className="flex items-start gap-2">
                 <Check size={14} className="mt-0.5 flex-none text-ok" aria-hidden /> {pages} стр. · метки реза при полях
+              </li>
+              <li className="flex items-start gap-2 text-warn">
+                <span className="mt-[3px] flex-none text-[11px] font-bold">RGB</span>
+                Цвета в PDF — RGB. Для типографии согласуйте профиль или включите CMYK-вывод на сервере.
               </li>
               {hard.length > 0 && (
                 <li className="flex items-start gap-2 text-bad">

@@ -91,6 +91,8 @@ export function emptyBlock(type: MenuBlock['type']): MenuBlock {
     fontSizePt: 10,
     align: 'left',
     bold: false,
+    uppercase: false,
+    locked: false,
     snapshotPriceRub: null,
     snapshotName: null,
     snapshotImageUrl: null,
@@ -122,6 +124,8 @@ export function emptyDoc(): MenuDoc {
     fontSizePt: 10,
     align: 'left',
     bold: false,
+    uppercase: false,
+    locked: false,
     snapshotPriceRub: null,
     snapshotName: null,
     snapshotImageUrl: null,
@@ -290,6 +294,8 @@ const blockZ = z.object({
   fontSizePt: z.number().min(5).max(72).optional(),
   align: z.enum(['left', 'center', 'right']).optional(),
   bold: z.boolean().optional(),
+  uppercase: z.boolean().optional(),
+  locked: z.boolean().optional(),
   sortOrder: z.number().int().min(0).max(10_000).optional(),
   snapshotPriceRub: z.number().int().nullable().optional(),
   snapshotName: z.string().max(120).nullable().optional(),
@@ -345,9 +351,10 @@ const docZ = z.object({
 
 const themeZ = z.object({
   preset: z.enum(['classic', 'dark', 'season']).optional(),
-  bg: z.string().max(7).optional(),
-  text: z.string().max(7).optional(),
-  accent: z.string().max(7).optional(),
+  // #RRGGBB или #RRGGBBAA: альфа нужна, чтобы цвет можно было сделать полупрозрачным.
+  bg: z.string().max(9).optional(),
+  text: z.string().max(9).optional(),
+  accent: z.string().max(9).optional(),
   backgroundImageUrl: z.string().max(500).nullable().optional(),
   backgroundDim: z.number().min(0).max(80).optional(),
   fontHeading: z.enum(['Unbounded', 'Golos Text']).optional(),
@@ -442,6 +449,8 @@ export const adminMenuLayouts = new Hono<Env>()
       categoryId: r.categoryId == null ? null : Number(r.categoryId),
       categoryName: r.categoryName ?? null,
       variantLabel: r.variantLabel ?? null,
+      // Один товар-вариант («Капучино 350 мл») — это часть группы объёмов.
+      groupId: r.groupId == null ? null : Number(r.groupId),
       prices: volumes.get(Number(r.id)) ?? (r.groupId != null ? groups.get(Number(r.groupId)) : null) ?? null,
     }))
     const categories = db.prepare('SELECT id, name FROM categories ORDER BY sort_order, id').all()
@@ -740,10 +749,30 @@ export const adminMenuLayouts = new Hono<Env>()
         .all() as { id: number; name: string }[]
       const products = db
         .prepare(
-          `SELECT id, name, price, category_id AS categoryId, image_url AS imageUrl, variant_label AS variantLabel
-             FROM products WHERE available=1 ORDER BY sort_order, id`,
+          `SELECT id, name, price, category_id AS categoryId, image_url AS imageUrl,
+                  variant_label AS variantLabel, group_id AS groupId, variant_sort AS variantSort
+             FROM products WHERE available=1 ORDER BY sort_order, variant_sort, id`,
         )
-        .all() as { id: number; name: string; price: number; categoryId: number | null; imageUrl: string | null; variantLabel: string | null }[]
+        .all() as {
+        id: number
+        name: string
+        price: number
+        categoryId: number | null
+        imageUrl: string | null
+        variantLabel: string | null
+        groupId: number | null
+        variantSort: number | null
+      }[]
+
+      // Объёмы в каталоге — отдельные товары с общим group_id. На листе это одна позиция
+      // («Капучино» с ценами 250 · 350 · 400), а не три почти одинаковых блока.
+      const keyOf = (p: { id: number; groupId: number | null }): number => p.groupId ?? p.id
+      const byKey = new Map<number, typeof products>()
+      for (const p of products) {
+        const list = byKey.get(keyOf(p)) ?? []
+        list.push(p)
+        byKey.set(keyOf(p), list)
+      }
 
       const doc = migrateDocToCanvas(normalizeDoc(jsonParse<unknown>(row.doc_json, emptyDoc())))
       const targetPage = body.pageId ? doc.pages.find((p) => p.id === body.pageId) : doc.pages[0]
@@ -755,38 +784,50 @@ export const adminMenuLayouts = new Hono<Env>()
         : [...targetPage.blocks]
       let skippedDuplicate = 0
 
-      // Один productId — один блок на весь макет: повторная сборка не должна плодить «Капучино ×N».
-      const usedProductIds = new Set<number>()
+      // Одна позиция (или группа объёмов) — один блок на весь макет:
+      // повторная сборка не должна плодить «Капучино ×N».
+      const productKey = new Map<number, number>()
+      for (const p of products) productKey.set(Number(p.id), keyOf(p))
+      const usedKeys = new Set<number>()
       for (const p of doc.pages) {
         const pageBlocks = p.id === targetPage.id ? keep : p.blocks
         for (const b of pageBlocks) {
-          if (b.type === 'product' && !b.hidden && b.productId != null) usedProductIds.add(b.productId)
+          if (b.type === 'product' && !b.hidden && b.productId != null) {
+            usedKeys.add(productKey.get(b.productId) ?? b.productId)
+          }
         }
       }
 
       // Секции — семантический слой (schemaVersion 2), блоки получает движок раскладки.
       const sizes = loadCatalogSizes(products.map((x) => Number(x.id)))
+      const groupSizes = loadGroupSizes(products.map((x) => x.groupId).filter((n): n is number => n != null))
       const sections: MenuSection[] = []
       let added = 0
       for (const cat of categories) {
         if (wanted && !wanted.has(cat.id)) continue
         const all = products.filter((p) => p.categoryId === cat.id)
-        const fresh = all.filter((p) => !usedProductIds.has(p.id))
-        skippedDuplicate += all.length - fresh.length
-        if (fresh.length === 0) continue
+        // Категория даёт ключи позиций: для группы объёмов это один ключ на все варианты.
+        const keys = [...new Set(all.map(keyOf))]
+        const freshKeys = keys.filter((k) => !usedKeys.has(k))
+        const freshProducts = all.filter((p) => freshKeys.includes(keyOf(p)))
+        skippedDuplicate += all.length - freshProducts.length
+        if (freshKeys.length === 0) continue
         sections.push({
           id: `sec-${cat.id}`,
           title: cat.name,
           categoryId: cat.id,
           style: { showPhotos: true },
-          items: fresh.map((p) => {
-            const list = sizes.get(Number(p.id)) ?? []
+          items: freshKeys.map((k) => {
+            const members = byKey.get(k) ?? []
+            const p = members[0]!
+            // Для группы объёмов берём общий список вариантов, для одиночного товара — его объёмы.
+            const list = p.groupId != null ? groupSizes.get(Number(p.groupId)) ?? [] : sizes.get(Number(p.id)) ?? []
             added += 1
-            usedProductIds.add(p.id)
+            usedKeys.add(k)
             return {
               id: `it-${p.id}`,
               productId: Number(p.id),
-              groupId: null,
+              groupId: p.groupId == null ? null : Number(p.groupId),
               titleOverride: null,
               description: null,
               badge: null,

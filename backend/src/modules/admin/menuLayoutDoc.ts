@@ -73,10 +73,14 @@ export type MenuBlock = {
   url: string | null
   /** image: как вписывать картинку в рамку. */
   fit: 'cover' | 'contain'
-  /** text: кегль в pt, выравнивание, жирность. */
+  /** text: кегль в pt, выравнивание, жирность, регистр. */
   fontSizePt: number
   align: 'left' | 'center' | 'right'
   bold: boolean
+  /** Весь текст блока капсом — «250 мл» → «250 МЛ». */
+  uppercase: boolean
+  /** Замок: блок виден и печатается, но не двигается и не ресайзится мышью. */
+  locked: boolean
   // ── снапшот каталога (frozen / баннер цен) ──
   snapshotPriceRub: number | null
   snapshotName: string | null
@@ -144,6 +148,8 @@ export type MenuTheme = {
   itemSize: number
   ornament: 'none' | 'line' | 'beans' | 'leaf'
   logoPosition: 'left' | 'top-right' | 'footer'
+  /** Недавние цвета пользователя — общие для макета, чтобы не подбирать заново. */
+  recentColors?: string[]
 }
 
 export const THEME_PRESETS: Record<MenuTheme['preset'], Pick<MenuTheme, 'bg' | 'text' | 'accent'>> = {
@@ -164,7 +170,7 @@ export const DEFAULT_THEME: MenuTheme = {
   logoPosition: 'left',
 }
 
-const HEX = /^#[0-9a-f]{6}$/i
+const HEX = /^#[0-9a-f]{6}([0-9a-f]{2})?$/i
 const hex = (v: unknown, fallback: string): string => (typeof v === 'string' && HEX.test(v) ? v.toUpperCase() : fallback)
 const num = (v: unknown, min: number, max: number, fallback: number): number => {
   const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN
@@ -196,6 +202,9 @@ export function normalizeTheme(raw: unknown): MenuTheme {
     itemSize: num(t.itemSize, 8, 16, DEFAULT_THEME.itemSize),
     ornament: oneOf(t.ornament, ['none', 'line', 'beans', 'leaf'] as const, 'line'),
     logoPosition: oneOf(t.logoPosition, ['left', 'top-right', 'footer'] as const, 'left'),
+    recentColors: Array.isArray(t.recentColors)
+      ? t.recentColors.filter((c): c is string => typeof c === 'string' && HEX.test(c)).slice(0, 8)
+      : [],
   }
 }
 
@@ -271,6 +280,8 @@ function normalizeBlock(raw: unknown, index: number): MenuBlock | null {
     fontSizePt: num(b.fontSizePt, 5, 72, 10),
     align: oneOf(b.align, ['left', 'center', 'right'] as const, 'left'),
     bold: b.bold === true,
+    uppercase: b.uppercase === true,
+    locked: b.locked === true,
     snapshotPriceRub: intOrNull(b.snapshotPriceRub),
     snapshotName: str(b.snapshotName, 120),
     snapshotImageUrl: str(b.snapshotImageUrl, 400),
@@ -754,8 +765,7 @@ export function resolveDoc(doc: MenuDoc, priceMode: PriceMode): ResolvedDoc {
         const priceText = b.priceText ?? (priceRub != null && priceRub > 0 ? String(priceRub) : null)
         if (!priceText) warnings.push('нет цены')
 
-        const displayName =
-          b.titleOverride ?? (frozen ? b.snapshotName ?? live?.name ?? '' : live?.name ?? b.snapshotName ?? '')
+        const baseName = frozen ? b.snapshotName ?? live?.name ?? '' : live?.name ?? b.snapshotName ?? ''
         const displayImageUrl = b.photoUrlOverride ?? live?.imageUrl ?? (frozen ? b.snapshotImageUrl : null) ?? null
         // Объёмы: у позиции может быть 250/350/450 — печатаем одной строкой, а не тремя блоками.
         // Ручная цена в блоке сильнее объёмов каталога; frozen печатает снимок объёмов.
@@ -769,6 +779,14 @@ export function resolveDoc(doc: MenuDoc, priceMode: PriceMode): ResolvedDoc {
             : catalogSizes.length > 1
               ? catalogSizes.map((sz) => ({ label: sz.label, price: sz.priceRub == null ? '' : String(sz.priceRub) }))
               : []
+        // Одна позиция на группу объёмов: «Капучино 350 мл» + объёмы 250/350/400 читается плохо,
+        // поэтому в названии убираем хвост варианта, а объёмы печатаем строкой ниже.
+        const variant = live?.variantLabel?.trim()
+        const stripped =
+          displaySizes.length > 1 && variant && baseName.toLowerCase().endsWith(variant.toLowerCase())
+            ? baseName.slice(0, baseName.length - variant.length).trim()
+            : baseName
+        const displayName = b.titleOverride ?? (stripped || baseName)
         if (b.showPhoto && !displayImageUrl) warnings.push('нет фото')
         else if (b.showPhoto && displayImageUrl && isUploadsUrl(displayImageUrl) && !uploadsFileExists(displayImageUrl)) {
           warnings.push('файл картинки не найден')

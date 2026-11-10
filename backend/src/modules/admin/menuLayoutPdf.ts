@@ -16,7 +16,23 @@ import type { LayoutView } from './menuLayouts'
 const require = createRequire(import.meta.url)
 type PdfDoc = any
 
-const FONT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../../../assets/fonts')
+/**
+ * Шрифты лежат в `backend/assets/fonts`. После сборки бандл может оказаться на другой
+ * глубине (`dist/index.js`), поэтому ищем каталог по списку кандидатов, а не по одному пути.
+ */
+function resolveFontDir(): string {
+  const here = dirname(fileURLToPath(import.meta.url))
+  const candidates = [
+    resolve(here, '../../../assets/fonts'),
+    resolve(here, '../../assets/fonts'),
+    resolve(here, '../assets/fonts'),
+    resolve(process.cwd(), 'backend/assets/fonts'),
+    resolve(process.cwd(), 'assets/fonts'),
+  ]
+  return candidates.find((dir) => existsSync(join(dir, 'GolosText-400.ttf'))) ?? candidates[0]!
+}
+
+const FONT_DIR = resolveFontDir()
 
 const FONTS = {
   body: join(FONT_DIR, 'GolosText-400.ttf'),
@@ -33,6 +49,26 @@ const MM_TO_PT = 72 / 25.4
 function clip(text: string, max: number): string {
   const t = text.trim()
   return t.length > max ? `${t.slice(0, Math.max(1, max - 1)).trimEnd()}…` : t
+}
+
+/**
+ * Цвет может прийти с альфой (`#RRGGBBAA`) — в редакторе так задаётся прозрачность.
+ * Печать без альфа-канала: фон листа смешиваем с бумагой, текст/акцент рисуем с opacity.
+ */
+export function splitHex(color: string): { hex: string; alpha: number } {
+  const c = /^#[0-9a-f]{8}$/i.test(color) ? color : null
+  if (!c) return { hex: color, alpha: 1 }
+  return { hex: c.slice(0, 7), alpha: Math.round((parseInt(c.slice(7, 9), 16) / 255) * 100) / 100 }
+}
+
+/** Полупрозрачный фон листа на белой бумаге — это сплошной цвет, а не «прозрачный PDF». */
+export function overWhite(color: string): string {
+  const { hex, alpha } = splitHex(color)
+  if (alpha >= 1) return hex
+  const ch = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16))
+  return `#${ch
+    .map((v) => Math.round(v * alpha + 255 * (1 - alpha)).toString(16).padStart(2, '0'))
+    .join('')}`.toUpperCase()
 }
 
 /**
@@ -101,17 +137,22 @@ function drawBlock(
     }
     case 'text': {
       const size = Math.max(5, block.fontSizePt * scale)
-      const content = clip(block.text ?? block.titleOverride ?? '', 240)
-      if (!content) return
-      doc.font(block.bold ? 'displayBold' : 'body').fontSize(size).fillColor(theme.text)
+      const raw = clip(block.text ?? block.titleOverride ?? '', 240)
+      if (!raw) return
+      const content = block.uppercase ? raw.toUpperCase() : raw
+      const ink = splitHex(theme.text)
+      doc.font(block.bold ? 'displayBold' : 'body').fontSize(size).fillColor(ink.hex).fillOpacity(ink.alpha)
       doc.text(content, x, y, { width: w, height: h, align: block.align, ellipsis: true })
+      doc.fillOpacity(1)
       return
     }
     case 'category': {
       const name = clip(block.titleOverride ?? block.displayCategory ?? 'Категория', 48)
       const size = Math.max(6, Math.min(h * 0.62, 15 * scale))
-      doc.font(theme.fontHeading === 'Unbounded' ? 'displayBold' : 'bodyBold').fontSize(size).fillColor(theme.accent)
+      const ink = splitHex(theme.accent)
+      doc.font(theme.fontHeading === 'Unbounded' ? 'displayBold' : 'bodyBold').fontSize(size).fillColor(ink.hex).fillOpacity(ink.alpha)
       doc.text(name, x, y, { width: w, height: h, lineBreak: false, ellipsis: true })
+      doc.fillOpacity(1)
       doc.strokeColor(line).lineWidth(0.6).moveTo(x, y + h).lineTo(x + w, y + h).stroke()
       return
     }
@@ -245,7 +286,7 @@ export async function renderLayoutPdf(view: LayoutView, opts: PdfOptions): Promi
   for (let pi = 0; pi < pages.length; pi++) {
     const page = pages[pi]!
     doc.addPage({ size: [W, H], margin: 0 })
-    doc.rect(0, 0, W, H).fill(theme.bg)
+    doc.rect(0, 0, W, H).fill(overWhite(theme.bg))
 
     const bg = imageFor(theme.backgroundImageUrl)
     if (bg) {
@@ -272,6 +313,7 @@ export async function renderLayoutPdf(view: LayoutView, opts: PdfOptions): Promi
         doc.rotate(block.rotationDeg, { origin: [cx, cy] })
       }
       drawBlock(doc, block, rect, { theme, scale, muted, line, imageFor })
+      doc.fillOpacity(1)
       doc.restore()
     }
 

@@ -2,6 +2,8 @@ node_modules
 dist
 .turbo
 backend/data
+frontend-admin/data
+frontend/data
 .env
 *.log
 .DS_Store

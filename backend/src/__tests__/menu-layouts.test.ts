@@ -42,6 +42,7 @@ type Block = {
   text?: string | null
   displayName?: string
   displayPrice?: string | null
+  displaySizes?: { label: string; price: string }[]
   warnings?: string[]
 }
 
@@ -535,5 +536,101 @@ describe('нормализация документа и темы', () => {
     expect(theme.backgroundDim).toBeLessThanOrEqual(80)
     expect(theme.backgroundImageUrl).toBeNull()
     expect(theme.preset).toBe('dark')
+  })
+})
+
+describe('объёмы одной позицией (groupId)', () => {
+  /** Группа объёмов: без строки в product_groups внешний ключ не даст вставить вариант. */
+  function mkGroup(name: string, categoryId: number): number {
+    const now = Date.now()
+    const info = db
+      .prepare('INSERT INTO product_groups(name, category_id, sort_order, created_at, updated_at) VALUES(?,?,0,?,?)')
+      .run(name, categoryId, now, now)
+    return Number(info.lastInsertRowid)
+  }
+
+  /** Товар-вариант: «Капучино 250 мл» с общим group_id. */
+  function mkVariant(name: string, price: number, categoryId: number, groupId: number, variantLabel: string, sort: number): number {
+    const id = ++productSeq
+    db.prepare(
+      `INSERT INTO products(id, name, price, icon, available, category_id, group_id, variant_label, variant_sort, size_value, size_unit)
+       VALUES(?,?,?,'Coffee',1,?,?,?,?,?, 'ml')`,
+    ).run(id, name, price, categoryId, groupId, variantLabel, sort, Number(variantLabel.replace(/\D+/g, '')) || null)
+    return id
+  }
+
+  it('seed собирает группу объёмов в один блок, а не в три', async () => {
+    const cat = mkCategory('Капучино-группа')
+    const group = mkGroup('Капучино', cat)
+    mkVariant('Капучино 250 мл', 190, cat, group, '250 мл', 0)
+    mkVariant('Капучино 350 мл', 220, cat, group, '350 мл', 1)
+    mkVariant('Капучино 400 мл', 350, cat, group, '400 мл', 2)
+
+    const created = await createLayout('Группа объёмов')
+    const res = await app.request(`/api/admin/menu-layouts/${created.id}/seed-from-catalog`, {
+      method: 'POST',
+      headers: H,
+      body: JSON.stringify({ categoryIds: [cat] }),
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as LayoutBody & { added: number }
+    expect(body.added).toBe(1)
+
+    const products = body.layout.doc.pages[0]!.blocks.filter((b) => b.type === 'product')
+    expect(products).toHaveLength(1)
+    // В блоке — вся группа объёмов и название без хвоста варианта.
+    expect(products[0]!.displayName).toBe('Капучино')
+    expect(products[0]!.displaySizes?.map((s) => s.label)).toEqual(['250 мл', '350 мл', '400 мл'])
+  })
+
+  it('повторный seed по группе не добавляет второй блок', async () => {
+    const cat = mkCategory('Латте-группа')
+    const group = mkGroup('Латте', cat)
+    mkVariant('Латте 250 мл', 200, cat, group, '250 мл', 0)
+    mkVariant('Латте 350 мл', 240, cat, group, '350 мл', 1)
+
+    const created = await createLayout('Латте')
+    const seed = async () => {
+      const res = await app.request(`/api/admin/menu-layouts/${created.id}/seed-from-catalog`, {
+        method: 'POST',
+        headers: H,
+        body: JSON.stringify({ categoryIds: [cat] }),
+      })
+      expect(res.status).toBe(200)
+      return (await res.json()) as LayoutBody & { added: number; skippedDuplicate: number }
+    }
+
+    expect((await seed()).added).toBe(1)
+    const second = await seed()
+    expect(second.added).toBe(0)
+    expect(second.skippedDuplicate).toBe(2)
+  })
+})
+
+describe('поля блока: замок и капс', () => {
+  it('locked и uppercase переживают сохранение', async () => {
+    const cat = mkCategory('Поля блока')
+    const pid = mkProduct('Флэт уайт', 210, cat)
+    const created = await createLayout('Поля')
+    await app.request(`/api/admin/menu-layouts/${created.id}`, {
+      method: 'PUT',
+      headers: H,
+      body: JSON.stringify({
+        doc: {
+          pages: [
+            {
+              id: 'page-1',
+              blocks: [
+                { id: 'b1', type: 'product', productId: pid, ...rect, locked: true, uppercase: true, zIndex: 0 },
+              ],
+            },
+          ],
+        },
+      }),
+    })
+    const view = await getLayout(created.id)
+    const block = view.doc.pages[0]!.blocks.find((b) => b.id === 'b1') as unknown as { locked?: boolean; uppercase?: boolean }
+    expect(block.locked).toBe(true)
+    expect(block.uppercase).toBe(true)
   })
 })

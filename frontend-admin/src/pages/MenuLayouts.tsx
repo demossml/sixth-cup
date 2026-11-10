@@ -53,6 +53,8 @@ export default function MenuLayouts() {
 
   const rows = data?.layouts ?? []
 
+  const nameError = creating && title.trim().length === 0 ? 'Введите название — по нему макет ищется в списке' : null
+
   const create = async () => {
     if (!title.trim()) {
       // Раньше пустое поле молча превращалось в «Новое меню» — теперь просим название.
@@ -230,8 +232,21 @@ export default function MenuLayouts() {
             <h2 className="text-lg font-bold">Новый макет</h2>
             <p className="mt-1 text-sm text-ink-secondary">Содержимое добавим в редакторе — или одной кнопкой из каталога.</p>
             <div className="mt-4">
-              <Field label="Название">
-                <Input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={120} placeholder="Летнее меню" />
+              <Field label="Название" error={nameError ?? undefined}>
+                <Input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void create()
+                  }}
+                  maxLength={120}
+                  placeholder="Летнее меню"
+                  autoFocus
+                  required
+                  aria-invalid={!!nameError}
+                  aria-required="true"
+                  className={nameError ? '!border-bad' : undefined}
+                />
               </Field>
             </div>
             <div className="mt-4">
@@ -302,7 +317,7 @@ export default function MenuLayouts() {
               <Button variant="secondary" onClick={() => setCreating(false)} disabled={busy}>
                 Отмена
               </Button>
-              <Button onClick={() => void create()} loading={busy} icon={<Plus size={16} />}>
+              <Button onClick={() => void create()} loading={busy} disabled={!title.trim()} icon={<Plus size={16} />}>
                 Создать макет
               </Button>
             </div>

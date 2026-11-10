@@ -1,6 +1,6 @@
 import { memo } from 'react'
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
-import { effectiveType, type MenuBlock, type MenuPage, type MenuTheme, type ResizeHandle } from '../../lib/menuLayout'
+import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
+import { effectiveType, type MenuBlock, type MenuPage, type MenuTheme, type Rect, type ResizeHandle } from '../../lib/menuLayout'
 import { ptToWidthPct, safeAreaStyle } from '../../lib/sheetGeometry'
 
 type Props = {
@@ -9,11 +9,18 @@ type Props = {
   title: string
   /** Живой холст в редакторе: выбор, перетаскивание, ручка размера. */
   selectedId?: string | null
-  onSelect?: (id: string) => void
+  onSelect?: (id: string, e?: ReactPointerEvent<HTMLDivElement>) => void
   onBlockPointerDown?: (e: ReactPointerEvent<HTMLDivElement>, id: string) => void
   onHandlePointerDown?: (e: ReactPointerEvent<HTMLDivElement>, id: string, handle: ResizeHandle) => void
   showGrid?: boolean
   showSafe?: boolean
+  /** Все выделенные блоки (мультивыбор Shift+клик и рамкой). */
+  selectedIds?: string[]
+  /** Линии прилипания: X и Y в процентах листа. */
+  guides?: { x: number[]; y: number[] }
+  /** Рамка выделения, которую сейчас тянут мышью. */
+  marquee?: Rect | null
+  onContextMenu?: (e: React.MouseEvent<HTMLDivElement>, id: string) => void
   index?: number
   total?: number
 }
@@ -45,9 +52,14 @@ function MenuCanvas({
   onHandlePointerDown,
   showGrid,
   showSafe,
+  selectedIds,
+  guides,
+  marquee,
+  onContextMenu,
   index = 1,
   total = 1,
 }: Props) {
+  const multi = selectedIds && selectedIds.length > 1 ? new Set(selectedIds) : null
   const muted = theme.preset === 'dark' ? '#A5A39D' : theme.preset === 'season' ? '#76695B' : '#6E6A62'
   const line = theme.preset === 'dark' ? '#3B3F49' : theme.preset === 'season' ? '#D9C9B3' : '#D8D2C7'
 
@@ -74,16 +86,22 @@ function MenuCanvas({
       <div className="mc-safe" style={safeAreaStyle}>
       {blocks.map((b) => {
         const type = effectiveType(b)
-        const selected = b.id === selectedId
+        const selected = b.id === selectedId || !!multi?.has(b.id)
         const warn = (b.warnings ?? []).length > 0
         return (
           <div
             key={b.id}
-            className={`mc-block mc-${type}${selected ? ' is-selected' : ''}${warn ? ' has-warn' : ''}`}
+            className={`mc-block mc-${type}${selected ? ' is-selected' : ''}${warn ? ' has-warn' : ''}${b.locked ? ' is-locked' : ''}`}
             style={wrapStyle(b)}
             onPointerDown={(e) => {
-              onSelect?.(b.id)
+              onSelect?.(b.id, e)
               onBlockPointerDown?.(e, b.id)
+            }}
+            onContextMenu={(e) => {
+              if (!onContextMenu) return
+              e.preventDefault()
+              onSelect?.(b.id)
+              onContextMenu(e, b.id)
             }}
             role={onSelect ? 'button' : undefined}
             tabIndex={onSelect ? 0 : undefined}
@@ -107,6 +125,7 @@ function MenuCanvas({
                   fontSize: `${ptToCqw(b.fontSizePt)}cqw`,
                   fontWeight: b.bold ? 650 : 400,
                   textAlign: b.align,
+                  textTransform: b.uppercase ? 'uppercase' : undefined,
                   fontFamily: b.bold ? 'var(--font-display)' : undefined,
                 }}
               >
@@ -143,7 +162,13 @@ function MenuCanvas({
                   {b.showPhoto && b.displayImageUrl && <img className="mc-product-thumb" src={b.displayImageUrl} alt="" />}
                   <div className="mc-product-body">
                     <div className="mc-product-row">
-                      <span className="mc-product-name" style={{ fontSize: `${ptToCqw(b.fontSizePt)}cqw` }}>
+                      <span
+                        className="mc-product-name"
+                        style={{
+                          fontSize: `${ptToCqw(b.fontSizePt)}cqw`,
+                          textTransform: b.uppercase ? 'uppercase' : undefined,
+                        }}
+                      >
                         {b.displayName ?? b.titleOverride ?? b.snapshotName ?? 'Позиция'}
                       </span>
                       {!twoLines && (
@@ -166,7 +191,7 @@ function MenuCanvas({
               )
             })()}
 
-            {selected && onHandlePointerDown && (
+            {selected && onHandlePointerDown && !b.locked && (
               <div
                 className="mc-handle"
                 onPointerDown={(e) => {
@@ -180,6 +205,24 @@ function MenuCanvas({
           </div>
         )
       })}
+        {guides && (guides.x.length > 0 || guides.y.length > 0) && (
+          <div className="mc-guides" aria-hidden="true">
+            {guides.x.map((x, i) => (
+              <span key={`x${i}`} className="mc-guide is-v" style={{ left: `${x}%` }} />
+            ))}
+            {guides.y.map((y, i) => (
+              <span key={`y${i}`} className="mc-guide is-h" style={{ top: `${y}%` }} />
+            ))}
+          </div>
+        )}
+
+        {marquee && (
+          <span
+            className="mc-marquee"
+            aria-hidden="true"
+            style={{ left: `${marquee.xPct}%`, top: `${marquee.yPct}%`, width: `${marquee.wPct}%`, height: `${marquee.hPct}%` }}
+          />
+        )}
       </div>
 
       <footer className="mc-foot">

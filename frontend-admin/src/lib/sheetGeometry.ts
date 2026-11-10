@@ -22,6 +22,11 @@ export const safeAreaStyle = {
  */
 export const ptToWidthPct = (pt: number): number => (pt / 595.28) * 100
 
+/** Сдвиг безопасной области внутри листа (пиксели) — нужен для рамки выделения. */
+export function safeBoxOffset(rect: { width: number }): { left: number; top: number } {
+  return { left: (rect.width * SHEET_SAFE.x) / 100, top: (rect.width * SHEET_SAFE.top) / 100 }
+}
+
 /** Размер безопасной области по рамке листа на экране (для перетаскивания). */
 export function safeBoxSize(rect: { width: number; height: number }): { w: number; h: number } {
   const padX = (rect.width * SHEET_SAFE.x) / 100

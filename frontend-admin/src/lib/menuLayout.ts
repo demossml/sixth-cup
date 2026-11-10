@@ -35,6 +35,10 @@ export type MenuBlock = {
   fontSizePt: number
   align: 'left' | 'center' | 'right'
   bold: boolean
+  /** Текст блока капсом. */
+  uppercase?: boolean
+  /** Замок: блок не двигается и не тянется мышью, но печатается. */
+  locked?: boolean
   snapshotPriceRub: number | null
   snapshotName: string | null
   snapshotImageUrl: string | null
@@ -99,6 +103,8 @@ export type MenuTheme = {
   itemSize: number
   ornament: 'none' | 'line' | 'beans' | 'leaf'
   logoPosition: 'left' | 'top-right' | 'footer'
+  /** Недавние цвета: свои, не из палитры бренда. */
+  recentColors?: string[]
 }
 
 /** Палитра бренда 6.7: шаблоны стартуют с неё, «выйти из бренда» — свободный выбор цвета. */
@@ -230,6 +236,8 @@ export function newBlock(type: BlockType, rect: Partial<Rect> = {}, extra: Parti
     fontSizePt: 10,
     align: 'left',
     bold: false,
+    uppercase: false,
+    locked: false,
     snapshotPriceRub: null,
     snapshotName: null,
     snapshotImageUrl: null,
@@ -248,6 +256,8 @@ export type CatalogProduct = {
   categoryId: number | null
   categoryName: string | null
   variantLabel: string | null
+  /** Группа объёмов: «Капучино 250/350/400» — это три товара с одним groupId. */
+  groupId?: number | null
   /** Объёмы из каталога: «250 мл — 169». Один размер — null. */
   prices?: { label: string; priceRub: number | null }[] | null
 }
@@ -520,6 +530,8 @@ export const blockPayload = (b: MenuBlock): MenuBlock => ({
   fontSizePt: b.fontSizePt,
   align: b.align,
   bold: b.bold,
+  uppercase: !!b.uppercase,
+  locked: !!b.locked,
   snapshotPriceRub: b.snapshotPriceRub,
   snapshotName: b.snapshotName,
   snapshotImageUrl: b.snapshotImageUrl,
@@ -616,8 +628,9 @@ export function resolvePreview(doc: MenuDoc, products: CatalogProduct[], mode: '
         const catalogPrice = mode === 'frozen' ? b.snapshotPriceRub ?? live?.price ?? null : live?.price ?? null
         const priceRub = b.priceRubOverride ?? catalogPrice
         const displayPrice = b.priceText ?? (priceRub != null && priceRub > 0 ? String(priceRub) : null)
-        const displayName =
-          b.titleOverride ?? (mode === 'frozen' ? b.snapshotName ?? live?.name ?? '' : live?.name ?? b.snapshotName ?? '')
+        const baseName = mode === 'frozen' ? b.snapshotName ?? live?.name ?? '' : live?.name ?? b.snapshotName ?? ''
+        // Одна позиция на группу объёмов: хвост варианта («350 мл») убираем, объёмы печатаем строкой.
+        const variant = live?.variantLabel?.trim()
         const displayImageUrl =
           b.photoUrlOverride ?? live?.imageUrl ?? (mode === 'frozen' ? b.snapshotImageUrl : null) ?? null
         // Объёмы: «250 · 350 · 450» одной строкой. Ручная цена сильнее каталога, frozen берёт снимок.
@@ -631,6 +644,12 @@ export function resolvePreview(doc: MenuDoc, products: CatalogProduct[], mode: '
             : catalogSizes.length > 1
               ? catalogSizes.map((sz) => ({ label: sz.label, price: sz.priceRub == null ? '' : String(sz.priceRub) }))
               : []
+
+        const stripped =
+          displaySizes.length > 1 && variant && baseName.toLowerCase().endsWith(variant.toLowerCase())
+            ? baseName.slice(0, baseName.length - variant.length).trim()
+            : baseName
+        const displayName = b.titleOverride ?? (stripped || baseName)
 
         const warnings: string[] = []
         if (b.productId != null && !live) warnings.push('позиции больше нет в каталоге')

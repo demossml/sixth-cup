@@ -22,6 +22,44 @@
  */
 .mc-safe {
   pointer-events: none;
+  position: relative;
+}
+
+/* Направляющие прилипания: показываем, почему блок «прыгнул» на линию. */
+.mc-guides {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+}
+.mc-guide {
+  position: absolute;
+  background: #e0342b;
+  box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.8);
+}
+.mc-guide.is-v {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+.mc-guide.is-h {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+/* Рамка выделения: тянется мышью по пустому месту листа. */
+.mc-marquee {
+  position: absolute;
+  border: 1px solid var(--mc-accent);
+  background: color-mix(in srgb, var(--mc-accent) 8%, transparent);
+  pointer-events: none;
+  z-index: 9998;
+}
+
+/* Замок: блок виден и печатается, но не двигается мышью. */
+.mc-block.is-locked {
+  cursor: default;
 }
 .mc-safe > * {
   pointer-events: auto;
