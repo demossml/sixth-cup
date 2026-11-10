@@ -161,3 +161,27 @@ export function sheetWidthMm(ratio: number): number {
   if (Math.abs(ratio - 297 / 210) < 0.01) return 297
   return 210
 }
+
+/* ───────────── группы блоков ───────────── */
+
+/** Id блоков, которые выделяются вместе с данным: вся его группа, иначе только он. */
+export function groupSelectionIds(blocks: MenuBlock[], id: string): string[] {
+  const block = blocks.find((b) => b.id === id)
+  if (!block) return [id]
+  if (!block.groupId) return [id]
+  return blocks.filter((b) => b.groupId === block.groupId).map((b) => b.id)
+}
+
+let groupSeq = 0
+const nextGroupId = (): string => `grp-${Date.now().toString(36)}-${(groupSeq += 1)}`
+
+/** Назначает общий groupId выделенным блокам (минимум двум). Возвращает новый документ. */
+export function groupBlocks(blocks: MenuBlock[], ids: string[]): { blocks: MenuBlock[]; groupId: string | null } {
+  if (ids.length < 2) return { blocks, groupId: null }
+  const gid = nextGroupId()
+  return { blocks: blocks.map((b) => (ids.includes(b.id) ? { ...b, groupId: gid } : b)), groupId: gid }
+}
+
+export function ungroupBlocks(blocks: MenuBlock[], ids: string[]): MenuBlock[] {
+  return blocks.map((b) => (ids.includes(b.id) ? { ...b, groupId: null } : b))
+}

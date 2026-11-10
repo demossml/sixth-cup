@@ -35,10 +35,16 @@ export type MenuBlock = {
   fontSizePt: number
   align: 'left' | 'center' | 'right'
   bold: boolean
+  /** Межстрочный интервал, 1.0–1.8. */
+  lineHeight?: number
+  /** Трекинг в тысячных em. */
+  tracking?: number
   /** Текст блока капсом. */
   uppercase?: boolean
   /** Замок: блок не двигается и не тянется мышью, но печатается. */
   locked?: boolean
+  /** Группа блоков: выделяются и двигаются вместе. */
+  groupId?: string | null
   snapshotPriceRub: number | null
   snapshotName: string | null
   snapshotImageUrl: string | null
@@ -236,8 +242,11 @@ export function newBlock(type: BlockType, rect: Partial<Rect> = {}, extra: Parti
     fontSizePt: 10,
     align: 'left',
     bold: false,
+    lineHeight: 1.15,
+    tracking: 0,
     uppercase: false,
     locked: false,
+    groupId: null,
     snapshotPriceRub: null,
     snapshotName: null,
     snapshotImageUrl: null,
@@ -530,8 +539,11 @@ export const blockPayload = (b: MenuBlock): MenuBlock => ({
   fontSizePt: b.fontSizePt,
   align: b.align,
   bold: b.bold,
+  lineHeight: b.lineHeight ?? 1.15,
+  tracking: b.tracking ?? 0,
   uppercase: !!b.uppercase,
   locked: !!b.locked,
+  groupId: b.groupId ?? null,
   snapshotPriceRub: b.snapshotPriceRub,
   snapshotName: b.snapshotName,
   snapshotImageUrl: b.snapshotImageUrl,

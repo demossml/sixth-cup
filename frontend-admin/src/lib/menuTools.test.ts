@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { newBlock, type MenuBlock } from './menuLayout'
 import {
   alignBlocks,
+  groupBlocks,
+  groupSelectionIds,
+  ungroupBlocks,
   clampZoom,
   distributeBlocks,
   fitZoom,
@@ -110,5 +113,28 @@ describe('группа объёмов', () => {
   it('ключом служит groupId, если он есть', () => {
     expect(groupKeyOf({ id: 5, groupId: 2 })).toBe(2)
     expect(groupKeyOf({ id: 5, groupId: null })).toBe(5)
+  })
+})
+
+describe('группы блоков', () => {
+  it('клик по участнику группы выделяет всю группу', () => {
+    const blocks = [block('a', 0, 0, 20, 6, { groupId: 'g1' }), block('b', 30, 0, 20, 6, { groupId: 'g1' }), block('c', 60, 0, 20, 6)]
+    expect(groupSelectionIds(blocks, 'b')).toEqual(['a', 'b'])
+    expect(groupSelectionIds(blocks, 'c')).toEqual(['c'])
+  })
+
+  it('группировка проставляет общий id, разгруппировка убирает', () => {
+    const blocks = [block('a', 0, 0), block('b', 10, 0), block('c', 20, 0)]
+    const grouped = groupBlocks(blocks, ['a', 'b'])
+    expect(grouped.groupId).toBeTruthy()
+    expect(grouped.blocks.filter((b) => b.groupId).map((b) => b.id)).toEqual(['a', 'b'])
+
+    const cleared = ungroupBlocks(grouped.blocks, ['a', 'b'])
+    expect(cleared.every((b) => !b.groupId)).toBe(true)
+  })
+
+  it('один блок не группируется', () => {
+    const blocks = [block('a', 0, 0)]
+    expect(groupBlocks(blocks, ['a']).groupId).toBeNull()
   })
 })

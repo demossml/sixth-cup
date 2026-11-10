@@ -43,6 +43,9 @@ type Block = {
   displayName?: string
   displayPrice?: string | null
   displaySizes?: { label: string; price: string }[]
+  lineHeight?: number
+  tracking?: number
+  groupId?: string | null
   warnings?: string[]
 }
 
@@ -621,7 +624,18 @@ describe('поля блока: замок и капс', () => {
             {
               id: 'page-1',
               blocks: [
-                { id: 'b1', type: 'product', productId: pid, ...rect, locked: true, uppercase: true, zIndex: 0 },
+                {
+                  id: 'b1',
+                  type: 'product',
+                  productId: pid,
+                  ...rect,
+                  locked: true,
+                  uppercase: true,
+                  lineHeight: 1.4,
+                  tracking: 60,
+                  groupId: 'grp-1',
+                  zIndex: 0,
+                },
               ],
             },
           ],
@@ -629,8 +643,17 @@ describe('поля блока: замок и капс', () => {
       }),
     })
     const view = await getLayout(created.id)
-    const block = view.doc.pages[0]!.blocks.find((b) => b.id === 'b1') as unknown as { locked?: boolean; uppercase?: boolean }
+    const block = view.doc.pages[0]!.blocks.find((b) => b.id === 'b1') as unknown as {
+      locked?: boolean
+      uppercase?: boolean
+      lineHeight?: number
+      tracking?: number
+      groupId?: string | null
+    }
     expect(block.locked).toBe(true)
     expect(block.uppercase).toBe(true)
+    expect(block.lineHeight).toBeCloseTo(1.4, 2)
+    expect(block.tracking).toBe(60)
+    expect(block.groupId).toBe('grp-1')
   })
 })

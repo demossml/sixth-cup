@@ -77,10 +77,16 @@ export type MenuBlock = {
   fontSizePt: number
   align: 'left' | 'center' | 'right'
   bold: boolean
+  /** Межстрочный интервал, 1.0–1.8. */
+  lineHeight: number
+  /** Трекинг в тысячных долях em: 0 — как есть, 100 — разреженный текст. */
+  tracking: number
   /** Весь текст блока капсом — «250 мл» → «250 МЛ». */
   uppercase: boolean
   /** Замок: блок виден и печатается, но не двигается и не ресайзится мышью. */
   locked: boolean
+  /** Группа блоков: выделяются и двигаются вместе. */
+  groupId: string | null
   // ── снапшот каталога (frozen / баннер цен) ──
   snapshotPriceRub: number | null
   snapshotName: string | null
@@ -280,8 +286,11 @@ function normalizeBlock(raw: unknown, index: number): MenuBlock | null {
     fontSizePt: num(b.fontSizePt, 5, 72, 10),
     align: oneOf(b.align, ['left', 'center', 'right'] as const, 'left'),
     bold: b.bold === true,
+    lineHeight: num(b.lineHeight, 0.9, 1.8, 1.15),
+    tracking: num(b.tracking, -50, 200, 0),
     uppercase: b.uppercase === true,
     locked: b.locked === true,
+    groupId: str(b.groupId, 64),
     snapshotPriceRub: intOrNull(b.snapshotPriceRub),
     snapshotName: str(b.snapshotName, 120),
     snapshotImageUrl: str(b.snapshotImageUrl, 400),

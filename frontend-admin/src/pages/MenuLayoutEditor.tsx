@@ -65,8 +65,8 @@ import { Badge, Button, Banner, Drawer, cx, ErrorBox, Field, Input, Select, Spin
 import MenuCanvas from '../components/menuLayout/MenuCanvas'
 import ColorField from '../components/menuLayout/ColorField'
 import {
-  alignBlocks, clampZoom, distributeBlocks, effectiveDpi, fitZoom, groupKeyOf, rectsIntersect, sheetWidthMm,
-  snapWithGuides, zoomStep, type AlignMode, type SnapGuides,
+  alignBlocks, clampZoom, distributeBlocks, effectiveDpi, fitZoom, groupBlocks, groupKeyOf, groupSelectionIds,
+  rectsIntersect, sheetWidthMm, snapWithGuides, ungroupBlocks, zoomStep, type AlignMode, type SnapGuides,
 } from '../lib/menuTools'
 import { MENU_LAYOUT_V2 } from '../lib/featureFlags'
 import { safeBoxOffset, safeBoxSize } from '../lib/sheetGeometry'
@@ -139,9 +139,13 @@ export default function MenuLayoutEditor() {
   const [marquee, setMarquee] = useState<Rect | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; id: string } | null>(null)
   const [layerQuery, setLayerQuery] = useState('')
+  /** Черновик из localStorage, если прошлая сессия оборвалась. */
+  const [draftOffer, setDraftOffer] = useState<{ body: SaveBody; savedAt: number } | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const clipboard = useRef<MenuBlock | null>(null)
   const canvasBox = useRef<HTMLDivElement | null>(null)
+  /** Пробел включает панорамирование листа, как в графических редакторах. */
+  const [spaceDown, setSpaceDown] = useState(false)
   const [leftTab, setLeftTab] = useState<LeftTab>('catalog')
   const [rightTab, setRightTab] = useState<RightTab>('design')
   const [mobileTab, setMobileTab] = useState<MobileTab>('preview')
@@ -185,6 +189,25 @@ export default function MenuLayoutEditor() {
   }, [])
 
   useEffect(() => {
+    const isField = (el: EventTarget | null) => el instanceof HTMLElement && /input|textarea|select/i.test(el.tagName)
+    const down = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && !isField(e.target)) {
+        e.preventDefault()
+        setSpaceDown(true)
+      }
+    }
+    const up = (e: KeyboardEvent) => {
+      if (e.code === 'Space') setSpaceDown(false)
+    }
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    return () => {
+      window.removeEventListener('keydown', down)
+      window.removeEventListener('keyup', up)
+    }
+  }, [])
+
+  useEffect(() => {
     if (doc) perfTTI()
   }, [doc])
 
@@ -205,6 +228,20 @@ export default function MenuLayoutEditor() {
     setDrift(layout.drift)
     lastSaved.current = JSON.stringify({ title: layout.title, theme: layout.theme, doc: docSnapshot(layout.doc) })
     setSave('idle')
+
+    // Черновик прошлой сессии: предлагаем, только если он новее серверного и отличается.
+    try {
+      const raw = localStorage.getItem(`menu-layout-draft-${layout.id}`)
+      if (raw) {
+        const parsed = JSON.parse(raw) as { body: SaveBody; savedAt: number }
+        const server = JSON.stringify({ title: layout.title, theme: layout.theme, doc: docSnapshot(layout.doc) })
+        const local = JSON.stringify(parsed.body)
+        if (parsed.savedAt > layout.updatedAt && local !== server) setDraftOffer(parsed)
+        else localStorage.removeItem(`menu-layout-draft-${layout.id}`)
+      }
+    } catch {
+      /* битый черновик не должен мешать открыть макет */
+    }
   }, [data])
 
   const products = catalog.data?.products ?? []
@@ -298,12 +335,13 @@ export default function MenuLayoutEditor() {
         setSelectedId(id)
         return
       }
-      setSelectedIds([id])
+      // Группа выделяется целиком: клик по одному блоку берёт все его блоки.
+      setSelectedIds(groupSelectionIds(page?.blocks ?? [], id))
       setSelectedId(id)
       // Выбрал блок — сразу показываем его свойства, а не общее оформление.
       setRightTab('block')
     },
-    [],
+    [page],
   )
 
   /** Двигать/выравнивать — только незаблокированные блоки. */
@@ -326,6 +364,44 @@ export default function MenuLayoutEditor() {
   const distribute = (axis: 'x' | 'y') => {
     if (!page) return
     updatePage((blocks) => distributeBlocks(blocks, editableIds, axis))
+  }
+
+  /** Сгруппировать выделение: дальше блоки ходят вместе и выделяются одним кликом. */
+  const groupSelection = () => {
+    if (!page || editableIds.length < 2) return
+    updatePage((blocks) => groupBlocks(blocks, editableIds).blocks)
+    toast.push(`Сгруппировано блоков: ${editableIds.length}`)
+  }
+
+  const ungroupSelection = () => {
+    if (!page) return
+    const ids = selectedIds
+    updatePage((blocks) => ungroupBlocks(blocks, ids))
+    toast.push('Группа разобрана')
+  }
+
+  /** Стиль = то, что переносится на другие блоки: кегль, выравнивание, шрифт, интервалы, регистр. */
+  const styleBuffer = useRef<Partial<MenuBlock> | null>(null)
+  const takeStyle = () => {
+    const b = page?.blocks.find((x) => x.id === selectedId)
+    if (!b) return
+    styleBuffer.current = {
+      fontSizePt: b.fontSizePt,
+      align: b.align,
+      bold: b.bold,
+      lineHeight: b.lineHeight ?? 1.15,
+      tracking: b.tracking ?? 0,
+      uppercase: !!b.uppercase,
+    }
+    toast.push('Стиль скопирован — выделите блоки и нажмите «Применить стиль»')
+  }
+  const applyStyle = () => {
+    const style = styleBuffer.current
+    if (!style || !page) return
+    const ids = selectedIds.length ? selectedIds : []
+    if (ids.length === 0) return
+    updatePage((blocks) => blocks.map((b) => (ids.includes(b.id) ? { ...b, ...style } : b)))
+    toast.push(`Стиль применён к блокам: ${ids.length}`)
   }
 
   const toggleLock = (id: string) => {
@@ -379,6 +455,12 @@ export default function MenuLayoutEditor() {
           setSave('saved')
           setSavedAt(res.savedAt)
           setDrift(res.layout.drift)
+          // Сохранено на сервере — локальный черновик больше не нужен.
+          try {
+            localStorage.removeItem(`menu-layout-draft-${numericId}`)
+          } catch {
+            /* приватный режим */
+          }
         })
         .catch((e: unknown) => {
           if (seq !== saveSeq.current) return
@@ -584,6 +666,36 @@ export default function MenuLayoutEditor() {
     return () => document.removeEventListener('keydown', onKey)
   }, [selectedId, selectedIds, undo, redo, updatePage, patchBlock, page, deleteBlock, duplicateBlocks, toast])
 
+  // Локальный черновик: пишем раз в полсекунды, чтобы падение вкладки не съело правки.
+  useEffect(() => {
+    if (!doc || !numericId) return
+    const body: SaveBody = { title, theme, doc }
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem(`menu-layout-draft-${numericId}`, JSON.stringify({ body, savedAt: Date.now() }))
+      } catch {
+        /* место в localStorage кончилось — не повод падать */
+      }
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [doc, theme, title, numericId])
+
+  const restoreDraft = () => {
+    if (!draftOffer) return
+    setDoc(docSnapshot(draftOffer.body.doc))
+    setTheme({ ...DEFAULT_THEME, ...draftOffer.body.theme })
+    setTitle(draftOffer.body.title)
+    setHistory(emptyHistory())
+    setSave('dirty')
+    setDraftOffer(null)
+    toast.push('Черновик восстановлен — проверьте лист и сохраните')
+  }
+
+  const dropDraft = () => {
+    if (numericId) localStorage.removeItem(`menu-layout-draft-${numericId}`)
+    setDraftOffer(null)
+  }
+
   // ── перетаскивание и размер ────────────────────────────────────
   const beginDrag = (e: ReactPointerEvent<HTMLDivElement>, id: string, mode: 'move' | 'resize', handle: ResizeHandle = 'se') => {
     const block = page?.blocks.find((b) => b.id === id)
@@ -613,7 +725,8 @@ export default function MenuLayoutEditor() {
     perfDragStart()
     // Shift/⌘ добавляют блок к выделению и не сбрасывают остальные.
     if (!(e.shiftKey || e.metaKey || e.ctrlKey)) {
-      setSelectedIds((cur) => (cur.length === 1 && cur[0] === id ? cur : [id]))
+      // Уже в выделении (группа, мультивыбор) — не схлопываем его до одного блока.
+      setSelectedIds((cur) => (cur.includes(id) ? cur : [id]))
     }
     setSelectedId(id)
     updatePage((blocks) => (blocks.find((b) => b.id === id)?.zIndex === topZ(blocks) - 1 ? blocks : bringToFront(blocks, id)))
@@ -870,9 +983,9 @@ export default function MenuLayoutEditor() {
     setPageIdx(Math.max(0, idx - 1))
   }
 
-  if (loading && !data) return <Spinner />
+  if (loading && !data) return <EditorSkeleton />
   if (error) return <ErrorBox message={error} onRetry={reload} />
-  if (!doc || !previewPage || !page) return <Spinner />
+  if (!doc || !previewPage || !page) return <EditorSkeleton />
 
   const format = data?.layout.format ?? 'a4_portrait'
   const filtered = products.filter((p) => {
@@ -1611,6 +1724,34 @@ export default function MenuLayoutEditor() {
               Название капсом
             </label>
             <div className="mt-2">
+              <Field label="Интерлиньяж" hint={(selected.lineHeight ?? 1.15).toFixed(2)}>
+                <input
+                  type="range"
+                  min={0.9}
+                  max={1.8}
+                  step={0.05}
+                  value={selected.lineHeight ?? 1.15}
+                  onChange={(e) => patchBlock({ lineHeight: Number(e.target.value) })}
+                  className="w-full"
+                  aria-label="Интерлиньяж позиции"
+                />
+              </Field>
+            </div>
+            <div className="mt-2">
+              <Field label="Трекинг" hint={`${selected.tracking ?? 0}`}>
+                <input
+                  type="range"
+                  min={-50}
+                  max={200}
+                  step={5}
+                  value={selected.tracking ?? 0}
+                  onChange={(e) => patchBlock({ tracking: Number(e.target.value) })}
+                  className="w-full"
+                  aria-label="Трекинг позиции"
+                />
+              </Field>
+            </div>
+            <div className="mt-2">
               <Field label="Бейдж">
                 <Select value={selected.badge ?? ''} onChange={(e) => patchBlock({ badge: e.target.value || null })}>
                   <option value="">Без бейджа</option>
@@ -1687,6 +1828,34 @@ export default function MenuLayoutEditor() {
               <input type="checkbox" checked={!!selected.uppercase} onChange={(e) => patchBlock({ uppercase: e.target.checked })} />
               Капсом (заглавными)
             </label>
+            <div className="mt-2">
+              <Field label="Интерлиньяж" hint={`${(selected.lineHeight ?? 1.15).toFixed(2)} — расстояние между строками`}>
+                <input
+                  type="range"
+                  min={0.9}
+                  max={1.8}
+                  step={0.05}
+                  value={selected.lineHeight ?? 1.15}
+                  onChange={(e) => patchBlock({ lineHeight: Number(e.target.value) })}
+                  className="w-full"
+                  aria-label="Интерлиньяж"
+                />
+              </Field>
+            </div>
+            <div className="mt-2">
+              <Field label="Трекинг" hint={`${selected.tracking ?? 0} — разрежение букв, −50…+200`}>
+                <input
+                  type="range"
+                  min={-50}
+                  max={200}
+                  step={5}
+                  value={selected.tracking ?? 0}
+                  onChange={(e) => patchBlock({ tracking: Number(e.target.value) })}
+                  className="w-full"
+                  aria-label="Трекинг"
+                />
+              </Field>
+            </div>
           </>
         )}
 
@@ -1872,6 +2041,21 @@ export default function MenuLayoutEditor() {
         </div>
       )}
 
+      {draftOffer && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-warn/40 bg-warn-soft px-3 py-2 text-[13px] text-warn">
+          <span className="min-w-0 flex-1">
+            Найден несохранённый черновик от {new Date(draftOffer.savedAt).toLocaleString('ru-RU')} — он новее
+            сохранённой версии. Восстановить?
+          </span>
+          <Button size="sm" onClick={restoreDraft}>
+            Восстановить
+          </Button>
+          <Button size="sm" variant="secondary" onClick={dropDraft}>
+            Выбросить
+          </Button>
+        </div>
+      )}
+
       {conflict && (
         <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-bad/40 bg-bad-soft px-3 py-2 text-[13px] text-bad">
           <RefreshCw size={15} className="flex-none" aria-hidden />
@@ -1971,6 +2155,17 @@ export default function MenuLayoutEditor() {
               <span className="text-[11px] font-normal text-ink-tertiary">{page.blocks.length} блоков</span>
             </div>
             <div className="flex items-center gap-1">
+              {selectedIds.length > 0 && editableIds.length <= 1 && (
+                <>
+                  <button type="button" onClick={takeStyle} className="h-8 rounded-md px-2 text-[11px] font-semibold text-ink-tertiary hover:bg-surface-2 hover:text-brand" title="Скопировать стиль блока">
+                    стиль ↓
+                  </button>
+                  <button type="button" onClick={applyStyle} className="h-8 rounded-md px-2 text-[11px] font-semibold text-ink-tertiary hover:bg-surface-2 hover:text-brand" title="Применить стиль к выделенным">
+                    стиль ↑
+                  </button>
+                  <span className="mx-1 h-5 w-px bg-line" />
+                </>
+              )}
               {editableIds.length > 1 && (
                 <>
                   <span className="mr-1 text-[11px] font-semibold text-ink-tertiary">выбрано {selectedIds.length}</span>
@@ -2000,6 +2195,20 @@ export default function MenuLayoutEditor() {
                   </button>
                   <button type="button" onClick={() => distribute('y')} className="h-8 rounded-md px-2 text-[11px] font-semibold text-ink-tertiary hover:bg-surface-2 hover:text-brand" title="Равные промежутки по вертикали">
                     ⇅
+                  </button>
+                  <span className="mx-1 h-5 w-px bg-line" />
+                  <button type="button" onClick={groupSelection} className="h-8 rounded-md px-2 text-[11px] font-semibold text-ink-tertiary hover:bg-surface-2 hover:text-brand" title="Сгруппировать выделенные блоки">
+                    группа
+                  </button>
+                  <button type="button" onClick={ungroupSelection} className="h-8 rounded-md px-2 text-[11px] font-semibold text-ink-tertiary hover:bg-surface-2 hover:text-brand" title="Разгруппировать">
+                    разбить
+                  </button>
+                  <span className="mx-1 h-5 w-px bg-line" />
+                  <button type="button" onClick={takeStyle} className="h-8 rounded-md px-2 text-[11px] font-semibold text-ink-tertiary hover:bg-surface-2 hover:text-brand" title="Скопировать стиль с активного блока">
+                    стиль ↓
+                  </button>
+                  <button type="button" onClick={applyStyle} className="h-8 rounded-md px-2 text-[11px] font-semibold text-ink-tertiary hover:bg-surface-2 hover:text-brand" title="Применить скопированный стиль к выделенным">
+                    стиль ↑
                   </button>
                   <span className="mx-1 h-5 w-px bg-line" />
                 </>
@@ -2056,7 +2265,25 @@ export default function MenuLayoutEditor() {
 
           <div
             ref={canvasBox}
-            className="flex-1 overflow-auto rounded-xl border border-line bg-[#e9ebef] p-4"
+            className={cx('flex-1 overflow-auto rounded-xl border border-line bg-[#e9ebef] p-4', spaceDown && 'cursor-grab')}
+            onPointerDown={(e) => {
+              // Пан: пробел + левая кнопка или средняя кнопка мыши.
+              if (!(spaceDown || e.button === 1)) return
+              const box = canvasBox.current
+              if (!box) return
+              e.preventDefault()
+              const start = { x: e.clientX, y: e.clientY, left: box.scrollLeft, top: box.scrollTop }
+              const move = (ev: PointerEvent) => {
+                box.scrollLeft = start.left - (ev.clientX - start.x)
+                box.scrollTop = start.top - (ev.clientY - start.y)
+              }
+              const up = () => {
+                window.removeEventListener('pointermove', move)
+                window.removeEventListener('pointerup', up)
+              }
+              window.addEventListener('pointermove', move)
+              window.addEventListener('pointerup', up)
+            }}
             onWheel={(e) => {
               // Ctrl/⌘ + колесо — зум как в редакторах; обычное колесо листает.
               if (!e.ctrlKey && !e.metaKey) return
@@ -2484,6 +2711,33 @@ type ExportProps = {
   pages: number
   blockers: Blocker[]
   onGoToBlock: (blockId: string, pageIdx: number) => void
+}
+
+/**
+ * Скелетон редактора: держит ту же сетку (панель — лист — панель), чтобы при загрузке
+ * ничего не «прыгало». Дешевле спиннера по восприятию и не даёт layout shift.
+ */
+function EditorSkeleton() {
+  return (
+    <div className="animate-pulse" aria-busy="true" aria-label="Загружаем редактор макета">
+      <div className="mb-3 h-9 rounded-xl bg-surface-2" />
+      <div className="grid gap-3 lg:grid-cols-[260px_minmax(0,1fr)_290px]">
+        <div className="hidden space-y-2 rounded-xl border border-line bg-white p-3 lg:block">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="h-7 rounded-lg bg-surface-2" style={{ opacity: 1 - i * 0.07 }} />
+          ))}
+        </div>
+        <div className="rounded-xl border border-line bg-[#e9ebef] p-4">
+          <div className="mx-auto aspect-[210/297] w-full max-w-[520px] rounded-lg bg-white/80" />
+        </div>
+        <div className="hidden space-y-2 rounded-xl border border-line bg-white p-3 lg:block">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="h-8 rounded-lg bg-surface-2" style={{ opacity: 1 - i * 0.08 }} />
+          ))}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 /**

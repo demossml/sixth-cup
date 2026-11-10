@@ -126,6 +126,8 @@ function MenuCanvas({
                   fontWeight: b.bold ? 650 : 400,
                   textAlign: b.align,
                   textTransform: b.uppercase ? 'uppercase' : undefined,
+                  lineHeight: b.lineHeight ?? 1.15,
+                  letterSpacing: `${(b.tracking ?? 0) / 1000}em`,
                   fontFamily: b.bold ? 'var(--font-display)' : undefined,
                 }}
               >
@@ -167,6 +169,7 @@ function MenuCanvas({
                         style={{
                           fontSize: `${ptToCqw(b.fontSizePt)}cqw`,
                           textTransform: b.uppercase ? 'uppercase' : undefined,
+                          letterSpacing: `${(b.tracking ?? 0) / 1000}em`,
                         }}
                       >
                         {b.displayName ?? b.titleOverride ?? b.snapshotName ?? 'Позиция'}
