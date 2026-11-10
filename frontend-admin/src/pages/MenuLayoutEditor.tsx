@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router-dom'
 import {
   AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical,
   AlignStartHorizontal, AlignStartVertical, ArrowDown, ArrowLeft, ArrowUp, Check, Download,
-  ChevronDown, ChevronRight, Eye, EyeOff, Grid3x3, History, ImagePlus, Layers, ListTree, Loader2, Lock, LockOpen, Maximize2,
+  ChevronDown, ChevronRight, Eye, EyeOff, Grid3x3, GripVertical, History, ImagePlus, Layers, ListTree, Loader2, Lock, LockOpen, Maximize2,
   Minus, Palette, Plus, Redo2, RefreshCw, Search, Sparkles, Trash2, Type, Undo2, Upload, X,
 } from 'lucide-react'
 import { ApiError, api, tokenStore, uploadFile, uploadMenuFont } from '../api/client'
@@ -68,12 +68,13 @@ import MenuCanvas from '../components/menuLayout/MenuCanvas'
 import ColorField from '../components/menuLayout/ColorField'
 import {
   alignBlocks, clampZoom, distributeBlocks, domTextMeasurer, effectiveDpi, fitFontSize, fitZoom, groupBlocks,
-  groupKeyOf, groupSelectionIds, layoutColumns, rectsIntersect, sheetWidthMm, snapWithGuides, ungroupBlocks, zoomStep,
+  groupKeyOf, groupSelectionIds, layoutColumns, rectsIntersect, reorderBlocks, sheetWidthMm, snapToGrid,
+  snapWithGuides, ungroupBlocks, zoomStep,
   type AlignMode, type SnapGuides,
 } from '../lib/menuTools'
 import { typograph } from '../lib/typography'
 import { MENU_LAYOUT_V2 } from '../lib/featureFlags'
-import { safeBoxOffset, safeBoxSize } from '../lib/sheetGeometry'
+import { mmToPct, pctToMm, safeBoxOffset, safeBoxSize, sheetMm } from '../lib/sheetGeometry'
 import { perfDragEnd, perfDragStart, perfFrame, perfInit, perfPdf, perfTTI } from '../lib/perf'
 
 type SaveBody = { title: string; theme: MenuTheme; doc: MenuDoc }
@@ -142,7 +143,23 @@ export default function MenuLayoutEditor() {
   const [guides, setGuides] = useState<SnapGuides>({ x: [], y: [] })
   const [marquee, setMarquee] = useState<Rect | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; id: string } | null>(null)
+  /** Единицы координат в свойствах блока: проценты или миллиметры. */
+  const [unit, setUnit] = useState<'pct' | 'mm'>('pct')
+  /** Командная палитра ⌘K. */
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [paletteQuery, setPaletteQuery] = useState('')
+  const [paletteIndex, setPaletteIndex] = useState(0)
+  /** Онбординг «3 шага»: скрывается после «Понятно». */
+  const [onboardingHidden, setOnboardingHidden] = useState(() => {
+    try {
+      return localStorage.getItem('menu-layout-onboarding') === 'done'
+    } catch {
+      return false
+    }
+  })
   const [layerQuery, setLayerQuery] = useState('')
+  /** Перетаскивание слоя: какой блок сейчас тащат. */
+  const [layerDragId, setLayerDragId] = useState<string | null>(null)
   /** Свои шрифты аккаунта: файлы в uploads, семейство в теме. */
   const [ownFonts, setOwnFonts] = useState<{ id: number; family: string; url: string; boldUrl: string | null }[]>([])
   const [fontBusy, setFontBusy] = useState(false)
@@ -175,6 +192,9 @@ export default function MenuLayoutEditor() {
   const [catFilter, setCatFilter] = useState<number | 'all'>('all')
   const [zoom, setZoom] = useState(1)
   const [showGrid, setShowGrid] = useState(false)
+  /** Шаг сетки в процентах и число колонок — для визуальных направляющих и прилипания. */
+  const [gridStep, setGridStep] = useState(5)
+  const [gridCols, setGridCols] = useState(1)
   const [showSafe, setShowSafe] = useState(true)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
@@ -552,6 +572,50 @@ export default function MenuLayoutEditor() {
     toast.push('Группа разобрана')
   }
 
+  /** Опорный блок массовых операций — активный, иначе первый по порядку чтения. */
+  const massAnchor = () => {
+    const blocks = page?.blocks ?? []
+    return blocks.find((b) => b.id === selectedId) ?? blocks.find((b) => editableIds.includes(b.id)) ?? null
+  }
+
+  /** «Одинаковая ширина/высота»: размер опорного блока раздаём остальным выделенным. */
+  const sameSize = (axis: 'w' | 'h') => {
+    const anchor = massAnchor()
+    if (!page || !anchor || editableIds.length < 2) return
+    const value = axis === 'w' ? anchor.wPct : anchor.hPct
+    updatePage((blocks) =>
+      blocks.map((b) =>
+        editableIds.includes(b.id)
+          ? { ...b, ...clampRect({ ...b, ...(axis === 'w' ? { wPct: value } : { hPct: value }) }) }
+          : b,
+      ),
+    )
+    toast.push(axis === 'w' ? 'Ширина выровнена по опорному блоку' : 'Высота выровнена по опорному блоку')
+  }
+
+  /** Массовый кегль: сдвигаем размер шрифта всех выделенных блоков с текстом. */
+  const bulkFontSize = (delta: number) => {
+    if (!page) return
+    let touched = 0
+    updatePage((blocks) =>
+      blocks.map((b) => {
+        if (!editableIds.includes(b.id) || b.type === 'divider') return b
+        touched += 1
+        const next = Math.min(72, Math.max(5, Math.round((b.fontSizePt + delta) * 10) / 10))
+        return { ...b, fontSizePt: next }
+      }),
+    )
+    if (touched) toast.push(`Кегль изменён на ${delta > 0 ? '+' : ''}${delta} pt у блоков: ${touched}`)
+  }
+
+  const bulkFamily = (family: string) => {
+    if (!page) return
+    updatePage((blocks) =>
+      blocks.map((b) => (editableIds.includes(b.id) && b.type !== 'divider' ? { ...b, fontFamily: family } : b)),
+    )
+    toast.push(`Семейство применено к блокам: ${editableIds.length}`)
+  }
+
   /** Стиль = то, что переносится на другие блоки: кегль, выравнивание, шрифт, интервалы, регистр. */
   const styleBuffer = useRef<Partial<MenuBlock> | null>(null)
   const takeStyle = () => {
@@ -834,6 +898,13 @@ export default function MenuLayoutEditor() {
       const target = e.target as HTMLElement | null
       if (target && /input|textarea|select/i.test(target.tagName)) return
       const mod = e.metaKey || e.ctrlKey
+      if (mod && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setPaletteOpen((v) => !v)
+        setPaletteQuery('')
+        setPaletteIndex(0)
+        return
+      }
       if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault()
         if (e.shiftKey) redo()
@@ -848,6 +919,14 @@ export default function MenuLayoutEditor() {
       if (e.key === 'Escape') {
         setCtxMenu(null)
         setRenamingId(null)
+        setPaletteOpen(false)
+        setSelectedIds([])
+        setSelectedId(null)
+        return
+      }
+      if (e.key === 'Enter' && selectedId) {
+        // Enter на блоке — открыть его свойства, как двойной клик в фигме.
+        setRightTab('block')
         return
       }
       if (mod && e.key.toLowerCase() === 'c' && selectedIds.length) {
@@ -982,6 +1061,16 @@ export default function MenuLayoutEditor() {
     ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
   }
 
+  // Обработчик перетаскивания не пересоздаётся на каждое изменение сетки — читаем через ref.
+  const showGridRef = useRef(showGrid)
+  const gridRef = useRef({ stepPct: gridStep, cols: gridCols })
+  useEffect(() => {
+    showGridRef.current = showGrid
+  }, [showGrid])
+  useEffect(() => {
+    gridRef.current = { stepPct: gridStep, cols: gridCols }
+  }, [gridStep, gridCols])
+
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
       const d = drag.current
@@ -999,7 +1088,10 @@ export default function MenuLayoutEditor() {
       if (d.mode === 'move' && !e.altKey) {
         const snapped = snapWithGuides(next, others, 0.8)
         next = snapped.rect
-        setGuides(e.metaKey || e.ctrlKey ? snapped.guides : snapped.guides)
+        // Сетка включена — доводим до её линий, если соседи не поймали блок.
+        const caught = snapped.guides.x.length + snapped.guides.y.length > 0
+        if (showGridRef.current && !caught) next = snapToGrid(next, gridRef.current)
+        setGuides(snapped.guides)
       }
       const shiftX = next.xPct - primary.xPct
       const shiftY = next.yPct - primary.yPct
@@ -1237,6 +1329,7 @@ export default function MenuLayoutEditor() {
   if (!doc || !previewPage || !page) return <EditorSkeleton />
 
   const format = data?.layout.format ?? 'a4_portrait'
+  const ratio = LAYOUT_FORMATS.find((f) => f.id === format)?.ratio ?? 210 / 297
   const filtered = products.filter((p) => {
     // По умолчанию в каталоге слева только то, что реально продаётся.
     if (!showAllProducts && !p.available) return false
@@ -1256,6 +1349,36 @@ export default function MenuLayoutEditor() {
           : savedAt
             ? `сохранено ${ago(savedAt)}`
             : 'сохранено'
+  /** Команды палитры: те же действия, что в панелях, но без поиска мышью. */
+  const commands: { id: string; title: string; hint?: string; run: () => void }[] = [
+    { id: 'text', title: 'Добавить текст', run: () => addBlock('text') },
+    { id: 'photo', title: 'Добавить фото', run: () => addBlock('image') },
+    { id: 'logo', title: 'Добавить логотип', run: () => addBlock('logo') },
+    { id: 'divider', title: 'Добавить линию', run: () => addBlock('divider') },
+    { id: 'seed', title: 'Собрать лист из каталога', run: () => void seedFromCatalog() },
+    { id: 'export', title: 'Экспорт PDF', hint: 'файл для типографии', run: () => setExportOpen(true) },
+    { id: 'preview', title: 'Предпросмотр', run: () => setPreviewOpen(true) },
+    { id: 'versions', title: 'Версии макета', run: () => setVersionsOpen(true) },
+    { id: 'version-save', title: 'Сохранить версию', run: () => void saveVersion() },
+    { id: 'grid', title: showGrid ? 'Выключить сетку' : 'Включить сетку', run: () => setShowGrid((v) => !v) },
+    { id: 'fit', title: 'Вписать лист', run: () => setZoom(1) },
+    { id: 'format', title: 'Сменить формат листа', run: () => setFormatOpen(true) },
+    { id: 'palettes', title: 'Палитры бренда', run: () => setRightTab('design') },
+    { id: 'group', title: 'Сгруппировать выделение', run: groupSelection },
+    { id: 'ungroup', title: 'Разгруппировать', run: ungroupSelection },
+    { id: 'columns2', title: 'Разложить в 2 колонки', run: () => columns(2) },
+    { id: 'duplicate', title: 'Дублировать блок', hint: '⌘D', run: () => duplicateBlocks(selectedIds) },
+    { id: 'delete', title: 'Убрать блок с листа', hint: 'Del', run: () => selectedId && deleteBlock(selectedId) },
+  ]
+  const paletteItems = commands.filter((c) => !paletteQuery || c.title.toLowerCase().includes(paletteQuery.toLowerCase()))
+  const runCommand = (index: number) => {
+    const cmd = paletteItems[index]
+    if (!cmd) return
+    cmd.run()
+    setPaletteOpen(false)
+    setPaletteQuery('')
+  }
+
   const driftText = driftBanner(drift.length ? drift : liveDrift, priceMode)
   const selectedType = selected ? effectiveType(selected) : null
 
@@ -1273,6 +1396,8 @@ export default function MenuLayoutEditor() {
       onHandlePointerDown={opts.interactive ? (e, bid) => beginDrag(e, bid, 'resize', 'se') : undefined}
       onContextMenu={opts.interactive ? (e, bid) => setCtxMenu({ x: e.clientX, y: e.clientY, id: bid }) : undefined}
       showGrid={opts.grid}
+      gridStepPct={gridStep}
+      gridCols={gridCols}
       showSafe={opts.safe}
       index={pageIdx + 1}
       total={doc.pages.length}
@@ -1508,12 +1633,30 @@ export default function MenuLayoutEditor() {
           .map((b) => (
           <li
             key={b.id}
+            draggable
+            onDragStart={(e) => {
+              setLayerDragId(b.id)
+              e.dataTransfer.effectAllowed = 'move'
+            }}
+            onDragOver={(e) => {
+              if (layerDragId && layerDragId !== b.id) e.preventDefault()
+            }}
+            onDrop={(e) => {
+              e.preventDefault()
+              if (layerDragId && layerDragId !== b.id) {
+                updatePage((blocks) => reorderBlocks(blocks, layerDragId, b.id))
+              }
+              setLayerDragId(null)
+            }}
+            onDragEnd={() => setLayerDragId(null)}
             className={cx(
               'flex items-center gap-1 rounded-lg border px-1.5 py-1',
               selectedIds.includes(b.id) ? 'border-brand bg-surface-2' : 'border-transparent hover:bg-surface-2',
               b.hidden && 'opacity-50',
+              layerDragId === b.id && 'opacity-60',
             )}
           >
+            <GripVertical size={12} className="flex-none text-ink-tertiary" aria-hidden />
             {renamingId === b.id ? (
               <input
                 autoFocus
@@ -2122,27 +2265,58 @@ export default function MenuLayoutEditor() {
       </div>
 
       <section className="border-b border-line px-3 py-3">
-        <h3 className="mb-2 text-[13px] font-semibold">Положение и размер</h3>
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className="text-[13px] font-semibold">Положение и размер</h3>
+          <div className="flex gap-1 rounded-md bg-surface-2 p-0.5">
+            {(sheetMm(format) ? (['pct', 'mm'] as const) : (['pct'] as const)).map((u) => (
+              <button
+                key={u}
+                type="button"
+                onClick={() => setUnit(u)}
+                aria-pressed={unit === u}
+                className={cx('rounded px-1.5 py-0.5 text-[10.5px] font-semibold', unit === u ? 'bg-white text-brand shadow-sm' : 'text-ink-tertiary')}
+              >
+                {u === 'pct' ? '%' : 'мм'}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="grid grid-cols-2 gap-2">
-          {(
-            [
-              ['xPct', 'X, %'],
-              ['yPct', 'Y, %'],
-              ['wPct', 'Ширина, %'],
-              ['hPct', 'Высота, %'],
-            ] as const
+          {(unit === 'pct'
+            ? ([
+                ['xPct', 'X, %'],
+                ['yPct', 'Y, %'],
+                ['wPct', 'Ширина, %'],
+                ['hPct', 'Высота, %'],
+              ] as [string, string][])
+            : ([
+                ['x', 'X, мм'],
+                ['y', 'Y, мм'],
+                ['w', 'Ширина, мм'],
+                ['h', 'Высота, мм'],
+              ] as [string, string][])
           ).map(([key, label]) => (
             <Field key={key} label={label}>
               <Input
                 type="number"
-                step="0.5"
+                step={unit === 'pct' ? '0.5' : '1'}
                 min={0}
-                max={100}
-                value={Math.round(selected[key] * 10) / 10}
+                max={unit === 'pct' ? 100 : Math.round(sheetMm(format)?.width ?? 100)}
+                value={
+                  unit === 'pct'
+                    ? Math.round(Number((selected as unknown as Record<string, number>)[key]) * 10) / 10
+                    : Number((pctToMm(selected, format) as unknown as Record<string, number>)[key])
+                }
                 onChange={(e) => {
                   const v = Number(e.target.value)
                   if (!Number.isFinite(v)) return
-                  patchBlock(clampRect({ ...selected, [key]: v }))
+                  const mmRect = pctToMm(selected, format)
+                  if (unit === 'pct' || !mmRect) {
+                    patchBlock(clampRect({ ...selected, [key]: v }))
+                    return
+                  }
+                  const next = mmToPct({ ...mmRect, [key]: v }, format)
+                  if (next) patchBlock({ ...selected, ...clampRect({ ...selected, ...next }) })
                 }}
                 className="!h-8 text-[12px]"
               />
@@ -2150,7 +2324,9 @@ export default function MenuLayoutEditor() {
           ))}
         </div>
         <p className="mt-1.5 text-[11px] text-ink-tertiary">
-          Минимум {MIN_W}×{MIN_H} %. Стрелки двигают на 0,5 %, с Shift — на 5 %.
+          {unit === 'mm' && sheetMm(format)
+            ? `Лист ${sheetMm(format)!.width} × ${sheetMm(format)!.height} мм, поля 4,4 % по бокам и сверху и 6 % снизу. Значения — от края листа.`
+            : `Минимум ${MIN_W}×${MIN_H} %. Стрелки двигают на 0,5 %, с Shift — на 5 %.`}
         </p>
         <PhotoDpiHint
           url={selected.displayImageUrl ?? selected.url ?? null}
@@ -2416,6 +2592,14 @@ export default function MenuLayoutEditor() {
 
   return (
     <>
+      {/* Клавиатура: Tab по панелям длинный, поэтому лист доступен сразу. */}
+      <button
+        type="button"
+        onClick={() => sheetRef.current?.focus()}
+        className="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-[90] focus:rounded-lg focus:bg-white focus:px-3 focus:py-2 focus:text-[13px] focus:font-semibold focus:text-brand focus:shadow-soft"
+      >
+        Перейти к листу
+      </button>
       {/* ── тулбар ─────────────────────────────────────────── */}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Link
@@ -2468,12 +2652,39 @@ export default function MenuLayoutEditor() {
         </div>
       </div>
 
-      <p className="mb-3 flex items-start gap-2 rounded-xl border border-line bg-surface-2 px-3 py-2 text-[12.5px] leading-4 text-ink-secondary">
-        <Layers size={14} className="mt-0.5 flex-none text-brand" aria-hidden />
-        Перетащите позицию на листе, тяните угол — блок меняет размер; края прилипают к полям и соседям
-        (Alt — без прилипания). Товары каталога при этом не удаляются и не меняются.
-        На телефоне сначала коснитесь блока, потом двигайте.
-      </p>
+      {onboardingHidden ? (
+        <p className="mb-3 flex items-start gap-2 rounded-xl border border-line bg-surface-2 px-3 py-2 text-[12.5px] leading-4 text-ink-secondary">
+          <Layers size={14} className="mt-0.5 flex-none text-brand" aria-hidden />
+          Перетащите позицию на листе, тяните угол — блок меняет размер; края прилипают к полям и соседям
+          (Alt — без прилипания). ⌘K — все команды.
+        </p>
+      ) : (
+        <div className="mb-3 rounded-xl border border-brand/30 bg-brand/5 px-3 py-2.5" data-testid="onboarding">
+          <div className="mb-1.5 flex items-center gap-2">
+            <Sparkles size={14} className="flex-none text-brand" aria-hidden />
+            <span className="min-w-0 flex-1 text-[12.5px] font-semibold text-ink">Три шага до готового макета</span>
+            <button
+              type="button"
+              onClick={() => {
+                setOnboardingHidden(true)
+                try {
+                  localStorage.setItem('menu-layout-onboarding', 'done')
+                } catch {
+                  /* приватный режим */
+                }
+              }}
+              className="text-[12px] font-semibold text-brand underline"
+            >
+              Понятно
+            </button>
+          </div>
+          <ol className="ml-4 list-decimal space-y-0.5 text-[12px] leading-4 text-ink-secondary">
+            <li>«Собрать из каталога» — лист заполнится товарами с ценами.</li>
+            <li>Перетащите блоки, тяните угол для размера; края прилипают к полям.</li>
+            <li>«Экспорт PDF» — файл с полями под рез. ⌘K открывает все команды.</li>
+          </ol>
+        </div>
+      )}
 
       {driftText && (
         <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-warn/40 bg-warn-soft px-3 py-2 text-[13px] text-warn">
@@ -2630,7 +2841,7 @@ export default function MenuLayoutEditor() {
               <Badge tone={status === 'ready' ? 'ok' : 'neutral'}>{status === 'ready' ? 'Готов' : 'Черновик'}</Badge>
               <span className="text-[11px] font-normal text-ink-tertiary">{page.blocks.length} блоков</span>
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex min-w-0 flex-wrap items-center justify-end gap-1">
               {selectedIds.length > 0 && editableIds.length <= 1 && (
                 <>
                   <button type="button" onClick={takeStyle} className="h-8 rounded-md px-2 text-[11px] font-semibold text-ink-tertiary hover:bg-surface-2 hover:text-brand" title="Скопировать стиль блока">
@@ -2689,6 +2900,33 @@ export default function MenuLayoutEditor() {
                   <button type="button" onClick={ungroupSelection} className="h-8 rounded-md px-2 text-[11px] font-semibold text-ink-tertiary hover:bg-surface-2 hover:text-brand" title="Разгруппировать">
                     разбить
                   </button>
+                  <button type="button" onClick={() => sameSize('w')} className="h-8 rounded-md px-2 text-[11px] font-semibold text-ink-tertiary hover:bg-surface-2 hover:text-brand" title="Одинаковая ширина по опорному блоку">
+                    = шир.
+                  </button>
+                  <button type="button" onClick={() => sameSize('h')} className="h-8 rounded-md px-2 text-[11px] font-semibold text-ink-tertiary hover:bg-surface-2 hover:text-brand" title="Одинаковая высота по опорному блоку">
+                    = выс.
+                  </button>
+                  <span className="mx-1 h-5 w-px bg-line" />
+                  <button type="button" onClick={() => bulkFontSize(-0.5)} className="h-8 w-8 rounded-md text-[12px] font-semibold text-ink-tertiary hover:bg-surface-2 hover:text-brand" title="Уменьшить кегль всех выделенных на 0,5 pt" aria-label="Уменьшить кегль выделенных">
+                    A−
+                  </button>
+                  <button type="button" onClick={() => bulkFontSize(0.5)} className="h-8 w-8 rounded-md text-[12px] font-semibold text-ink-tertiary hover:bg-surface-2 hover:text-brand" title="Увеличить кегль всех выделенных на 0,5 pt" aria-label="Увеличить кегль выделенных">
+                    A+
+                  </button>
+                  <select
+                    value=""
+                    onChange={(e) => e.target.value && bulkFamily(e.target.value)}
+                    aria-label="Семейство шрифта для всех выделенных"
+                    title="Семейство шрифта для всех выделенных"
+                    className="h-8 rounded-md border border-line bg-white px-1 text-[11px] text-ink-secondary"
+                  >
+                    <option value="">шрифт…</option>
+                    {FONT_FAMILIES.map((f) => (
+                      <option key={f} value={f}>
+                        {FONT_LABELS[f]}
+                      </option>
+                    ))}
+                  </select>
                   <span className="mx-1 h-5 w-px bg-line" />
                   <button type="button" onClick={takeStyle} className="h-8 rounded-md px-2 text-[11px] font-semibold text-ink-tertiary hover:bg-surface-2 hover:text-brand" title="Скопировать стиль с активного блока">
                     стиль ↓
@@ -2705,9 +2943,40 @@ export default function MenuLayoutEditor() {
                 aria-pressed={showGrid}
                 className={cx('grid h-8 w-8 place-items-center rounded-md', showGrid ? 'bg-surface-2 text-brand' : 'text-ink-tertiary hover:text-brand')}
                 title="Сетка"
+                aria-label={showGrid ? 'Выключить сетку и привязку' : 'Включить сетку и привязку'}
               >
                 <Grid3x3 size={15} />
               </button>
+              {showGrid && (
+                <span className="flex items-center gap-1 rounded-md bg-surface-2 px-1">
+                  <select
+                    value={gridStep}
+                    onChange={(e) => setGridStep(Number(e.target.value))}
+                    aria-label="Шаг сетки"
+                    title="Шаг сетки, % листа"
+                    className="h-7 rounded bg-transparent text-[11px] text-ink-secondary outline-none"
+                  >
+                    {[2.5, 5, 10, 12.5, 25].map((v) => (
+                      <option key={v} value={v}>
+                        {v} %
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={gridCols}
+                    onChange={(e) => setGridCols(Number(e.target.value))}
+                    aria-label="Колонки сетки"
+                    title="Колонки: направляющие для колонок меню"
+                    className="h-7 rounded bg-transparent text-[11px] text-ink-secondary outline-none"
+                  >
+                    {[1, 2, 3, 4].map((v) => (
+                      <option key={v} value={v}>
+                        {v} кол.
+                      </option>
+                    ))}
+                  </select>
+                </span>
+              )}
               <button
                 type="button"
                 onClick={() => setShowSafe((v) => !v)}
@@ -2779,7 +3048,9 @@ export default function MenuLayoutEditor() {
           >
             <div
               ref={sheetRef}
-              className="mx-auto"
+              className="mx-auto rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+              tabIndex={-1}
+              aria-label="Лист макета"
               style={{
                 width: `${Math.round(560 * zoom)}px`,
                 aspectRatio: String(LAYOUT_FORMATS.find((f) => f.id === format)?.ratio ?? 210 / 297),
@@ -3015,6 +3286,67 @@ export default function MenuLayoutEditor() {
         )}
       </div>
 
+      {/* ── командная палитра ⌘K ──────────────────────────── */}
+      {paletteOpen && (
+        <div
+          className="fixed inset-0 z-[80] bg-black/50 p-4"
+          onMouseDown={(e) => e.target === e.currentTarget && setPaletteOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-label="Команды редактора"
+            className="mx-auto mt-[12vh] w-full max-w-[520px] overflow-hidden rounded-2xl bg-white shadow-2xl"
+          >
+            <input
+              autoFocus
+              value={paletteQuery}
+              onChange={(e) => {
+                setPaletteQuery(e.target.value)
+                setPaletteIndex(0)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault()
+                  setPaletteIndex((i) => Math.min(i + 1, paletteItems.length - 1))
+                } else if (e.key === 'ArrowUp') {
+                  e.preventDefault()
+                  setPaletteIndex((i) => Math.max(i - 1, 0))
+                } else if (e.key === 'Enter') {
+                  e.preventDefault()
+                  runCommand(paletteIndex)
+                } else if (e.key === 'Escape') {
+                  setPaletteOpen(false)
+                }
+              }}
+              placeholder="Что сделать? Например: фото, экспорт, колонки"
+              aria-label="Поиск команды"
+              className="min-h-12 w-full border-b border-line px-4 text-[14px] outline-none"
+            />
+            <ul className="max-h-[46vh] overflow-y-auto py-1">
+              {paletteItems.map((cmd, i) => (
+                <li key={cmd.id}>
+                  <button
+                    type="button"
+                    onMouseEnter={() => setPaletteIndex(i)}
+                    onClick={() => runCommand(i)}
+                    className={cx(
+                      'flex w-full items-center gap-2 px-4 py-2 text-left text-[13px]',
+                      i === paletteIndex ? 'bg-brand/10 text-ink' : 'text-ink-secondary',
+                    )}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{cmd.title}</span>
+                    {cmd.hint && <span className="flex-none text-[11px] text-ink-tertiary">{cmd.hint}</span>}
+                  </button>
+                </li>
+              ))}
+              {paletteItems.length === 0 && (
+                <li className="px-4 py-3 text-[13px] text-ink-tertiary">Ничего не найдено</li>
+              )}
+            </ul>
+          </div>
+        </div>
+      )}
+
       {/* ── предпросмотр ──────────────────────────────────── */}
       {previewOpen && (
         <div className="fixed inset-0 z-[70] overflow-y-auto bg-black/70 p-4" onMouseDown={(e) => e.target === e.currentTarget && setPreviewOpen(false)}>
@@ -3103,6 +3435,11 @@ export default function MenuLayoutEditor() {
                 pageIdx,
               }))
         }
+        onDone={(ok, message) => toast.push(message, ok ? 'ok' : 'bad')}
+        onBlocked={(message) => {
+          toast.push(message, 'bad')
+          setExportOpen(true)
+        }}
         onGoToBlock={(blockId, pageIdx) => {
           setExportOpen(false)
           goToBlock(blockId, pageIdx)
@@ -3240,6 +3577,10 @@ type ExportProps = {
   pages: number
   blockers: Blocker[]
   onGoToBlock: (blockId: string, pageIdx: number) => void
+  /** Экспорт идёт в фоне: модалка закрывается сразу, итог приходит тостом. */
+  onDone: (ok: boolean, message: string) => void
+  /** 409: в макете есть дырки — просим владельца вернуться в модалку. */
+  onBlocked: (message: string) => void
 }
 
 /**
@@ -3302,7 +3643,7 @@ function PhotoDpiHint({ url, widthPct, ratio }: { url: string | null; widthPct: 
   )
 }
 
-function ExportModal({ open, onClose, layoutId, format, pages, blockers, onGoToBlock }: ExportProps) {
+function ExportModal({ open, onClose, layoutId, format, pages, blockers, onGoToBlock, onDone, onBlocked }: ExportProps) {
   const [preset, setPreset] = useState<'print' | 'screen'>('print')
   const [bleed, setBleed] = useState(3)
   const [busy, setBusy] = useState(false)
@@ -3318,39 +3659,47 @@ function ExportModal({ open, onClose, layoutId, format, pages, blockers, onGoToB
 
   if (!open) return null
 
-  const download = async (force: boolean) => {
+  /**
+   * Экспорт в фоне: закрываем модалку сразу после старта, чтобы можно было продолжать
+   * работать. Итог приходит тостом, файл скачивается сам.
+   */
+  const download = (force: boolean) => {
     setBusy(true)
     setErr('')
     const startedAt = performance.now()
-    try {
-      const qs = new URLSearchParams({ preset, bleed: String(preset === 'print' ? bleed : 0) })
-      if (cmyk) qs.set('cmyk', '1')
-      if (force) qs.set('force', '1')
-      const res = await fetch(`/api/admin/menu-layouts/${layoutId}/export.pdf?${qs.toString()}`, {
-        headers: { 'X-Admin-Token': tokenStore.get() },
-      })
-      if (res.status === 409) {
-        setForced(true)
-        setErr('В макете есть незаполненные позиции. Можно скачать как есть — но лучше поправить.')
-        return
+    const qs = new URLSearchParams({ preset, bleed: String(preset === 'print' ? bleed : 0) })
+    if (cmyk) qs.set('cmyk', '1')
+    if (force) qs.set('force', '1')
+    onClose()
+    void (async () => {
+      try {
+        const res = await fetch(`/api/admin/menu-layouts/${layoutId}/export.pdf?${qs.toString()}`, {
+          headers: { 'X-Admin-Token': tokenStore.get() },
+        })
+        if (res.status === 409) {
+          setForced(true)
+          onBlocked('В макете есть незаполненные позиции — PDF не собран. Можно скачать как есть.')
+          return
+        }
+        if (!res.ok) throw new Error(`Сервер ответил ${res.status}`)
+        const blob = await res.blob()
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `menu-${layoutId}-${new Date().toISOString().slice(0, 10)}.pdf`
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        setTimeout(() => URL.revokeObjectURL(url), 1000)
+        const ms = performance.now() - startedAt
+        perfPdf(ms)
+        onDone(true, `PDF готов за ${(ms / 1000).toFixed(1)} с · ${cmyk ? 'CMYK' : 'RGB'}, поля ${preset === 'print' ? bleed : 0} мм`)
+      } catch (e) {
+        onDone(false, e instanceof Error ? `PDF не собран: ${e.message}` : 'Не удалось скачать PDF')
+      } finally {
+        setBusy(false)
       }
-      if (!res.ok) throw new Error(`Сервер ответил ${res.status}`)
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `menu-${layoutId}-${new Date().toISOString().slice(0, 10)}.pdf`
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      setTimeout(() => URL.revokeObjectURL(url), 1000)
-      perfPdf(performance.now() - startedAt)
-      onClose()
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Не удалось скачать PDF')
-    } finally {
-      setBusy(false)
-    }
+    })()
   }
 
   const hard = blockers.filter((b) => b.code !== 'notice')

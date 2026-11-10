@@ -344,8 +344,19 @@
   pointer-events: none;
   background-image: linear-gradient(rgba(0, 47, 167, 0.06) 1px, transparent 1px),
     linear-gradient(90deg, rgba(0, 47, 167, 0.06) 1px, transparent 1px);
-  background-size: 5cqw 5cqw;
+  background-size: var(--mc-grid-step, 5cqw) var(--mc-grid-step, 5cqw);
   z-index: 9998;
+}
+
+/* Колонки поверх шага сетки: правые границы колонок жирнее. */
+.mc-sheet.is-cols::before {
+  background-image: linear-gradient(rgba(0, 47, 167, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 47, 167, 0.06) 1px, transparent 1px),
+    repeating-linear-gradient(
+      90deg,
+      transparent 0 calc(100% / var(--mc-grid-cols) - 1px),
+      rgba(0, 47, 167, 0.22) calc(100% / var(--mc-grid-cols) - 1px) calc(100% / var(--mc-grid-cols))
+    );
 }
 .mc-sheet.is-safe::after {
   content: '';
@@ -414,4 +425,17 @@
     min-width: 44px;
     min-height: 44px;
   }
+}
+
+/* ── клавиатура: видимый фокус на всём, что можно нажать ── */
+.mc-block:focus-visible,
+.mc-sheet button:focus-visible,
+.mc-sheet input:focus-visible {
+  outline: 2px solid var(--mc-accent);
+  outline-offset: 2px;
+}
+
+/* Блок в фокусе — как выбранный: сразу видно, чем управляют стрелки. */
+.mc-block:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--mc-accent) 45%, transparent);
 }

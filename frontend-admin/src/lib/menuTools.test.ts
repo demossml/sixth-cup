@@ -12,6 +12,8 @@ import {
   fitZoom,
   groupKeyOf,
   rectsIntersect,
+  reorderBlocks,
+  snapToGrid,
   snapWithGuides,
   zoomStep,
 } from './menuTools'
@@ -173,5 +175,47 @@ describe('раскладка по колонкам', () => {
     const blocks = [block('a', 0, 0, 40, 6), block('b', 0, 10, 40, 6, { locked: true })]
     const out = layoutColumns(blocks, ['a', 'b'], 2)
     expect(out.find((b) => b.id === 'b')!.xPct).toBe(0)
+  })
+})
+
+describe('сетка', () => {
+  it('доводит левый верхний край до ближайшей линии шага', () => {
+    const r = snapToGrid({ xPct: 12.4, yPct: 37.6, wPct: 30, hPct: 10 }, { stepPct: 5, cols: 1 })
+    expect(r.xPct).toBe(10)
+    expect(r.yPct).toBe(40)
+    expect(r.wPct).toBe(30)
+  })
+
+  it('колонки добавляют свои границы к линиям шага', () => {
+    // 3 колонки → границы 0, 33.3, 66.6, 100: значение 33 попадает на границу колонки
+    const r = snapToGrid({ xPct: 33, yPct: 4, wPct: 20, hPct: 5 }, { stepPct: 5, cols: 3 })
+    expect(r.xPct).toBeCloseTo(100 / 3, 2)
+  })
+
+  it('далёкое значение не дёргается и не выходит за лист', () => {
+    const r = snapToGrid({ xPct: 47, yPct: 47, wPct: 10, hPct: 10 }, { stepPct: 2.5, cols: 1 })
+    expect(r.xPct).toBe(47.5)
+    const edge = snapToGrid({ xPct: 95, yPct: 95, wPct: 20, hPct: 20 }, { stepPct: 10, cols: 1 })
+    expect(edge.xPct + edge.wPct).toBeLessThanOrEqual(100)
+    expect(edge.yPct + edge.hPct).toBeLessThanOrEqual(100)
+  })
+})
+
+describe('порядок слоёв', () => {
+  const mk = (id: string, zIndex: number): MenuBlock => ({ ...newBlock('text'), id, zIndex })
+
+  it('перетаскивание ставит блок на место цели и перенумеровывает слои', () => {
+    const blocks = [mk('a', 0), mk('b', 1), mk('c', 2)]
+    const next = reorderBlocks(blocks, 'a', 'c')
+    const z = Object.fromEntries(next.map((b) => [b.id, b.zIndex]))
+    // «a» перетащили на самый верх — он рисуется последним
+    expect(z.a).toBe(2)
+    expect(z.c).toBe(1)
+    expect(z.b).toBe(0)
+  })
+
+  it('перетаскивание на себя ничего не меняет', () => {
+    const blocks = [mk('a', 0), mk('b', 1)]
+    expect(reorderBlocks(blocks, 'b', 'b')).toBe(blocks)
   })
 })

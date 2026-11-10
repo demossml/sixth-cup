@@ -618,6 +618,9 @@ export function uploadsFileExists(url: string | null | undefined): boolean {
   return existsSync(join(config.uploadsDir, file))
 }
 
+/** У блока есть печатаемый текст, кегль которого важен. */
+const effectiveText = (b: MenuBlock): boolean => b.type === 'product' || b.type === 'category' || b.type === 'text' || b.type === 'header'
+
 export function loadCatalogProducts(ids: number[]): Map<number, CatalogProduct> {
   const unique = [...new Set(ids.filter((n) => Number.isInteger(n) && n > 0))]
   const out = new Map<number, CatalogProduct>()
@@ -785,12 +788,20 @@ export function resolveDoc(doc: MenuDoc, priceMode: PriceMode): ResolvedDoc {
     blocks: page.blocks
       .filter((b) => !b.hidden)
       .map((b): RenderBlock => {
+        // Мелкий кегль на печати не читается: типографии просят не меньше 7 pt.
+        // Проверяем у всех блоков с текстом — раньше проверка стояла в ветке товара
+        // и текстовые блоки проходили молча.
+        const fontWarning = effectiveText(b) && b.fontSizePt < 7 ? ['текст мельче 7 pt'] : []
         if (b.type === 'category') {
           const name = b.titleOverride ?? (b.categoryId == null ? null : catNames.get(b.categoryId) ?? null)
-          return { ...b, displayCategory: name, warnings: name ? [] : ['категория не найдена'] }
+          return {
+            ...b,
+            displayCategory: name,
+            warnings: name ? fontWarning : ['категория не найдена', ...fontWarning],
+          }
         }
         if (b.type !== 'product') {
-          const warnings: string[] = []
+          const warnings: string[] = [...fontWarning]
           const missing = b.type === 'image' && !!b.url && !uploadsFileExists(b.url)
           if (b.type === 'image') {
             if (!b.url) warnings.push('нет картинки')
@@ -832,6 +843,7 @@ export function resolveDoc(doc: MenuDoc, priceMode: PriceMode): ResolvedDoc {
             ? baseName.slice(0, baseName.length - variant.length).trim()
             : baseName
         const displayName = b.titleOverride ?? (stripped || baseName)
+        warnings.push(...fontWarning)
         if (b.showPhoto && !displayImageUrl) warnings.push('нет фото')
         else if (b.showPhoto && displayImageUrl && isUploadsUrl(displayImageUrl) && !uploadsFileExists(displayImageUrl)) {
           warnings.push('файл картинки не найден')

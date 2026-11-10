@@ -617,6 +617,13 @@ export const effectiveType = (b: MenuBlock): BlockType =>
       ? 'image'
       : 'text'
 
+/** Минимальный кегль, который типографии соглашаются печатать. */
+export const MIN_PRINT_PT = 7
+
+/** У блока есть печатаемый текст, кегль которого важно проверить. */
+export const hasPrintableText = (b: MenuBlock): boolean =>
+  ['product', 'category', 'text', 'header'].includes(effectiveType(b))
+
 export const priceModeLabel = (mode: 'live' | 'frozen'): string =>
   mode === 'frozen' ? 'цены зафиксированы' : 'цены живые, из каталога'
 
@@ -648,12 +655,20 @@ export function resolvePreview(doc: MenuDoc, products: CatalogProduct[], mode: '
     pages: doc.pages.map((page) => ({
       ...page,
       blocks: page.blocks.map((b): MenuBlock => {
+        // Мелкий кегль на печати не читается: типографии просят не меньше 7 pt.
+        // Проверяем у всех блоков с текстом — раньше проверка стояла только в ветке
+        // товара, и подпись «5 pt» проходила молча.
+        const fontWarnings = hasPrintableText(b) && b.fontSizePt < MIN_PRINT_PT ? ['текст мельче 7 pt'] : []
         if (effectiveType(b) === 'category') {
           const name = b.titleOverride ?? (b.categoryId ? catName.get(b.categoryId) ?? null : null)
-          return { ...b, displayCategory: name, warnings: name ? [] : ['категория не найдена'] }
+          return {
+            ...b,
+            displayCategory: name,
+            warnings: name ? fontWarnings : ['категория не найдена', ...fontWarnings],
+          }
         }
         if (effectiveType(b) !== 'product') {
-          const warnings: string[] = []
+          const warnings: string[] = [...fontWarnings]
           if (effectiveType(b) === 'image' && !b.url && !b.displayImageUrl) warnings.push('нет картинки')
           else if (b.imageMissing) warnings.push('файл картинки не найден')
           return { ...b, warnings }
@@ -690,6 +705,7 @@ export function resolvePreview(doc: MenuDoc, products: CatalogProduct[], mode: '
         if (b.productId != null && !live) warnings.push('позиции больше нет в каталоге')
         if (live && !live.available) warnings.push('не в продаже (выключена в каталоге)')
         if (!displayPrice) warnings.push('нет цены')
+        warnings.push(...fontWarnings)
         if (b.showPhoto && !displayImageUrl) warnings.push('нет фото')
         else if (b.imageMissing) warnings.push('файл картинки не найден')
 

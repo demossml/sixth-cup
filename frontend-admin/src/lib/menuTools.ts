@@ -11,6 +11,54 @@ import { clampRect, MIN_H, MIN_W } from './menuLayout'
  */
 export const groupKeyOf = (p: Pick<CatalogProduct, 'id' | 'groupId'>): number => p.groupId ?? p.id
 
+/**
+ * Перестановка слоёв мышью: блок `dragId` встаёт на место `targetId`
+ * (перед ним в списке сверху вниз) и всем блокам заново проставляются zIndex.
+ */
+export function reorderBlocks(blocks: MenuBlock[], dragId: string, targetId: string): MenuBlock[] {
+  if (dragId === targetId) return blocks
+  const top = [...blocks].sort((a, b) => b.zIndex - a.zIndex)
+  const from = top.findIndex((b) => b.id === dragId)
+  const to = top.findIndex((b) => b.id === targetId)
+  if (from < 0 || to < 0) return blocks
+  const moved = top.splice(from, 1)[0]!
+  top.splice(to, 0, moved)
+  const z = new Map(top.map((b, i) => [b.id, top.length - 1 - i]))
+  return blocks.map((b) => {
+    const next = z.get(b.id)
+    return next === undefined || next === b.zIndex ? b : { ...b, zIndex: next }
+  })
+}
+
+/** Шаг сетки и колонок: попадание в сетку важнее прилипания к соседям. */
+export type GridSpec = { stepPct: number; cols: number }
+
+/** Ближайшая линия сетки (шаг + правые границы колонок) для левого/верхнего края. */
+export function snapToGrid(rect: Rect, grid: GridSpec): Rect {
+  const step = grid.stepPct > 0 ? grid.stepPct : 0
+  const colWidth = grid.cols > 1 ? 100 / grid.cols : 0
+  const pick = (value: number): number => {
+    let best = value
+    let bestDist = Infinity
+    const candidates = new Set<number>([0, 100])
+    if (step > 0) {
+      for (let v = 0; v <= 100 + 1e-9; v += step) candidates.add(Math.round(v * 1000) / 1000)
+    }
+    if (colWidth > 0) {
+      for (let c = 0; c <= grid.cols; c += 1) candidates.add(Math.round(c * colWidth * 1000) / 1000)
+    }
+    for (const c of candidates) {
+      const d = Math.abs(c - value)
+      if (d < bestDist) {
+        bestDist = d
+        best = c
+      }
+    }
+    return bestDist <= Math.max(0.5, step / 2) ? best : value
+  }
+  return clampRect({ ...rect, xPct: pick(rect.xPct), yPct: pick(rect.yPct) })
+}
+
 export type AlignMode = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom'
 
 export function alignBlocks(blocks: MenuBlock[], ids: string[], mode: AlignMode): MenuBlock[] {

@@ -186,6 +186,25 @@ describe('локальный резолв каталога', () => {
     expect(blocks[1]!.warnings).toContain('нет картинки')
   })
 
+  it('текст мельче 7 pt замечается у текстовых блоков и категорий, а не только у товаров', () => {
+    const doc = {
+      pages: [
+        {
+          id: 'p',
+          blocks: [
+            b('text', 't-small', { text: 'Сноска', fontSizePt: 5 }),
+            b('text', 't-ok', { text: 'Обычный текст', fontSizePt: 12 }),
+            b('category', 'cat-small', { titleOverride: 'Кофе', fontSizePt: 6 }),
+          ],
+        },
+      ],
+    }
+    const blocks = resolvePreview(doc, catalog, 'live').pages[0]!.blocks
+    expect(blocks[0]!.warnings).toContain('текст мельче 7 pt')
+    expect(blocks[1]!.warnings).not.toContain('текст мельче 7 pt')
+    expect(blocks[2]!.warnings).toContain('текст мельче 7 pt')
+  })
+
   it('localDrift показывает расхождение со снапшотом', () => {
     const doc = { pages: [{ id: 'p', blocks: [b('product', 'p1', { productId: 1, snapshotPriceRub: 159 })] }] }
     expect(localDrift(doc, catalog)).toEqual([{ blockId: 'p1', title: 'Капучино', from: 159, to: 169 }])

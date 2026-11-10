@@ -14,6 +14,9 @@ type Props = {
   onBlockPointerDown?: (e: ReactPointerEvent<HTMLDivElement>, id: string) => void
   onHandlePointerDown?: (e: ReactPointerEvent<HTMLDivElement>, id: string, handle: ResizeHandle) => void
   showGrid?: boolean
+  /** Шаг сетки в процентах безопасной области и число колонок — только для показа. */
+  gridStepPct?: number
+  gridCols?: number
   showSafe?: boolean
   /** Все выделенные блоки (мультивыбор Shift+клик и рамкой). */
   selectedIds?: string[]
@@ -52,6 +55,8 @@ function MenuCanvas({
   onBlockPointerDown,
   onHandlePointerDown,
   showGrid,
+  gridStepPct = 5,
+  gridCols = 1,
   showSafe,
   selectedIds,
   guides,
@@ -66,6 +71,8 @@ function MenuCanvas({
 
   const gradient = theme.gradient
   const style = {
+    '--mc-grid-step': `${gridStepPct}%`,
+    '--mc-grid-cols': String(Math.max(1, gridCols)),
     '--mc-bg': gradient ? `linear-gradient(${gradient.angle}deg, ${gradient.from}, ${gradient.to})` : theme.bg,
     '--mc-text': theme.text,
     '--mc-accent': theme.accent,
@@ -77,7 +84,10 @@ function MenuCanvas({
   const blocks = [...page.blocks].sort((a, b) => a.zIndex - b.zIndex || a.sortOrder - b.sortOrder)
 
   return (
-    <div className={`mc-sheet${showGrid ? ' is-grid' : ''}${showSafe ? ' is-safe' : ''}`} style={style}>
+    <div
+      className={`mc-sheet${showGrid ? ' is-grid' : ''}${showSafe ? ' is-safe' : ''}${showGrid && gridCols > 1 ? ' is-cols' : ''}`}
+      style={style}
+    >
       {theme.backgroundImageUrl && (
         <div className="mc-bg-image" aria-hidden="true">
           <img src={theme.backgroundImageUrl} alt="" />

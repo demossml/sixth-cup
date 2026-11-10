@@ -197,6 +197,25 @@ describe('макет меню: CRUD и сохранение', () => {
     expect(view.blockers.some((b) => b.code === 'missing_product')).toBe(true)
   })
 
+  it('текст мельче 7 pt предупреждает и у текстовых блоков, не только у товаров', async () => {
+    const productId = mkProduct('Эспрессо', 99, null)
+    const created = await createLayout()
+    await put(created.id, {
+      doc: docWith([
+        { id: 'p-1', type: 'product', productId, fontSizePt: 5, sortOrder: 0, ...rect },
+        { id: 't-1', type: 'text', text: 'Сноска мелким кеглем', fontSizePt: 6, sortOrder: 1, ...rect, yPct: 20 },
+        { id: 't-2', type: 'text', text: 'Обычный текст', fontSizePt: 12, sortOrder: 2, ...rect, yPct: 40 },
+        { id: 'c-1', type: 'category', titleOverride: 'Кофе', fontSizePt: 5, sortOrder: 3, ...rect, yPct: 60 },
+      ]),
+    })
+    const blocks = (await getLayout(created.id)).doc.pages[0]!.blocks
+    const byId = Object.fromEntries(blocks.map((b) => [b.id, b.warnings]))
+    expect(byId['p-1']).toContain('текст мельче 7 pt')
+    expect(byId['t-1']).toContain('текст мельче 7 pt')
+    expect(byId['t-2']).not.toContain('текст мельче 7 pt')
+    expect(byId['c-1']).toContain('текст мельче 7 pt')
+  })
+
   it('дубликат и удаление', async () => {
     const created = await createLayout('Копируемый')
     const dup = await app.request(`/api/admin/menu-layouts/${created.id}/duplicate`, { method: 'POST', headers: H })
