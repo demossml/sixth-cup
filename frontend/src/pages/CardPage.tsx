@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import InstallBanner from '../components/InstallBanner'
+import AppSetup from '../components/AppSetup'
 import InviteNotice from '../components/InviteNotice'
 import ActiveOrderBanner from '../components/order/ActiveOrderBanner'
 import { OrderQrScreen } from '../components/order/OrderQrScreen'
@@ -264,17 +264,8 @@ export default function CardPage() {
           </div>
         )}
 
-        <InstallBanner variant="inline" />
-
-        {!saved && me && (
-          <button
-            type="button"
-            onClick={() => nav('/me')}
-            className="w-full text-left text-[11px] leading-4 text-ink-secondary py-3 underline decoration-dotted underline-offset-2"
-          >
-            Сохраните код восстановления, чтобы не потерять прогресс
-          </button>
-        )}
+        {/* Аудит F-07: вместо двух баннеров — одна компактная строка настройки. */}
+        <AppSetup restore={!saved && !!me} onSaveCode={() => nav('/me')} />
 
         {vouchers.length > 0 && (
           <div className="space-y-2">
