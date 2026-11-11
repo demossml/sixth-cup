@@ -257,3 +257,39 @@ describe('F3: сигналы и сводка', () => {
     expect(problems.json.cards.every((c: { insights: unknown[] }) => c.insights.length > 0)).toBe(true)
   })
 })
+
+describe('F9: импорт пишет в модель v2, а не в cost_*', () => {
+  it('текст техкарты создаёт позиции склада и карту с составом', async () => {
+    const r = await admin('POST', '/cost/import/techcards-text', {
+      text: 'КАПУЧИНО ИМПОРТ QA\nкофе молотый — 10 г\nмолоко — 150 мл\nстакан 200 мл — 1 шт',
+    })
+    expect(r.status).toBe(200)
+    expect(r.json.cardsCreated).toBe(1)
+    expect(r.json.itemsCreated).toBeGreaterThanOrEqual(3)
+
+    const card = db
+      .prepare(`SELECT id, status FROM tech_cards WHERE name='КАПУЧИНО ИМПОРТ QA'`)
+      .get() as { id: number; status: string }
+    expect(card.status).toBe('draft')
+    const lines = db
+      .prepare(`SELECT COUNT(*) AS n FROM tech_card_lines l JOIN tech_card_versions v ON v.id=l.version_id WHERE v.card_id=?`)
+      .get(card.id) as { n: number }
+    expect(lines.n).toBe(3)
+
+    // Старые таблицы не тронуты — в них по-прежнему пусто.
+    const legacy = db.prepare(`SELECT COUNT(*) AS n FROM cost_recipes`).get() as { n: number }
+    expect(legacy.n).toBe(0)
+  })
+
+  it('ИИ-прайс добавляет позиции склада с ценой за единицу', async () => {
+    const r = await admin('POST', '/cost/import/items-bulk', {
+      items: [{ name: 'Молоко ИИ QA', unit: 'ml', packQty: 1000, packPriceRub: 95 }],
+    })
+    expect(r.status).toBe(200)
+    expect(r.json.created).toBe(1)
+    const item = db
+      .prepare(`SELECT unit, manual_cost_kop AS cost FROM stock_items WHERE name='Молоко ИИ QA'`)
+      .get() as { unit: string; cost: number }
+    expect(item).toEqual({ unit: 'ml', cost: 10 }) // 95 ₽ / 1000 мл = 9,5 коп → округление до 10
+  })
+})

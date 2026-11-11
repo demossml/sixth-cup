@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { initialCostTab, shouldAutoFocusMissing } from './costTabs'
 
 describe('initialCostTab', () => {
-  it('opens «Дозаполнить» for ?focus=missing', () => {
-    expect(initialCostTab('missing')).toBe('fill')
+  it('старая ссылка ?focus=missing ведёт в «Ингредиенты»', () => {
+    expect(initialCostTab('missing')).toBe('items')
+    expect(initialCostTab('items')).toBe('items')
+    expect(initialCostTab('fill')).toBe('items')
   })
 
   it('defaults to «Техкарты» without a focus parameter', () => {
@@ -11,10 +13,10 @@ describe('initialCostTab', () => {
     expect(initialCostTab('other')).toBe('tech')
   })
 
-  it('opens «Сигналы» and старые вкладки по прямому параметру', () => {
+  it('«Сигналы» и «Сводка» открываются по параметру, старые рецепты ведут в «Техкарты»', () => {
     expect(initialCostTab('signals')).toBe('signals')
-    expect(initialCostTab('recipes')).toBe('recipes')
     expect(initialCostTab('summary')).toBe('summary')
+    expect(initialCostTab('recipes')).toBe('tech')
   })
 })
 

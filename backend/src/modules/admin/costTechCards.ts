@@ -10,6 +10,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
+import { parseTechcardBuffer, parseTechcardText, type ParsedRecipe } from './techcardImport'
 import {
   cardInsights,
   cardTotals,
@@ -904,3 +905,152 @@ export const adminCostTechCards = new Hono()
       cardsTotal: cards.length,
     })
   })
+
+/* ───────────────────── F9: импорт прямо в модель v2 ───────────────────── */
+
+/**
+ * Импорт техкарт больше не пишет в старые cost_*: он создаёт позиции склада и карты v2.
+ * Так у раздела остаётся один источник правды — `stock_items` + `tech_cards`.
+ */
+export function importParsedV2(parsed: ParsedRecipe[]): {
+  cardsCreated: number
+  cardsUpdated: number
+  linesAdded: number
+  itemsCreated: number
+  itemsWithoutPrice: string[]
+} {
+  const result = { cardsCreated: 0, cardsUpdated: 0, linesAdded: 0, itemsCreated: 0, itemsWithoutPrice: [] as string[] }
+  const t = now()
+
+  const ensureItem = (name: string, unit: Unit, costPerBaseKop: number | null): number => {
+    const found = db
+      .prepare(`SELECT id FROM stock_items WHERE lower(name)=lower(?) AND unit=? AND active=1 ORDER BY id LIMIT 1`)
+      .get(name, unit) as { id: number } | undefined
+    if (found) {
+      if (costPerBaseKop != null) {
+        db.prepare(`UPDATE stock_items SET manual_cost_kop=?, updated_at=? WHERE id=?`).run(costPerBaseKop, t, found.id)
+      }
+      return found.id
+    }
+    const info = db
+      .prepare(
+        `INSERT INTO stock_items(name, kind, unit, min_qty, multiplicity, notes, manual_cost_kop, active, created_at, updated_at)
+         VALUES(?, 'raw', ?, 0, 1, 'импорт техкарты', ?, 1, ?, ?)`,
+      )
+      .run(name, unit, costPerBaseKop, t, t)
+    result.itemsCreated++
+    if (costPerBaseKop == null) result.itemsWithoutPrice.push(name)
+    return Number(info.lastInsertRowid)
+  }
+
+  db.transaction(() => {
+    for (const rec of parsed) {
+      const card = db
+        .prepare(`SELECT id FROM tech_cards WHERE lower(name)=lower(?) ORDER BY id LIMIT 1`)
+        .get(rec.name) as { id: number } | undefined
+      let cardId: number
+      if (card) {
+        cardId = card.id
+        result.cardsUpdated++
+      } else {
+        const info = db
+          .prepare(
+            `INSERT INTO tech_cards(name, kind, output_qty, output_unit, method_text, status, write_off_mode, created_at, updated_at)
+             VALUES(?,?,?,?,?,'draft','ingredients',?,?)`,
+          )
+          .run(rec.name, 'dish', 1, 'pcs', rec.methodText, t, t)
+        cardId = Number(info.lastInsertRowid)
+        result.cardsCreated++
+      }
+      const version = activeVersion(cardId) ?? (() => {
+        const info = db
+          .prepare(`INSERT INTO tech_card_versions(card_id, valid_from, note, created_at) VALUES(?,?,?,?)`)
+          .run(cardId, t, 'импорт', t)
+        return { id: Number(info.lastInsertRowid), cardId, validFrom: t, note: 'импорт', createdAt: t }
+      })()
+      const lines: z.infer<typeof lineZ>[] = rec.lines.map((l) => ({
+        stockItemId: ensureItem(l.ingredientName, l.unit, null),
+        qtyBrutto: l.qty,
+        lossColdPct: 0,
+        lossHotPct: 0,
+        lineRole: l.lineRole,
+      }))
+      replaceLines(version.id, lines)
+      result.linesAdded += lines.length
+    }
+  })()
+
+  return result
+}
+
+adminCostTechCards
+  .post(
+    '/cost/import/techcards-text',
+    zValidator('json', z.object({ text: z.string().min(1).max(500_000) })),
+    (c) => {
+      requireWrite(c)
+      const parsed = parseTechcardText(c.req.valid('json').text)
+      if (!parsed.length) throw bad('Не удалось разобрать техкарту — проверьте формат', 400)
+      return c.json({ ok: true, parsed: parsed.length, ...importParsedV2(parsed) })
+    },
+  )
+  .post('/cost/import/techcards-file', async (c) => {
+    requireWrite(c)
+    const body = await c.req.parseBody()
+    const file = body['file']
+    if (!file || typeof file === 'string') throw bad('Нужен файл file (xlsx/csv)', 400)
+    const f = file as File
+    if (f.size > 5 * 1024 * 1024) throw bad('Файл больше 5 МБ — сохраните техкарту отдельно', 400)
+    let parsed
+    try {
+      parsed = parseTechcardBuffer(await f.arrayBuffer(), f.name || 'techcard.xlsx')
+    } catch (e) {
+      throw bad(e instanceof Error ? e.message : 'Не удалось прочитать файл', 400)
+    }
+    if (!parsed.length) throw bad('В файле не найдено рецептов с составом', 400)
+    return c.json({ ok: true, file: f.name, parsed: parsed.length, ...importParsedV2(parsed) })
+  })
+  /** Массовое добавление ингредиентов (ИИ-прайс): только позиции склада, без карт. */
+  .post(
+    '/cost/import/items-bulk',
+    zValidator(
+      'json',
+      z.object({
+        items: z.array(
+          z.object({
+            name: z.string().trim().min(1).max(120),
+            unit: z.enum(['g', 'ml', 'pcs']),
+            packQty: z.number().positive(),
+            packPriceRub: z.number().nonnegative().nullable().optional(),
+          }),
+        ),
+      }),
+    ),
+    (c) => {
+      requireWrite(c)
+      const { items } = c.req.valid('json')
+      const t = now()
+      let created = 0
+      db.transaction(() => {
+        for (const it of items) {
+          const costKop =
+            it.packPriceRub == null ? null : Math.round((it.packPriceRub * 100) / it.packQty)
+          const found = db
+            .prepare(`SELECT id FROM stock_items WHERE lower(name)=lower(?) AND unit=? AND active=1 LIMIT 1`)
+            .get(it.name, it.unit) as { id: number } | undefined
+          if (found) {
+            if (costKop != null) {
+              db.prepare(`UPDATE stock_items SET manual_cost_kop=?, updated_at=? WHERE id=?`).run(costKop, t, found.id)
+            }
+            continue
+          }
+          db.prepare(
+            `INSERT INTO stock_items(name, kind, unit, min_qty, multiplicity, notes, manual_cost_kop, active, created_at, updated_at)
+             VALUES(?, 'raw', ?, 0, 1, 'ИИ-прайс', ?, 1, ?, ?)`,
+          ).run(it.name, it.unit, costKop, t, t)
+          created++
+        }
+      })()
+      return c.json({ ok: true, created })
+    },
+  )
