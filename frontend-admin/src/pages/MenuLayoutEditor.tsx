@@ -4,9 +4,9 @@ import { Link, useParams } from 'react-router-dom'
 import {
   AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical,
   AlignStartHorizontal, AlignStartVertical, ArrowDown, ArrowLeft, ArrowUp, Check, Download,
-  ChevronDown, ChevronRight, Eye, EyeOff, Grid3x3, GripVertical, History, Layers, ListTree, Loader2, Lock, LockOpen, Maximize2,
+  Eye, EyeOff, Grid3x3, History, Layers, ListTree, Loader2, Lock, LockOpen, Maximize2,
   MessageSquare,
-  Minus, Palette, Plus, Redo2, RefreshCw, Search, Sparkles, Trash2, Type, Undo2, Upload, X,
+  Minus, Palette, Plus, Redo2, RefreshCw, Sparkles, Trash2, Type, Undo2, Upload, X,
 } from 'lucide-react'
 import { ApiError, api, tokenStore, uploadFile, uploadMenuFont } from '../api/client'
 import { canRedo, canUndo, emptyHistory, pushHistory, redoStep, undoStep, type DocHistory } from '../lib/docHistory'
@@ -24,7 +24,6 @@ import {
   THEME_PRESETS,
   blockLabel,
   bringToFront,
-  byZ,
   clampRect,
   addItemToSection,
   collapseDuplicateProducts,
@@ -64,7 +63,7 @@ import MenuCanvas from '../components/menuLayout/MenuCanvas'
 import ColorField from '../components/menuLayout/ColorField'
 import {
   alignBlocks, clampZoom, distributeBlocks, domTextMeasurer, editorMode, fitFontSize, fitZoom, groupBlocks,
-  groupKeyOf, groupSelectionIds, layoutColumns, rectsIntersect, reorderBlocks, snapToGrid,
+  groupKeyOf, groupSelectionIds, layoutColumns, rectsIntersect, snapToGrid,
   snapWithGuides, ungroupBlocks, zoomStep,
   type AlignMode, type SnapGuides,
 } from '../lib/menuTools'
@@ -91,6 +90,7 @@ import PhotoDpiHint from '../components/menuLayout/PhotoDpiHint'
 import EditorSkeleton from '../components/menuLayout/EditorSkeleton'
 import CatalogPane from '../components/menuLayout/panes/CatalogPane'
 import PlacesPane from '../components/menuLayout/panes/PlacesPane'
+import LayersPane from '../components/menuLayout/panes/LayersPane'
 
 type SaveBody = { title: string; theme: MenuTheme; doc: MenuDoc }
 
@@ -1711,220 +1711,32 @@ export default function MenuLayoutEditor() {
   )
 
   const layersPane = (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="border-b border-line px-2 py-2">
-        <label className="flex min-h-8 items-center gap-2 rounded-lg border border-line bg-white px-2">
-          <Search size={13} className="text-ink-tertiary" aria-hidden />
-          <input
-            value={layerQuery}
-            onChange={(e) => setLayerQuery(e.target.value)}
-            placeholder="Найти слой"
-            aria-label="Поиск по слоям"
-            className="min-w-0 flex-1 border-0 bg-transparent text-[12.5px] outline-none"
-          />
-          {layerQuery && (
-            <button type="button" onClick={() => setLayerQuery('')} aria-label="Очистить поиск" className="text-ink-tertiary hover:text-brand">
-              <X size={13} />
-            </button>
-          )}
-        </label>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-2">
-      {page.blocks.length === 0 && (
-        <p className="p-2 text-[13px] text-ink-secondary">Холст пуст. Добавьте позиции из каталога или текст.</p>
-      )}
-      {page.blocks.length > 0 && layerQuery && byZ(page.blocks).filter((b) => layerName(b).toLowerCase().includes(layerQuery.toLowerCase())).length === 0 && (
-        <p className="p-2 text-[12.5px] text-ink-secondary">Ничего не найдено по «{layerQuery}».</p>
-      )}
-      {(() => {
-        const groups = new Map<string, MenuBlock[]>()
-        for (const b of page.blocks) if (b.groupId) groups.set(b.groupId, [...(groups.get(b.groupId) ?? []), b])
-        if (groups.size === 0) return null
-        return (
-          <ul className="mb-2 space-y-1">
-            {[...groups.entries()].map(([gid, list]) => {
-              const open = !collapsedGroups.includes(gid)
-              return (
-                <li key={gid} className="rounded-lg border border-line">
-                  <div className="flex items-center gap-1 px-1.5 py-1">
-                    <button
-                      type="button"
-                      onClick={() => setCollapsedGroups((cur) => (cur.includes(gid) ? cur.filter((x) => x !== gid) : [...cur, gid]))}
-                      aria-expanded={open}
-                      className="grid h-6 w-6 place-items-center rounded text-ink-tertiary hover:text-brand"
-                      aria-label={open ? 'Свернуть группу' : 'Развернуть группу'}
-                    >
-                      {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedIds(list.map((b) => b.id))}
-                      className="min-w-0 flex-1 truncate text-left text-[12.5px] font-semibold"
-                    >
-                      Группа · {list.length}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => ungroupSelection()}
-                      className="rounded px-1 text-[11px] text-ink-tertiary hover:text-brand"
-                      title="Разгруппировать"
-                    >
-                      разбить
-                    </button>
-                  </div>
-                  {open && (
-                    <ul className="space-y-0.5 border-t border-line p-1">
-                      {byZ(list).map((b) => (
-                        <li key={b.id}>
-                          <button
-                            type="button"
-                            onClick={() => selectBlock(b.id)}
-                            className="w-full truncate rounded px-1 py-0.5 text-left text-[12px] text-ink-secondary hover:bg-surface-2 hover:text-brand"
-                          >
-                            {layerName(b)}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </li>
-              )
-            })}
-          </ul>
-        )
-      })()}
-
-      <ul className="space-y-0.5">
-        {byZ(page.blocks)
-          .filter((b) => !b.groupId)
-          .filter((b) => !layerQuery || layerName(b).toLowerCase().includes(layerQuery.toLowerCase()))
-          .map((b) => (
-          <li
-            key={b.id}
-            draggable
-            onDragStart={(e) => {
-              setLayerDragId(b.id)
-              e.dataTransfer.effectAllowed = 'move'
-            }}
-            onDragOver={(e) => {
-              if (layerDragId && layerDragId !== b.id) e.preventDefault()
-            }}
-            onDrop={(e) => {
-              e.preventDefault()
-              if (layerDragId && layerDragId !== b.id) {
-                updatePage((blocks) => reorderBlocks(blocks, layerDragId, b.id))
-              }
-              setLayerDragId(null)
-            }}
-            onDragEnd={() => setLayerDragId(null)}
-            className={cx(
-              'flex items-center gap-1 rounded-lg border px-1.5 py-1',
-              selectedIds.includes(b.id) ? 'border-brand bg-surface-2' : 'border-transparent hover:bg-surface-2',
-              b.hidden && 'opacity-50',
-              layerDragId === b.id && 'opacity-60',
-            )}
-          >
-            <GripVertical size={12} className="flex-none text-ink-tertiary" aria-hidden />
-            {renamingId === b.id ? (
-              <input
-                autoFocus
-                defaultValue={b.titleOverride ?? layerName(b)}
-                onClick={(e) => e.stopPropagation()}
-                onBlur={(e) => {
-                  const v = e.target.value.trim()
-                  if (v) patchBlock({ titleOverride: v }, b.id)
-                  setRenamingId(null)
-                }}
-                onKeyDown={(e) => {
-                  e.stopPropagation()
-                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                  if (e.key === 'Escape') setRenamingId(null)
-                }}
-                aria-label="Новое имя слоя"
-                className="min-w-0 flex-1 rounded border border-brand px-1 text-[12.5px] outline-none"
-              />
-            ) : (
-              <button
-                type="button"
-                onClick={(e) => selectBlock(b.id, e as unknown as ReactPointerEvent<HTMLDivElement>)}
-                onDoubleClick={() => setRenamingId(b.id)}
-                title="Двойной клик — переименовать (меняет и подпись на печати)"
-                className="min-w-0 flex-1 truncate text-left text-[12.5px]"
-              >
-                <span className="text-ink-tertiary">{b.zIndex}.</span> {layerName(b)}
-              </button>
-            )}
-            {commentCounts[b.id] > 0 && (
-              <span
-                className="grid h-5 min-w-5 flex-none place-items-center rounded-full bg-warn-soft px-1 text-[10px] font-bold text-warn"
-                title={`Замечаний: ${commentCounts[b.id]}`}
-              >
-                {commentCounts[b.id]}
-              </span>
-            )}
-            <button
-              type="button"
-              onClick={() => toggleLock(b.id)}
-              className={cx('grid h-6 w-6 place-items-center rounded', b.locked ? 'text-brand' : 'text-ink-tertiary hover:text-brand')}
-              aria-label={b.locked ? 'Снять замок' : 'Закрепить блок'}
-              title={b.locked ? 'Снять замок' : 'Закрепить блок'}
-            >
-              {b.locked ? <Lock size={13} /> : <LockOpen size={13} />}
-            </button>
-            <button
-              type="button"
-              onClick={() => updatePage((blocks) => bringToFront(blocks, b.id))}
-              className="grid h-6 w-6 place-items-center rounded text-ink-tertiary hover:text-brand"
-              aria-label="На передний план"
-              title="На передний план"
-            >
-              <ArrowUp size={13} />
-            </button>
-            <button
-              type="button"
-              onClick={() => updatePage((blocks) => sendToBack(blocks, b.id))}
-              className="grid h-6 w-6 place-items-center rounded text-ink-tertiary hover:text-brand"
-              aria-label="На задний план"
-              title="На задний план"
-            >
-              <ArrowDown size={13} />
-            </button>
-            <button
-              type="button"
-              onClick={() => updatePage((blocks) => toggleHidden(blocks, b.id))}
-              className="grid h-6 w-6 place-items-center rounded text-ink-tertiary hover:text-brand"
-              aria-label={b.hidden ? 'Показать' : 'Скрыть'}
-            >
-              {b.hidden ? <EyeOff size={13} /> : <Eye size={13} />}
-            </button>
-            <button
-              type="button"
-              onClick={() => deleteBlock(b.id)}
-              className="grid h-6 w-6 place-items-center rounded text-ink-tertiary hover:text-bad"
-              aria-label={`Удалить «${blockLabel(b)}» с листа`}
-              title="Удалить с листа"
-            >
-              <Trash2 size={13} />
-            </button>
-          </li>
-        ))}
-      </ul>
-      {dupes.length > 0 && (
-        <div className="mt-2 rounded-lg border border-warn/40 bg-warn-soft p-2">
-          <p className="text-[12px] text-warn">Дублей позиций: {dupes.length}. На печати они повторятся.</p>
-          <button
-            type="button"
-            onClick={removeDuplicates}
-            className="mt-1 text-[12px] font-semibold text-brand hover:underline"
-          >
-            Убрать дубли
-          </button>
-        </div>
-      )}
-      </div>
-    </div>
+    <LayersPane
+      blocks={page.blocks}
+      layerQuery={layerQuery}
+      setLayerQuery={setLayerQuery}
+      layerName={layerName}
+      collapsedGroups={collapsedGroups}
+      setCollapsedGroups={setCollapsedGroups}
+      selectedIds={selectedIds}
+      setSelectedIds={setSelectedIds}
+      selectBlock={selectBlock}
+      ungroupSelection={ungroupSelection}
+      layerDragId={layerDragId}
+      setLayerDragId={setLayerDragId}
+      renamingId={renamingId}
+      setRenamingId={setRenamingId}
+      patchBlock={patchBlock}
+      toggleLock={toggleLock}
+      updatePage={updatePage}
+      deleteBlock={deleteBlock}
+      commentCounts={commentCounts}
+      dupes={dupes}
+      removeDuplicates={removeDuplicates}
+    />
   )
 
+  // Осторожно: это после ранних return'ов, поэтому без useMemo — только вычисление.
   // Осторожно: это после ранних return'ов, поэтому без useMemo — только вычисление.
   /** Сменить шаблон: раскладка пересобирается, позиции и секции остаются. */
   const applyTemplate = async (templateId: string) => {
