@@ -43,4 +43,13 @@ export default defineConfig({
       '/uploads': 'http://localhost:3000',
     },
   },
+  // `vite preview` — прод-сборка с настоящим SW: так проверяем офлайн и кеш,
+  // которых в dev нет. Прокси тот же, что у dev, чтобы API работал.
+  preview: {
+    port: 4174,
+    proxy: {
+      '/api': 'http://localhost:3000',
+      '/uploads': 'http://localhost:3000',
+    },
+  },
 })
