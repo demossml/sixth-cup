@@ -90,6 +90,7 @@ import FormatDrawer from '../components/menuLayout/FormatDrawer'
 import ShareDrawer from '../components/menuLayout/ShareDrawer'
 import CatalogDiffDrawer from '../components/menuLayout/CatalogDiffDrawer'
 import PriceImportDrawer from '../components/menuLayout/PriceImportDrawer'
+import PrintPreview from '../components/menuLayout/PrintPreview'
 import { priceRowText } from '../lib/priceImport'
 import MobileEditor from '../components/menuLayout/MobileEditor'
 import CanvasToolbar from '../components/menuLayout/CanvasToolbar'
@@ -245,6 +246,8 @@ export default function MenuLayoutEditor() {
   const [qrBusy, setQrBusy] = useState(false)
   /** P3-1: импорт прайса из CSV — шторка с предпросмотром и построчными ошибками. */
   const [priceImportOpen, setPriceImportOpen] = useState(false)
+  /** P3-6: наложение настоящего PDF на холст. */
+  const [printPreviewOpen, setPrintPreviewOpen] = useState(false)
   const [busyUpload, setBusyUpload] = useState(false)
 
   const [history, setHistory] = useState<DocHistory>(emptyHistory)
@@ -2154,9 +2157,27 @@ export default function MenuLayoutEditor() {
             setPreviewOpen(false)
             setExportOpen(true)
           }}
+          onPrintView={() => {
+            setPreviewOpen(false)
+            setPrintPreviewOpen(true)
+          }}
         >
           {canvas()}
         </PreviewOverlay>
+      )}
+
+      {/* P3-6: «как в печати» — настоящий PDF поверх холста. */}
+      {printPreviewOpen && (
+        <PrintPreview
+          layoutId={numericId}
+          pageIdx={pageIdx}
+          pageCount={doc.pages.length}
+          format={format}
+          close={() => setPrintPreviewOpen(false)}
+          setPageIdx={setPageIdx}
+        >
+          {canvas({ grid: showGrid, safe: showSafe })}
+        </PrintPreview>
       )}
 
       <NotesDrawer

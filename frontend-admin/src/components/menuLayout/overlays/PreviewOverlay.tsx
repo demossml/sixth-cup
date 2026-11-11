@@ -11,11 +11,13 @@ type Props = {
   format: LayoutFormat
   close: () => void
   onExport: () => void
+  /** P3-6: перейти к наложению настоящего PDF. */
+  onPrintView?: () => void
   children: ReactNode
 }
 
 /** Полноэкранный предпросмотр листа без наведения мышью и подсказок. */
-export default function PreviewOverlay({ title, pageIdx, setPageIdx, pageCount, format, close, onExport, children }: Props) {
+export default function PreviewOverlay({ title, pageIdx, setPageIdx, pageCount, format, close, onExport, onPrintView, children }: Props) {
   return (
     <div className="fixed inset-0 z-[70] overflow-y-auto bg-black/70 p-4" onMouseDown={(e) => e.target === e.currentTarget && close()}>
       <div className="mx-auto max-w-[720px]">
@@ -37,6 +39,11 @@ export default function PreviewOverlay({ title, pageIdx, setPageIdx, pageCount, 
           <Button size="sm" variant="secondary" onClick={() => setPageIdx((i) => Math.min(pageCount - 1, i + 1))} disabled={pageIdx >= pageCount - 1}>
             →
           </Button>
+          {onPrintView && (
+            <Button size="sm" variant="secondary" onClick={() => onPrintView()}>
+              Как в печати
+            </Button>
+          )}
           <Button size="sm" icon={<Download size={14} />} onClick={() => { close(); onExport() }}>
             Экспорт PDF
           </Button>
