@@ -124,11 +124,15 @@ function Layout() {
             to={to}
             end={end}
             className={({ isActive }) =>
-              `flex-1 min-h-14 flex flex-col items-center justify-center gap-0.5 text-[12px] leading-4 font-semibold no-underline ${isActive ? 'text-brand' : 'text-ink-secondary'}`
+              `relative flex-1 min-h-14 flex flex-col items-center justify-center gap-0.5 text-[12px] leading-4 no-underline ${
+                // Аудит F-14: активная вкладка отличалась только цветом — добавляем полоску и вес.
+                isActive ? 'text-brand font-bold' : 'text-ink-secondary font-semibold'
+              }`
             }
           >
             {({ isActive }) => (<>
-              <Icon size={24} strokeWidth={1.75} />
+              {isActive ? <span className="absolute top-0 h-[2px] w-8 rounded-full bg-brand" aria-hidden="true" /> : null}
+              <Icon size={24} strokeWidth={isActive ? 2.1 : 1.75} />
               {label}
             </>)}
           </NavLink>
