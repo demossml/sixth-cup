@@ -86,6 +86,7 @@ import CommandPalette from '../components/menuLayout/overlays/CommandPalette'
 import PreviewOverlay from '../components/menuLayout/overlays/PreviewOverlay'
 import NotesDrawer from '../components/menuLayout/overlays/NotesDrawer'
 import VersionsDrawer from '../components/menuLayout/overlays/VersionsDrawer'
+import EditorBanners from '../components/menuLayout/EditorBanners'
 import EditorSkeleton from '../components/menuLayout/EditorSkeleton'
 import CatalogPane from '../components/menuLayout/panes/CatalogPane'
 import PlacesPane from '../components/menuLayout/panes/PlacesPane'
@@ -1946,131 +1947,22 @@ export default function MenuLayoutEditor() {
         </div>
       </div>
 
-      {onboardingHidden ? (
-        <p className="mb-3 flex items-start gap-2 rounded-xl border border-line bg-surface-2 px-3 py-2 text-[12.5px] leading-4 text-ink-secondary">
-          <Layers size={14} className="mt-0.5 flex-none text-brand" aria-hidden />
-          Перетащите позицию на листе, тяните угол — блок меняет размер; края прилипают к полям и соседям
-          (Alt — без прилипания). ⌘K — все команды.
-        </p>
-      ) : (
-        <div className="mb-3 rounded-xl border border-brand/30 bg-brand/5 px-3 py-2.5" data-testid="onboarding">
-          <div className="mb-1.5 flex items-center gap-2">
-            <Sparkles size={14} className="flex-none text-brand" aria-hidden />
-            <span className="min-w-0 flex-1 text-[12.5px] font-semibold text-ink">Три шага до готового макета</span>
-            <button
-              type="button"
-              onClick={() => {
-                setOnboardingHidden(true)
-                try {
-                  localStorage.setItem('menu-layout-onboarding', 'done')
-                } catch {
-                  /* приватный режим */
-                }
-              }}
-              className="text-[12px] font-semibold text-brand underline"
-            >
-              Понятно
-            </button>
-          </div>
-          <ol className="ml-4 list-decimal space-y-0.5 text-[12px] leading-4 text-ink-secondary">
-            <li>«Собрать из каталога» — лист заполнится товарами с ценами.</li>
-            <li>Перетащите блоки, тяните угол для размера; края прилипают к полям.</li>
-            <li>«Экспорт PDF» — файл с полями под рез. ⌘K открывает все команды.</li>
-          </ol>
-        </div>
-      )}
-
-      {driftText && (
-        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-warn/40 bg-warn-soft px-3 py-2 text-[13px] text-warn">
-          <RefreshCw size={15} className="flex-none" aria-hidden />
-          <span className="min-w-0 flex-1">{driftText}</span>
-          <Button size="sm" variant="secondary" onClick={() => void syncPrices()}>
-            {priceMode === 'frozen' ? 'Проверить' : 'Обновить с каталога'}
-          </Button>
-        </div>
-      )}
-
-      {MENU_LAYOUT_V2 && (
-        <div className="mb-3 rounded-xl border border-line bg-surface-2 px-3 py-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <Sparkles size={15} className="flex-none text-brand" aria-hidden />
-            <input
-              value={aiPrompt}
-              onChange={(e) => setAiPrompt(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && void runAi()}
-              placeholder="Опишите правку: «добавь напитки», «убери корицу», «переименуй добавки в топпинги»"
-              aria-label="Запрос к AI"
-              className="min-h-9 min-w-0 flex-1 rounded-lg border border-line bg-white px-2 text-[13px] outline-none"
-            />
-            <Button size="sm" variant="secondary" loading={aiBusy} onClick={() => void runAi()}>
-              Предложить
-            </Button>
-          </div>
-          {aiPlan && (
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-[12.5px]">
-              <span className="min-w-0 flex-1">
-                {aiPlan.summary} · операций: {aiPlan.ops.length}. Запишем только после подтверждения.
-              </span>
-              <Button size="sm" onClick={() => void applyAiPlan()} loading={aiBusy}>
-                Применить
-              </Button>
-              <Button size="sm" variant="secondary" onClick={() => setAiPlan(null)} disabled={aiBusy}>
-                Отмена
-              </Button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {draftOffer && (
-        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-warn/40 bg-warn-soft px-3 py-2 text-[13px] text-warn">
-          <span className="min-w-0 flex-1">
-            Найден несохранённый черновик от {new Date(draftOffer.savedAt).toLocaleString('ru-RU')} — он новее
-            сохранённой версии. Восстановить?
-          </span>
-          <Button size="sm" onClick={restoreDraft}>
-            Восстановить
-          </Button>
-          <Button size="sm" variant="secondary" onClick={dropDraft}>
-            Выбросить
-          </Button>
-        </div>
-      )}
-
-      {conflict && (
-        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-bad/40 bg-bad-soft px-3 py-2 text-[13px] text-bad">
-          <RefreshCw size={15} className="flex-none" aria-hidden />
-          <span className="min-w-0 flex-1">
-            Макет изменили в другом окне. Ваши правки ещё не сохранены — выберите, чью версию оставить.
-          </span>
-          <Button size="sm" variant="secondary" onClick={takeServerVersion}>
-            Взять серверную
-          </Button>
-          <Button size="sm" onClick={() => void overwriteMine()}>
-            Перезаписать своей
-          </Button>
-        </div>
-      )}
-
-      {blockers.length > 0 && (
-        <div className="mb-3 rounded-xl border border-warn/40 bg-warn-soft px-3 py-2">
-          <p className="text-[13px] font-semibold text-warn">Перед печатью: {blockers.length}</p>
-          <ul className="mt-1 space-y-0.5">
-            {blockers.slice(0, 8).map((b) => (
-              <li key={`${b.blockId}-${b.text}`}>
-                <button
-                  type="button"
-                  onClick={() => goToBlock(b.blockId, b.pageIdx)}
-                  className="text-left text-[12.5px] text-ink-secondary hover:text-brand hover:underline"
-                >
-                  {b.label} — {b.text}
-                </button>
-              </li>
-            ))}
-          </ul>
-          {blockers.length > 8 && <p className="mt-1 text-[12px] text-ink-tertiary">и ещё {blockers.length - 8}</p>}
-        </div>
-      )}
+      <EditorBanners
+        onboardingHidden={onboardingHidden}
+        setOnboardingHidden={setOnboardingHidden}
+        driftText={driftText}
+        priceMode={priceMode}
+        onSyncPrices={() => void syncPrices()}
+        ai={MENU_LAYOUT_V2 ? { prompt: aiPrompt, setPrompt: setAiPrompt, busy: aiBusy, plan: aiPlan, propose: () => void runAi(), apply: () => void applyAiPlan(), clear: () => setAiPlan(null) } : null}
+        draftSavedAt={draftOffer?.savedAt ?? null}
+        onRestoreDraft={restoreDraft}
+        onDropDraft={dropDraft}
+        hasConflict={!!conflict}
+        onTakeServer={takeServerVersion}
+        onOverwriteServer={() => void overwriteMine()}
+        blockers={blockers}
+        goToBlock={goToBlock}
+      />
 
       {/* ── мобильные вкладки ─────────────────────────────── */}
       <nav
