@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import { Badge, Button, Card, Drawer, EmptyState, ErrorBox, Input, Select, Skeleton, useToast } from '../../ui/kit'
-import { RefreshCw, Search, Upload } from 'lucide-react'
+import { Plus, RefreshCw, Search, Upload } from 'lucide-react'
 
 import { costApi, type CostItem } from '../../lib/costApi'
 import { COST_SOURCE_LABELS, UNIT_LABELS, money } from '../../lib/costMath'
@@ -19,6 +19,8 @@ export default function ItemsTab({ onImport, reloadKey = 0 }: { onImport?: () =>
   const [q, setQ] = useState('')
   const [problemsOnly, setProblemsOnly] = useState(false)
   const [draft, setDraft] = useState<Record<number, { price: string; weight: string }>>({})
+  const [createOpen, setCreateOpen] = useState(false)
+  const [created, setCreated] = useState({ name: '', unit: 'g' as 'g' | 'ml' | 'pcs', price: '' })
   const [history, setHistory] = useState<{ item: CostItem; rows: { at: number; costRub: number | null; source: string }[]; purchases: { at: number; qty: number; unitCostRub: number | null }[] } | null>(null)
 
   const load = () => {
@@ -78,6 +80,9 @@ export default function ItemsTab({ onImport, reloadKey = 0 }: { onImport?: () =>
         </Button>
         <Button variant="secondary" onClick={load} aria-label="Обновить ингредиенты">
           <RefreshCw size={14} />
+        </Button>
+        <Button variant="secondary" onClick={() => setCreateOpen(true)}>
+          <Plus size={14} /> Позиция
         </Button>
         {onImport && (
           <Button onClick={onImport}>
@@ -150,6 +155,56 @@ export default function ItemsTab({ onImport, reloadKey = 0 }: { onImport?: () =>
           </Card>
         ))}
       </div>
+
+      <Drawer
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="Новая позиция склада"
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setCreateOpen(false)}>
+              Отмена
+            </Button>
+            <Button
+              disabled={!created.name.trim()}
+              onClick={async () => {
+                try {
+                  const r = await costApi.createItem({ name: created.name.trim(), unit: created.unit })
+                  if (created.price !== '') await costApi.updateItem(r.id, { manualCostRub: Number(created.price) })
+                  toast.push(`«${created.name.trim()}» добавлена`, 'ok')
+                  setCreated({ name: '', unit: 'g', price: '' })
+                  setCreateOpen(false)
+                  load()
+                } catch (e) {
+                  toast.push(e instanceof Error ? e.message : 'Не удалось создать позицию', 'bad')
+                }
+              }}
+            >
+              Создать
+            </Button>
+          </div>
+        }
+      >
+        <label className="mb-2 block text-sm">
+          Название
+          <Input className="mt-1" value={created.name} onChange={(e) => setCreated((c) => ({ ...c, name: e.target.value }))} placeholder="Молоко 3,2%" />
+        </label>
+        <label className="mb-2 block text-sm">
+          Единица
+          <Select className="mt-1" value={created.unit} onChange={(e) => setCreated((c) => ({ ...c, unit: e.target.value as 'g' | 'ml' | 'pcs' }))}>
+            <option value="g">грамм</option>
+            <option value="ml">миллилитр</option>
+            <option value="pcs">штука</option>
+          </Select>
+        </label>
+        <label className="block text-sm">
+          Ручная цена за единицу, ₽
+          <Input className="mt-1" type="number" step="0.01" min="0" value={created.price} onChange={(e) => setCreated((c) => ({ ...c, price: e.target.value }))} placeholder="0,09" />
+        </label>
+        <p className="mt-3 text-[11px] text-ink-tertiary">
+          Основной путь — цены из накладных в «Закупках». Ручная цена нужна, пока поставок не было.
+        </p>
+      </Drawer>
 
       <Drawer open={history !== null} onClose={() => setHistory(null)} title={`История цены: ${history?.item.name ?? ''}`}>
         {history && history.purchases.length > 0 ? (

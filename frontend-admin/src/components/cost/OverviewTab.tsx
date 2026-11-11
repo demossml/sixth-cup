@@ -6,6 +6,7 @@ import { RefreshCw } from 'lucide-react'
 
 import { costApi } from '../../lib/costApi'
 import { KIND_LABELS, money, pct } from '../../lib/costMath'
+import { csvName } from '../../lib/csv'
 
 type Overview = Awaited<ReturnType<typeof costApi.overview>>
 
@@ -49,6 +50,37 @@ export default function OverviewTab({ onOpenCard, reloadKey = 0 }: { onOpenCard:
         </Card>
         <Button variant="secondary" className="ml-auto" onClick={load} aria-label="Обновить сводку">
           <RefreshCw size={14} />
+        </Button>
+        <Button
+          variant="secondary"
+          onClick={() => {
+            // Свой файл: у сводки «своя» шапка и русские числа с запятой.
+            const head = ['Техкарта', 'Тип', 'Себестоимость, ₽', 'Цена, ₽', 'Фудкост, %', 'Маржа, ₽', 'Замечания']
+            const rows = sorted.map((c) => [
+              c.name,
+              KIND_LABELS[c.kind] ?? c.kind,
+              c.costPerUnitRub == null ? '' : c.costPerUnitRub.toFixed(2).replace('.', ','),
+              c.retailRub == null ? '' : c.retailRub.toFixed(2).replace('.', ','),
+              c.foodCostPct == null ? '' : String(c.foodCostPct).replace('.', ','),
+              c.marginRub == null ? '' : c.marginRub.toFixed(2).replace('.', ','),
+              c.insights.map((i) => i.text).join(' · '),
+            ])
+            const csv = [head, ...rows]
+              .map((r) => r.map((v) => (/[";\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v)).join(';'))
+              .join('\n')
+            const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' })
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = csvName('себестоимость-меню')
+            document.body.appendChild(a)
+            a.click()
+            a.remove()
+            URL.revokeObjectURL(url)
+          }}
+          aria-label="Выгрузить сводку в CSV"
+        >
+          CSV
         </Button>
       </div>
 

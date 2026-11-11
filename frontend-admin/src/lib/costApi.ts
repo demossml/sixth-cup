@@ -140,6 +140,9 @@ export const costApi = {
     ),
   items: (params: { q?: string; problems?: boolean } = {}) =>
     api<{ items: CostItem[] }>(`/cost/items${qs({ q: params.q, problems: params.problems ? 1 : undefined })}`),
+  /** Новая позиция склада — чтобы не уходить со страницы себестоимости. */
+  createItem: (body: { name: string; unit: Unit; kind?: 'raw' | 'unit' }) =>
+    api<{ id: number }>('/stock/items', { method: 'POST', body }),
   updateItem: (id: number, body: { manualCostRub?: number | null; weightPerPcKg?: number | null; densityKgL?: number | null; notes?: string | null }) =>
     api(`/cost/items/${id}`, { method: 'PUT', body }),
   priceHistory: (id: number) =>
