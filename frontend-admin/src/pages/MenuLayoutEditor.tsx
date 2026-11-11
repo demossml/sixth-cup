@@ -3,7 +3,7 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useParams } from 'react-router-dom'
 import {
   ArrowDown, ArrowUp, Check, Download,
-  Eye, Layers, Palette, Plus, RefreshCw, Sparkles, Trash2, X,
+  Eye, Layers, Palette, RefreshCw, Sparkles, Trash2, X,
 } from 'lucide-react'
 import { ApiError, api, tokenStore, uploadFile, uploadMenuFont } from '../api/client'
 import { canRedo, canUndo, emptyHistory, pushHistory, redoStep, undoStep, type DocHistory } from '../lib/docHistory'
@@ -90,6 +90,7 @@ import FormatDrawer from '../components/menuLayout/FormatDrawer'
 import MobileEditor from '../components/menuLayout/MobileEditor'
 import CanvasToolbar from '../components/menuLayout/CanvasToolbar'
 import CanvasViewport from '../components/menuLayout/CanvasViewport'
+import LeftPanel, { RightPanel, PageBar } from '../components/menuLayout/panes/Panels'
 import EditorSkeleton from '../components/menuLayout/EditorSkeleton'
 import CatalogPane from '../components/menuLayout/panes/CatalogPane'
 import PlacesPane from '../components/menuLayout/panes/PlacesPane'
@@ -1861,31 +1862,14 @@ export default function MenuLayoutEditor() {
 
   /** Левая панель: на широком экране стоит в сетке, на среднем — в шторке. */
   const leftAside = (
-    <aside className="flex h-full max-h-[calc(100vh-230px)] min-h-[320px] flex-col overflow-hidden rounded-xl border border-line bg-white">
-      <div className="flex border-b border-line">
-        {(
-          [
-            ['catalog', 'Каталог'],
-            ...((data?.layout.sections ?? 0) > 0 ? ([['places', 'Места']] as [LeftTab, string][]) : []),
-            ['layers', 'Слои'],
-          ] as [LeftTab, string][]
-        ).map(([k, label]) => (
-          <button
-            key={k}
-            type="button"
-            onClick={() => setLeftTab(k)}
-            aria-pressed={leftTab === k}
-            className={cx(
-              'min-h-10 flex-1 border-b-2 px-2 text-[13px] font-semibold',
-              leftTab === k ? 'border-brand text-brand' : 'border-transparent text-ink-secondary',
-            )}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      {leftTab === 'catalog' ? catalogPane : leftTab === 'places' ? placesPane : layersPane}
-    </aside>
+    <LeftPanel
+      leftTab={leftTab}
+      setLeftTab={setLeftTab}
+      hasSections={(data?.layout.sections ?? 0) > 0}
+      catalogPane={catalogPane}
+      placesPane={placesPane}
+      layersPane={layersPane}
+    />
   )
 
   return (
@@ -2025,66 +2009,17 @@ export default function MenuLayoutEditor() {
             {canvas({ interactive: true, grid: showGrid, safe: showSafe })}
           </CanvasViewport>
 
-          <div className="flex flex-wrap items-center gap-1 rounded-xl border border-line bg-white px-2 py-1.5">
-            {doc.pages.map((p, i) => (
-              <span key={p.id} className="inline-flex items-center">
-                <button
-                  type="button"
-                  onClick={() => setPageIdx(i)}
-                  aria-pressed={pageIdx === i}
-                  className={cx(
-                    'min-h-7 rounded-md border px-2 text-[12px] font-semibold',
-                    pageIdx === i ? 'border-brand bg-surface-2 text-brand' : 'border-line text-ink-secondary',
-                  )}
-                >
-                  {i + 1} <span className="text-[10px] text-ink-tertiary">{p.blocks.length}</span>
-                </button>
-                {doc.pages.length > 1 && (
-                  <button type="button" onClick={() => removePage(i)} className="ml-0.5 grid h-6 w-6 place-items-center rounded text-ink-tertiary hover:text-bad" aria-label={`Удалить страницу ${i + 1}`}>
-                    <X size={12} />
-                  </button>
-                )}
-              </span>
-            ))}
-            <button
-              type="button"
-              onClick={addPage}
-              className="grid h-7 w-7 place-items-center rounded-md border border-dashed border-line text-ink-tertiary hover:border-brand hover:text-brand"
-              title="Добавить страницу"
-              aria-label="Добавить страницу"
-            >
-              <Plus size={13} />
-            </button>
-            <span className="ml-auto text-[11px] text-ink-tertiary">
-              {savedAt ? `сохранено ${ago(savedAt)}` : 'автосохранение'} · ⌘Z отменяет, Delete убирает блок с листа
-            </span>
-          </div>
+          <PageBar
+            pages={doc.pages}
+            pageIdx={pageIdx}
+            setPageIdx={setPageIdx}
+            onRemovePage={removePage}
+            onAddPage={addPage}
+            savedLabel={`${savedAt ? `сохранено ${ago(savedAt)}` : 'автосохранение'} · ⌘Z отменяет, Delete убирает блок с листа`}
+          />
         </section>
 
-        <aside className="flex max-h-[calc(100vh-230px)] min-h-[460px] flex-col overflow-hidden rounded-xl border border-line bg-white">
-          <div className="flex border-b border-line">
-            {(
-              [
-                ['design', 'Оформление'],
-                ['block', 'Блок'],
-              ] as [RightTab, string][]
-            ).map(([k, label]) => (
-              <button
-                key={k}
-                type="button"
-                onClick={() => setRightTab(k)}
-                aria-pressed={rightTab === k}
-                className={cx(
-                  'min-h-10 flex-1 border-b-2 px-2 text-[13px] font-semibold',
-                  rightTab === k ? 'border-brand text-brand' : 'border-transparent text-ink-secondary',
-                )}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          {rightTab === 'design' ? designPane : blockPane}
-        </aside>
+        <RightPanel rightTab={rightTab} setRightTab={setRightTab} designPane={designPane} blockPane={blockPane} />
       </div>
 
       {/* ── планшет: каталог и слои в шторке ──────────────── */}
