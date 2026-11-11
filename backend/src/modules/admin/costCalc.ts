@@ -458,3 +458,188 @@ export function overheadPerUnit(input: {
 
   return { perUnitKop: total / units, basis, units, revenueKop: revenue }
 }
+
+/* ─────────────── меню-инжиниринг: продажи × маржа (звёзды, лошадки, загадки, собаки) ─────────────── */
+
+export type MenuEngineeringInput = {
+  cardId: number
+  name: string
+  kind?: string | null
+  /** Сколько продано за окно анализа (шт). */
+  qtySold: number
+  /** Выручка за окно, копейки. */
+  revenueKop: number
+  /** Себестоимость единицы, копейки: полная (с расходами), если флаг включён, иначе сырьё. */
+  costPerUnitKop: number | null
+  /** Цена меню, копейки (для позиций без продаж — чтобы показать потенциал). */
+  priceKop: number | null
+}
+
+/** Классические четыре клетки меню-инжиниринга (Kasavana & Smith). */
+export type MenuCategory = 'star' | 'plowhorse' | 'puzzle' | 'dog' | 'none'
+export type AbcClass = 'A' | 'B' | 'C'
+
+export type MenuEngineeringRow = MenuEngineeringInput & {
+  avgPriceKop: number | null
+  profitKop: number | null
+  marginPerUnitKop: number | null
+  /** Маржинальность, % от выручки. */
+  marginPct: number | null
+  shareRevenuePct: number
+  shareProfitPct: number
+  abcRevenue: AbcClass | null
+  abcProfit: AbcClass | null
+  category: MenuCategory
+  /** Что делать владельцу — одна строка человеческим языком. */
+  advice: string
+  /** Почему позиция не попала в анализ (нет продаж / нет себестоимости). */
+  reason: string | null
+}
+
+export type MenuEngineeringResult = {
+  rows: MenuEngineeringRow[]
+  totals: {
+    /** Позиций в анализе (есть продажи и себестоимость). */
+    counted: number
+    /** Всего карт в меню. */
+    cards: number
+    qtySold: number
+    revenueKop: number
+    costKop: number
+    profitKop: number
+    marginPct: number | null
+    /** Сколько позиций без продаж / без себестоимости. */
+    noSales: number
+    noCost: number
+  }
+  thresholds: {
+    /** Порог популярности: 70 % от среднего объёма продаж на позицию. */
+    popularityQty: number | null
+    /** Средняя маржа на единицу по проданному объёму. */
+    marginPerUnitKop: number | null
+    popularityFactor: number
+  }
+}
+
+const MENU_ADVICE: Record<Exclude<MenuCategory, 'none'>, string> = {
+  star: 'Хорошо продаётся и хорошо зарабатывает — держим в меню и на витрине.',
+  plowhorse: 'Берут часто, но маржа низкая: поднять цену на 5–10 % или снизить себестоимость.',
+  puzzle: 'Маржа отличная, но берут редко: вынести на витрину, переименовать, добавить в комбо.',
+  dog: 'Продаётся слабо и почти не зарабатывает: заменить рецептуру или убрать из меню.',
+}
+
+/** Кумулятивные доли 80/95 % → A/B/C. */
+function abcBy<K extends string | number>(
+  rows: { key: K; value: number }[],
+  limits: [number, number] = [80, 95],
+): Map<K, AbcClass> {
+  const out = new Map<K, AbcClass>()
+  const total = rows.reduce((s, r) => s + Math.max(0, r.value), 0)
+  if (total <= 0) return out
+  const sorted = [...rows].sort((a, b) => b.value - a.value)
+  let cum = 0
+  sorted.forEach((r, i) => {
+    cum += Math.max(0, r.value)
+    const share = (cum / total) * 100
+    // Первая позиция всегда A: иначе при единственной карте всё уехало бы в C.
+    out.set(r.key, i === 0 || share <= limits[0] ? 'A' : share <= limits[1] ? 'B' : 'C')
+  })
+  return out
+}
+
+/**
+ * Меню-инжиниринг: раскладывает позиции по популярности и марже.
+ *
+ * Популярность — объём продаж за окно; порог = 70 % от среднего объёма на позицию
+ * (классика Kasavana–Smith). Маржа — прибыль на единицу; порог = средняя маржа по
+ * проданному объёму (взвешенная по количеству), поэтому он сам подстраивается под меню.
+ *
+ * Позиции без продаж или без себестоимости не ломают расчёт: они попадают в `rows`
+ * с `category: 'none'` и причиной — их видно, но они не тянут пороги.
+ */
+export function menuEngineering(
+  items: MenuEngineeringInput[],
+  opts: { popularityFactor?: number } = {},
+): MenuEngineeringResult {
+  const factor = opts.popularityFactor && opts.popularityFactor > 0 ? opts.popularityFactor : 0.7
+  const normalized = items.map((it) => ({
+    ...it,
+    qtySold: Math.max(0, Number(it.qtySold) || 0),
+    revenueKop: Math.max(0, Number(it.revenueKop) || 0),
+  }))
+
+  const participants = normalized.filter((it) => it.qtySold > 0 && it.revenueKop > 0 && it.costPerUnitKop != null)
+  const totalQty = participants.reduce((s, it) => s + it.qtySold, 0)
+  const totalRevenue = participants.reduce((s, it) => s + it.revenueKop, 0)
+  const totalCost = participants.reduce((s, it) => s + it.qtySold * (it.costPerUnitKop as number), 0)
+  const totalProfit = totalRevenue - totalCost
+
+  const popularityQty = participants.length ? round((factor * totalQty) / participants.length, 2) : null
+  const marginThreshold = participants.length && totalQty > 0 ? totalProfit / totalQty : null
+
+  const abcRevenue = abcBy(participants.map((it) => ({ key: it.cardId, value: it.revenueKop })))
+  const abcProfit = abcBy(
+    participants.map((it) => ({ key: it.cardId, value: it.revenueKop - it.qtySold * (it.costPerUnitKop as number) })),
+  )
+
+  const rows: MenuEngineeringRow[] = normalized.map((it) => {
+    const avgPriceKop = it.qtySold > 0 ? it.revenueKop / it.qtySold : it.priceKop
+    const profitKop =
+      it.costPerUnitKop == null || it.qtySold <= 0 ? null : it.revenueKop - it.qtySold * it.costPerUnitKop
+    const marginPerUnitKop = profitKop != null && it.qtySold > 0 ? profitKop / it.qtySold : null
+    const marginPct = profitKop != null && it.revenueKop > 0 ? round((profitKop / it.revenueKop) * 100, 1) : null
+
+    let reason: string | null = null
+    if (it.qtySold <= 0) reason = 'нет продаж за период'
+    else if (it.costPerUnitKop == null) reason = 'не посчитана себестоимость — заполните цены сырья'
+    else if (it.revenueKop <= 0) reason = 'нет выручки за период'
+
+    let category: MenuCategory = 'none'
+    if (!reason && marginPerUnitKop != null && popularityQty != null && marginThreshold != null) {
+      const popular = it.qtySold >= popularityQty
+      // Продажа в минус — всегда «собака», даже при большом объёме: это дыра в кассе,
+      // а не «лошадка». Порог средней маржи может быть отрицательным, поэтому такая
+      // проверка нужна отдельно.
+      if (marginPerUnitKop <= 0) {
+        category = 'dog'
+      } else {
+        const profitable = marginPerUnitKop >= marginThreshold
+        category = popular ? (profitable ? 'star' : 'plowhorse') : profitable ? 'puzzle' : 'dog'
+      }
+    }
+
+    return {
+      ...it,
+      avgPriceKop,
+      profitKop,
+      marginPerUnitKop,
+      marginPct,
+      shareRevenuePct: totalRevenue > 0 ? round((it.revenueKop / totalRevenue) * 100, 1) : 0,
+      shareProfitPct: totalProfit > 0 && profitKop != null ? round((profitKop / totalProfit) * 100, 1) : 0,
+      abcRevenue: abcRevenue.get(it.cardId) ?? null,
+      abcProfit: abcProfit.get(it.cardId) ?? null,
+      category,
+      advice: category === 'none' ? (reason ?? 'недостаточно данных') : MENU_ADVICE[category],
+      reason,
+    }
+  })
+
+  // Проданное — по выручке, непроданное — в конце: владелец сначала смотрит на то, что кормит.
+  rows.sort((a, b) => Number(b.qtySold > 0) - Number(a.qtySold > 0) || b.revenueKop - a.revenueKop)
+
+  return {
+    rows,
+    totals: {
+      counted: participants.length,
+      cards: normalized.length,
+      qtySold: totalQty,
+      revenueKop: totalRevenue,
+      costKop: totalCost,
+      profitKop: totalProfit,
+      marginPct: totalRevenue > 0 ? round((totalProfit / totalRevenue) * 100, 1) : null,
+      noSales: normalized.filter((it) => it.qtySold <= 0).length,
+      noCost: normalized.filter((it) => it.qtySold > 0 && it.costPerUnitKop == null).length,
+    },
+    thresholds: { popularityQty, marginPerUnitKop: marginThreshold, popularityFactor: factor },
+  }
+}

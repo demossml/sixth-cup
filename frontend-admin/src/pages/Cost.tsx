@@ -1,7 +1,8 @@
 /**
  * Себестоимость: техкарты на складе (v2).
  *
- * Вкладки: Техкарты · Ингредиенты · Сигналы · Сводка. Импорт пишет в ту же модель,
+ * Вкладки: Техкарты · Ингредиенты · Расходы · Прибыльность · Сигналы · Сводка.
+ * Импорт пишет в ту же модель,
  * старых таблиц `cost_*` страница больше не касается (они живут только для совместимости API).
  */
 import { useEffect, useState } from 'react'
@@ -14,6 +15,7 @@ import { initialCostTab, type CostTabKey } from '../lib/costTabs'
 import TechCardsTab from '../components/cost/TechCardsTab'
 import ItemsTab from '../components/cost/ItemsTab'
 import OverheadsTab from '../components/cost/OverheadsTab'
+import MenuTab from '../components/cost/MenuTab'
 import SignalsTab from '../components/cost/SignalsTab'
 import OverviewTab from '../components/cost/OverviewTab'
 import ImportPanel from '../components/cost/ImportPanel'
@@ -22,6 +24,7 @@ const TABS: { key: CostTabKey; label: string }[] = [
   { key: 'tech', label: 'Техкарты' },
   { key: 'items', label: 'Ингредиенты' },
   { key: 'overheads', label: 'Расходы' },
+  { key: 'menu', label: 'Прибыльность' },
   { key: 'signals', label: 'Сигналы' },
   { key: 'summary', label: 'Сводка' },
 ]
@@ -56,7 +59,7 @@ export default function Cost() {
     <div>
       <PageHeader
         title="Себестоимость"
-        subtitle="Техкарты, заготовки, цены из накладных и постоянные расходы на порцию."
+        subtitle="Техкарты, заготовки, цены из накладных, постоянные расходы и прибыльность меню."
         actions={
           <>
             <Button variant="secondary" onClick={() => setReloadKey((n) => n + 1)} aria-label="Обновить">
@@ -113,6 +116,15 @@ export default function Cost() {
       )}
       {tab === 'items' && <ItemsTab reloadKey={reloadKey} onImport={() => setImportOpen(true)} />}
       {tab === 'overheads' && <OverheadsTab reloadKey={reloadKey} />}
+      {tab === 'menu' && (
+        <MenuTab
+          reloadKey={reloadKey}
+          onOpenCard={(id) => {
+            setOpenCardId(id)
+            selectTab('tech')
+          }}
+        />
+      )}
       {tab === 'signals' && (
         <SignalsTab
           key={`signals-${reloadKey}`}

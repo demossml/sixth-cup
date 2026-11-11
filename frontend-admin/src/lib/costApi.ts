@@ -145,6 +145,51 @@ export type CardPayload = {
   lines?: LinePayload[]
 }
 
+/** F12: меню-инжиниринг — продажи × маржа. */
+export type MenuCategory = 'star' | 'plowhorse' | 'puzzle' | 'dog' | 'none'
+export type AbcClass = 'A' | 'B' | 'C'
+
+export type MenuEngineeringRow = {
+  cardId: number
+  name: string
+  kind: CardKind | null
+  qtySold: number
+  revenueRub: number | null
+  avgPriceRub: number | null
+  costPerUnitRub: number | null
+  profitRub: number | null
+  marginPerUnitRub: number | null
+  marginPct: number | null
+  shareRevenuePct: number
+  shareProfitPct: number
+  abcRevenue: AbcClass | null
+  abcProfit: AbcClass | null
+  category: MenuCategory
+  advice: string
+  reason: string | null
+}
+
+export type MenuEngineering = {
+  window: { days: number; since: number }
+  storeUuid: string | null
+  overheadEnabled: boolean
+  costBasis: 'full' | 'raw'
+  thresholds: { popularityQty: number | null; marginPerUnitRub: number | null; popularityFactor: number }
+  totals: {
+    cards: number
+    counted: number
+    qtySold: number
+    revenueRub: number | null
+    costRub: number | null
+    profitRub: number | null
+    marginPct: number | null
+    noSales: number
+    noCost: number
+  }
+  rows: MenuEngineeringRow[]
+  note: string
+}
+
 const qs = (params: Record<string, string | number | undefined>) => {
   const parts = Object.entries(params)
     .filter(([, v]) => v !== undefined && v !== '')
@@ -227,6 +272,8 @@ export const costApi = {
       problems: number
       cardsTotal: number
     }>('/cost/overview'),
+  menuEngineering: (params: { days?: number; storeUuid?: string } = {}) =>
+    api<MenuEngineering>(`/cost/menu-engineering${qs({ days: params.days, storeUuid: params.storeUuid })}`),
   overheads: () => api<OverheadsState>('/cost/overheads'),
   createOverhead: (body: { name: string; kind?: OverheadRow['kind']; amountRub?: number; period?: OverheadRow['period'] }) =>
     api<{ id: number; overheads: OverheadsState }>('/cost/overheads', { method: 'POST', body }),

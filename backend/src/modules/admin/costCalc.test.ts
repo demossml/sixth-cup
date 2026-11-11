@@ -8,6 +8,7 @@ import {
   findCycle,
   foodCostPct,
   marginKop,
+  menuEngineering,
   overheadPerUnit,
   priceWindowStart,
   projectNorms,
@@ -248,5 +249,123 @@ describe('F11: постоянные расходы на порцию', () => {
   it('ноль в расходах — распределять нечего', () => {
     const r = overheadPerUnit({ totalKop: 0, mode: 'units', soldUnits: 100, revenueKop: 0 })
     expect(r.perUnitKop).toBeNull()
+  })
+})
+
+describe('меню-инжиниринг: продажи × маржа', () => {
+  const item = (cardId: number, name: string, qtySold: number, revenueKop: number, costPerUnitKop: number | null) => ({
+    cardId,
+    name,
+    qtySold,
+    revenueKop,
+    costPerUnitKop,
+    priceKop: null,
+  })
+
+  it('раскладывает четыре классические категории', () => {
+    // 400 порций → средний объём 100, порог популярности 70; средняя маржа 5 562,5 коп.
+    const r = menuEngineering([
+      item(1, 'Звезда', 200, 2_000_000, 2_000), // 200 шт по 100 ₽, маржа 80 ₽
+      item(2, 'Лошадка', 150, 1_500_000, 9_500), // 150 шт по 100 ₽, маржа 5 ₽
+      item(3, 'Загадка', 30, 600_000, 2_000), // 30 шт по 200 ₽, маржа 180 ₽
+      item(4, 'Собака', 20, 200_000, 9_500), // 20 шт по 100 ₽, маржа 5 ₽
+    ])
+    const byName = new Map(r.rows.map((x) => [x.name, x]))
+    expect(byName.get('Звезда')!.category).toBe('star')
+    expect(byName.get('Лошадка')!.category).toBe('plowhorse')
+    expect(byName.get('Загадка')!.category).toBe('puzzle')
+    expect(byName.get('Собака')!.category).toBe('dog')
+    // Порог популярности посчитан от среднего объёма и коэффициента 0.7.
+    expect(r.thresholds.popularityFactor).toBe(0.7)
+    expect(r.thresholds.popularityQty).toBeCloseTo(70, 2)
+  })
+
+  it('«лошадка» — это много продаж при марже ниже средней', () => {
+    // Все цены ниже — в копейках: 300 шт по 100 ₽ = 3 000 000 коп.
+    const r = menuEngineering([
+      item(1, 'Кофе', 300, 3_000_000, 2_000), // маржа 80 ₽
+      item(2, 'Чай', 300, 3_000_000, 9_000), // маржа 10 ₽ — ниже средней
+      item(3, 'Десерт', 20, 400_000, 1_000), // маржа 190 ₽, но продаётся редко
+    ])
+    const chat = r.rows.find((x) => x.name === 'Чай')!
+    expect(chat.category).toBe('plowhorse')
+    expect(chat.marginPerUnitKop).toBeCloseTo(1_000, 0) // 10 ₽ на порцию
+    expect(r.rows.find((x) => x.name === 'Десерт')!.category).toBe('puzzle')
+  })
+
+  it('ABC по выручке: 80/95 % → A, B, C', () => {
+    const r = menuEngineering([
+      item(1, 'Большой', 10, 80_000, 1_000),
+      item(2, 'Средний', 10, 15_000, 1_000),
+      item(3, 'Малый', 10, 5_000, 1_000),
+    ])
+    const abc = new Map(r.rows.map((x) => [x.name, x.abcRevenue]))
+    expect(abc.get('Большой')).toBe('A')
+    expect(abc.get('Средний')).toBe('B')
+    expect(abc.get('Малый')).toBe('C')
+  })
+
+  it('одна позиция всегда A, а не C', () => {
+    const r = menuEngineering([item(1, 'Единственная', 5, 5_000, 500)])
+    expect(r.rows[0]!.abcRevenue).toBe('A')
+    expect(r.rows[0]!.abcProfit).toBe('A')
+    expect(r.rows[0]!.shareRevenuePct).toBeCloseTo(100, 1)
+  })
+
+  it('позиции без продаж и без себестоимости не тянут пороги, но видны с причиной', () => {
+    const r = menuEngineering([
+      item(1, 'Продаётся', 100, 10_000, 1_000),
+      item(2, 'Нет продаж', 0, 0, 1_000),
+      item(3, 'Нет цены сырья', 50, 5_000, null),
+    ])
+    expect(r.totals.counted).toBe(1)
+    expect(r.totals.cards).toBe(3)
+    expect(r.totals.noSales).toBe(1)
+    expect(r.totals.noCost).toBe(1)
+    expect(r.totals.revenueKop).toBe(10_000)
+
+    const noSales = r.rows.find((x) => x.name === 'Нет продаж')!
+    expect(noSales.category).toBe('none')
+    expect(noSales.reason).toMatch(/нет продаж/)
+    expect(noSales.profitKop).toBeNull()
+
+    const noCost = r.rows.find((x) => x.name === 'Нет цены сырья')!
+    expect(noCost.category).toBe('none')
+    expect(noCost.reason).toMatch(/себестоимость/)
+    expect(noCost.abcRevenue).toBeNull()
+  })
+
+  it('непроданные карты стоят в конце списка', () => {
+    const r = menuEngineering([item(1, 'Тишина', 0, 0, 1_000), item(2, 'Работает', 10, 1_000, 100)])
+    expect(r.rows[0]!.name).toBe('Работает')
+    expect(r.rows[1]!.name).toBe('Тишина')
+  })
+
+  it('суммы, маржинальность и доли считаются по проданному объёму', () => {
+    const r = menuEngineering([item(1, 'A', 10, 10_000, 500), item(2, 'B', 30, 15_000, 400)])
+    expect(r.totals.qtySold).toBe(40)
+    expect(r.totals.revenueKop).toBe(25_000)
+    expect(r.totals.costKop).toBe(17_000) // 10×500 + 30×400
+    expect(r.totals.profitKop).toBe(8_000)
+    expect(r.totals.marginPct).toBeCloseTo(32, 0) // 8000/25000
+    expect(r.rows.find((x) => x.name === 'A')!.shareProfitPct).toBeCloseTo(62.5, 1)
+  })
+
+  it('отрицательная маржа — «собака» с советом убрать', () => {
+    // Убыточная: 100 шт по 100 ₽, себестоимость 200 ₽. Норма: 100 шт по 100 ₽, 10 ₽.
+    const r = menuEngineering([item(1, 'Убыточная', 100, 1_000_000, 20_000), item(2, 'Норма', 100, 1_000_000, 1_000)])
+    const loss = r.rows.find((x) => x.name === 'Убыточная')!
+    expect(loss.category).toBe('dog')
+    expect(loss.profitKop).toBeLessThan(0)
+    expect(loss.marginPct).toBeLessThan(0)
+    expect(loss.advice).toMatch(/убрать|заменить/)
+  })
+
+  it('пустое меню не падает', () => {
+    const r = menuEngineering([])
+    expect(r.rows).toHaveLength(0)
+    expect(r.totals.counted).toBe(0)
+    expect(r.thresholds.popularityQty).toBeNull()
+    expect(r.thresholds.marginPerUnitKop).toBeNull()
   })
 })

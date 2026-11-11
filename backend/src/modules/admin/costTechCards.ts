@@ -18,6 +18,7 @@ import {
   findCycle,
   foodCostPct,
   marginKop,
+  menuEngineering,
   overheadPerUnit,
   priceWindowStart,
   retailFromMarkup,
@@ -37,6 +38,7 @@ function requireWrite(c: { get: (k: string) => unknown }) {
 }
 
 const now = () => Date.now()
+const DAY_MS = 24 * 60 * 60 * 1000
 const kop = (rub: number | null | undefined) => (rub == null ? null : Math.round(Number(rub) * 100))
 const rub = (k: number | null | undefined) => (k == null || !Number.isFinite(k) ? null : Math.round(k) / 100)
 
@@ -1425,3 +1427,121 @@ adminCostTechCards
       return c.json({ ok: true, overheads: overheadsState() })
     },
   )
+
+  /**
+   * F12: меню-инжиниринг — продажи × маржа.
+   *
+   * Продажи берём из `sales_lines` (чеки Эвотора): сначала привязка по `product_id`,
+   * если у карты нет товара кассы — по имени (`name_snapshot`). Окно задаётся `days`.
+   * Себестоимость — та же, что в картах: полная, если владелец включил постоянные расходы.
+   */
+  .get('/cost/menu-engineering', (c) => {
+    const days = Math.min(365, Math.max(1, Number(c.req.query('days')) || 30))
+    const store = (c.req.query('storeUuid') || '').trim() || null
+    const since = now() - days * DAY_MS
+    const storeSql = store ? 'AND store_uuid = ?' : ''
+    const args = store ? [since, store] : [since]
+
+    const byProduct = new Map<number, { qty: number; revenue: number }>()
+    const productRows = db
+      .prepare(
+        `SELECT product_id AS productId, COALESCE(SUM(qty),0) AS qty, COALESCE(SUM(sum_kopecks),0) AS revenue
+           FROM sales_lines
+          WHERE closed_at >= ? AND product_id IS NOT NULL ${storeSql}
+          GROUP BY product_id`,
+      )
+      .all(...args) as { productId: number; qty: number; revenue: number }[]
+    for (const r of productRows) byProduct.set(r.productId, { qty: Number(r.qty) || 0, revenue: Number(r.revenue) || 0 })
+
+    // Fallback по имени: у старых чеков `product_id` может быть пустым.
+    // ВАЖНО: `LOWER()` в SQLite не трогает кириллицу, поэтому нормализуем имена в JS —
+    // иначе «Латте» из чека никогда не совпадёт с «латте» из карты.
+    const byName = new Map<string, { qty: number; revenue: number }>()
+    const nameRows = db
+      .prepare(
+        `SELECT COALESCE(name_snapshot,'') AS name, COALESCE(SUM(qty),0) AS qty, COALESCE(SUM(sum_kopecks),0) AS revenue
+           FROM sales_lines
+          WHERE closed_at >= ? AND COALESCE(TRIM(name_snapshot),'') <> '' ${storeSql}
+          GROUP BY 1`,
+      )
+      .all(...args) as { name: string; qty: number; revenue: number }[]
+    for (const r of nameRows) {
+      const key = r.name.trim().toLowerCase()
+      if (!key) continue
+      const cur = byName.get(key) ?? { qty: 0, revenue: 0 }
+      cur.qty += Number(r.qty) || 0
+      cur.revenue += Number(r.revenue) || 0
+      byName.set(key, cur)
+    }
+
+    const overhead = overheadContext()
+    const cards = db
+      .prepare(`SELECT id FROM tech_cards ORDER BY name COLLATE NOCASE`)
+      .all() as { id: number }[]
+
+    const input = cards
+      .map((row) => serializeCard(row.id))
+      .filter((card): card is NonNullable<typeof card> => card != null)
+      .map((card) => {
+        const nameKey = card.name.trim().toLowerCase()
+        const sales = (card.productId != null ? byProduct.get(card.productId) : undefined) ?? byName.get(nameKey)
+        const costRub = overhead.enabled ? card.fullCostPerUnitRub : card.costPerUnitRub
+        const priceRub = card.retailRub ?? card.retailCalcRub
+        return {
+          cardId: card.id,
+          name: card.name,
+          kind: card.kind,
+          qtySold: sales?.qty ?? 0,
+          revenueKop: sales?.revenue ?? 0,
+          costPerUnitKop: costRub == null ? null : Math.round(costRub * 100),
+          priceKop: priceRub == null ? null : Math.round(priceRub * 100),
+        }
+      })
+
+    const result = menuEngineering(input)
+    return c.json({
+      window: { days, since },
+      storeUuid: store,
+      overheadEnabled: overhead.enabled,
+      costBasis: overhead.enabled ? 'full' : 'raw',
+      thresholds: {
+        popularityQty: result.thresholds.popularityQty,
+        marginPerUnitRub: rub(result.thresholds.marginPerUnitKop),
+        popularityFactor: result.thresholds.popularityFactor,
+      },
+      totals: {
+        cards: result.totals.cards,
+        counted: result.totals.counted,
+        qtySold: result.totals.qtySold,
+        revenueRub: rub(result.totals.revenueKop),
+        costRub: rub(result.totals.costKop),
+        profitRub: rub(result.totals.profitKop),
+        marginPct: result.totals.marginPct,
+        noSales: result.totals.noSales,
+        noCost: result.totals.noCost,
+      },
+      rows: result.rows.map((r) => ({
+        cardId: r.cardId,
+        name: r.name,
+        kind: r.kind,
+        qtySold: r.qtySold,
+        revenueRub: rub(r.revenueKop),
+        avgPriceRub: rub(r.avgPriceKop),
+        costPerUnitRub: rub(r.costPerUnitKop),
+        profitRub: rub(r.profitKop),
+        marginPerUnitRub: rub(r.marginPerUnitKop),
+        marginPct: r.marginPct,
+        shareRevenuePct: r.shareRevenuePct,
+        shareProfitPct: r.shareProfitPct,
+        abcRevenue: r.abcRevenue,
+        abcProfit: r.abcProfit,
+        category: r.category,
+        advice: r.advice,
+        reason: r.reason,
+      })),
+      note:
+        result.totals.counted === 0
+          ? 'За период нет чеков по позициям меню — анализ появится после первых продаж.'
+          : 'Категории: порог популярности — 70 % от среднего объёма продаж; маржа — прибыль на порцию.',
+    })
+  })

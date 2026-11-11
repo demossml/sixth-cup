@@ -20,6 +20,12 @@ describe('initialCostTab', () => {
     expect(initialCostTab('expenses')).toBe('overheads')
     expect(initialCostTab('recipes')).toBe('tech')
   })
+
+  it('«Прибыльность» открывается по своему параметру и по короткому `abc`', () => {
+    expect(initialCostTab('menu')).toBe('menu')
+    expect(initialCostTab('abc')).toBe('menu')
+    expect(initialCostTab('engineering')).toBe('menu')
+  })
 })
 
 describe('shouldAutoFocusMissing', () => {
