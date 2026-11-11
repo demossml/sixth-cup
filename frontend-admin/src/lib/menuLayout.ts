@@ -685,6 +685,17 @@ export function driftBanner(
  * Резолв каталога на клиенте: мгновенное превью и замечания без round-trip.
  * Сервер считает то же самое при сохранении.
  */
+/** P3-4: в блоке хранится `{{date}}` — показываем дату печати, как в PDF. */
+export const PRINT_DATE_TOKEN = '{{date}}'
+
+export function fillPrintDate(text: string | null | undefined, now: number = Date.now()): string | null {
+  if (!text || !text.includes(PRINT_DATE_TOKEN)) return text ?? null
+  const d = new Date(now)
+  return text.split(PRINT_DATE_TOKEN).join(
+    `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`,
+  )
+}
+
 export function resolvePreview(doc: MenuDoc, products: CatalogProduct[], mode: 'live' | 'frozen'): MenuDoc {
   const byId = new Map(products.map((p) => [p.id, p]))
   const catName = new Map<number, string>()
@@ -710,7 +721,8 @@ export function resolvePreview(doc: MenuDoc, products: CatalogProduct[], mode: '
           const warnings: string[] = [...fontWarnings]
           if (effectiveType(b) === 'image' && !b.url && !b.displayImageUrl) warnings.push('нет картинки')
           else if (b.imageMissing) warnings.push('файл картинки не найден')
-          return { ...b, warnings }
+          // P3-4: дата печати подставляется и в превью, и в PDF.
+          return { ...b, text: fillPrintDate(b.text), warnings }
         }
 
         const live = b.productId == null ? null : byId.get(b.productId) ?? null

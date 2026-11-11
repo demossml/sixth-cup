@@ -238,6 +238,9 @@ export default function MenuLayoutEditor() {
   const [shareOpen, setShareOpen] = useState(false)
   /** P3-2: предпросмотр изменений каталога перед применением. */
   const [catalogDiffOpen, setCatalogDiffOpen] = useState(false)
+  /** P3-4: ссылка для QR на листе и состояние генерации. */
+  const [qrLink, setQrLink] = useState('https://67coffee.ru')
+  const [qrBusy, setQrBusy] = useState(false)
   const [busyUpload, setBusyUpload] = useState(false)
 
   const [history, setHistory] = useState<DocHistory>(emptyHistory)
@@ -1437,6 +1440,29 @@ export default function MenuLayoutEditor() {
     setRightTab('block')
   }
 
+  /**
+   * P3-4: QR на меню. Картинку генерирует сервер и кладёт в uploads, поэтому блок —
+   * обычная картинка: печатается и на холсте, и в PDF одинаково.
+   */
+  const insertQr = async () => {
+    setQrBusy(true)
+    try {
+      const res = await api<{ url: string }>(`/menu-layouts/${numericId}/qr`, { method: 'POST', body: { url: qrLink.trim() } })
+      addBlock('image', { url: res.url, fit: 'contain', titleOverride: `Меню по QR: ${qrLink.trim()}` })
+      toast.push('QR добавлен на лист')
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Не удалось сделать QR', 'bad')
+    } finally {
+      setQrBusy(false)
+    }
+  }
+
+  /** P3-4: подпись «цены на <дата>». В блоке остаётся `{{date}}` — дата подставляется при печати. */
+  const insertPriceDate = () => {
+    addBlock('text', { text: 'цены на {{date}}', fontSizePt: 8 })
+    toast.push('Дата добавлена: подставится при печати')
+  }
+
   /** Картинка блока — только файл из админки: внешние ссылки сервер не примет. */
   const setImageUrl = (value: string, field: 'url' | 'photoUrlOverride') => {
     const v = value.trim()
@@ -1848,6 +1874,11 @@ export default function MenuLayoutEditor() {
       setPaletteName={setPaletteName}
       savePalette={savePalette}
       uploadInto={uploadInto}
+      qrLink={qrLink}
+      setQrLink={setQrLink}
+      qrBusy={qrBusy}
+      onInsertQr={() => void insertQr()}
+      onInsertPriceDate={insertPriceDate}
     />
   )
 

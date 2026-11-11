@@ -27,6 +27,13 @@ type Props = {
   setPaletteName: (v: string) => void
   savePalette: () => Promise<void>
   uploadInto: (file: File, apply: (url: string) => void, full?: boolean) => Promise<void>
+  /** P3-4: ссылка, куда ведёт QR на листе. */
+  qrLink: string
+  setQrLink: (v: string) => void
+  qrBusy: boolean
+  onInsertQr: () => void
+  /** Подпись «цены на {{date}}»: дата подставится при печати. */
+  onInsertPriceDate: () => void
 }
 
 /** Панель «Оформление»: тема, стили, шрифты, цвета, градиент, палитры и фон листа. */
@@ -50,6 +57,11 @@ export default function DesignPane({
   setPaletteName,
   savePalette,
   uploadInto,
+  qrLink,
+  setQrLink,
+  qrBusy,
+  onInsertQr,
+  onInsertPriceDate,
 }: Props) {
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
@@ -381,6 +393,35 @@ export default function DesignPane({
             />
           </label>
         )}
+      </section>
+
+      <section className="border-b border-line px-3 py-3">
+        <div className="mb-2 flex items-baseline justify-between">
+          <h3 className="text-[13px] font-semibold">QR и дата цен</h3>
+          <span className="text-[11px] text-ink-tertiary">P3-4</span>
+        </div>
+        <Field label="Куда ведёт QR" hint="Обычно ссылка на меню или лендинг">
+          <Input
+            value={qrLink}
+            onChange={(e) => setQrLink(e.target.value)}
+            placeholder="https://67coffee.ru"
+            aria-label="Ссылка для QR"
+            maxLength={300}
+            className="!h-8 text-[12px]"
+          />
+        </Field>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          <Button size="sm" variant="secondary" loading={qrBusy} onClick={() => onInsertQr()}>
+            Вставить QR
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => onInsertPriceDate()}>
+            Вставить дату
+          </Button>
+        </div>
+        <p className="mt-1.5 text-[11px] leading-4 text-ink-tertiary">
+          QR генерируется на сервере картинкой в uploads и печатается как обычное фото. Дата в блоке остаётся
+          подписью <span className="font-mono">{'{{date}}'}</span> — при печати подставляется день вывода PDF.
+        </p>
       </section>
 
       <section className="px-3 py-3">

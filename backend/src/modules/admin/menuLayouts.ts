@@ -8,6 +8,10 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { randomBytes } from 'node:crypto'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import QRCode from 'qrcode'
+import { config } from '../../config'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import {
@@ -1129,6 +1133,37 @@ type ShareRow = { id: number; layout_id: number; token: string; note: string | n
 function shareToken(): string {
   return randomBytes(12).toString('hex')
 }
+
+/**
+ * P3-4: QR на меню. Картинку генерируем на сервере и кладём в uploads — так она
+ * попадает и на холст, и в PDF теми же путями, что остальные картинки.
+ */
+adminMenuLayouts.post(
+  '/menu-layouts/:id/qr',
+  zValidator('json', z.object({ url: z.string().trim().max(300).optional(), note: z.string().trim().max(60).optional() }).optional()),
+  async (c) => {
+    requireWrite(c.get('adminRole' as never) as string | undefined)
+    const id = Number(c.req.param('id'))
+    const row = rowById(id)
+    if (!row) throw bad('Макет не найден', 404)
+    const body = c.req.valid('json') ?? {}
+    const target = (body.url ?? '').trim() || 'https://67coffee.ru'
+    // Только http(s): QR с file:// или javascript: в листовке — это дыра, а не ссылка.
+    if (!/^https?:\/\/[^\s]+$/i.test(target)) throw bad('Ссылка должна начинаться с http:// или https://')
+    const png = await QRCode.toBuffer(target, {
+      type: 'png',
+      errorCorrectionLevel: 'M',
+      margin: 1,
+      width: 600,
+      color: { dark: '#000000', light: '#FFFFFF' },
+    })
+    mkdirSync(config.uploadsDir, { recursive: true })
+    const file = `qr-${id}-${randomBytes(6).toString('hex')}.png`
+    writeFileSync(join(config.uploadsDir, file), png)
+    c.set('audit', { entity: 'menu-layout', entityId: String(id), summary: `QR на макет «${row.title}» создан` })
+    return c.json({ ok: true, url: `/uploads/${file}`, target, note: body.note ?? null })
+  },
+)
 
 adminMenuLayouts
   .get('/menu-layouts/:id/shares', (c) => {

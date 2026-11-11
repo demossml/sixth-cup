@@ -866,6 +866,19 @@ export type ResolvedDoc = { pages: ResolvedPage[]; schemaVersion?: number }
  * Подставляет данные каталога в блоки.
  * live — цена и фото из каталога; frozen — из снапшота. Правка в макете сильнее любого источника.
  */
+/**
+ * P3-4: дата актуальности в подписи. В блоке хранится `{{date}}` — подставляем
+ * дату печати, чтобы листовка не врала через месяц.
+ */
+export const PRINT_DATE_TOKEN = '{{date}}'
+
+export function fillPrintDate(text: string | null | undefined, now: number = Date.now()): string | null {
+  if (!text || !text.includes(PRINT_DATE_TOKEN)) return text ?? null
+  const d = new Date(now)
+  const value = `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`
+  return text.split(PRINT_DATE_TOKEN).join(value)
+}
+
 export function resolveDoc(doc: MenuDoc, priceMode: PriceMode): ResolvedDoc {
   const ids = doc.pages
     .flatMap((p) => p.blocks.map((b) => b.productId))
@@ -894,12 +907,14 @@ export function resolveDoc(doc: MenuDoc, priceMode: PriceMode): ResolvedDoc {
         }
         if (b.type !== 'product') {
           const warnings: string[] = [...fontWarning]
+          // P3-4: «цены на {{date}}» превращается в дату печати.
+          const withDate = fillPrintDate(b.text)
           const missing = b.type === 'image' && !!b.url && !uploadsFileExists(b.url)
           if (b.type === 'image') {
             if (!b.url) warnings.push('нет картинки')
             else if (missing) warnings.push('файл картинки не найден')
           }
-          return { ...b, warnings, imageMissing: missing }
+          return { ...b, text: withDate, warnings, imageMissing: missing }
         }
 
         const live = b.productId == null ? null : catalog.get(b.productId) ?? null
