@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import AppSetup from '../components/AppSetup'
+import DealCard from '../components/DealCard'
 import InviteNotice from '../components/InviteNotice'
 import ActiveOrderBanner from '../components/order/ActiveOrderBanner'
 import { OrderQrScreen } from '../components/order/OrderQrScreen'
@@ -22,7 +23,11 @@ import { ChevronRight, Gift, RefreshCw, Ticket, Users, WifiOff } from '../lib/ic
 
 /**
  * Титульный экран (TITLE-SCREEN-PWA-SPEC): шапка с прогрессом → карта-пропуск →
- * акция → приглашение → установка → напоминание о коде → купоны.
+ * секция «Акции» (акции и купоны) → приглашение → установка.
+ *
+ * Тексты акций приходят только из админки (`promos`, плейсмент home_feature):
+ * в коде нет зашитых «каждый N-й стакан» — иначе сезонная кампания выглядела бы
+ * как постоянная надпись. Нет акций и купонов — секции на экране нет совсем.
  *
  * Сеть: в онлайне сетевого бейджа нет вообще, «Офлайн» показывается только когда
  * данные действительно не обновляются (результат sync, а не один navigator.onLine).
@@ -80,71 +85,62 @@ export default function CardPage() {
   const content = (dir?.content ?? dir?.promos ?? []) as Array<{
     id: number; title: string; body?: string; imageUrl?: string | null; mediaType?: 'image' | 'video'
     placement?: string; badge?: string | null; ctaLabel?: string | null; sortOrder?: number
+    productId?: number | null
   }>
   const activeContent = [...content].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id)
   // home_hero — фон существующей шапки, а не отдельный блок над ней.
   const heroBackground = activeContent.find((x) => x.placement === 'home_hero') ?? null
-  // home_feature — единственная акция сразу под картой-пропуском; legacy 'home' совместим.
-  const featureItem = activeContent.find((x) => ['home_feature', 'home'].includes(x.placement || 'home')) ?? null
   const media = (item: typeof content[number], className: string) => item.imageUrl ? (
     item.mediaType === 'video' ? <video src={item.imageUrl} className={className} autoPlay muted loop playsInline preload="metadata" aria-label={item.title} /> :
       <img src={item.imageUrl} alt={item.title} className={className} loading="lazy" />
   ) : null
-  const badge = featureItem
-    ? (featureItem.badge === 'new' ? 'Новинка' : featureItem.badge === 'hit' ? 'Хит' : featureItem.badge ? 'Сезон' : null)
-    : null
 
-  const promoTitle = featureItem?.title?.trim() || `Каждый ${N + 1}-й кофе в подарок`
-  const promoBody = featureItem?.body?.trim() || ''
-  const promoCta = featureItem?.ctaLabel?.trim() || 'Смотреть'
+  // Акции на главной — только из админки. Никакого зашитого «каждый N-й стакан»:
+  // заголовок, подпись, CTA и бейдж приходят из `promos` (плейсмент home_feature).
+  // Плейсмент home — легаси-совместимость: берём одну карточку, как раньше.
+  const featured = activeContent.filter((x) => x.placement === 'home_feature')
+  const legacyHome = activeContent.filter((x) => (x.placement || 'home') === 'home')
+  const deals = featured.length > 0 ? featured : legacyHome.slice(0, 1)
+
   // Приветствие: одна строка, имя только если оно осмысленное (у гостя — «Гость»).
   const guestName = displayNickname(me?.nickname)
   const greeting = me ? `${greetingFor()}, ${guestName === 'Гость' ? 'гость' : guestName}` : greetingFor()
-  // Акция: карточка в рельсе «Акции» (Luckin: карточки вбок, а не один баннер).
-  const promo = (wide = false) => (
-    <button
-      type="button"
-      onClick={() => nav('/menu')}
-      className={`relative text-left rounded-3xl overflow-hidden shadow-card block text-white ${wide ? 'min-h-[104px]' : 'h-[132px]'} ${featureItem?.imageUrl ? 'bg-night' : 'bg-brand'}`}
-    >
-      {featureItem?.imageUrl ? (
-        <>
-          {media(featureItem, 'absolute inset-0 w-full h-full object-cover')}
-          <div className="absolute inset-0 bg-gradient-to-t from-[#073561]/80 via-[#0B4A8D]/30 to-transparent" />
-        </>
-      ) : null}
-      <div className={`relative p-3 flex flex-col gap-2 ${wide ? '' : 'h-full justify-between'}`}>
-        <div className="min-w-0">
-          {badge ? <span className="inline-block text-[10px] font-semibold uppercase tracking-wide bg-brand-mid text-white rounded-full px-2 py-0.5 mb-1">{badge}</span> : null}
-          <div className="font-display font-semibold text-[14px] leading-[18px] line-clamp-2">{promoTitle}</div>
-          {promoBody ? <div className="mt-1 text-[11px] leading-[14px] text-white/75 line-clamp-2">{promoBody}</div> : null}
-        </div>
-        <span className="inline-flex items-center gap-0.5 text-[11px] leading-4 font-semibold text-white/90">
-          {promoCta}
-          <ChevronRight size={12} strokeWidth={2.2} />
-        </span>
-      </div>
-    </button>
-  )
+
+  const dealCards = deals.map((d) => {
+    const title = (d.title || d.body || '').trim()
+    if (!title) return null
+    return {
+      key: `deal-${d.id}`,
+      title,
+      body: d.title ? d.body?.trim() : '',
+      cta: d.ctaLabel?.trim() || '',
+      badge: d.badge,
+      imageUrl: d.imageUrl,
+      mediaType: d.mediaType,
+      mediaIcon: undefined,
+      // Товар задан в админке — ведём на него, иначе в меню.
+      onClick: () => nav(d.productId ? `/menu/${d.productId}` : '/menu'),
+    }
+  }).filter((x) => x !== null)
 
   const voucherDate = (day: number) => new Date(day * 86_400_000).toLocaleDateString('ru-RU')
   // Купоны живут в том же рельсе: срок годности виден прямо в карточке.
-  const voucherCards = vouchers.map((v) => (
-    <button
-      key={v[0]}
-      type="button"
-      onClick={() => nav('/promos')}
-      className="text-left rounded-2xl bg-white border border-line shadow-card p-3 h-[132px] flex flex-col justify-between"
-    >
-      <span className="inline-flex items-center gap-1.5 text-[10px] leading-3 font-semibold uppercase tracking-[0.08em] text-brand">
-        <Ticket size={14} strokeWidth={1.9} /> Купон
-      </span>
-      <span className="font-display font-semibold text-[20px] leading-6 text-ink num">
-        {v[1] === 'p' ? `Скидка ${v[2]}%` : `Скидка ${v[2]} ₽`}
-      </span>
-      <span className="text-[11px] leading-4 text-ink-secondary num">до {voucherDate(v[3])}</span>
-    </button>
-  ))
+  const voucherCards = vouchers.map((v) => ({
+    key: `voucher-${v[0]}`,
+    title: v[1] === 'p' ? `Скидка ${v[2]}%` : `Скидка ${v[2]} ₽`,
+    body: `до ${voucherDate(v[3])}`,
+    cta: 'Куда применить',
+    badge: null,
+    imageUrl: null,
+    mediaType: 'image' as const,
+    mediaIcon: <Ticket size={26} strokeWidth={1.7} />,
+    onClick: () => nav('/promos'),
+  }))
+
+  const deals_all = [...dealCards, ...voucherCards]
+  const dealCount = deals_all.length
+  // Одна карточка — широкая (медиа слева), несколько — рельс вбок.
+  const dealsWide = dealCount === 1
 
   return (
     <div className="pb-4">
@@ -262,21 +258,48 @@ export default function CardPage() {
 
         {msg && <p className={`text-sm ${msg.ok ? 'text-ok' : 'text-bad'}`}>{msg.text}</p>}
 
-        <section>
-          <div className="section-head">
-            <h2>Акции</h2>
-            <button type="button" className="section-more" onClick={() => nav('/promos')}>
-              Ещё <ChevronRight size={12} strokeWidth={2.2} className="inline align-[-1px]" />
-            </button>
-          </div>
-          {/* Один промо-блок без купонов — на всю ширину; с купонами — рельс вбок. */}
-          {vouchers.length > 0 ? (
-            <div className="rail scrollbar-none">
-              {promo(false)}
-              {voucherCards}
+        {dealCount > 0 && (
+          <section>
+            <div className="section-head">
+              <h2>Акции</h2>
+              <button type="button" className="section-more" onClick={() => nav('/promos')}>
+                Ещё <ChevronRight size={12} strokeWidth={2.2} className="inline align-[-1px]" />
+              </button>
             </div>
-          ) : promo(true)}
-        </section>
+            {dealsWide ? (
+              deals_all.map((d) => (
+                <DealCard
+                  key={d.key}
+                  title={d.title}
+                  body={d.body}
+                  cta={d.cta}
+                  badge={d.badge}
+                  imageUrl={d.imageUrl}
+                  mediaType={d.mediaType}
+                  mediaIcon={d.mediaIcon}
+                  wide
+                  onClick={d.onClick}
+                />
+              ))
+            ) : (
+              <div className="rail scrollbar-none">
+                {deals_all.map((d) => (
+                  <DealCard
+                    key={d.key}
+                    title={d.title}
+                    body={d.body}
+                    cta={d.cta}
+                    badge={d.badge}
+                    imageUrl={d.imageUrl}
+                    mediaType={d.mediaType}
+                    mediaIcon={d.mediaIcon}
+                    onClick={d.onClick}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+        )}
 
         {me && (
           <div className="bg-white border border-line rounded-2xl shadow-card divide-y divide-line">

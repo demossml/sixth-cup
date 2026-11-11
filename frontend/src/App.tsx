@@ -31,7 +31,11 @@ function RequireSession() {
   const [fail, setFail] = useState<null | 'offline' | 'rate_limited'>(null)
   // Онбординг показываем ДО создания карты: гость успевает ввести код приглашения,
   // а «брошенные» аккаунты не появляются у тех, кто закрыл приложение на первом экране.
-  const onboarded = (() => { try { return !!localStorage.getItem('sc-onboarded') } catch { return true } })()
+  // Если карта уже есть (JWT), онбординг пройден: иначе `/` → `/onboarding` → `/`
+  // зацикливаются при потерянном флаге (F-15 отправляет с онбординга на главную).
+  const onboarded = (() => {
+    try { return !!localStorage.getItem('sc-onboarded') } catch { return true }
+  })() || !!getJwt()
 
   // Новая карта: сразу синхронизируемся, чтобы QR появился без тапа «Получить карту».
   const onGuestReady = () => {

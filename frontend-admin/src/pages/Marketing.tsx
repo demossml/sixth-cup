@@ -211,7 +211,7 @@ function Promos() {
             <Field label="CTA">
               <Input value={edit.ctaLabel} onChange={(e) => setEdit({ ...edit, ctaLabel: e.target.value })} />
             </Field>
-            <Field label="Порядок (sortOrder, больше = выше)">
+            <Field label="Порядок (sortOrder, меньше = выше)">
               <Input
                 type="number"
                 value={edit.sortOrder}
