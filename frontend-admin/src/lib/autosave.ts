@@ -53,6 +53,8 @@ export function createAutosave<Body, Res>(opts: AutosaveOptions<Body, Res>): Aut
   let pending: AutosaveJob<Body> | null = null
   let latest: AutosaveJob<Body> | null = null
   let disposed = false
+  /** Текущий запрос: второй параллельный получил бы тот же rev и 409. */
+  let inflight: Promise<void> | null = null
 
   const payloadOf = (body: Body): string => JSON.stringify(body)
 
@@ -63,11 +65,7 @@ export function createAutosave<Body, Res>(opts: AutosaveOptions<Body, Res>): Aut
     }
   }
 
-  const send = async (job: AutosaveJob<Body>): Promise<void> => {
-    if (job.payload === saved) {
-      pending = null
-      return
-    }
+  const run = async (job: AutosaveJob<Body>): Promise<void> => {
     const mine = ++seq
     opts.onState('saving')
     try {
@@ -84,6 +82,26 @@ export function createAutosave<Body, Res>(opts: AutosaveOptions<Body, Res>): Aut
       if (opts.isConflict(error)) opts.onConflict()
       else opts.onError(error)
     }
+  }
+
+  const send = async (job: AutosaveJob<Body>): Promise<void> => {
+    // Уже отправленное не дублируем вовсе, летящее — дожидаемся и решаем заново:
+    // rev к этому моменту уже свежий, поэтому повтор не превращается в 409.
+    if (inflight) {
+      await inflight
+      if (job.payload === saved) {
+        pending = null
+        return
+      }
+    }
+    if (job.payload === saved) {
+      pending = null
+      return
+    }
+    inflight = run(job).finally(() => {
+      inflight = null
+    })
+    await inflight
   }
 
   return {

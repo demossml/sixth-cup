@@ -87,8 +87,8 @@ describe('P2-15b: очередь автосохранения', () => {
     expect(h.save).not.toHaveBeenCalled()
   })
 
-  it('устаревший ответ не перебивает более новый запрос', async () => {
-    // Первый запрос «висит», второй успевает уйти раньше.
+  it('второй пакет ждёт первый и уходит уже с новым rev, ответ применяется по порядку', async () => {
+    // Параллельных PUT больше нет: два запроса с одним baseRev давали 409 в браузере.
     const resolvers: ((v: Res) => void)[] = []
     const save = vi.fn(
       () =>
@@ -101,16 +101,17 @@ describe('P2-15b: очередь автосохранения', () => {
     await vi.advanceTimersByTimeAsync(800)
     h.api.schedule({ title: 'B' })
     await vi.advanceTimersByTimeAsync(800)
-    expect(resolvers).toHaveLength(2)
+    // Пока A не ответил, второй запрос не стартует.
+    expect(resolvers).toHaveLength(1)
 
-    // Первый (A) отвечает позже второго (B): его ответ должен быть проигнорирован.
-    resolvers[1]!({ rev: 5, savedAt: 2000 })
-    await Promise.resolve()
     resolvers[0]!({ rev: 2, savedAt: 1000 })
-    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(h.saved.map((s) => s.payload)).toEqual([JSON.stringify({ title: 'A' })])
+    expect(resolvers).toHaveLength(2) // B дождался и ушёл
 
-    expect(h.saved).toHaveLength(1)
-    expect(h.saved[0]!.res.rev).toBe(5)
+    resolvers[1]!({ rev: 3, savedAt: 2000 })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(h.saved.at(-1)!.res.rev).toBe(3)
     expect(h.api.savedPayload()).toBe(JSON.stringify({ title: 'B' }))
   })
 
@@ -180,5 +181,25 @@ describe('P2-15b: очередь автосохранения', () => {
     expect(h.save).toHaveBeenCalledTimes(1)
     expect(h.api.savedPayload()).toBe(JSON.stringify({ title: 'правка после ремаунта' }))
     expect(h.states.at(-1)).toBe('saved')
+  })
+
+  it('flush во время летящего запроса не шлёт второй с тем же rev', async () => {
+    // Ровно этот сценарий давал 409 в браузере: таймер уже отправил сохранение,
+    // а flush() перед серверной операцией стартовал параллельный PUT с тем же baseRev.
+    let release: (() => void) | null = null
+    const saveSpy = vi.fn(async (_body: Body, baseRev: number) => {
+      await new Promise<void>((r) => (release = r))
+      return { rev: baseRev + 1, savedAt: 2000 }
+    })
+    const h = harness({ save: saveSpy })
+    h.api.schedule({ title: 'A' })
+    await vi.advanceTimersByTimeAsync(800) // таймер отправил
+    const flushing = h.api.flush() // «дослать немедленно» — запрос уже летит
+    expect(saveSpy).toHaveBeenCalledTimes(1)
+    release!()
+    await vi.advanceTimersByTimeAsync(0)
+    await flushing
+    expect(saveSpy).toHaveBeenCalledTimes(1)
+    expect(h.api.savedPayload()).toBe(JSON.stringify({ title: 'A' }))
   })
 })

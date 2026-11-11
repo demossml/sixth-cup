@@ -72,6 +72,7 @@ import { typograph } from '../lib/typography'
 import { MENU_LAYOUT_V2 } from '../lib/featureFlags'
 import { safeBoxSize } from '../lib/sheetGeometry'
 import { perfDragEnd, perfDragStart, perfFrame, perfInit, perfPdf, perfTTI } from '../lib/perf'
+import { meterInit } from '../lib/meter'
 import {
   applyProgress, blockJob, cancelJob, createJob, exportQuery, failJob, finishJob, liveJobs, nextQueued,
   progressText, startJob,
@@ -308,6 +309,8 @@ export default function MenuLayoutEditor() {
 
   useEffect(() => {
     perfInit()
+    // P1-31: счётчик кликов для замера сценариев S1–S8 (?meter=1).
+    meterInit()
   }, [])
 
   const loadFonts = useCallback(async () => {
