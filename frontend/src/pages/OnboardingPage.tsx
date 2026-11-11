@@ -4,7 +4,7 @@ import { IllCard, IllScan, IllStamps } from '../components/Illustrations'
 import { useApp } from '../lib/app'
 import { isValidInviteCode, parseInviteInput } from '../lib/invite'
 import { applyInvite } from '../lib/ensureGuest'
-import { Gift, RefreshCw } from '../lib/icons'
+import { Gift, RefreshCw, WifiOff } from '../lib/icons'
 
 type Slide = {
   Ill: () => JSX.Element
@@ -18,7 +18,7 @@ type Slide = {
  * Лого: /logo-mark.png на белой подложке (маскот цветной, светлый фон читается на тёмной шапке).
  */
 export default function OnboardingPage() {
-  const { dir, me } = useApp()
+  const { dir, me, online } = useApp()
   const N = Math.max(1, me?.cupsForFree ?? dir?.cupsForFree ?? 5)
   const pct = dir?.referralCashbackPercent ?? 3
 
@@ -113,6 +113,17 @@ export default function OnboardingPage() {
           />
           <span className="font-display text-[16px] font-semibold leading-5 tracking-tight">6<span className="brand-dot" aria-hidden /><span className="sr-only">.</span>7 Coffee</span>
         </div>
+
+        {/* Аудит F-01: офлайн виден ДО нажатия, а не только после «Пропустить». */}
+        {!online ? (
+          <div
+            role="status"
+            className="mt-3 flex items-start gap-2 rounded-2xl bg-white/10 border border-white/25 px-3 py-2 text-[12px] leading-4 text-white/85"
+          >
+            <WifiOff size={14} strokeWidth={2} className="mt-0.5 flex-none" />
+            <span>Нет сети — карта создастся сама, когда интернет появится. Анкету заполнять не нужно.</span>
+          </div>
+        ) : null}
 
         <div className="flex-1 flex items-center justify-center py-5 min-h-[40vh]">
           {!photoOk[i] ? (
