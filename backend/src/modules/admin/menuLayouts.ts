@@ -7,6 +7,7 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
+import { randomBytes } from 'node:crypto'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import {
@@ -971,3 +972,65 @@ export const adminMenuLayouts = new Hono<Env>()
   })
 
 export type { LayoutView }
+export { layoutView, rowById }
+
+// ── P2-5: просмотр по ссылке ────────────────────────────────────────────
+// Ссылка открывает макет только на чтение и не требует токена админки.
+// Токен случайный (12 байт), отзыв — revoked_at: история остаётся, ссылка гаснет.
+
+type ShareRow = { id: number; layout_id: number; token: string; note: string | null; created_at: number; revoked_at: number | null }
+
+/** Случайный токен ссылки: 24 hex-символа — перебирать бессмысленно. */
+function shareToken(): string {
+  return randomBytes(12).toString('hex')
+}
+
+adminMenuLayouts
+  .get('/menu-layouts/:id/shares', (c) => {
+    const id = Number(c.req.param('id'))
+    if (!rowById(id)) throw bad('Макет не найден', 404)
+    const rows = db
+      .prepare('SELECT * FROM menu_layout_shares WHERE layout_id=? ORDER BY created_at DESC')
+      .all(id) as ShareRow[]
+    return c.json({
+      shares: rows.map((s) => ({
+        id: s.id,
+        token: s.token,
+        note: s.note,
+        createdAt: s.created_at,
+        revokedAt: s.revoked_at,
+        // Полная ссылка строится на клиенте: origin зависит от стенда.
+        path: `#/share/${s.token}`,
+      })),
+    })
+  })
+  .post(
+    '/menu-layouts/:id/shares',
+    zValidator('json', z.object({ note: z.string().trim().max(120).optional() }).optional()),
+    (c) => {
+      requireWrite(c.get('adminRole' as never) as string | undefined)
+      const id = Number(c.req.param('id'))
+      const row = rowById(id)
+      if (!row) throw bad('Макет не найден', 404)
+      const note = c.req.valid('json')?.note ?? null
+      const token = shareToken()
+      const info = db
+        .prepare('INSERT INTO menu_layout_shares(layout_id, token, note, created_at) VALUES(?,?,?,?)')
+        .run(id, token, note, Date.now())
+      c.set('audit', { entity: 'menu-layout', entityId: String(id), summary: `Ссылка на просмотр макета «${row.title}» создана` })
+      return c.json({ share: { id: Number(info.lastInsertRowid), token, note, path: `#/share/${token}` } })
+    },
+  )
+  .delete('/menu-layouts/:id/shares/:shareId', (c) => {
+    requireWrite(c.get('adminRole' as never) as string | undefined)
+    const id = Number(c.req.param('id'))
+    const shareId = Number(c.req.param('shareId'))
+    const share = db.prepare('SELECT * FROM menu_layout_shares WHERE id=? AND layout_id=?').get(shareId, id) as ShareRow | undefined
+    if (!share) throw bad('Ссылка не найдена', 404)
+    if (!share.revoked_at) {
+      db.prepare('UPDATE menu_layout_shares SET revoked_at=? WHERE id=?').run(Date.now(), shareId)
+      c.set('audit', { entity: 'menu-layout', entityId: String(id), summary: 'Ссылка на просмотр макета отозвана' })
+    }
+    return c.json({ ok: true })
+  })
+

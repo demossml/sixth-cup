@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { api, setUnauthorizedHandler, tokenStore } from './api/client'
 import { MetaCtx } from './meta'
 import type { Meta } from './meta'
@@ -32,6 +32,8 @@ const Purchases = lazy(() => import('./pages/Purchases'))
 const Inventory = lazy(() => import('./pages/Inventory'))
 const Analytics = lazy(() => import('./pages/Analytics'))
 const Help = lazy(() => import('./pages/Help'))
+// P2-5: просмотр макета по ссылке — публичная страница, вне входа в админку.
+const MenuShare = lazy(() => import('./pages/MenuShare'))
 
 
 function Login({ onOk }: { onOk: (m: Meta) => void }) {
@@ -75,6 +77,9 @@ export default function App() {
   const [state, setState] = useState<'checking' | 'out' | 'in'>(tokenStore.get() ? 'checking' : 'out')
   const [meta, setMeta] = useState<Meta>({ production: true, resetAllowed: false })
   const logout = useCallback(() => { tokenStore.clear(); setState('out') }, [])
+  const location = useLocation()
+  // Ссылка на просмотр макета не требует входа: страница живёт вне админ-оболочки.
+  const isShare = location.pathname.startsWith('/share/')
 
   useEffect(() => {
     setUnauthorizedHandler(logout)
@@ -82,9 +87,19 @@ export default function App() {
   }, [logout])
 
   useEffect(() => {
-    if (state !== 'checking') return
+    if (state !== 'checking' || isShare) return
     api<Meta>('/meta').then((m) => { setMeta(m); setState('in') }).catch(() => setState('out'))
-  }, [state])
+  }, [state, isShare])
+
+  if (isShare)
+    return (
+      <Suspense fallback={<Spinner />}>
+        <Routes>
+          <Route path="/share/:token" element={<MenuShare />} />
+          <Route path="*" element={<MenuShare />} />
+        </Routes>
+      </Suspense>
+    )
 
   if (state === 'checking') return <Spinner />
   if (state === 'out') return <Login onOk={(m) => { setMeta(m); setState('in') }} />

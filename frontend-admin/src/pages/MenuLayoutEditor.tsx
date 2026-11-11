@@ -87,6 +87,7 @@ import EditorBanners from '../components/menuLayout/EditorBanners'
 import EditorToolbar from '../components/menuLayout/EditorToolbar'
 import ContextMenu from '../components/menuLayout/ContextMenu'
 import FormatDrawer from '../components/menuLayout/FormatDrawer'
+import ShareDrawer from '../components/menuLayout/ShareDrawer'
 import MobileEditor from '../components/menuLayout/MobileEditor'
 import CanvasToolbar from '../components/menuLayout/CanvasToolbar'
 import CanvasViewport from '../components/menuLayout/CanvasViewport'
@@ -232,6 +233,8 @@ export default function MenuLayoutEditor() {
   /** Очередь экспорта PDF: одна задача собирается, остальные ждут. */
   const [jobs, setJobs] = useState<ExportJob[]>([])
   const [formatOpen, setFormatOpen] = useState(false)
+  /** P2-5: ссылка на просмотр — шторка со списком и отзывом. */
+  const [shareOpen, setShareOpen] = useState(false)
   const [busyUpload, setBusyUpload] = useState(false)
 
   const [history, setHistory] = useState<DocHistory>(emptyHistory)
@@ -1902,6 +1905,7 @@ export default function MenuLayoutEditor() {
         onNotes={() => setNotesOpen(true)}
         notesCount={openNotes.length}
         onExport={() => setExportOpen(true)}
+        onShare={() => setShareOpen(true)}
       />
 
       <EditorBanners
@@ -2181,6 +2185,8 @@ export default function MenuLayoutEditor() {
           onForce={(req: ExportRequest) => enqueueExport({ ...req, force: true })}
         />
       )}
+
+      <ShareDrawer open={shareOpen} onClose={() => setShareOpen(false)} layoutId={numericId} title={title} />
 
       <FormatDrawer
         open={formatOpen}

@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom"
-import { ArrowLeft, Download, Eye, History, Loader2, MessageSquare, Redo2, Undo2 } from "lucide-react"
+import { ArrowLeft, Download, Eye, History, Link2, Loader2, MessageSquare, Redo2, Undo2 } from "lucide-react"
 import { Button, cx } from "../../ui/kit"
 
 type Props = {
@@ -22,6 +22,7 @@ type Props = {
   onNotes: () => void
   notesCount: number
   onExport: () => void
+  onShare: () => void
 }
 
 /** Верхняя строка редактора: название, статус сохранения и основные действия. */
@@ -45,6 +46,7 @@ export default function EditorToolbar({
   onNotes,
   notesCount,
   onExport,
+  onShare,
 }: Props) {
   return (
     <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -100,6 +102,9 @@ export default function EditorToolbar({
           onClick={() => onNotes()}
         >
           Замечания{notesCount > 0 ? ` · ${notesCount}` : ''}
+        </Button>
+        <Button size="sm" variant="secondary" icon={<Link2 size={14} />} onClick={() => onShare()}>
+          Поделиться
         </Button>
         <Button size="sm" icon={<Download size={14} />} onClick={() => onExport()}>
           Экспорт PDF
