@@ -82,6 +82,10 @@ import {
 } from '../lib/exportQueue'
 import ExportModal, { type Blocker } from '../components/menuLayout/ExportModal'
 import ExportJobsPanel from '../components/menuLayout/ExportJobsPanel'
+import CommandPalette from '../components/menuLayout/overlays/CommandPalette'
+import PreviewOverlay from '../components/menuLayout/overlays/PreviewOverlay'
+import NotesDrawer from '../components/menuLayout/overlays/NotesDrawer'
+import VersionsDrawer from '../components/menuLayout/overlays/VersionsDrawer'
 import EditorSkeleton from '../components/menuLayout/EditorSkeleton'
 import CatalogPane from '../components/menuLayout/panes/CatalogPane'
 import PlacesPane from '../components/menuLayout/panes/PlacesPane'
@@ -2610,189 +2614,60 @@ export default function MenuLayoutEditor() {
         )}
       </div>
 
-      {/* ── командная палитра ⌘K ──────────────────────────── */}
       {paletteOpen && (
-        <div
-          className="fixed inset-0 z-[80] bg-black/50 p-4"
-          onMouseDown={(e) => e.target === e.currentTarget && setPaletteOpen(false)}
-        >
-          <div
-            role="dialog"
-            aria-label="Команды редактора"
-            className="mx-auto mt-[12vh] w-full max-w-[520px] overflow-hidden rounded-2xl bg-white shadow-2xl"
-          >
-            <input
-              autoFocus
-              value={paletteQuery}
-              onChange={(e) => {
-                setPaletteQuery(e.target.value)
-                setPaletteIndex(0)
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'ArrowDown') {
-                  e.preventDefault()
-                  setPaletteIndex((i) => Math.min(i + 1, paletteItems.length - 1))
-                } else if (e.key === 'ArrowUp') {
-                  e.preventDefault()
-                  setPaletteIndex((i) => Math.max(i - 1, 0))
-                } else if (e.key === 'Enter') {
-                  e.preventDefault()
-                  runCommand(paletteIndex)
-                } else if (e.key === 'Escape') {
-                  setPaletteOpen(false)
-                }
-              }}
-              placeholder="Что сделать? Например: фото, экспорт, колонки"
-              aria-label="Поиск команды"
-              className="min-h-12 w-full border-b border-line px-4 text-[14px] outline-none"
-            />
-            <ul className="max-h-[46vh] overflow-y-auto py-1">
-              {paletteItems.map((cmd, i) => (
-                <li key={cmd.id}>
-                  <button
-                    type="button"
-                    onMouseEnter={() => setPaletteIndex(i)}
-                    onClick={() => runCommand(i)}
-                    className={cx(
-                      'flex w-full items-center gap-2 px-4 py-2 text-left text-[13px]',
-                      i === paletteIndex ? 'bg-brand/10 text-ink' : 'text-ink-secondary',
-                    )}
-                  >
-                    <span className="min-w-0 flex-1 truncate">{cmd.title}</span>
-                    {cmd.hint && <span className="flex-none text-[11px] text-ink-tertiary">{cmd.hint}</span>}
-                  </button>
-                </li>
-              ))}
-              {paletteItems.length === 0 && (
-                <li className="px-4 py-3 text-[13px] text-ink-tertiary">Ничего не найдено</li>
-              )}
-            </ul>
-          </div>
-        </div>
+        <CommandPalette
+          query={paletteQuery}
+          setQuery={setPaletteQuery}
+          index={paletteIndex}
+          setIndex={setPaletteIndex}
+          items={paletteItems}
+          onRun={runCommand}
+          close={() => setPaletteOpen(false)}
+        />
       )}
 
-      {/* ── предпросмотр ──────────────────────────────────── */}
       {previewOpen && (
-        <div className="fixed inset-0 z-[70] overflow-y-auto bg-black/70 p-4" onMouseDown={(e) => e.target === e.currentTarget && setPreviewOpen(false)}>
-          <div className="mx-auto max-w-[720px]">
-            <div className="mb-2 flex items-center justify-between text-white">
-              <span className="text-[13px] font-semibold">
-                {title} · {pageIdx + 1} / {doc.pages.length}
-              </span>
-              <button type="button" onClick={() => setPreviewOpen(false)} className="grid h-9 w-9 place-items-center rounded-full bg-white/15" aria-label="Закрыть">
-                <X size={18} />
-              </button>
-            </div>
-            <div className="shadow-2xl" style={{ aspectRatio: String(LAYOUT_FORMATS.find((f) => f.id === format)?.ratio ?? 210 / 297) }}>
-              {canvas()}
-            </div>
-            <div className="mt-3 flex justify-center gap-2">
-              <Button size="sm" variant="secondary" onClick={() => setPageIdx((i) => Math.max(0, i - 1))} disabled={pageIdx === 0}>
-                ←
-              </Button>
-              <Button size="sm" variant="secondary" onClick={() => setPageIdx((i) => Math.min(doc.pages.length - 1, i + 1))} disabled={pageIdx >= doc.pages.length - 1}>
-                →
-              </Button>
-              <Button size="sm" icon={<Download size={14} />} onClick={() => { setPreviewOpen(false); setExportOpen(true) }}>
-                Экспорт PDF
-              </Button>
-            </div>
-          </div>
-        </div>
+        <PreviewOverlay
+          title={title}
+          pageIdx={pageIdx}
+          setPageIdx={setPageIdx}
+          pageCount={doc.pages.length}
+          format={format}
+          close={() => setPreviewOpen(false)}
+          onExport={() => {
+            setPreviewOpen(false)
+            setExportOpen(true)
+          }}
+        >
+          {canvas()}
+        </PreviewOverlay>
       )}
 
-      <Drawer open={notesOpen} onClose={() => setNotesOpen(false)} title={`Замечания${openNotes.length ? ` · ${openNotes.length}` : ''}`} layer={64}>
-        {openNotes.length === 0 ? (
-          <p className="text-[12.5px] text-ink-secondary">
-            Открытых замечаний нет. Выберите блок на листе и напишите замечание в панели «Блок» — оно повиснет на
-            блоке и уйдёт в PDF стикером.
-          </p>
-        ) : (
-          <ul className="space-y-2">
-            {openNotes.map((c) => {
-              const block = blockById(c.blockId)
-              const pi = pageIndexOfBlock(c.blockId)
-              return (
-                <li key={c.id} className="rounded-lg border border-warn/40 bg-warn-soft/40 p-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNotesOpen(false)
-                      if (pi >= 0) goToBlock(c.blockId, pi)
-                    }}
-                    className="block w-full text-left"
-                  >
-                    <p className="truncate text-[12.5px] font-semibold text-ink">
-                      {block ? layerName(block) : 'Блок удалён'}
-                    </p>
-                    <p className="mt-0.5 text-[12px] text-ink-secondary">{c.text}</p>
-                    <p className="mt-0.5 text-[10.5px] text-ink-tertiary">
-                      {c.author ? `${c.author} · ` : ''}
-                      {ago(c.createdAt)} · {pi >= 0 ? `стр. ${pi + 1}` : 'нет на листе'}
-                    </p>
-                  </button>
-                  <div className="mt-1 flex gap-3 text-[11px] font-semibold">
-                    <button type="button" onClick={() => toggleNote(c.id, true)} className="text-brand hover:underline">
-                      решено
-                    </button>
-                    <button type="button" onClick={() => deleteNote(c.id)} className="text-ink-tertiary hover:text-bad">
-                      удалить
-                    </button>
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
-        )}
-        {openNotes.some((c) => !blockById(c.blockId)) && (
-          <Button size="sm" variant="secondary" className="mt-3" onClick={dropOrphanNotes}>
-            Убрать замечания удалённых блоков
-          </Button>
-        )}
-      </Drawer>
+      <NotesDrawer
+        open={notesOpen}
+        onClose={() => setNotesOpen(false)}
+        notes={openNotes}
+        blockName={(id) => {
+          const b = blockById(id)
+          return b ? layerName(b) : null
+        }}
+        pageIndex={pageIndexOfBlock}
+        goToBlock={goToBlock}
+        toggleNote={toggleNote}
+        deleteNote={deleteNote}
+        onDropOrphans={dropOrphanNotes}
+      />
 
-      <Drawer open={versionsOpen} onClose={() => setVersionsOpen(false)} title="Версии макета" layer={70}>
-        <p className="mb-3 text-[12.5px] text-ink-secondary">
-          Версия — снимок листа и оформления. Перед откатом текущее состояние сохраняется автоматически, поэтому
-          откат тоже можно отменить.
-        </p>
-        <div className="mb-3 flex gap-1">
-          <Input
-            value={versionNote}
-            onChange={(e) => setVersionNote(e.target.value)}
-            placeholder="Комментарий (необязательно)"
-            aria-label="Комментарий к версии"
-            className="!h-8 text-[12px]"
-          />
-          <Button size="sm" variant="secondary" onClick={() => void saveVersion()}>
-            Сохранить версию
-          </Button>
-        </div>
-        {versions.length === 0 && <p className="text-[12.5px] text-ink-tertiary">Версий пока нет.</p>}
-        <ul className="space-y-1">
-          {versions.map((v) => (
-            <li key={v.id} className="flex items-center gap-2 rounded-lg border border-line px-2 py-1.5">
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[12.5px] font-semibold">{v.note || v.title}</p>
-                <p className="text-[11px] text-ink-tertiary">
-                  {new Date(v.createdAt).toLocaleString('ru-RU')} · ревизия {v.rev} · {v.pages} стр. · {v.blocks} блоков
-                </p>
-              </div>
-              <Button size="sm" variant="secondary" onClick={() => void restoreVersion(v.id)}>
-                Вернуть
-              </Button>
-              <button
-                type="button"
-                onClick={() => void removeVersion(v.id)}
-                className="grid h-7 w-7 place-items-center rounded text-ink-tertiary hover:text-bad"
-                aria-label="Удалить версию"
-              >
-                <Trash2 size={13} />
-              </button>
-            </li>
-          ))}
-        </ul>
-      </Drawer>
+      <VersionsDrawer
+        open={versionsOpen}
+        onClose={() => setVersionsOpen(false)}
+        note={versionNote}
+        setNote={setVersionNote}
+        onSave={saveVersion}
+        versions={versions}
+        onRestore={restoreVersion}
+        onRemove={removeVersion}
+      />
 
       <ExportModal
         open={exportOpen}
