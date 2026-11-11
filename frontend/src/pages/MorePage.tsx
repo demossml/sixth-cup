@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { useApp } from '../lib/app'
+import { displayNickname } from '../lib/guestName'
 import { formatCardCode } from '../lib/card'
 import { ru } from '../copy/ru'
 import {
@@ -23,8 +24,8 @@ type Row = { to: string; title: string; detail: string; Icon: typeof History }
 export default function MorePage() {
   const { me, dir } = useApp()
   const pct = dir?.referralCashbackPercent ?? 3
-  const nick = (me?.nickname || '').trim()
-  const title = nick || 'Моя карта'
+  // Аудит F-08: «Гость I7WFJD» пугает — показываем просто «Гость», номер карты рядом.
+  const title = me ? displayNickname(me.nickname) : 'Моя карта'
   const code = formatCardCode(me?.cardCode)
 
   const groups: Row[][] = [
@@ -34,7 +35,7 @@ export default function MorePage() {
       {
         to: '/invite',
         title: ru.more.invite,
-        detail: `Кэшбэк ${pct}% · не для кассы`,
+        detail: `Кэшбэк ${pct}% с покупок друга`,
         Icon: Users,
       },
     ],

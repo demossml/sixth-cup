@@ -10,6 +10,7 @@ import { formatCardCode } from '../lib/card'
 import { clearUserData } from '../lib/db'
 import { syncStatus } from '../lib/syncStatus'
 import { ArrowLeft, Camera, Copy, Download, LogOut, RefreshCw, Users, Wallet } from '../lib/icons'
+import { displayNickname } from '../lib/guestName'
 
 const ScanModal = lazy(() => import('../components/ScanModal'))
 
@@ -91,7 +92,7 @@ export default function ProfilePage() {
         <button type="button" className="inline-flex items-center gap-1 min-h-11 text-white/90 text-sm" onClick={() => nav('/more')}>
           <ArrowLeft size={18} /> Ещё
         </button>
-        <h1 className="text-[22px] leading-7 font-semibold">{me?.nickname ?? 'Профиль'}</h1>
+        <h1 className="text-[22px] leading-7 font-semibold">{me ? displayNickname(me.nickname) : 'Профиль'}</h1>
         <p className="text-white/80 text-xs mt-1">{status.label}{status.detail ? ` · ${status.detail}` : ''}</p>
         {me && me.cashbackBalance > 0 && (
           <div className="mt-3 inline-flex items-center gap-2 bg-white/15 rounded-xl px-3 py-2">

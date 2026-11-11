@@ -160,6 +160,8 @@ export default function CardPage() {
           <p className="mt-3.5 font-display font-semibold text-[19px] leading-[26px] tracking-[-0.01em] max-w-[250px]">
             {progressPhrase({ n: N, marks, freeAvailable: me?.freeAvailable ?? 0 })}
           </p>
+          {/* Аудит F-02: главное отличие — без SMS и регистрации — должно читаться на главной, а не только в онбординге. */}
+          <p className="mt-1 text-[12px] leading-4 text-white/75">Без SMS и регистрации — карта уже ваша</p>
 
           <ProgressStamps n={N} marks={marks} gift={hasGift} />
         </div>
@@ -235,7 +237,7 @@ export default function CardPage() {
               <Users size={20} strokeWidth={1.75} className="text-brand shrink-0" />
               <span className="min-w-0 flex-1">
                 <span className="block text-[15px] leading-5 font-semibold text-ink">Пригласить друга</span>
-                <span className="block text-[12px] leading-4 text-ink-secondary">{pct}% с его покупок · не для кассы</span>
+                <span className="block text-[12px] leading-4 text-ink-secondary">{pct}% с покупок друга</span>
               </span>
               <ChevronRight size={18} strokeWidth={1.75} className="text-ink-tertiary shrink-0" />
             </button>

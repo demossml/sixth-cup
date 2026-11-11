@@ -36,7 +36,7 @@ export default function ProgressStamps({ n, marks, gift = false }: Props) {
     <div
       className="stamps"
       role="img"
-      aria-label={`Куплено ${shown} из ${n}, подарок ${gift ? 'доступен' : 'недоступен'}`}
+      aria-label={`Собрано ${shown} из ${n}${gift ? ', подарок доступен' : ''}`}
     >
       {Array.from({ length: shown }, (_, i) => (
         <Stamp key={i} fresh={i >= freshFrom && freshFrom >= 0} />

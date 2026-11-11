@@ -13,7 +13,7 @@ export default function AppLogo({ tone = 'onDark', size = 'sm', className = '' }
     <div className={`inline-flex items-center gap-2 min-w-0 ${className}`}>
       <img
         src="/logo-mark.png"
-        alt=""
+        alt="6.7 Coffee"
         width={size === 'md' ? 36 : 32}
         height={size === 'md' ? 36 : 32}
         className={`${mark} rounded-xl object-contain shrink-0 bg-white ring-1 ring-black/5`}

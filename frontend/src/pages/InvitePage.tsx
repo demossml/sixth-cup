@@ -79,7 +79,7 @@ export default function InvitePage() {
         {/* Приглашение выглядит как билет с кремовой рамкой — не спутать с картой (белый квадрат с QR). */}
         <div className="bg-white rounded-2xl p-4 text-center border-2 border-dashed border-brand-mid shadow-card">
           <p className="inline-block text-[12px] leading-4 font-semibold tracking-wide text-warn bg-warn-bg rounded-full px-3 py-1.5 mb-2">
-            Приглашение · не для кассы
+            Приглашение друга
           </p>
           <p className="text-sm font-semibold text-ink mb-1">QR приглашения — покажите другу</p>
           <p className="text-xs text-ink-secondary mb-1">

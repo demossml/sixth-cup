@@ -125,13 +125,17 @@ export default function OnboardingPage() {
         <h1 className="font-display text-[28px] leading-8 font-semibold">{s.title}</h1>
         <p className="mt-2 text-white/80 text-[15px] leading-[22px] max-w-[340px]">{s.text}</p>
 
-        <div className="flex gap-2 mt-5" aria-hidden>
-          {slides.map((_, idx) => (
-            <div
-              key={idx}
-              className={`h-1.5 rounded-full transition-all ${idx === i ? 'w-6 bg-white' : 'w-1.5 bg-white/35'}`}
-            />
-          ))}
+        {/* Аудит F-05: точки были aria-hidden — гость не знал, сколько шагов и где он. */}
+        <div className="flex items-center gap-2 mt-5">
+          <div className="flex gap-2" aria-hidden>
+            {slides.map((_, idx) => (
+              <div
+                key={idx}
+                className={`h-1.5 rounded-full transition-all ${idx === i ? 'w-6 bg-white' : 'w-1.5 bg-white/35'}`}
+              />
+            ))}
+          </div>
+          <span className="text-[12px] leading-4 text-white/70 num">Шаг {i + 1} из {slides.length}</span>
         </div>
 
         {/* Ручной ввод кода друга — до создания карты. */}
@@ -175,6 +179,11 @@ export default function OnboardingPage() {
                   </button>
                 )}
               </div>
+              {!code.trim() && !codeMessage && (
+                <p className="mt-1.5 text-[12px] leading-4 text-white/70">
+                  Введите код или вставьте ссылку друга
+                </p>
+              )}
               {codeMessage && (
                 <p className={`mt-1.5 text-[12px] leading-4 ${codeResult === 'ok' ? 'text-white' : 'text-white/85'}`}>
                   {codeMessage}
