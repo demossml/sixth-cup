@@ -223,8 +223,10 @@ export default function CardPage() {
                   Кэшбэк {formatRub(cashback)} ₽ · у бариста
                 </span>
               ) : null}
+              {/* Аудит F-10, вариант 1: QR на карте — компактный «якорь», подпись честно говорит,
+                  что тап открывает полноэкранный QR для кассы. */}
               <span className="mt-1.5 inline-flex items-center gap-0.5 text-[12px] leading-4 font-semibold text-brand">
-                Показать QR · тап
+                Открыть QR
                 <ChevronRight size={12} strokeWidth={2} />
               </span>
             </span>
