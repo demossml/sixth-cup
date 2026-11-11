@@ -16,6 +16,7 @@ import {
   resolveLine,
   resolveYield,
   retailFromMarkup,
+  unitsFromWeights,
   weightedCostKop,
 } from './costCalc'
 
@@ -468,5 +469,31 @@ describe('распределение постоянных расходов по 
     })
     expect(r.basis).toBe('units')
     expect(r.rows[0]!.perUnitKop).toBeCloseTo(250_000_00 / 40, 0)
+  })
+})
+
+describe('веса популярности → штуки плана', () => {
+  it('делит общий план пропорционально весам', () => {
+    const u = unitsFromWeights(new Map([[1, 7], [2, 2], [3, 1]]), 100, [1, 2, 3])
+    expect(u.get(1)).toBeCloseTo(70, 3)
+    expect(u.get(2)).toBeCloseTo(20, 3)
+    expect(u.get(3)).toBeCloseTo(10, 3)
+  })
+
+  it('вес 0 — позиция не участвует, остальные делят весь план', () => {
+    const u = unitsFromWeights(new Map([[1, 5], [2, 0]]), 50, [1, 2])
+    expect(u.get(1)).toBeCloseTo(50, 3)
+    expect(u.get(2)).toBe(0)
+  })
+
+  it('все веса нулевые — делим поровну, а не теряем план', () => {
+    const u = unitsFromWeights(new Map(), 90, [1, 2, 3])
+    expect(u.get(1)).toBeCloseTo(30, 3)
+    expect(u.get(2)).toBeCloseTo(30, 3)
+  })
+
+  it('общий план не задан — штук нет', () => {
+    const u = unitsFromWeights(new Map([[1, 3]]), 0, [1])
+    expect(u.get(1)).toBe(0)
   })
 })

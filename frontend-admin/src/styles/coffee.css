@@ -262,6 +262,47 @@ svg { display: block; }
   transition: background 120ms ease, color 120ms ease;
 }
 .seg-item:hover { color: var(--ink); background: var(--surface); }
+/* Ползунки весов (F16). Без своих стилей `appearance: none` в браузере не рисует бегунок,
+   и такой range невозможно сдвинуть мышью. */
+.range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 22px;
+  background: transparent;
+  cursor: pointer;
+}
+.range::-webkit-slider-runnable-track {
+  height: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+.range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: var(--yellow-strong);
+  box-shadow: 0 1px 3px rgba(16, 27, 45, 0.25);
+}
+.range::-moz-range-track {
+  height: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+.range::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: var(--yellow-strong);
+}
+.range:focus-visible { outline: 2px solid var(--yellow-strong); outline-offset: 4px; }
+
 .seg-item.is-on {
   color: var(--ink);
   font-weight: 700;

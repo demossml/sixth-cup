@@ -204,7 +204,9 @@ export type SalesPlanRow = {
   name: string
   kind: CardKind | null
   retailRub: number | null
-  /** План владельца, шт/мес. */
+  /** Вес популярности из ползунка (0 — не продаётся). */
+  weight: number
+  /** План владельца, шт/мес — считается из веса и общего плана. */
   plannedUnits: number
   /** Факт продаж за окно, шт. */
   actualUnits: number
@@ -324,7 +326,7 @@ export const costApi = {
   menuEngineering: (params: { days?: number; storeUuid?: string } = {}) =>
     api<MenuEngineering>(`/cost/menu-engineering${qs({ days: params.days, storeUuid: params.storeUuid })}`),
   salesPlan: () => api<SalesPlan>('/cost/sales-plan'),
-  saveSalesPlan: (rows: { cardId: number; unitsPerMonth: number }[]) =>
+  saveSalesPlan: (rows: { cardId: number; weight: number }[]) =>
     api<SalesPlan>('/cost/sales-plan', { method: 'PUT', body: { rows } }),
   overheads: () => api<OverheadsState>('/cost/overheads'),
   createOverhead: (body: { name: string; kind?: OverheadRow['kind']; amountRub?: number; period?: OverheadRow['period'] }) =>

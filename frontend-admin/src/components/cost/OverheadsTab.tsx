@@ -25,14 +25,15 @@ export default function OverheadsTab({ reloadKey = 0 }: { reloadKey?: number }) 
   const [busy, setBusy] = useState(false)
   // F15: план продаж по позициям — по нему расходы делятся между блюдами.
   const [plan, setPlan] = useState<SalesPlan | null>(null)
-  const [planDraft, setPlanDraft] = useState<Record<number, string>>({})
+  /** Черновик весов популярности: ползунки, а не цифры. */
+  const [planDraft, setPlanDraft] = useState<Record<number, number>>({})
 
   const loadPlan = () => {
     costApi
       .salesPlan()
       .then((p) => {
         setPlan(p)
-        setPlanDraft(Object.fromEntries(p.rows.map((r) => [r.cardId, r.plannedUnits ? String(r.plannedUnits) : ''])))
+        setPlanDraft(Object.fromEntries(p.rows.map((r) => [r.cardId, r.weight ?? 0])))
       })
       .catch(() => setPlan(null))
   }
@@ -75,9 +76,10 @@ export default function OverheadsTab({ reloadKey = 0 }: { reloadKey?: number }) 
     if (!plan) return
     setBusy(true)
     try {
-      const rows = plan.rows.map((r) => ({ cardId: r.cardId, unitsPerMonth: Number(planDraft[r.cardId]) || 0 }))
+      const rows = plan.rows.map((r) => ({ cardId: r.cardId, weight: Number(planDraft[r.cardId]) || 0 }))
       const p = await costApi.saveSalesPlan(rows)
       setPlan(p)
+      setPlanDraft(Object.fromEntries(p.rows.map((r) => [r.cardId, r.weight ?? 0])))
       const over = await costApi.overheads()
       setState(over)
       toast.push(`План сохранён: ${p.totals.plannedUnits} шт/мес`, 'ok')
@@ -248,101 +250,110 @@ export default function OverheadsTab({ reloadKey = 0 }: { reloadKey?: number }) 
 
       {plan && plan.rows.length > 0 && (
         <Card className="mt-3">
-          <div className="mb-1 text-sm font-semibold">План продаж по позициям</div>
+          <div className="mb-1 text-sm font-semibold">Что продаётся чаще — веса позиций</div>
           <p className="mb-2 text-[12px] text-ink-secondary">
-            Укажите, сколько штук каждой позиции планируете за месяц. Расходы делятся между позициями по их доле
-            ({plan.mode === 'revenue' ? 'пропорционально выручке' : 'поровну по количеству'}), а внутри позиции — на её
-            собственный план. Так в дорогом капучино аренды больше, чем в редком эспрессо.
+            Двигайте ползунки: чем популярнее позиция, тем больше её вес. Штуки и доли считаются сами от общего
+            плана — вписывать цифры по каждой позиции не нужно. Расходы делятся по долям
+            ({plan.mode === 'revenue' ? 'пропорционально выручке' : 'поровну по количеству'}).
           </p>
 
           {plan.source === 'sales' && (
             <div className="mb-2 rounded-lg border border-line bg-surface-2 px-3 py-2 text-[12px] text-ink-secondary">
               Сейчас база — фактически{' '}
-              <b>продажи за {plan.windowDays} дн.</b> ({plan.totals.actualUnits} шт). План пригодится, когда чеков не будет.
+              <b>продажи за {plan.windowDays} дн.</b> ({plan.totals.actualUnits} шт). Веса пригодятся, когда чеков не будет.
             </div>
           )}
           {plan.source === 'none' && (
             <div className="mb-2 rounded-lg border border-amber bg-surface-2 px-3 py-2 text-[12px]">
-              Пока не заполнен ни план, ни продажи — расходы раскладываются на общий объём из поля выше.
+              Укажите общий план продаж выше и расставьте веса — тогда расходы разложатся по позициям.
+            </div>
+          )}
+          {plan.totals.plannedUnits === 0 && plan.source !== 'sales' && (
+            <div className="mb-2 text-[11px] text-ink-tertiary">
+              Общий план пуст: штуки появятся, когда укажете его в поле «Общий план, шт/мес».
             </div>
           )}
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-ink-tertiary">
-                  <th className="px-2 py-2">Позиция</th>
-                  <th className="px-2 py-2 text-right">Цена</th>
-                  <th className="px-2 py-2 text-right">План, шт/мес</th>
-                  <th className="px-2 py-2 text-right">Доля</th>
-                  <th className="px-2 py-2 text-right">План. выручка</th>
-                  <th className="px-2 py-2 text-right">Постоянные на порцию</th>
-                </tr>
-              </thead>
-              <tbody>
-                {plan.rows.map((r) => (
-                  <tr key={r.cardId} className="border-b border-line/60">
-                    <td className="px-2 py-2">{r.name}</td>
-                    <td className="px-2 py-2 text-right">{money(r.retailRub)}</td>
-                    <td className="px-2 py-2 text-right">
-                      <Input
-                        className="ml-auto w-24 text-right"
-                        type="number"
-                        min="0"
-                        step="1"
-                        aria-label={`План продаж: ${r.name}`}
-                        value={planDraft[r.cardId] ?? ''}
-                        onChange={(e) => setPlanDraft((d) => ({ ...d, [r.cardId]: e.target.value }))}
-                      />
-                    </td>
-                    <td className="px-2 py-2 text-right">{pct(r.sharePct)}</td>
-                    <td className="px-2 py-2 text-right">{money(r.planRevenueRub)}</td>
-                    <td className="px-2 py-2 text-right">
-                      <div className="font-semibold">{money(r.overheadPerUnitRub)}</div>
-                      {r.breakdownRub.length > 0 && (
+          <div className="space-y-3">
+            {plan.rows.map((r) => {
+              const weight = planDraft[r.cardId] ?? 0
+              // Живой предпросмотр: двигаем ползунок — сразу видно штуки, долю и расход на порцию.
+              const draftSum = plan.rows.reduce((s2, x) => s2 + Math.max(0, planDraft[x.cardId] ?? 0), 0)
+              const planTotal = Number(planned) || plan.totals.plannedUnits
+              const previewUnits = draftSum > 0 ? (planTotal * weight) / draftSum : planTotal / plan.rows.length
+              const weightOf = (x: (typeof plan.rows)[number]) => {
+                const u = draftSum > 0 ? (planTotal * Math.max(0, planDraft[x.cardId] ?? 0)) / draftSum : previewUnits
+                return plan.mode === 'revenue' ? u * (x.retailRub ?? 0) : u
+              }
+              const totalWeight = plan.rows.reduce((s2, x) => s2 + weightOf(x), 0)
+              const sharePct = totalWeight > 0 ? (weightOf(r) / totalWeight) * 100 : 0
+              const perUnit =
+                previewUnits > 0 && plan.totalRub != null ? ((plan.totalRub ?? 0) * (sharePct / 100)) / previewUnits : null
+              // Разбивку тоже считаем от ползунка, иначе она отстаёт от предпросмотра.
+              const monthlyKop = (a: { amountRub: number | null; period: string }) => {
+                const amount = a.amountRub ?? 0
+                return a.period === 'quarter' ? amount / 3 : a.period === 'year' ? amount / 12 : amount
+              }
+              const previewBreakdown = (state?.rows ?? [])
+                .filter((a) => monthlyKop(a) > 0)
+                .map((a) => ({
+                  kind: a.kind,
+                  perUnitRub: previewUnits > 0 ? (monthlyKop(a) * (sharePct / 100)) / previewUnits : null,
+                }))
+              return (
+                <div key={r.cardId} className="rounded-xl border border-line p-3">
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <div className="min-w-[140px] flex-1 text-sm font-semibold">{r.name}</div>
+                    <div className="text-[12px] text-ink-secondary">{money(r.retailRub)}</div>
+                    <div className="text-[12px] tabular-nums">
+                      вес <b>{weight}</b>
+                    </div>
+                    <div className="text-[12px] text-ink-secondary tabular-nums">
+                      ≈ {Math.round(previewUnits)} шт/мес · {pct(sharePct)}
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm font-semibold">{money(perUnit)}</div>
+                      {previewBreakdown.length > 0 && (
                         <div className="text-[10px] text-ink-tertiary">
-                          {r.breakdownRub.map((b) => `${b.name} ${money(b.perUnitRub)}`).join(' · ')}
+                          {previewBreakdown
+                            .map((b) => `${OVERHEAD_KIND_LABELS[b.kind] ?? b.kind} ${money(b.perUnitRub)}`)
+                            .join(' · ')}
                         </div>
                       )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr className="text-[12px] font-semibold">
-                  <td className="px-2 py-2">Итого</td>
-                  <td className="px-2 py-2" />
-                  <td className="px-2 py-2 text-right">{plan.totals.plannedUnits} шт</td>
-                  <td className="px-2 py-2 text-right">100 %</td>
-                  <td className="px-2 py-2 text-right">{money(plan.totalRevenueRub)}</td>
-                  <td className="px-2 py-2 text-right">{money(plan.totalRub)} за месяц</td>
-                </tr>
-              </tfoot>
-            </table>
+                    </div>
+                  </div>
+                  <div className="mt-2 flex items-center gap-3">
+                    <span className="text-[11px] text-ink-tertiary">редко</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={20}
+                      step={1}
+                      value={weight}
+                      aria-label={`Вес популярности: ${r.name}`}
+                      onChange={(e) => setPlanDraft((d) => ({ ...d, [r.cardId]: Number(e.target.value) }))}
+                      className="range flex-1"
+                    />
+                    <span className="text-[11px] text-ink-tertiary">часто</span>
+                  </div>
+                </div>
+              )
+            })}
           </div>
 
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <Button loading={busy} onClick={() => void savePlan()}>
-              Сохранить план
+              Сохранить веса
             </Button>
             <Button
               variant="secondary"
-              onClick={() => {
-                const total = Number(planned) || 0
-                if (!total || !plan) return
-                // Быстрый способ: задать общий план и доли в процентах — считаем штуки.
-                const shares = plan.rows.map((r) => ({ id: r.cardId, share: Number(planDraft[r.cardId]) || 0 }))
-                const sum = shares.reduce((s2, r) => s2 + r.share, 0)
-                if (sum <= 0) return
-                setPlanDraft(Object.fromEntries(shares.map((r) => [r.id, String(Math.round((total * r.share) / sum))])))
-                toast.push('Доли пересчитаны в штуки — проверьте и сохраните')
-              }}
-              aria-label="Пересчитать проценты в штуки"
+              onClick={() => setPlanDraft(Object.fromEntries(plan.rows.map((r) => [r.cardId, 10])))}
+              aria-label="Поставить всем одинаковый вес"
             >
-              Доли → штуки от общего плана
+              Всем поровну
             </Button>
             <span className="text-[11px] text-ink-tertiary">
-              База: {plan.basisLabel} · сумма постоянных {money(plan.totalRub)}
+              База: {plan.basisLabel} · всего {plan.totals.plannedUnits} шт/мес · постоянные {money(plan.totalRub)}
             </span>
           </div>
         </Card>

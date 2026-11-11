@@ -23,6 +23,7 @@ import {
   overheadPerUnit,
   priceWindowStart,
   retailFromMarkup,
+  unitsFromWeights,
   weightedCostKop,
   type LineInput,
   type PricePoint,
@@ -1272,14 +1273,19 @@ export function overheadRows(): OverheadRow[] {
     .all() as OverheadRow[]
 }
 
-/** План продаж по позициям: сколько единиц каждой карты планируем в месяц. */
+/**
+ * Веса популярности по позициям: «насколько эта позиция продаётся чаще других».
+ * Штуки из них считаются от общего плана: units = план × вес / сумма весов.
+ */
 export function planRows(): Map<number, number> {
-  const rows = db.prepare(`SELECT card_id AS cardId, units_per_month AS units FROM cost_sales_plan`).all() as {
+  const rows = db.prepare(`SELECT card_id AS cardId, weight FROM cost_sales_plan`).all() as {
     cardId: number
-    units: number
+    weight: number
   }[]
-  return new Map(rows.map((r) => [r.cardId, Number(r.units) || 0]))
+  return new Map(rows.map((r) => [r.cardId, Number(r.weight) || 0]))
 }
+
+
 
 /**
  * Факт продаж по картам за окно: сначала привязка к товару кассы, если её нет — по имени.
@@ -1376,9 +1382,14 @@ export function overheadContext() {
   const sold = salesByCard(days)
   const useSales = [...sold.values()].some((v) => v.qty > 0)
 
+  const plannedUnitsById = unitsFromWeights(
+    plan,
+    planned,
+    cards.map((c) => c.id),
+  )
   const mix = cards.map((c) => {
     const fact = sold.get(c.id)
-    const plannedUnits = plan.get(c.id) ?? 0
+    const plannedUnits = plannedUnitsById.get(c.id) ?? 0
     const priceKop = c.retailKop ?? 0
     if (useSales) return { cardId: c.id, units: fact?.qty ?? 0, revenueKop: fact?.revenue ?? 0 }
     return { cardId: c.id, units: plannedUnits, revenueKop: plannedUnits * priceKop }
@@ -1487,9 +1498,15 @@ export function salesPlanState() {
   const sold = salesByCard(ctx.windowDays)
   const prices = unitCostMap()
 
+  const plannedUnitsById = unitsFromWeights(
+    ctx.planRows,
+    ctx.plannedUnitsPerMonth,
+    cards.map((c) => c.id),
+  )
   const rows = cards.map((c) => {
     const alloc = ctx.allocationByCard.get(c.id)
-    const plannedUnits = ctx.planRows.get(c.id) ?? 0
+    const weight = ctx.planRows.get(c.id) ?? 0
+    const plannedUnits = plannedUnitsById.get(c.id) ?? 0
     const actualUnits = sold.get(c.id)?.qty ?? 0
     const priceKop = c.retailKop ?? retailFromMarkup(cardCostKop(c.id, prices), c.markupPct)
     return {
@@ -1497,6 +1514,8 @@ export function salesPlanState() {
       name: c.name,
       kind: c.kind,
       retailRub: rub(priceKop),
+      /** Вес популярности из ползунка (0 — не продаётся). */
+      weight,
       plannedUnits,
       actualUnits,
       unitsUsed: alloc?.units ?? 0,
@@ -1565,7 +1584,12 @@ adminCostTechCards
       'json',
       z.object({
         rows: z.array(
-          z.object({ cardId: z.number().int().positive(), unitsPerMonth: z.number().nonnegative() }),
+          z.object({
+            cardId: z.number().int().positive(),
+            /** Вес популярности (ползунок). `unitsPerMonth` — старый формат, трактуем как вес. */
+            weight: z.number().nonnegative().optional(),
+            unitsPerMonth: z.number().nonnegative().optional(),
+          }),
         ),
       }),
     ),
@@ -1574,15 +1598,16 @@ adminCostTechCards
       const p = c.req.valid('json')
       const t = now()
       const up = db.prepare(
-        `INSERT INTO cost_sales_plan(card_id, units_per_month, updated_at) VALUES(?,?,?)
-         ON CONFLICT(card_id) DO UPDATE SET units_per_month=excluded.units_per_month, updated_at=excluded.updated_at`,
+        `INSERT INTO cost_sales_plan(card_id, weight, units_per_month, updated_at) VALUES(?,?,?,?)
+         ON CONFLICT(card_id) DO UPDATE SET weight=excluded.weight, updated_at=excluded.updated_at`,
       )
       db.transaction(() => {
-        for (const r of p.rows) up.run(r.cardId, r.unitsPerMonth, t)
+        for (const r of p.rows) {
+          const weight = r.weight ?? r.unitsPerMonth ?? 0
+          up.run(r.cardId, weight, 0, t)
+        }
       })()
-      // Итог плана по позициям становится общим планом продаж — иначе старые плитки врут.
-      const sum = p.rows.reduce((s, r) => s + r.unitsPerMonth, 0)
-      if (sum > 0) setSettingValue('planned_units_per_month', String(Math.round(sum)))
+      // Общий план не переписываем: штуки теперь считаются из весов и общего плана.
       return c.json(salesPlanState())
     },
   )

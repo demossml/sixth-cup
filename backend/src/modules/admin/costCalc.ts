@@ -736,3 +736,28 @@ export function allocateOverheads(input: {
     totalRevenueKop,
   }
 }
+
+
+/**
+ * Штуки из весов популярности: `units = общий план × вес / сумма весов`.
+ *
+ * Владелец двигает ползунки («это продаётся чаще»), а не вписывает штуки по каждой позиции.
+ * Если все веса нулевые — считаем, что позиции продаются одинаково: иначе план пропадёт.
+ */
+export function unitsFromWeights(
+  weights: Map<number, number>,
+  totalPlan: number,
+  cardIds: number[],
+): Map<number, number> {
+  const out = new Map<number, number>()
+  const plan = Math.max(0, Number(totalPlan) || 0)
+  const sum = [...weights.values()].reduce((s, w) => s + Math.max(0, w), 0)
+  if (sum > 0) {
+    for (const id of cardIds) out.set(id, (plan * Math.max(0, weights.get(id) ?? 0)) / sum)
+    return out
+  }
+  if (plan > 0 && cardIds.length > 0) {
+    for (const id of cardIds) out.set(id, plan / cardIds.length)
+  }
+  return out
+}
