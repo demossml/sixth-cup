@@ -19,6 +19,10 @@ export type CardListItem = {
   retailRub: number | null
   foodCostPct: number | null
   marginRub: number | null
+  /** Постоянные расходы на единицу (null, если флаг выключен). */
+  overheadPerUnitRub: number | null
+  fullCostPerUnitRub: number | null
+  fullFoodCostPct: number | null
   linesCount: number
   version: { id: number; validFrom: number } | null
   insights: Insight[]
@@ -65,9 +69,41 @@ export type TechCard = {
   retailCalcRub: number | null
   foodCostPct: number | null
   marginRub: number | null
+  /** Полная себестоимость с постоянными расходами (флаг владельца). */
+  overheadEnabled: boolean
+  overheadPerUnitRub: number | null
+  fullCostPerUnitRub: number | null
+  fullFoodCostPct: number | null
+  fullMarginRub: number | null
   missingPrices: boolean
   insights: Insight[]
   lines: CardLine[]
+}
+
+export type OverheadRow = {
+  id: number
+  name: string
+  kind: 'electricity' | 'salary' | 'rent' | 'tax' | 'other'
+  amountKop: number
+  amountRub: number | null
+  period: 'month' | 'quarter' | 'year'
+  active: number
+  sortOrder: number
+}
+
+export type OverheadsState = {
+  rows: OverheadRow[]
+  totalRub: number | null
+  allocation: 'units' | 'revenue'
+  plannedUnitsPerMonth: number
+  windowDays: number
+  soldUnits: number
+  revenueRub: number | null
+  basisLabel: string
+  /** Флаг владельца: учитывать постоянные в себестоимости. */
+  enabled: boolean
+  perUnitRub: number | null
+  appliedPerUnitRub: number | null
 }
 
 export type CostItem = {
@@ -171,11 +207,35 @@ export const costApi = {
     ),
   overview: () =>
     api<{
-      cards: { id: number; name: string; kind: CardKind; status: string; costPerUnitRub: number | null; retailRub: number | null; foodCostPct: number | null; marginRub: number | null; insights: Insight[] }[]
+      cards: {
+        id: number
+        name: string
+        kind: CardKind
+        status: string
+        costPerUnitRub: number | null
+        retailRub: number | null
+        foodCostPct: number | null
+        marginRub: number | null
+        fullCostPerUnitRub: number | null
+        fullFoodCostPct: number | null
+        fullMarginRub: number | null
+        insights: Insight[]
+      }[]
       avgFoodCostPct: number | null
+      avgFullFoodCostPct: number | null
+      overheadEnabled: boolean
       problems: number
       cardsTotal: number
     }>('/cost/overview'),
+  overheads: () => api<OverheadsState>('/cost/overheads'),
+  createOverhead: (body: { name: string; kind?: OverheadRow['kind']; amountRub?: number; period?: OverheadRow['period'] }) =>
+    api<{ id: number; overheads: OverheadsState }>('/cost/overheads', { method: 'POST', body }),
+  updateOverhead: (id: number, body: { name?: string; kind?: OverheadRow['kind']; amountRub?: number | null; period?: OverheadRow['period']; active?: boolean }) =>
+    api<{ overheads: OverheadsState }>(`/cost/overheads/${id}`, { method: 'PUT', body }),
+  deleteOverhead: (id: number) =>
+    api<{ overheads: OverheadsState }>(`/cost/overheads/${id}`, { method: 'DELETE' }),
+  updateCostSettings: (body: { allocation?: 'units' | 'revenue'; plannedUnitsPerMonth?: number; enabled?: boolean }) =>
+    api<{ overheads: OverheadsState }>('/cost/settings', { method: 'PUT', body }),
   bulkReplace: (body: { fromStockItemId: number; toStockItemId: number; factor?: number; cardIds?: number[] }) =>
     api<{ cards: number; lines: number }>('/cost/bulk/replace-ingredient', { method: 'POST', body }),
   bulkLoss: (body: { cardIds: number[]; stockItemId?: number; lossColdPct: number; lossHotPct?: number }) =>

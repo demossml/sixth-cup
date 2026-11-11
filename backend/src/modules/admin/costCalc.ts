@@ -396,3 +396,65 @@ export function cardInsights(input: {
   }
   return out
 }
+
+/* ────────────── постоянные расходы на порцию (электричество, ЗП, аренда, налоги) ────────────── */
+
+export type OverheadMode = 'units' | 'revenue'
+
+export type OverheadAllocation = {
+  /** Сколько постоянных расходов приходится на одну проданную единицу, копейки. */
+  perUnitKop: number | null
+  /** Доля постоянных в цене позиции (только для режима «по выручке»), %. */
+  shareOfPricePct?: number | null
+  /** Откуда взяли базу распределения — важно для честной подписи в UI. */
+  basis: 'sales' | 'planned' | 'none'
+  units: number
+  revenueKop: number
+}
+
+/**
+ * Постоянные расходы за период раскладываются на проданные единицы.
+ *
+ * - `units`: сумма / количество проданных единиц — ровно то, что владелец ждёт от «кружки»;
+ * - `revenue`: сумма × (цена позиции / выручка) — честнее для меню с разными ценами
+ *   (дорогое блюдо забирает больше аренды).
+ *
+ * Если продаж в базе нет, берём плановый объём из настроек; если и его нет — `null`,
+ * чтобы UI показал «нужен объём продаж», а не выдуманное число.
+ */
+export function overheadPerUnit(input: {
+  totalKop: number
+  mode: OverheadMode
+  soldUnits: number
+  revenueKop: number
+  priceKop?: number | null
+  plannedUnits?: number | null
+}): OverheadAllocation {
+  const total = Math.max(0, Number(input.totalKop) || 0)
+  const sold = Math.max(0, Number(input.soldUnits) || 0)
+  const planned = Math.max(0, Number(input.plannedUnits ?? 0) || 0)
+  const units = sold > 0 ? sold : planned
+  const basis: OverheadAllocation['basis'] = sold > 0 ? 'sales' : planned > 0 ? 'planned' : 'none'
+  const revenue = Math.max(0, Number(input.revenueKop) || 0)
+
+  if (units <= 0 || total === 0) {
+    return { perUnitKop: null, basis: 'none', units, revenueKop: revenue }
+  }
+
+  if (input.mode === 'revenue') {
+    const price = Number(input.priceKop ?? 0)
+    // Выручка неизвестна (нет продаж) — считаем по средней цене планового объёма.
+    const revenueBase = revenue > 0 ? revenue : units * (price > 0 ? price : 1)
+    if (price <= 0) return { perUnitKop: null, basis, units, revenueKop: revenueBase }
+    const perUnit = (total * price) / revenueBase
+    return {
+      perUnitKop: perUnit,
+      shareOfPricePct: price > 0 ? round((perUnit / price) * 100, 1) : null,
+      basis,
+      units,
+      revenueKop: revenueBase,
+    }
+  }
+
+  return { perUnitKop: total / units, basis, units, revenueKop: revenue }
+}

@@ -18,6 +18,7 @@ import {
   findCycle,
   foodCostPct,
   marginKop,
+  overheadPerUnit,
   priceWindowStart,
   retailFromMarkup,
   weightedCostKop,
@@ -266,6 +267,7 @@ function computeTotals(
 }
 
 export function serializeCard(id: number, opts: { versionId?: number } = {}) {
+  const overhead = overheadContext()
   const card = cardRow(id)
   if (!card) return null
   const costs = unitCostMap()
@@ -278,6 +280,10 @@ export function serializeCard(id: number, opts: { versionId?: number } = {}) {
   const costPerUnit = costPerUnitKop(totals.costKop, card.outputQty)
   const retail = card.retailPriceKop ?? retailFromMarkup(costPerUnit, card.markupPct)
   const fc = foodCostPct(costPerUnit, retail)
+  // Полная себестоимость = сырьё + доля постоянных расходов (если владелец включил флаг).
+  const overheadPerUnit = overheadForCard(overhead, retail)
+  const fullCostPerUnit = costPerUnit != null && overheadPerUnit != null ? costPerUnit + overheadPerUnit : costPerUnit
+  const fullFc = foodCostPct(fullCostPerUnit, retail)
 
   return {
     id: card.id,
@@ -302,6 +308,11 @@ export function serializeCard(id: number, opts: { versionId?: number } = {}) {
     retailCalcRub: rub(retailFromMarkup(costPerUnit, card.markupPct)),
     foodCostPct: fc,
     marginRub: rub(marginKop(costPerUnit, retail)),
+    overheadEnabled: overhead.enabled,
+    overheadPerUnitRub: rub(overheadPerUnit),
+    fullCostPerUnitRub: rub(fullCostPerUnit),
+    fullFoodCostPct: fullFc,
+    fullMarginRub: rub(marginKop(fullCostPerUnit, retail)),
     missingPrices: totals.missing,
     insights: cardInsights({
       costKop: costPerUnit,
@@ -473,6 +484,9 @@ export const adminCostTechCards = new Hono()
         retailRub: c!.retailRub,
         foodCostPct: c!.foodCostPct,
         marginRub: c!.marginRub,
+        overheadPerUnitRub: c!.overheadPerUnitRub,
+        fullCostPerUnitRub: c!.fullCostPerUnitRub,
+        fullFoodCostPct: c!.fullFoodCostPct,
         linesCount: c!.lines.length,
         version: c!.version ? { id: c!.version.id, validFrom: c!.version.validFrom } : null,
         insights: c!.insights,
@@ -888,6 +902,10 @@ export const adminCostTechCards = new Hono()
       withCost.length > 0
         ? Math.round((withCost.reduce((s, c) => s + (c.foodCostPct ?? 0), 0) / withCost.length) * 10) / 10
         : null
+    const avgFullFoodCost =
+      withCost.length > 0
+        ? Math.round((withCost.reduce((s, c) => s + (c.fullFoodCostPct ?? c.foodCostPct ?? 0), 0) / withCost.length) * 10) / 10
+        : null
     return c.json({
       cards: cards.map((c) => ({
         id: c.id,
@@ -898,9 +916,14 @@ export const adminCostTechCards = new Hono()
         retailRub: c.retailRub,
         foodCostPct: c.foodCostPct,
         marginRub: c.marginRub,
+        fullCostPerUnitRub: c.fullCostPerUnitRub,
+        fullFoodCostPct: c.fullFoodCostPct,
+        fullMarginRub: c.fullMarginRub,
         insights: c.insights,
       })),
       avgFoodCostPct: avgFoodCost,
+      avgFullFoodCostPct: avgFullFoodCost,
+      overheadEnabled: overheadContext().enabled,
       problems: cards.filter((c) => c.insights.length > 0).length,
       cardsTotal: cards.length,
     })
@@ -1198,5 +1221,207 @@ adminCostTechCards
       const p = c.req.valid('json')
       const r = mergeStockItems(p.keepId, p.mergeIds)
       return c.json({ ok: true, ...r })
+    },
+  )
+
+/* ─────────── F11: постоянные расходы и полная себестоимость ─────────── */
+
+type OverheadRow = { id: number; name: string; kind: string; amountKop: number; period: string; active: number; sortOrder: number }
+
+function settingValue(key: string, fallback: string): string {
+  const row = db.prepare(`SELECT value FROM cost_settings WHERE key=?`).get(key) as { value: string } | undefined
+  return row?.value ?? fallback
+}
+
+function setSettingValue(key: string, value: string) {
+  db.prepare(
+    `INSERT INTO cost_settings(key, value) VALUES(?,?)
+     ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+  ).run(key, value)
+}
+
+export function overheadRows(): OverheadRow[] {
+  return db
+    .prepare(
+      `SELECT id, name, kind, amount_kop AS amountKop, period, active, sort_order AS sortOrder
+         FROM cost_overheads ORDER BY sort_order, id`,
+    )
+    .all() as OverheadRow[]
+}
+
+/**
+ * Контекст распределения: сумма постоянных за месяц, база (продажи/план) и цена одной единицы.
+ * Считается один раз на запрос — карт может быть сотня, а база у них общая.
+ */
+export function overheadContext() {
+  const enabled = settingValue('overhead_enabled', '1') !== '0'
+  const rows = overheadRows().filter((r) => r.active)
+  const perMonth = (r: OverheadRow) => (r.period === 'quarter' ? r.amountKop / 3 : r.period === 'year' ? r.amountKop / 12 : r.amountKop)
+  const totalKop = rows.reduce((s, r) => s + perMonth(r), 0)
+  const mode = (settingValue('overhead_allocation', 'units') === 'revenue' ? 'revenue' : 'units') as 'units' | 'revenue'
+  const planned = Number(settingValue('planned_units_per_month', '0')) || 0
+  const days = Number(settingValue('overhead_window_days', '30')) || 30
+
+  const sales = db
+    .prepare(
+      `SELECT COALESCE(SUM(qty),0) AS units, COALESCE(SUM(sum_kopecks),0) AS revenue
+         FROM sales_lines WHERE closed_at >= ?`,
+    )
+    .get(now() - days * 24 * 60 * 60 * 1000) as { units: number; revenue: number }
+
+  // База считается всегда: даже с выключенным флагом полезно видеть, сколько вышло бы на порцию.
+  // Флаг влияет только на «применяется сейчас» и на попадание в себестоимость карт.
+  const base = overheadPerUnit({
+    totalKop,
+    mode: 'units',
+    soldUnits: sales.units,
+    revenueKop: sales.revenue,
+    plannedUnits: planned,
+  })
+
+  return {
+    enabled,
+    rows,
+    totalKop,
+    totalRub: rub(totalKop),
+    mode,
+    plannedUnitsPerMonth: planned,
+    windowDays: days,
+    soldUnits: Number(sales.units) || 0,
+    revenueKop: Number(sales.revenue) || 0,
+    basis: base.basis,
+    /** Подпись в UI: откуда база — из продаж, из плана или её нет. */
+    basisLabel:
+      base.basis === 'sales'
+        ? `по продажам за ${days} дн.: ${Math.round(sales.units)} шт`
+        : base.basis === 'planned'
+          ? `по плану: ${Math.round(planned)} шт/мес`
+          : 'нужен объём продаж или план',
+    /** Включён ли учёт в себестоимости (флаг владельца). */
+    appliedKop: enabled ? base.perUnitKop : null,
+    perUnitKop: base.perUnitKop,
+  }
+}
+
+/** Постоянные расходы на одну единицу карты: в режиме «по выручке» зависят от цены. */
+function overheadForCard(ctx: ReturnType<typeof overheadContext>, priceKop: number | null): number | null {
+  if (!ctx.enabled || ctx.totalKop <= 0) return null
+  if (ctx.mode === 'revenue') {
+    if (priceKop == null || priceKop <= 0) return null
+    return overheadPerUnit({
+      totalKop: ctx.totalKop,
+      mode: 'revenue',
+      soldUnits: ctx.soldUnits,
+      revenueKop: ctx.revenueKop,
+      priceKop,
+      plannedUnits: ctx.plannedUnitsPerMonth,
+    }).perUnitKop
+  }
+  return ctx.perUnitKop
+}
+
+/** Состояние раздела «Расходы» — один формат для чтения и для мутаций, чтобы UI не «терял» цифры. */
+export function overheadsState() {
+  const ctx = overheadContext()
+  return {
+    rows: ctx.rows.map((r) => ({ ...r, amountRub: rub(r.amountKop) })),
+    totalRub: ctx.totalRub,
+    allocation: ctx.mode,
+    plannedUnitsPerMonth: ctx.plannedUnitsPerMonth,
+    windowDays: ctx.windowDays,
+    soldUnits: ctx.soldUnits,
+    revenueRub: rub(ctx.revenueKop),
+    basisLabel: ctx.basisLabel,
+    enabled: ctx.enabled,
+    perUnitRub: rub(ctx.perUnitKop),
+    appliedPerUnitRub: rub(ctx.appliedKop),
+  }
+}
+
+adminCostTechCards
+  .get('/cost/overheads', (c) => c.json(overheadsState()))
+  .post(
+    '/cost/overheads',
+    zValidator(
+      'json',
+      z.object({
+        name: z.string().trim().min(1).max(80),
+        kind: z.enum(['electricity', 'salary', 'rent', 'tax', 'other']).optional(),
+        amountRub: z.number().nonnegative().optional(),
+        period: z.enum(['month', 'quarter', 'year']).optional(),
+      }),
+    ),
+    (c) => {
+      requireWrite(c)
+      const p = c.req.valid('json')
+      const t = now()
+      const max = (db.prepare(`SELECT COALESCE(MAX(sort_order),0) AS m FROM cost_overheads`).get() as { m: number }).m
+      const info = db
+        .prepare(
+          `INSERT INTO cost_overheads(name, kind, amount_kop, period, active, sort_order, created_at, updated_at)
+           VALUES(?,?,?,?,1,?,?,?)`,
+        )
+        .run(p.name, p.kind ?? 'other', kop(p.amountRub) ?? 0, p.period ?? 'month', max + 10, t, t)
+      return c.json({ ok: true, id: Number(info.lastInsertRowid), overheads: overheadsState() })
+    },
+  )
+  .put(
+    '/cost/overheads/:id',
+    zValidator(
+      'json',
+      z.object({
+        name: z.string().trim().min(1).max(80).optional(),
+        kind: z.enum(['electricity', 'salary', 'rent', 'tax', 'other']).optional(),
+        amountRub: z.number().nonnegative().nullable().optional(),
+        period: z.enum(['month', 'quarter', 'year']).optional(),
+        active: z.boolean().optional(),
+      }),
+    ),
+    (c) => {
+      requireWrite(c)
+      const id = Number(c.req.param('id'))
+      const cur = db.prepare(`SELECT * FROM cost_overheads WHERE id=?`).get(id) as
+        | { name: string; kind: string; amount_kop: number; period: string; active: number }
+        | undefined
+      if (!cur) throw bad('Статья расходов не найдена', 404)
+      const p = c.req.valid('json')
+      db.prepare(
+        `UPDATE cost_overheads SET name=?, kind=?, amount_kop=?, period=?, active=?, updated_at=? WHERE id=?`,
+      ).run(
+        p.name ?? cur.name,
+        p.kind ?? cur.kind,
+        p.amountRub !== undefined ? kop(p.amountRub) ?? 0 : cur.amount_kop,
+        p.period ?? cur.period,
+        p.active !== undefined ? (p.active ? 1 : 0) : cur.active,
+        now(),
+        id,
+      )
+      return c.json({ ok: true, overheads: overheadsState() })
+    },
+  )
+  .delete('/cost/overheads/:id', (c) => {
+    requireWrite(c)
+    const id = Number(c.req.param('id'))
+    const r = db.prepare(`DELETE FROM cost_overheads WHERE id=?`).run(id)
+    if (!r.changes) throw bad('Статья расходов не найдена', 404)
+    return c.json({ ok: true, overheads: overheadsState() })
+  })
+  .put(
+    '/cost/settings',
+    zValidator(
+      'json',
+      z.object({
+        allocation: z.enum(['units', 'revenue']).optional(),
+        plannedUnitsPerMonth: z.number().nonnegative().optional(),
+        enabled: z.boolean().optional(),
+      }),
+    ),
+    (c) => {
+      requireWrite(c)
+      const p = c.req.valid('json')
+      if (p.allocation) setSettingValue('overhead_allocation', p.allocation)
+      if (p.plannedUnitsPerMonth !== undefined) setSettingValue('planned_units_per_month', String(p.plannedUnitsPerMonth))
+      if (p.enabled !== undefined) setSettingValue('overhead_enabled', p.enabled ? '1' : '0')
+      return c.json({ ok: true, overheads: overheadsState() })
     },
   )

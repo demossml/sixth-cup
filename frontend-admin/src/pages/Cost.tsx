@@ -13,6 +13,7 @@ import { RefreshCw, Upload } from 'lucide-react'
 import { initialCostTab, type CostTabKey } from '../lib/costTabs'
 import TechCardsTab from '../components/cost/TechCardsTab'
 import ItemsTab from '../components/cost/ItemsTab'
+import OverheadsTab from '../components/cost/OverheadsTab'
 import SignalsTab from '../components/cost/SignalsTab'
 import OverviewTab from '../components/cost/OverviewTab'
 import ImportPanel from '../components/cost/ImportPanel'
@@ -20,6 +21,7 @@ import ImportPanel from '../components/cost/ImportPanel'
 const TABS: { key: CostTabKey; label: string }[] = [
   { key: 'tech', label: 'Техкарты' },
   { key: 'items', label: 'Ингредиенты' },
+  { key: 'overheads', label: 'Расходы' },
   { key: 'signals', label: 'Сигналы' },
   { key: 'summary', label: 'Сводка' },
 ]
@@ -54,7 +56,7 @@ export default function Cost() {
     <div>
       <PageHeader
         title="Себестоимость"
-        subtitle="Техкарты, заготовки и цены из накладных. Себестоимость считается по брутто."
+        subtitle="Техкарты, заготовки, цены из накладных и постоянные расходы на порцию."
         actions={
           <>
             <Button variant="secondary" onClick={() => setReloadKey((n) => n + 1)} aria-label="Обновить">
@@ -110,6 +112,7 @@ export default function Cost() {
         <TechCardsTab key={`tech-${reloadKey}`} initialCardId={openCardId ?? undefined} onOpenSignals={() => selectTab('signals')} />
       )}
       {tab === 'items' && <ItemsTab reloadKey={reloadKey} onImport={() => setImportOpen(true)} />}
+      {tab === 'overheads' && <OverheadsTab reloadKey={reloadKey} />}
       {tab === 'signals' && (
         <SignalsTab
           key={`signals-${reloadKey}`}

@@ -345,3 +345,142 @@ describe('F10: склейка дублей позиций', () => {
     expect(bad2.status).toBe(400)
   })
 })
+
+describe('F11: постоянные расходы и флаг учёта', () => {
+  async function setOverheads(amounts: Record<string, number>) {
+    const list = await admin('GET', '/cost/overheads')
+    for (const row of list.json.rows) {
+      const amount = amounts[row.name]
+      if (amount != null) await admin('PUT', `/cost/overheads/${row.id}`, { amountRub: amount })
+    }
+  }
+
+  async function resetOverheads() {
+    const list = await admin('GET', '/cost/overheads')
+    for (const row of list.json.rows) await admin('PUT', `/cost/overheads/${row.id}`, { amountRub: 0 })
+    await admin('PUT', '/cost/settings', { enabled: true, allocation: 'units', plannedUnitsPerMonth: 0 })
+  }
+
+  it('расходы месяца раскладываются на план продаж и попадают в полную себестоимость', async () => {
+    await resetOverheads()
+    await setOverheads({ Электричество: 10000, Зарплата: 90000, Аренда: 150000, Налоги: 40000 })
+    // 290 000 ₽ на 1000 единиц = 290 ₽ на порцию
+    await admin('PUT', '/cost/settings', { enabled: true, plannedUnitsPerMonth: 1000 })
+
+    const ctx = await admin('GET', '/cost/overheads')
+    expect(ctx.json.totalRub).toBe(290000)
+    expect(ctx.json.enabled).toBe(true)
+    expect(ctx.json.perUnitRub).toBe(290)
+    expect(ctx.json.basisLabel).toMatch(/по плану/)
+
+    const item = await createItem('Зерно для расходов QA', 'g', { manualCostKop: 200 })
+    const card = await admin('POST', '/cost/tech-cards', {
+      name: 'Карта с расходами QA',
+      retailPriceRub: 500,
+      lines: [{ stockItemId: item, qtyBrutto: 10 }],
+    })
+    // сырьё 10 г × 2 ₽ = 20 ₽; полная = 20 + 290 = 310 ₽ из 500 ₽
+    expect(card.json.card.costPerUnitRub).toBeCloseTo(20, 2)
+    expect(card.json.card.overheadPerUnitRub).toBeCloseTo(290, 2)
+    expect(card.json.card.fullCostPerUnitRub).toBeCloseTo(310, 2)
+    expect(card.json.card.fullFoodCostPct).toBeCloseTo(62, 1)
+    expect(card.json.card.fullMarginRub).toBeCloseTo(190, 2)
+  })
+
+  it('флаг выключен — статьи остаются, но в себестоимость не входят', async () => {
+    const item = await createItem('Зерно флага QA', 'g', { manualCostKop: 200 })
+    const card = await admin('POST', '/cost/tech-cards', {
+      name: 'Карта флага QA',
+      retailPriceRub: 500,
+      lines: [{ stockItemId: item, qtyBrutto: 10 }],
+    })
+    expect(card.status).toBe(200)
+    await admin('PUT', '/cost/settings', { allocation: 'units', plannedUnitsPerMonth: 1000 })
+
+    const on = await admin('GET', '/cost/tech-cards?q=Карта флага QA')
+    expect(on.json.cards[0].overheadPerUnitRub).toBeCloseTo(290, 2)
+    expect(on.json.cards[0].fullCostPerUnitRub).toBeCloseTo(310, 2)
+
+    await admin('PUT', '/cost/settings', { enabled: false })
+    const ctx = await admin('GET', '/cost/overheads')
+    expect(ctx.json.totalRub).toBe(290000) // суммы на месте
+    expect(ctx.json.enabled).toBe(false)
+    expect(ctx.json.appliedPerUnitRub).toBeNull()
+
+    const off = await admin('GET', '/cost/tech-cards?q=Карта флага QA')
+    expect(off.json.cards[0].overheadPerUnitRub).toBeNull()
+    expect(off.json.cards[0].fullCostPerUnitRub).toBeCloseTo(20, 2)
+    expect(off.json.cards[0].fullFoodCostPct).toBeCloseTo(4, 1)
+
+    await admin('PUT', '/cost/settings', { enabled: true })
+    const back = await admin('GET', '/cost/tech-cards?q=Карта флага QA')
+    expect(back.json.cards[0].overheadPerUnitRub).toBeCloseTo(290, 2)
+  })
+
+  it('режим «по выручке»: дорогая позиция забирает больше постоянных', async () => {
+    const item = await createItem('Зерно выручка QA', 'g', { manualCostKop: 100 })
+    const cheap = await admin('POST', '/cost/tech-cards', {
+      name: 'Дешёвая QA',
+      retailPriceRub: 100,
+      lines: [{ stockItemId: item, qtyBrutto: 10 }],
+    })
+    const pricey = await admin('POST', '/cost/tech-cards', {
+      name: 'Дорогая QA',
+      retailPriceRub: 400,
+      lines: [{ stockItemId: item, qtyBrutto: 10 }],
+    })
+    // Реальная база — выручка: дешёвая позиция продана 100 раз на 10 000 ₽.
+    const t = Date.now()
+    db.prepare(
+      `INSERT INTO sales_lines(store_uuid, doc_id, product_id, name_snapshot, qty, sum_kopecks, closed_at)
+       VALUES('s1','d1',?, 'Дешёвая QA', 100, 1000000, ?)`,
+    ).run(cheap.json.card.id, t)
+
+    await admin('PUT', '/cost/settings', { allocation: 'revenue', enabled: true, plannedUnitsPerMonth: 0 })
+    const ctx = await admin('GET', '/cost/overheads')
+    expect(ctx.json.basisLabel).toMatch(/по продажам/)
+    expect(ctx.json.revenueRub).toBe(10000)
+
+    const cheapCard = await admin('GET', `/cost/tech-cards/${cheap.json.card.id}`)
+    const priceyCard = await admin('GET', `/cost/tech-cards/${pricey.json.card.id}`)
+    // 100 ₽ из 10 000 ₽ → 1 % расходов; 400 ₽ → 4 %
+    expect(cheapCard.json.card.overheadPerUnitRub).toBeCloseTo(2900, 0)
+    expect(priceyCard.json.card.overheadPerUnitRub).toBeCloseTo(11600, 0)
+    expect(priceyCard.json.card.overheadPerUnitRub).toBeGreaterThan(cheapCard.json.card.overheadPerUnitRub)
+    await admin('PUT', '/cost/settings', { allocation: 'units', plannedUnitsPerMonth: 0 })
+    await resetOverheads()
+  })
+
+  it('ответы мутаций «Расходов» в том же формате, что и чтение (UI не теряет цифры)', async () => {
+    // База — план: убираем продажи, оставшиеся от предыдущей проверки.
+    db.prepare(`DELETE FROM sales_lines WHERE name_snapshot LIKE '%QA%'`).run()
+    await resetOverheads()
+    await admin('PUT', '/cost/settings', { allocation: 'units', plannedUnitsPerMonth: 500 })
+    const rows = (await admin('GET', '/cost/overheads')).json.rows as { id: number; name: string; kind: string }[]
+    const rent = rows.find((r) => r.kind === 'rent')!
+    const put = await admin('PUT', `/cost/overheads/${rent.id}`, { amountRub: 50000 })
+    expect(put.status).toBe(200)
+    const state = put.json.overheads
+    // Те же поля, что отдаёт GET: суммы в рублях и расход на порцию.
+    expect(state.totalRub).toBe(50000)
+    expect(state.perUnitRub).toBe(100)
+    expect(state.appliedPerUnitRub).toBe(100)
+    expect(state.rows.find((r: { kind: string }) => r.kind === 'rent')!.amountRub).toBe(50000)
+    expect(state.basisLabel).toMatch(/по плану/)
+
+    const created = await admin('POST', '/cost/overheads', { name: 'QA интернет', amountRub: 1000, kind: 'other' })
+    expect(created.status).toBe(200)
+    expect(created.json.overheads.totalRub).toBe(51000)
+    expect(created.json.overheads.perUnitRub).toBe(102)
+
+    const removed = await admin('DELETE', `/cost/overheads/${created.json.id}`)
+    expect(removed.json.overheads.totalRub).toBe(50000)
+
+    const toggled = await admin('PUT', '/cost/settings', { enabled: false })
+    expect(toggled.json.overheads.perUnitRub).toBe(100)
+    expect(toggled.json.overheads.appliedPerUnitRub).toBeNull()
+
+    await admin('PUT', '/cost/settings', { enabled: true, plannedUnitsPerMonth: 0 })
+    await resetOverheads()
+  })
+})

@@ -8,6 +8,7 @@ import {
   findCycle,
   foodCostPct,
   marginKop,
+  overheadPerUnit,
   priceWindowStart,
   projectNorms,
   resolveLine,
@@ -202,5 +203,50 @@ describe('F2: циклы, проекция, сигналы', () => {
       'negative_margin',
     ])
     expect(cardInsights({ costKop: 50, retailKop: 200, missingPrices: false, foodCostPct: 25 })).toEqual([])
+  })
+})
+
+describe('F11: постоянные расходы на порцию', () => {
+  it('режим «на единицу»: сумма месяца делится на проданные единицы', () => {
+    const r = overheadPerUnit({ totalKop: 300_000, mode: 'units', soldUnits: 3000, revenueKop: 0 })
+    expect(r.perUnitKop).toBe(100) // 3000 ₽ / 3000 чашек = 1 ₽
+    expect(r.basis).toBe('sales')
+  })
+
+  it('без продаж берётся плановый объём и это честно помечено', () => {
+    const r = overheadPerUnit({ totalKop: 300_000, mode: 'units', soldUnits: 0, revenueKop: 0, plannedUnits: 1500 })
+    expect(r.perUnitKop).toBe(200)
+    expect(r.basis).toBe('planned')
+  })
+
+  it('без продаж и плана — null, а не выдуманное число', () => {
+    const r = overheadPerUnit({ totalKop: 300_000, mode: 'units', soldUnits: 0, revenueKop: 0 })
+    expect(r.perUnitKop).toBeNull()
+    expect(r.basis).toBe('none')
+  })
+
+  it('режим «по выручке»: дорогая позиция забирает больше расходов', () => {
+    const cheap = overheadPerUnit({
+      totalKop: 100_000,
+      mode: 'revenue',
+      soldUnits: 100,
+      revenueKop: 100_000, // 1000 ₽ выручки
+      priceKop: 20_000, // 200 ₽
+    })
+    const pricey = overheadPerUnit({
+      totalKop: 100_000,
+      mode: 'revenue',
+      soldUnits: 100,
+      revenueKop: 100_000,
+      priceKop: 40_000, // 400 ₽
+    })
+    expect(cheap.perUnitKop).toBeCloseTo(20_000, 0) // 1000 ₽ × 200/1000
+    expect(pricey.perUnitKop).toBeCloseTo(40_000, 0)
+    expect(pricey.shareOfPricePct).toBeCloseTo(100, 1)
+  })
+
+  it('ноль в расходах — распределять нечего', () => {
+    const r = overheadPerUnit({ totalKop: 0, mode: 'units', soldUnits: 100, revenueKop: 0 })
+    expect(r.perUnitKop).toBeNull()
   })
 })

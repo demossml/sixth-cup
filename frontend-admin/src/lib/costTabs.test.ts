@@ -13,9 +13,11 @@ describe('initialCostTab', () => {
     expect(initialCostTab('other')).toBe('tech')
   })
 
-  it('«Сигналы» и «Сводка» открываются по параметру, старые рецепты ведут в «Техкарты»', () => {
+  it('«Сигналы», «Сводка» и «Расходы» открываются по параметру, старые рецепты — в «Техкарты»', () => {
     expect(initialCostTab('signals')).toBe('signals')
     expect(initialCostTab('summary')).toBe('summary')
+    expect(initialCostTab('overheads')).toBe('overheads')
+    expect(initialCostTab('expenses')).toBe('overheads')
     expect(initialCostTab('recipes')).toBe('tech')
   })
 })

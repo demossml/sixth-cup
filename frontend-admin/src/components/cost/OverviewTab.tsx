@@ -44,6 +44,12 @@ export default function OverviewTab({ onOpenCard, reloadKey = 0 }: { onOpenCard:
           <div className="text-[11px] uppercase tracking-wide text-ink-tertiary">Средний фудкост</div>
           <div className="text-lg font-bold">{pct(data.avgFoodCostPct)}</div>
         </Card>
+        {data.overheadEnabled && (
+          <Card className="px-3 py-2">
+            <div className="text-[11px] uppercase tracking-wide text-ink-tertiary">Средний полный фудкост</div>
+            <div className="text-lg font-bold">{pct(data.avgFullFoodCostPct)}</div>
+          </Card>
+        )}
         <Card className="px-3 py-2">
           <div className="text-[11px] uppercase tracking-wide text-ink-tertiary">С замечаниями</div>
           <div className="text-lg font-bold">{data.problems}</div>
@@ -91,8 +97,10 @@ export default function OverviewTab({ onOpenCard, reloadKey = 0 }: { onOpenCard:
               <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-ink-tertiary">
                 <th className="px-3 py-2">Техкарта</th>
                 <th className="px-3 py-2">Себестоимость</th>
+                {data.overheadEnabled && <th className="px-3 py-2">Полная</th>}
                 <th className="px-3 py-2">Цена</th>
                 <th className="px-3 py-2">Фудкост</th>
+                {data.overheadEnabled && <th className="px-3 py-2">Фудкост полный</th>}
                 <th className="px-3 py-2">Маржа</th>
                 <th className="px-3 py-2">Замечания</th>
               </tr>
@@ -105,8 +113,12 @@ export default function OverviewTab({ onOpenCard, reloadKey = 0 }: { onOpenCard:
                     <div className="text-[11px] text-ink-tertiary">{KIND_LABELS[c.kind] ?? c.kind}</div>
                   </td>
                   <td className="px-3 py-2">{money(c.costPerUnitRub)}</td>
+                  {data.overheadEnabled && <td className="px-3 py-2">{money(c.fullCostPerUnitRub)}</td>}
                   <td className="px-3 py-2">{money(c.retailRub)}</td>
                   <td className={`px-3 py-2 ${c.foodCostPct != null && c.foodCostPct > 35 ? 'font-semibold text-bad' : ''}`}>{pct(c.foodCostPct)}</td>
+                  {data.overheadEnabled && (
+                    <td className={`px-3 py-2 ${c.fullFoodCostPct != null && c.fullFoodCostPct > 35 ? 'font-semibold text-bad' : ''}`}>{pct(c.fullFoodCostPct)}</td>
+                  )}
                   <td className="px-3 py-2">{money(c.marginRub)}</td>
                   <td className="px-3 py-2">
                     <div className="flex flex-wrap gap-1">

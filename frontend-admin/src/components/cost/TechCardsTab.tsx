@@ -583,6 +583,26 @@ function TechCardEditor({ cardId, onClose }: { cardId: number | 'new'; onClose: 
             <div className="text-lg font-bold">{money(computed.margin)}</div>
           </div>
         </div>
+        {card?.overheadEnabled && card.overheadPerUnitRub != null && (
+          <div className="mt-3 grid gap-2 border-t border-line pt-3 sm:grid-cols-4">
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-ink-tertiary">Постоянные на порцию</div>
+              <div className="text-sm font-semibold">{money(card.overheadPerUnitRub)}</div>
+            </div>
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-ink-tertiary">Полная себестоимость</div>
+              <div className="text-sm font-semibold">{money(card.fullCostPerUnitRub)}</div>
+            </div>
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-ink-tertiary">Полный фудкост</div>
+              <div className="text-sm font-semibold">{pct(card.fullFoodCostPct)}</div>
+            </div>
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-ink-tertiary">Маржа с расходами</div>
+              <div className="text-sm font-semibold">{money(card.fullMarginRub)}</div>
+            </div>
+          </div>
+        )}
       </Card>
 
       <PickerDrawer
