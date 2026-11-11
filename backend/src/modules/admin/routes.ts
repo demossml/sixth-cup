@@ -78,6 +78,7 @@ import { adminAnalytics } from './analytics'
 import { adminAi } from './ai'
 import { adminStock } from './stock'
 import { adminCost } from './cost'
+import { adminCostTechCards } from './costTechCards'
 import { adminMenuLayouts } from './menuLayouts'
 import { adminMenuAssets } from './menuAssets'
 import { adminStudio } from './studio'
@@ -1994,6 +1995,7 @@ adminRoutes.route('/', adminConsole)
 adminRoutes.route('/', adminStudio) // before adminStock: /inventory/overview must win over /inventory/:id
 adminRoutes.route('/', adminStock)
 adminRoutes.route('/', adminCost)
+adminRoutes.route('/', adminCostTechCards) // F3: техкарты v2 (/cost/tech-cards, /cost/items, /cost/insights)
 adminRoutes.route('/', adminMenuLayouts)
 adminRoutes.route('/', adminMenuAssets)
 adminRoutes.route('/', staffAdminRoutes)

@@ -6,9 +6,15 @@ describe('initialCostTab', () => {
     expect(initialCostTab('missing')).toBe('fill')
   })
 
-  it('defaults to «Рецепты» without a focus parameter', () => {
-    expect(initialCostTab(null)).toBe('recipes')
-    expect(initialCostTab('other')).toBe('recipes')
+  it('defaults to «Техкарты» without a focus parameter', () => {
+    expect(initialCostTab(null)).toBe('tech')
+    expect(initialCostTab('other')).toBe('tech')
+  })
+
+  it('opens «Сигналы» and старые вкладки по прямому параметру', () => {
+    expect(initialCostTab('signals')).toBe('signals')
+    expect(initialCostTab('recipes')).toBe('recipes')
+    expect(initialCostTab('summary')).toBe('summary')
   })
 })
 

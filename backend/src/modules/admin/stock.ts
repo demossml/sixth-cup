@@ -744,6 +744,11 @@ export const adminStock = new Hono()
           `INSERT INTO stock_movements(stock_item_id, batch_id, store_uuid, qty, kind, doc_type, doc_id, note, created_at)
            VALUES(?,?,?,?,'purchase_in','purchase_invoice',?,?,?)`,
         ).run(l.stockItemId, batchId, inv.storeUuid, l.qty, id, 'Приход по накладной', t)
+        // F4: история цен — из неё живёт средневзвешенная себестоимость техкарт.
+        db.prepare(
+          `INSERT INTO stock_item_cost_history(stock_item_id, at, cost_kop, source, ref_id)
+           VALUES(?,?,?,'invoice',?)`,
+        ).run(l.stockItemId, t, l.unitCostKop, id)
       }
       db.prepare(`UPDATE purchase_invoices SET status='posted', posted_at=?, updated_at=? WHERE id=?`).run(t, t, id)
       // D-17: заказ считается принятым по ПРОВЕДЁННОЙ накладной, а не по её созданию.

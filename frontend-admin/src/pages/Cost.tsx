@@ -9,6 +9,8 @@ import {
 import { Plus, RefreshCw, Sparkles, Trash2, Upload, Pencil } from 'lucide-react'
 import { csvName, downloadCsv } from '../lib/csv'
 import { initialCostTab, shouldAutoFocusMissing, type CostTabKey } from '../lib/costTabs'
+import TechCardsTab from '../components/cost/TechCardsTab'
+import SignalsTab from '../components/cost/SignalsTab'
 
 type Cat = { id: number; name: string; sortOrder: number; isSystem: number }
 type Ing = {
@@ -40,6 +42,8 @@ export default function Cost() {
   // ?focus=missing — из импорта техкарты и внешних ссылок: сразу режим дозаполнения.
   const focusMissing = params.get('focus') === 'missing'
   const [tab, setTab] = useState<CostTabKey>(initialCostTab(params.get('focus')))
+  // Переход «сигнал → карта»: держим id, чтобы вкладка открыла нужную техкарту.
+  const [openCardId, setOpenCardId] = useState<number | null>(null)
   const cats = useApi<{ categories: Cat[] }>('/cost/categories')
   const ings = useApi<{ ingredients: Ing[] }>('/cost/ingredients')
   const recipes = useApi<{ recipes: Recipe[] }>('/cost/recipes')
@@ -151,11 +155,27 @@ export default function Cost() {
         value={tab}
         onChange={selectTab}
         items={[
+          { key: 'tech', label: 'Техкарты' },
+          { key: 'signals', label: 'Сигналы' },
           { key: 'fill', label: 'Дозаполнить', count: missingCount || null },
-          { key: 'recipes', label: 'Рецепты' },
+          { key: 'recipes', label: 'Старые рецепты' },
           { key: 'summary', label: 'Сводка' },
         ]}
       />
+      {tab === 'tech' && (
+        <TechCardsTab
+          initialCardId={openCardId ?? undefined}
+          onOpenSignals={() => selectTab('signals')}
+        />
+      )}
+      {tab === 'signals' && (
+        <SignalsTab
+          onOpenCard={(id) => {
+            setOpenCardId(id)
+            selectTab('tech')
+          }}
+        />
+      )}
       {tab === 'fill' && (
         <FillTab
           cats={cats.data?.categories || []}
