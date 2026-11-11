@@ -56,7 +56,7 @@ import { Button, Banner, Drawer, cx, ErrorBox, Input, useToast } from '../ui/kit
 import MenuCanvas from '../components/menuLayout/MenuCanvas'
 import {
   alignBlocks, clampZoom, distributeBlocks, domTextMeasurer, editorMode, fitFontSize, groupBlocks,
-  groupKeyOf, groupSelectionIds, layoutColumns, rectsIntersect, snapToGrid,
+  groupKeyOf, groupSelectionIds, layoutColumns, snapToGrid,
   snapWithGuides, ungroupBlocks, zoomStep,
   type AlignMode, type SnapGuides, type LeftTab, type RightTab, type MobileTab,
 } from '../lib/menuTools'
@@ -70,7 +70,7 @@ import {
 } from '../lib/blockComments'
 import { typograph } from '../lib/typography'
 import { MENU_LAYOUT_V2 } from '../lib/featureFlags'
-import { safeBoxOffset, safeBoxSize } from '../lib/sheetGeometry'
+import { safeBoxSize } from '../lib/sheetGeometry'
 import { perfDragEnd, perfDragStart, perfFrame, perfInit, perfPdf, perfTTI } from '../lib/perf'
 import {
   applyProgress, blockJob, cancelJob, createJob, exportQuery, failJob, finishJob, liveJobs, nextQueued,
@@ -89,6 +89,7 @@ import ContextMenu from '../components/menuLayout/ContextMenu'
 import FormatDrawer from '../components/menuLayout/FormatDrawer'
 import MobileEditor from '../components/menuLayout/MobileEditor'
 import CanvasToolbar from '../components/menuLayout/CanvasToolbar'
+import CanvasViewport from '../components/menuLayout/CanvasViewport'
 import EditorSkeleton from '../components/menuLayout/EditorSkeleton'
 import CatalogPane from '../components/menuLayout/panes/CatalogPane'
 import PlacesPane from '../components/menuLayout/panes/PlacesPane'
@@ -2009,92 +2010,20 @@ export default function MenuLayoutEditor() {
             format={format}
           />
 
-          <div
-            ref={canvasBox}
-            className={cx('flex-1 overflow-auto rounded-xl border border-line bg-[#e9ebef] p-4', spaceDown && 'cursor-grab')}
-            onPointerDown={(e) => {
-              // Пан: пробел + левая кнопка или средняя кнопка мыши.
-              if (!(spaceDown || e.button === 1)) return
-              const box = canvasBox.current
-              if (!box) return
-              e.preventDefault()
-              const start = { x: e.clientX, y: e.clientY, left: box.scrollLeft, top: box.scrollTop }
-              const move = (ev: PointerEvent) => {
-                box.scrollLeft = start.left - (ev.clientX - start.x)
-                box.scrollTop = start.top - (ev.clientY - start.y)
-              }
-              const up = () => {
-                window.removeEventListener('pointermove', move)
-                window.removeEventListener('pointerup', up)
-              }
-              window.addEventListener('pointermove', move)
-              window.addEventListener('pointerup', up)
-            }}
-            onWheel={(e) => {
-              // Ctrl/⌘ + колесо — зум как в редакторах; обычное колесо листает.
-              if (!e.ctrlKey && !e.metaKey) return
-              e.preventDefault()
-              setZoom((z) => clampZoom(z * (e.deltaY < 0 ? 1.1 : 0.9)))
-            }}
+          <CanvasViewport
+            canvasBox={canvasBox}
+            sheetRef={sheetRef}
+            spaceDown={spaceDown}
+            zoom={zoom}
+            setZoom={setZoom}
+            format={format}
+            blocks={page?.blocks ?? []}
+            setSelectedId={setSelectedId}
+            setSelectedIds={setSelectedIds}
+            setMarquee={setMarquee}
           >
-            <div
-              ref={sheetRef}
-              className="mx-auto rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
-              tabIndex={-1}
-              aria-label="Лист макета"
-              style={{
-                width: `${Math.round(560 * zoom)}px`,
-                // На планшете колонка уже 560 px: лист ужимается по ней, а не уезжает под панель.
-                maxWidth: '100%',
-                aspectRatio: String(LAYOUT_FORMATS.find((f) => f.id === format)?.ratio ?? 210 / 297),
-              }}
-              onPointerDown={(e) => {
-                const target = e.target as HTMLElement
-                const empty = target === e.currentTarget || !!target.closest('.mc-safe')
-                if (target === e.currentTarget) {
-                  setSelectedId(null)
-                  setSelectedIds([])
-                }
-                // Рамка выделения: тянем по пустому месту безопасной области.
-                if (!empty || (target !== e.currentTarget && target.closest('.mc-block'))) return
-                const sheet = sheetRef.current
-                if (!sheet) return
-                const box = sheet.getBoundingClientRect()
-                const off = safeBoxOffset(box)
-                const size = safeBoxSize(box)
-                const toPct = (clientX: number, clientY: number) => ({
-                  x: ((clientX - box.left - off.left) / size.w) * 100,
-                  y: ((clientY - box.top - off.top) / size.h) * 100,
-                })
-                const start = toPct(e.clientX, e.clientY)
-                setMarquee(null)
-                const move = (ev: PointerEvent) => {
-                  const cur = toPct(ev.clientX, ev.clientY)
-                  const rect = {
-                    xPct: Math.max(0, Math.min(start.x, cur.x)),
-                    yPct: Math.max(0, Math.min(start.y, cur.y)),
-                    wPct: Math.abs(cur.x - start.x),
-                    hPct: Math.abs(cur.y - start.y),
-                  }
-                  setMarquee(rect)
-                  const hit = (page?.blocks ?? [])
-                    .filter((b) => !b.hidden && rectsIntersect(rect, b))
-                    .map((b) => b.id)
-                  setSelectedIds(hit)
-                  setSelectedId(hit[0] ?? null)
-                }
-                const up = () => {
-                  setMarquee(null)
-                  window.removeEventListener('pointermove', move)
-                  window.removeEventListener('pointerup', up)
-                }
-                window.addEventListener('pointermove', move)
-                window.addEventListener('pointerup', up)
-              }}
-            >
-              <div className="h-full w-full shadow-[0_10px_30px_rgba(16,24,40,.15)]">{canvas({ interactive: true, grid: showGrid, safe: showSafe })}</div>
-            </div>
-          </div>
+            {canvas({ interactive: true, grid: showGrid, safe: showSafe })}
+          </CanvasViewport>
 
           <div className="flex flex-wrap items-center gap-1 rounded-xl border border-line bg-white px-2 py-1.5">
             {doc.pages.map((p, i) => (
