@@ -145,7 +145,8 @@ function Layout() {
 export default function App() {
   return (
     <Routes>
-      <Route path="/onboarding" element={<OnboardingPage />} />
+      {/* Аудит F-15: у гостя с картой онбординг бессмысленен — сразу на главную. */}
+      <Route path="/onboarding" element={getJwt() ? <Navigate to="/" replace /> : <OnboardingPage />} />
       <Route element={<RequireSession />}>
         <Route element={<Layout />}>
           <Route path="/" element={<CardPage />} />
