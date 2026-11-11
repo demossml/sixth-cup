@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import {
   AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical,
-  AlignStartHorizontal, AlignStartVertical, ArrowDown, ArrowLeft, ArrowUp, Check, Download,
-  Eye, Grid3x3, History, Layers, ListTree, Loader2, Maximize2,
-  MessageSquare,
-  Minus, Palette, Plus, Redo2, RefreshCw, Sparkles, Trash2, Undo2, X,
+  AlignStartHorizontal, AlignStartVertical, ArrowDown, ArrowUp, Check, Download,
+  Eye, Grid3x3, Layers, ListTree, Maximize2,
+  Minus, Palette, Plus, RefreshCw, Sparkles, Trash2, X,
 } from 'lucide-react'
 import { ApiError, api, tokenStore, uploadFile, uploadMenuFont } from '../api/client'
 import { canRedo, canUndo, emptyHistory, pushHistory, redoStep, undoStep, type DocHistory } from '../lib/docHistory'
@@ -87,6 +86,7 @@ import PreviewOverlay from '../components/menuLayout/overlays/PreviewOverlay'
 import NotesDrawer from '../components/menuLayout/overlays/NotesDrawer'
 import VersionsDrawer from '../components/menuLayout/overlays/VersionsDrawer'
 import EditorBanners from '../components/menuLayout/EditorBanners'
+import EditorToolbar from '../components/menuLayout/EditorToolbar'
 import EditorSkeleton from '../components/menuLayout/EditorSkeleton'
 import CatalogPane from '../components/menuLayout/panes/CatalogPane'
 import PlacesPane from '../components/menuLayout/panes/PlacesPane'
@@ -1886,66 +1886,27 @@ export default function MenuLayoutEditor() {
       >
         Перейти к листу
       </button>
-      {/* ── тулбар ─────────────────────────────────────────── */}
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <Link
-          to="/menu-layouts"
-          className="inline-flex min-h-9 items-center gap-1 rounded-lg px-1.5 text-[13px] font-semibold text-brand hover:bg-surface-2"
-        >
-          <ArrowLeft size={16} /> Все макеты
-        </Link>
-        <div className={cx('min-w-0', mode === 'wide' ? 'flex-1' : 'w-full')}>
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              maxLength={120}
-              aria-label="Название макета"
-              className="min-w-[7rem] flex-1 truncate border-0 bg-transparent p-0 text-[19px] font-bold text-ink outline-none focus:underline"
-            />
-            <span
-              className={cx(
-                // Статус не должен наезжать на кнопки: он сжимается и уходит на свою строку.
-                'inline-flex min-w-0 items-center gap-1 truncate text-[11px] font-semibold',
-                save === 'error' ? 'text-bad' : save === 'dirty' || save === 'saving' ? 'text-ink-tertiary' : 'text-ok',
-              )}
-              aria-live="polite"
-            >
-              {save === 'saving' ? <Loader2 size={12} className="animate-spin" /> : <span className="h-1.5 w-1.5 rounded-full bg-current" />}
-              {statusLabel} · {saveStateText}
-            </span>
-          </div>
-          <p className="mt-0.5 truncate text-[12px] text-ink-secondary">
-            {formatFull(format)} · {doc.pages.length} стр. ·{' '}
-            {priceMode === 'frozen' ? `цены зафиксированы${fmtFrozen(frozenAt)}` : 'цены из каталога'}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <Button size="sm" variant="secondary" icon={<Undo2 size={14} />} onClick={undo} disabled={!canUndo(history)}>
-            Отменить
-          </Button>
-          <Button size="sm" variant="secondary" icon={<Redo2 size={14} />} onClick={redo} disabled={!canRedo(history)}>
-            Вернуть
-          </Button>
-          <Button size="sm" variant="secondary" icon={<Eye size={14} />} onClick={() => setPreviewOpen(true)}>
-            Предпросмотр
-          </Button>
-          <Button size="sm" variant="secondary" icon={<History size={14} />} onClick={() => setVersionsOpen(true)}>
-            Версии
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            icon={<MessageSquare size={14} />}
-            onClick={() => setNotesOpen(true)}
-          >
-            Замечания{openNotes.length > 0 ? ` · ${openNotes.length}` : ''}
-          </Button>
-          <Button size="sm" icon={<Download size={14} />} onClick={() => setExportOpen(true)}>
-            Экспорт PDF
-          </Button>
-        </div>
-      </div>
+      <EditorToolbar
+        mode={mode}
+        title={title}
+        setTitle={setTitle}
+        save={save}
+        statusLabel={statusLabel}
+        saveStateText={saveStateText}
+        formatLine={formatFull(format)}
+        pageCount={doc.pages.length}
+        priceMode={priceMode}
+        frozenLabel={fmtFrozen(frozenAt)}
+        onUndo={undo}
+        onRedo={redo}
+        canUndo={canUndo(history)}
+        canRedo={canRedo(history)}
+        onPreview={() => setPreviewOpen(true)}
+        onVersions={() => setVersionsOpen(true)}
+        onNotes={() => setNotesOpen(true)}
+        notesCount={openNotes.length}
+        onExport={() => setExportOpen(true)}
+      />
 
       <EditorBanners
         onboardingHidden={onboardingHidden}
