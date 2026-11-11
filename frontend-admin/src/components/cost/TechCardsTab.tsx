@@ -22,7 +22,7 @@ import {
   cx,
   useToast,
 } from '../../ui/kit'
-import { Plus, RefreshCw, Search, Trash2, Layers, ArrowLeft, History, Sparkles, Copy } from 'lucide-react'
+import { Plus, RefreshCw, Search, Trash2, Layers, ArrowLeft, History, Sparkles, Copy, Printer } from 'lucide-react'
 
 import {
   costApi,
@@ -344,6 +344,12 @@ function TechCardEditor({ cardId, onClose }: { cardId: number | 'new'; onClose: 
     }
   }
 
+  // F13: печатная карта открывается в новой вкладке — кухня печатает и уходит.
+  const openPrint = () => {
+    if (!card) return
+    window.open(`${window.location.pathname}#/cost/card/${card.id}/print`, '_blank', 'noopener')
+  }
+
   const openUsage = async () => {
     if (!card) return
     try {
@@ -373,6 +379,9 @@ function TechCardEditor({ cardId, onClose }: { cardId: number | 'new'; onClose: 
               </Button>
               <Button variant="secondary" onClick={openUsage}>
                 <Layers size={14} /> Вхождение
+              </Button>
+              <Button variant="secondary" onClick={openPrint} aria-label="Печатная техкарта (ТТК)">
+                <Printer size={14} /> ТТК
               </Button>
               <Button variant="secondary" onClick={() => setConfirmDelete(true)} aria-label="Удалить карту">
                 <Trash2 size={14} />

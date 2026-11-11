@@ -35,6 +35,8 @@ export type CardLine = {
   itemUnit: Unit | null
   childCardId: number | null
   childCardName: string | null
+  /** Единица выхода заготовки — нужна печатной ТТК. */
+  childOutputUnit: Unit | null
   qtyBrutto: number
   lossColdPct: number
   lossHotPct: number

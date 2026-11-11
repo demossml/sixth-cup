@@ -26,6 +26,8 @@ const System = lazy(() => import('./pages/System'))
 const Staff = lazy(() => import('./pages/Staff'))
 const Stock = lazy(() => import('./pages/Stock'))
 const Cost = lazy(() => import('./pages/Cost'))
+// F13: печатная ТТК — вне оболочки, чтобы в PDF не попали меню и кнопки.
+const CostCardPrint = lazy(() => import('./pages/CostCardPrint'))
 const MenuLayouts = lazy(() => import('./pages/MenuLayouts'))
 const MenuLayoutEditor = lazy(() => import('./pages/MenuLayoutEditor'))
 const Purchases = lazy(() => import('./pages/Purchases'))
@@ -108,6 +110,8 @@ export default function App() {
       <ToastProvider>
         <Suspense fallback={<Spinner />}>
         <Routes>
+          {/* Печать технологической карты живёт без Shell: лист А4 без интерфейса. */}
+          <Route path="cost/card/:id/print" element={<CostCardPrint />} />
           <Route element={<Shell onLogout={logout} />}>
             <Route index element={<Today />} />
             <Route path="operations" element={<Operations />} />

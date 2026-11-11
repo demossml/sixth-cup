@@ -1,0 +1,100 @@
+/**
+ * F13: печать технологической карты. Экран — «лист А4», печать — чёрное на белом.
+ * Классы `.no-print` и `.ttk-*` использует только страница `CostCardPrint`.
+ */
+
+.ttk-sheet {
+  width: 210mm;
+  min-height: 297mm;
+  margin: 0 auto;
+  padding: 14mm 12mm;
+  background: #fff;
+  color: #111;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.ttk-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.ttk-table th,
+.ttk-table td {
+  border: 1px solid #999;
+  padding: 3px 5px;
+  vertical-align: top;
+}
+
+.ttk-table thead th {
+  background: #f1f1f1;
+  font-weight: 600;
+  text-align: left;
+}
+
+.ttk-table td.num,
+.ttk-table th.num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.ttk-sign {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8mm;
+  margin-top: 8mm;
+  font-size: 11px;
+}
+
+.ttk-line {
+  border-bottom: 1px solid #333;
+  display: inline-block;
+  min-width: 45mm;
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 10mm;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .ttk-sheet {
+    width: auto;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    box-shadow: none;
+    font-size: 11pt;
+  }
+
+  .ttk-table {
+    font-size: 9.5pt;
+  }
+
+  .ttk-table th,
+  .ttk-table td {
+    border-color: #000 !important;
+  }
+
+  .ttk-table thead th {
+    background: #eee !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  tr,
+  .ttk-block {
+    break-inside: avoid;
+  }
+}

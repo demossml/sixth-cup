@@ -334,6 +334,8 @@ export function serializeCard(id: number, opts: { versionId?: number } = {}) {
         itemUnit: item?.unit ?? null,
         childCardId: l.childCardId,
         childCardName: child?.name ?? null,
+        // Единица заготовки нужна печатной ТТК: иначе в карточке нечего писать в графе «ед. изм.».
+        childOutputUnit: child?.outputUnit ?? null,
         qtyBrutto: l.qtyBrutto,
         lossColdPct: l.lossColdPct,
         lossHotPct: l.lossHotPct,
