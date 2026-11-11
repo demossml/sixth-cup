@@ -35,6 +35,7 @@ import { flowSections, relayoutDoc } from './menuLayoutFlow'
 import { MENU_TEMPLATES, findTemplate } from './menuTemplates'
 import { applyOps, proposeByRules } from './menuLayoutAi'
 import { renderLayoutPdf } from './menuLayoutPdf'
+import { printChecks } from './printChecks'
 import { imposePlan as imposePlanFor, parseImpose } from './imposition'
 
 type Row = {
@@ -238,7 +239,8 @@ function layoutView(row: Row): LayoutView {
     },
     stats: docStats(resolved),
     drift,
-    blockers: collectBlockers(resolved),
+    // P3-3: к предупреждениям блоков добавляем то, что видно только на печати (dpi, контраст).
+    blockers: [...collectBlockers(resolved), ...printChecks(resolved, theme, row.format as LayoutFormat)],
     formatHint: formatMetrics(row.format),
     sections: doc.pages.reduce((n, p) => n + (p.sections?.length ?? 0), 0),
     schemaVersion: doc.schemaVersion ?? 1,
@@ -945,7 +947,10 @@ export const adminMenuLayouts = new Hono<Env>()
     const impose = parseImpose(c.req.query('impose'))
     const metricsForImpose = formatMetrics(layout.format)
     const imposePlan = impose ? imposePlanFor(metricsForImpose.width, metricsForImpose.height, impose) : null
-    const blocking = layout.blockers.filter((b) => b.code !== 'notice')
+    // Блокируют экспорт только реальные ошибки данных. Проверки печатаемости (dpi, контраст)
+    // и прочие notice — предупреждения: решение остаётся за человеком.
+    const NON_BLOCKING = new Set(['notice', 'low_dpi', 'low_contrast'])
+    const blocking = layout.blockers.filter((b) => !NON_BLOCKING.has(b.code))
     if (blocking.length > 0 && !force) {
       return c.json({ ok: false, error: 'has_blockers', blockers: layout.blockers, stats: layout.stats }, 409)
     }

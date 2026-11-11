@@ -115,7 +115,7 @@ type ServerLayout = {
   schemaVersion: number
   stats: { pages: number; products: number; warnings: number }
   drift: { blockId: string; title: string; from: number | null; to: number | null }[]
-  blockers: { blockId: string; code: string; text: string }[]
+  blockers: { blockId: string; pageId?: string; code: string; text: string }[]
   doc: MenuDoc
   formatHint: { label: string; mm: string }
 }
@@ -481,12 +481,25 @@ export default function MenuLayoutEditor() {
   const liveDrift = useMemo(() => (doc ? localDrift(doc, products) : []), [doc, products])
 
   const blockers = useMemo(() => {
-    if (!previewDoc) return [] as Blocker[]
-    const out: Blocker[] = []
-    previewDoc.pages.forEach((p, pageIdx) => {
+    if (!previewDoc && !data?.layout.blockers?.length) return [] as Blocker[]
+    const out = new Map<string, Blocker>()
+    // Сервер уже считает проверки печатаемости (dpi, контраст) — берём их как базу.
+    for (const b of data?.layout.blockers ?? []) {
+      const pageIdx = Math.max(0, (previewDoc?.pages ?? []).findIndex((p) => p.id === b.pageId))
+      const found = (previewDoc?.pages ?? []).flatMap((p) => p.blocks).find((x) => x.id === b.blockId)
+      out.set(`${b.blockId}-${b.text}`, {
+        blockId: b.blockId,
+        pageIdx,
+        label: found ? blockLabel(found) : 'Блок',
+        code: b.code,
+        text: b.text,
+      })
+    }
+    // Локальные (несохранённые) правки: их сервер ещё не видел.
+    previewDoc?.pages.forEach((p, pageIdx) => {
       for (const b of p.blocks) {
         for (const w of b.warnings ?? []) {
-          out.push({
+          out.set(`${b.id}-${w}`, {
             blockId: b.id,
             pageIdx,
             label: blockLabel(b),
@@ -496,8 +509,8 @@ export default function MenuLayoutEditor() {
         }
       }
     })
-    return out
-  }, [previewDoc])
+    return [...out.values()]
+  }, [previewDoc, data])
 
   /** Показать блок из замечания: нужная страница + выделение. */
   const goToBlock = (blockId: string, page?: number) => {
