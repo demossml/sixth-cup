@@ -87,6 +87,8 @@ import NotesDrawer from '../components/menuLayout/overlays/NotesDrawer'
 import VersionsDrawer from '../components/menuLayout/overlays/VersionsDrawer'
 import EditorBanners from '../components/menuLayout/EditorBanners'
 import EditorToolbar from '../components/menuLayout/EditorToolbar'
+import ContextMenu from '../components/menuLayout/ContextMenu'
+import FormatDrawer from '../components/menuLayout/FormatDrawer'
 import EditorSkeleton from '../components/menuLayout/EditorSkeleton'
 import CatalogPane from '../components/menuLayout/panes/CatalogPane'
 import PlacesPane from '../components/menuLayout/panes/PlacesPane'
@@ -1708,6 +1710,18 @@ export default function MenuLayoutEditor() {
     }
   }
 
+  /** Смена формата: сохраняем размер, перечитываем макет с сервера. */
+  const pickFormat = async (f: LayoutFormat) => {
+    setFormatOpen(false)
+    try {
+      await api(`/menu-layouts/${numericId}`, { method: 'PUT', body: { format: f } })
+      toast.push(`Формат: ${LAYOUT_FORMATS.find((x) => x.id === f)?.label ?? f}`)
+      reload()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Не удалось сменить формат', 'bad')
+    }
+  }
+
   const sections = doc ? docSections(doc) : []
   const templates = templatesData.data?.templates ?? []
   /** Любая правка «Мест» сразу пересобирает блоки на сервере — иначе лист разъедется с секциями. */
@@ -2545,54 +2559,25 @@ export default function MenuLayoutEditor() {
         }}
       />
 
-      {ctxMenu && (() => {
-        const target = page.blocks.find((b) => b.id === ctxMenu.id)
-        const item = (label: string, action: () => void, hint?: string, danger?: boolean) => (
-          <button
-            key={label}
-            type="button"
-            onClick={() => {
-              action()
-              setCtxMenu(null)
-            }}
-            className={cx(
-              'flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-[12.5px] hover:bg-surface-2',
-              danger ? 'text-bad' : 'text-ink',
-            )}
-          >
-            <span>{label}</span>
-            {hint && <span className="text-[10.5px] text-ink-tertiary">{hint}</span>}
-          </button>
-        )
-        return (
-          <>
-            <div className="fixed inset-0 z-[85]" onPointerDown={() => setCtxMenu(null)} aria-hidden />
-            <div
-              role="menu"
-              aria-label="Действия с блоком"
-              className="fixed z-[86] w-56 overflow-hidden rounded-xl border border-line bg-white py-1 shadow-soft"
-              style={{ left: Math.min(ctxMenu.x, window.innerWidth - 240), top: Math.min(ctxMenu.y, window.innerHeight - 300) }}
-            >
-              <p className="truncate px-3 py-1 text-[11px] uppercase tracking-wide text-ink-tertiary">
-                {target ? layerName(target) : 'Блок'}
-              </p>
-              {item('Дублировать', () => duplicateBlocks([ctxMenu.id]), '⌘D')}
-              {item('Копировать', () => {
-                if (target) clipboard.current = target
-                toast.push('Блок скопирован — ⌘V вставит')
-              }, '⌘C')}
-              {item(target?.locked ? 'Снять замок' : 'Закрепить', () => toggleLock(ctxMenu.id))}
-              {item(target?.hidden ? 'Показать' : 'Скрыть', () => patchBlock({ hidden: !target?.hidden }, ctxMenu.id), 'Alt+Del')}
-              <div className="my-1 h-px bg-line" />
-              {item('На передний план', () => updatePage((blocks) => bringToFront(blocks, ctxMenu.id)))}
-              {item('На задний план', () => updatePage((blocks) => sendToBack(blocks, ctxMenu.id)))}
-              <div className="my-1 h-px bg-line" />
-              {item('Переименовать', () => setRenamingId(ctxMenu.id))}
-              {item('Удалить с листа', () => deleteBlock(ctxMenu.id), 'Del', true)}
-            </div>
-          </>
-        )
-      })()}
+      {ctxMenu && (
+        <ContextMenu
+          menu={ctxMenu}
+          blocks={page.blocks}
+          layerName={layerName}
+          close={() => setCtxMenu(null)}
+          duplicate={(id) => duplicateBlocks([id])}
+          copy={(block) => {
+            clipboard.current = block
+            toast.push('Блок скопирован — ⌘V вставит')
+          }}
+          toggleLock={toggleLock}
+          setHidden={(id, hidden) => patchBlock({ hidden }, id)}
+          bringFront={(id) => updatePage((blocks) => bringToFront(blocks, id))}
+          sendBack={(id) => updatePage((blocks) => sendToBack(blocks, id))}
+          rename={(id) => setRenamingId(id)}
+          remove={deleteBlock}
+        />
+      )}
 
       <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-3 text-[12px] text-ink-secondary">
         {MENU_LAYOUT_V2 && (data?.layout.sections ?? 0) > 0 && (
@@ -2631,48 +2616,15 @@ export default function MenuLayoutEditor() {
         />
       )}
 
-      <Drawer open={formatOpen} onClose={() => setFormatOpen(false)} title="Формат и шаблон" layer={65}>
-        {MENU_LAYOUT_V2 && (data?.layout.sections ?? 0) > 0 && (
-          <div className="mb-3 rounded-lg border border-line p-2">
-            <p className="mb-1 text-[12px] font-semibold text-ink-secondary">Шаблон раскладки</p>
-            <div className="flex flex-wrap gap-1">
-              {templates.map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => void applyTemplate(t.id)}
-                  className="rounded-full border border-line px-2.5 py-1 text-[11px] font-semibold text-ink-secondary hover:border-brand hover:text-brand"
-                >
-                  {t.name}
-                </button>
-              ))}
-            </div>
-            <p className="mt-1 text-[11px] text-ink-tertiary">Шаблон меняет колонки и плотность, содержимое «Мест» остаётся.</p>
-          </div>
-        )}
-        <div className="space-y-2">
-          {LAYOUT_FORMATS.map((f) => (
-            <button
-              key={f.id}
-              type="button"
-              onClick={async () => {
-                setFormatOpen(false)
-                try {
-                  await api(`/menu-layouts/${numericId}`, { method: 'PUT', body: { format: f.id } })
-                  toast.push(`Формат: ${f.label}`)
-                  reload()
-                } catch (e) {
-                  toast.push(e instanceof Error ? e.message : 'Не удалось сменить формат', 'bad')
-                }
-              }}
-              className={cx('flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left', format === f.id ? 'border-brand bg-surface-2' : 'border-line')}
-            >
-              <span className="text-[13px] font-semibold">{f.label}</span>
-              <span className="text-[11px] text-ink-tertiary">{f.unit === 'мм' ? `${f.mm} мм` : f.mm}</span>
-            </button>
-          ))}
-        </div>
-      </Drawer>
+      <FormatDrawer
+        open={formatOpen}
+        onClose={() => setFormatOpen(false)}
+        format={format}
+        templates={templates}
+        showTemplates={MENU_LAYOUT_V2 && (data?.layout.sections ?? 0) > 0}
+        onApplyTemplate={(id) => void applyTemplate(id)}
+        onPickFormat={(f) => void pickFormat(f)}
+      />
     </div>
   )
 }
