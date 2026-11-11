@@ -35,6 +35,30 @@ export const IMPOSE_LABELS: Record<ImposePreset, string> = {
   'a2-4': '4 на A2 (2×2)',
 }
 
+/**
+ * P3-5: пресеты типографий — одна кнопка вместо ручной настройки полей и спуска.
+ * Формат листа в пресет не входит: он принадлежит макету, а не экспорту.
+ */
+export type TypoPreset = 'none' | 'print-a4' | 'fold-a3-2' | 'brochure-a3-4' | 'a5-booklet'
+
+export type TypoPresetSpec = {
+  label: string
+  /** Подсказка: что именно подставит пресет. */
+  hint: string
+  preset: ExportPreset
+  bleed: number
+  cmyk: boolean
+  impose: ImposePreset
+}
+
+export const TYPO_PRESETS: Record<TypoPreset, TypoPresetSpec> = {
+  none: { label: 'Без пресета', hint: 'Настроить вручную', preset: 'print', bleed: 3, cmyk: false, impose: 'off' },
+  'print-a4': { label: 'Лист A4', hint: '3 мм под обрез, метки реза, CMYK', preset: 'print', bleed: 3, cmyk: true, impose: 'off' },
+  'fold-a3-2': { label: 'A3, 2 фальца', hint: 'две A4 на A3 с полями 3 мм', preset: 'print', bleed: 3, cmyk: true, impose: 'a3-2' },
+  'brochure-a3-4': { label: 'A3, буклет 4×', hint: 'четыре A4 на A3, CMYK', preset: 'print', bleed: 3, cmyk: true, impose: 'a3-4' },
+  'a5-booklet': { label: 'A2, 4×A5', hint: 'четыре страницы A5 на A2, CMYK', preset: 'print', bleed: 3, cmyk: true, impose: 'a2-4' },
+}
+
 export type ExportStatus = 'queued' | 'running' | 'done' | 'error' | 'blocked' | 'canceled'
 
 export type ExportJob = {

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Check, Download, X } from 'lucide-react'
 import { Button, cx, Field, Input, Select } from '../../ui/kit'
 import { formatFull, type LayoutFormat } from '../../lib/menuLayout'
-import { IMPOSE_LABELS, type ExportRequest, type ImposePreset } from '../../lib/exportQueue'
+import { IMPOSE_LABELS, TYPO_PRESETS, type TypoPreset, type ExportRequest, type ImposePreset } from '../../lib/exportQueue'
 
 /** Замечание печати, мешающее собрать PDF: показываем в диалоге со ссылкой на блок. */
 export type Blocker = { blockId: string; code: string; text: string; label: string; pageIdx: number }
@@ -37,6 +37,8 @@ export default function ExportModal({
   notesCount,
 }: ExportProps) {
   const [preset, setPreset] = useState<'print' | 'screen'>('print')
+  /** P3-5: выбранный пресет типографии — подставляет поля, CMYK и спуск полос. */
+  const [typo, setTypo] = useState<TypoPreset>('none')
   const [bleed, setBleed] = useState(3)
   const [cmyk, setCmyk] = useState(false)
   /** Спуск полос: только для печати, для экрана бессмысленнен. */
@@ -108,6 +110,30 @@ export default function ExportModal({
                   {label}
                 </button>
               ))}
+            </div>
+            {/* P3-5: пресеты типографий — одна кнопка вместо ручной настройки. */}
+            <div className="mt-3">
+              <Field label="Пресет типографии" hint={TYPO_PRESETS[typo].hint}>
+                <Select
+                  value={typo}
+                  aria-label="Пресет типографии"
+                  onChange={(e) => {
+                    const key = e.target.value as TypoPreset
+                    setTypo(key)
+                    const spec = TYPO_PRESETS[key]
+                    setPreset(spec.preset)
+                    setBleed(spec.bleed)
+                    setCmyk(spec.cmyk)
+                    setImpose(spec.impose)
+                  }}
+                >
+                  {(Object.keys(TYPO_PRESETS) as TypoPreset[]).map((k) => (
+                    <option key={k} value={k}>
+                      {TYPO_PRESETS[k].label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
             </div>
             <div className="mt-3 space-y-2">
               <Field label="Формат">

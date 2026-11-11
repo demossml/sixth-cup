@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  IMPOSE_LABELS,
+  TYPO_PRESETS,
   applyProgress,
   blockJob,
   cancelJob,
@@ -103,5 +105,39 @@ describe('очередь экспорта PDF', () => {
     expect(progressText(finishJob(job, 'blob:x', 2048))).toBe('готов · 2 КБ')
     expect(progressText(blockJob(job, 'пусто'))).toBe('нужны правки')
     expect(progressText(failJob(job, 'сеть'))).toBe('ошибка')
+  })
+})
+
+// P3-5: пресеты типографий подставляют поля, CMYK и спуск полос.
+describe('пресеты типографий (P3-5)', () => {
+  it('каждый пресет задаёт спуск полос и CMYK для печати', () => {
+    for (const [key, spec] of Object.entries(TYPO_PRESETS)) {
+      if (key === 'none') continue
+      expect(spec.preset).toBe('print')
+      expect(spec.bleed).toBe(3)
+      expect(spec.cmyk).toBe(true)
+      expect(IMPOSE_LABELS[spec.impose]).toBeTruthy()
+    }
+  })
+
+  it('раскладки отличаются спуском, а не форматом листа', () => {
+    expect(TYPO_PRESETS['print-a4'].impose).toBe('off')
+    expect(TYPO_PRESETS['fold-a3-2'].impose).toBe('a3-2')
+    expect(TYPO_PRESETS['brochure-a3-4'].impose).toBe('a3-4')
+    expect(TYPO_PRESETS['a5-booklet'].impose).toBe('a2-4')
+  })
+
+  it('пресет превращает запрос в query с нужными флагами', () => {
+    const spec = TYPO_PRESETS['brochure-a3-4']
+    const q = exportQuery({
+      layoutId: 3,
+      preset: spec.preset,
+      bleed: spec.bleed,
+      cmyk: spec.cmyk,
+      impose: spec.impose,
+    })
+    expect(q).toContain('cmyk=1')
+    expect(q).toContain('impose=a3-4')
+    expect(q).toContain('bleed=3')
   })
 })
