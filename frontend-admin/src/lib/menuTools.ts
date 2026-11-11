@@ -358,3 +358,10 @@ export function layoutColumns(
     return next ? { ...b, ...clampRect({ ...next, hPct: b.hPct }) } : b
   })
 }
+
+/** Вкладки левой колонки: каталог, места (секции) и слои. */
+export type LeftTab = 'catalog' | 'places' | 'layers'
+/** Вкладки правой колонки: оформление и свойства блока. */
+export type RightTab = 'design' | 'block'
+/** Вкладки мобильного режима. */
+export type MobileTab = 'preview' | 'content' | 'design' | 'export'
