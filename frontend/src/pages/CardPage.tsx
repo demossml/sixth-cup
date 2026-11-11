@@ -164,6 +164,10 @@ export default function CardPage() {
           <p className="mt-1 text-[12px] leading-4 text-white/75">Без SMS и регистрации — карта уже ваша</p>
 
           <ProgressStamps n={N} marks={marks} gift={hasGift} />
+          {/* Аудит F-03: прогресс был только в штампах — числом его видно сразу. */}
+          <p className="mt-1.5 text-[11px] leading-4 text-white/70 num">
+            {hasGift ? `Подарок доступен — собрано ${N} из ${N}` : `Собрано ${Math.min(marks, N)} из ${N}`}
+          </p>
         </div>
       </div>
 
