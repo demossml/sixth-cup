@@ -4,7 +4,7 @@
  * Вкладки: Техкарты · Ингредиенты · Сигналы · Сводка. Импорт пишет в ту же модель,
  * старых таблиц `cost_*` страница больше не касается (они живут только для совместимости API).
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
 import { PageHeader, Button, Banner, cx, useToast } from '../ui/kit'
@@ -33,6 +33,13 @@ export default function Cost() {
   /** Перезагрузка вкладок после импорта: ключ вместо событийной шины. */
   const [reloadKey, setReloadKey] = useState(0)
   const [importSummary, setImportSummary] = useState<string | null>(null)
+
+  // Ссылку можно открыть в уже работающей вкладке: слушаем `focus` и переключаемся.
+  const focus = params.get('focus')
+  useEffect(() => {
+    const want = initialCostTab(focus)
+    setTab((cur) => (cur === want ? cur : want))
+  }, [focus])
 
   const selectTab = (k: CostTabKey) => {
     setTab(k)
