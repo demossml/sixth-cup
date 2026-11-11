@@ -17,6 +17,8 @@ export type CatalogPaneProps = {
   /** Что делать с товаром: на холст или в «Места» — решает редактор. */
   onPickProduct: (product: CatalogProduct) => void
   addBlock: (type: BlockType, extra?: { categoryId?: number; titleOverride?: string }) => void
+  /** P3-1: прайс из CSV — позиции, которых нет в каталоге. */
+  onOpenPriceImport: () => void
 }
 
 /**
@@ -36,6 +38,7 @@ export default function CatalogPane({
   seedFromCatalog,
   onPickProduct,
   addBlock,
+  onOpenPriceImport,
 }: CatalogPaneProps) {
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -98,6 +101,14 @@ export default function CatalogPane({
           className="mt-2 w-full rounded-lg border border-dashed border-line px-2 py-1.5 text-[12px] font-semibold text-brand hover:border-brand"
         >
           Собрать лист из каталога
+        </button>
+        <button
+          type="button"
+          onClick={onOpenPriceImport}
+          className="mt-1.5 w-full rounded-lg border border-line px-2 py-1.5 text-[12px] font-semibold text-ink-secondary hover:border-brand hover:text-brand"
+          title="Позиции из CSV, которых нет в каталоге"
+        >
+          Импорт прайса (CSV)
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-2">

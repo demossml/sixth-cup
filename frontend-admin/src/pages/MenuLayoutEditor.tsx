@@ -89,6 +89,8 @@ import ContextMenu from '../components/menuLayout/ContextMenu'
 import FormatDrawer from '../components/menuLayout/FormatDrawer'
 import ShareDrawer from '../components/menuLayout/ShareDrawer'
 import CatalogDiffDrawer from '../components/menuLayout/CatalogDiffDrawer'
+import PriceImportDrawer from '../components/menuLayout/PriceImportDrawer'
+import { priceRowText } from '../lib/priceImport'
 import MobileEditor from '../components/menuLayout/MobileEditor'
 import CanvasToolbar from '../components/menuLayout/CanvasToolbar'
 import CanvasViewport from '../components/menuLayout/CanvasViewport'
@@ -241,6 +243,8 @@ export default function MenuLayoutEditor() {
   /** P3-4: ссылка для QR на листе и состояние генерации. */
   const [qrLink, setQrLink] = useState('https://67coffee.ru')
   const [qrBusy, setQrBusy] = useState(false)
+  /** P3-1: импорт прайса из CSV — шторка с предпросмотром и построчными ошибками. */
+  const [priceImportOpen, setPriceImportOpen] = useState(false)
   const [busyUpload, setBusyUpload] = useState(false)
 
   const [history, setHistory] = useState<DocHistory>(emptyHistory)
@@ -1457,6 +1461,28 @@ export default function MenuLayoutEditor() {
     }
   }
 
+  /**
+   * P3-1: вставить строки прайса текстовыми блоками одной колонкой.
+   * Каталог не трогаем: это лист, а не товары.
+   */
+  const importPriceRows = (rows: { name: string; price: number; volume: string }[]) => {
+    if (rows.length === 0) return
+    updatePage((blocks) => {
+      const area = nextFreeRect(blocks, 60, 4.5)
+      const step = 5
+      const z = topZ(blocks)
+      const created = rows.map((r, i) => ({
+        ...newBlock('text', {}, { text: priceRowText({ ...r, line: i + 1, ok: true, error: null }), fontSizePt: 9 }),
+        xPct: area.xPct,
+        yPct: Math.min(96, area.yPct + i * step),
+        wPct: Math.max(20, area.wPct),
+        hPct: 4.5,
+        zIndex: z + i,
+      }))
+      return [...blocks, ...created]
+    })
+  }
+
   /** P3-4: подпись «цены на <дата>». В блоке остаётся `{{date}}` — дата подставляется при печати. */
   const insertPriceDate = () => {
     addBlock('text', { text: 'цены на {{date}}', fontSizePt: 8 })
@@ -1709,6 +1735,7 @@ export default function MenuLayoutEditor() {
       // Решение «на холст или в Места» остаётся здесь: панель не знает про секции.
       onPickProduct={(item) => (MENU_LAYOUT_V2 && sections.length > 0 ? addToPlaces(item, sections[0]!.section.id) : addProduct(item))}
       addBlock={addBlock}
+      onOpenPriceImport={() => setPriceImportOpen(true)}
     />
   )
 
@@ -2244,6 +2271,12 @@ export default function MenuLayoutEditor() {
         layoutId={numericId}
         frozen={priceMode === 'frozen'}
         onApplied={resyncFromServer}
+      />
+
+      <PriceImportDrawer
+        open={priceImportOpen}
+        onClose={() => setPriceImportOpen(false)}
+        onImport={(rows) => importPriceRows(rows)}
       />
 
       <ShareDrawer open={shareOpen} onClose={() => setShareOpen(false)} layoutId={numericId} title={title} />

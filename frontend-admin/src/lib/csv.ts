@@ -24,3 +24,68 @@ export function downloadCsv(filename: string, head: string[], rows: unknown[][])
 export function csvName(base: string): string {
   return `${base}-${new Date().toISOString().slice(0, 10)}.csv`
 }
+
+/**
+ * P3-1: разбор CSV для импорта прайса. Понимает `;` и `,`, кавычки по RFC 4180,
+ * BOM из Excel и переводы строк CRLF. Возвращает строки без пустых ячеек в конце.
+ */
+export function parseCsvText(text: string): string[][] {
+  const src = text.replace(/^\ufeff/, '')
+  // Разделитель определяем по первой непустой строке: в русских выгрузках чаще «;».
+  // Считаем только разделители вне кавычек — иначе «Латте, 250»;220 уводит в запятые.
+  const firstLine = src.split(/\r?\n/).find((l) => l.trim()) ?? ''
+  let semicolons = 0
+  let commas = 0
+  let inQuotes = false
+  for (let i = 0; i < firstLine.length; i++) {
+    const ch = firstLine[i]
+    if (ch === '"') {
+      if (inQuotes && firstLine[i + 1] === '"') i++
+      else inQuotes = !inQuotes
+    } else if (!inQuotes && ch === ';') semicolons++
+    else if (!inQuotes && ch === ',') commas++
+  }
+  const delim = semicolons >= commas ? ';' : ','
+
+  const rows: string[][] = []
+  let row: string[] = []
+  let cell = ''
+  let quoted = false
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i]!
+    if (quoted) {
+      if (ch === '"') {
+        if (src[i + 1] === '"') {
+          cell += '"'
+          i++
+        } else {
+          quoted = false
+        }
+      } else {
+        cell += ch
+      }
+      continue
+    }
+    if (ch === '"') {
+      quoted = true
+      continue
+    }
+    if (ch === delim) {
+      row.push(cell.trim())
+      cell = ''
+      continue
+    }
+    if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && src[i + 1] === '\n') i++
+      row.push(cell.trim())
+      rows.push(row)
+      row = []
+      cell = ''
+      continue
+    }
+    cell += ch
+  }
+  row.push(cell.trim())
+  rows.push(row)
+  return rows.filter((r) => r.some((c) => c !== ''))
+}
