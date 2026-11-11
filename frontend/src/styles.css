@@ -231,19 +231,11 @@ html, body, #root {
   display: block;
   object-fit: contain;
 }
-/* Несобранный шаг: пунктирное кольцо-разметка, без ассета и без иконки. */
-.stamp-slot {
-  width: 38px;
-  height: 38px;
-  flex: none;
-  border-radius: 999px;
-  border: 1.5px dashed rgba(255, 255, 255, 0.36);
-  background: rgba(255, 255, 255, 0.08);
-}
+/* Полая высота полосы: марки рисуются только собранные (пустых ячеек нет),
+   но место под полосу зарезервировано, чтобы карта не прыгала после покупки. */
 @media (max-width: 340px) {
   .stamp,
-  .stamp img,
-  .stamp-slot { width: 32px; height: 32px; }
+  .stamp img { width: 32px; height: 32px; }
 }
 /* Появление новой марки: 160 мс, только она. */
 @keyframes stamp-fresh-in {
