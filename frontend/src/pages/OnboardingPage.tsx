@@ -163,7 +163,7 @@ export default function OnboardingPage() {
                   autoCapitalize="characters"
                   autoCorrect="off"
                   spellCheck={false}
-                  placeholder="ABCD1234EF"
+                  placeholder="4–40 символов: буквы, цифры, - и _"
                   className="min-w-0 flex-1 rounded-xl bg-white text-ink px-3 min-h-11 text-[15px] num"
                 />
                 {codeResult === 'ok' ? (
