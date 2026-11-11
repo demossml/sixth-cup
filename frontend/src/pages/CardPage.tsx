@@ -200,18 +200,10 @@ export default function CardPage() {
             </button>
           </div>
         ) : (
-          <button
-            type="button"
-            onClick={() => setQrOpen(true)}
-            aria-expanded={qrOpen}
-            aria-controls="qr-layer"
-            aria-label={`Карта ${cardCode}. Показать QR на кассе`}
-            className="w-full bg-white border border-line rounded-[20px] shadow-lift p-3 flex items-center gap-3 text-left active:scale-[0.995] motion-reduce:transition-none"
-          >
-            <span className="w-[112px] h-[112px] flex-none p-1.5 border border-line rounded-xl bg-white">
-              <Qr value={proof} size={112} alt="" />
-            </span>
-            <span className="min-w-0 flex-1">
+          // Аудит F-10: QR был 112 px и требовал тапа. Теперь карта = сам QR (~62 % ширины):
+          // бариста сканирует сразу, полный экран — по желанию.
+          <div className="bg-white border border-line rounded-[20px] shadow-lift p-3">
+            <div className="text-center">
               <span className="block text-[10px] leading-[14px] font-semibold uppercase tracking-[0.08em] text-ink-secondary">
                 Карта 6<span className="brand-dot" aria-hidden="true" />7
               </span>
@@ -223,12 +215,28 @@ export default function CardPage() {
                   Кэшбэк {formatRub(cashback)} ₽ · у бариста
                 </span>
               ) : null}
-              <span className="mt-1.5 inline-flex items-center gap-0.5 text-[12px] leading-4 font-semibold text-brand">
-                Показать QR · тап
-                <ChevronRight size={12} strokeWidth={2} />
-              </span>
-            </span>
-          </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setQrOpen(true)}
+              aria-expanded={qrOpen}
+              aria-controls="qr-layer"
+              aria-label={`QR карты ${formatCardCode(cardCode)}. Открыть на весь экран`}
+              className="mx-auto mt-2.5 block w-[min(62vw,260px)] rounded-2xl border border-line bg-white p-2 active:scale-[0.995] motion-reduce:transition-none"
+            >
+              <Qr value={proof} size={260} alt="" />
+            </button>
+
+            <p className="mt-2 text-center text-[12px] leading-4 text-ink-secondary">
+              Покажите QR бариста. Не читается — назовите номер {formatCardCode(cardCode)}.
+            </p>
+            <p className="mt-1 text-center text-[11px] leading-4 text-brand">
+              <button type="button" onClick={() => setQrOpen(true)} className="font-semibold underline decoration-dotted underline-offset-2">
+                Открыть на весь экран
+              </button>
+            </p>
+          </div>
         )}
 
         {msg && <p className={`text-sm ${msg.ok ? 'text-ok' : 'text-bad'}`}>{msg.text}</p>}
