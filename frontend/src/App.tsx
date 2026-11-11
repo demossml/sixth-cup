@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { NavLink, Navigate, Outlet, Route, Routes } from 'react-router-dom'
+import { NavLink, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom'
 import { getJwt } from './api'
 import CardPage from './pages/CardPage'
 import MenuPage from './pages/MenuPage'
@@ -109,8 +109,12 @@ const NAV = [
 ]
 
 function Layout() {
+  const { pathname } = useLocation()
+  // Тонировка только у главной: белые карточки читаются отдельными плоскостями (приём Luckin).
+  // Класс живёт на оболочке, а не на странице: иначе min-h-screen складывается с её padding-bottom.
+  const tint = pathname === '/'
   return (
-    <div className="max-w-[480px] mx-auto min-h-screen bg-page" style={{ paddingBottom: 'calc(4rem + env(safe-area-inset-bottom, 0px))' }}>
+    <div className={`max-w-[480px] mx-auto min-h-screen ${tint ? 'page-tint' : 'bg-page'}`} style={{ paddingBottom: 'calc(4rem + env(safe-area-inset-bottom, 0px))' }}>
       <Outlet />
       <InstallBanner variant="fixed" />
       <nav

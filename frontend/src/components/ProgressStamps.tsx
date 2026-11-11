@@ -3,8 +3,9 @@ import { useEffect, useRef } from 'react'
 /**
  * Прогресс «N+1-й стакан — в подарок» по PROGRESS-STICKERS-SPEC.
  *
- * Марки — только из серверного прогресса, пустые позиции не рисуются вообще:
- * полоса сохраняет высоту 40 px, чтобы карта-пропуск не прыгала после первой покупки.
+ * Марки — только из серверного прогресса. Несобранные позиции — пустой пунктирный
+ * слот (не арт, а разметка): шкала читается как «лестница N шагов», как в Luckin,
+ * и полоса больше не выглядит дырой до первой покупки. Высота всегда 40 px.
  * Арт марки — единственный ассет `sticker-scratch*` (не рисуем свои кружки/чашки).
  */
 type Props = {
@@ -14,6 +15,11 @@ type Props = {
   marks: number
   /** Подарок доступен — только для доступного имени полосы (визуально это чип в шапке). */
   gift?: boolean
+}
+
+/** Пустой шаг шкалы: только разметка, без изображения. */
+function Slot() {
+  return <span className="stamp-slot" aria-hidden="true" />
 }
 
 function Stamp({ fresh }: { fresh: boolean }) {
@@ -38,9 +44,11 @@ export default function ProgressStamps({ n, marks, gift = false }: Props) {
       role="img"
       aria-label={`Собрано ${shown} из ${n}${gift ? ', подарок доступен' : ''}`}
     >
-      {Array.from({ length: shown }, (_, i) => (
-        <Stamp key={i} fresh={i >= freshFrom && freshFrom >= 0} />
-      ))}
+      {Array.from({ length: n }, (_, i) =>
+        i < shown
+          ? <Stamp key={i} fresh={i >= freshFrom && freshFrom >= 0} />
+          : <Slot key={i} />,
+      )}
     </div>
   )
 }

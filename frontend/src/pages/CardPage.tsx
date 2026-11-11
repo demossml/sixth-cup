@@ -11,6 +11,8 @@ import Qr from '../components/Qr'
 import QrLayer from '../components/QrLayer'
 import { useApp } from '../lib/app'
 import { formatCardCode } from '../lib/card'
+import { displayNickname } from '../lib/guestName'
+import { greetingFor } from '../lib/greeting'
 import { activeVouchers } from '../lib/proof'
 import { formatRub } from '../lib/money'
 import { friendsWord, progressPhrase } from '../lib/plural'
@@ -93,32 +95,56 @@ export default function CardPage() {
     : null
 
   const promoTitle = featureItem?.title?.trim() || `Каждый ${N + 1}-й кофе в подарок`
-  const promoSub = featureItem?.ctaLabel || featureItem?.body || 'Копите стаканы в 6.7 Coffee'
-  // Акция: одна карточка сразу под картой-пропуском, до 148 px. С медиа — фон, без — центрированный текст.
-  const promo = (
+  const promoBody = featureItem?.body?.trim() || ''
+  const promoCta = featureItem?.ctaLabel?.trim() || 'Смотреть'
+  // Приветствие: одна строка, имя только если оно осмысленное (у гостя — «Гость»).
+  const guestName = displayNickname(me?.nickname)
+  const greeting = me ? `${greetingFor()}, ${guestName === 'Гость' ? 'гость' : guestName}` : greetingFor()
+  // Акция: карточка в рельсе «Акции» (Luckin: карточки вбок, а не один баннер).
+  const promo = (wide = false) => (
     <button
       type="button"
       onClick={() => nav('/menu')}
-      className={`relative w-full text-left rounded-3xl overflow-hidden shadow-card block text-white min-h-[132px] max-h-[148px] ${featureItem?.imageUrl ? 'bg-night' : 'bg-brand'}`}
+      className={`relative text-left rounded-3xl overflow-hidden shadow-card block text-white ${wide ? 'min-h-[104px]' : 'h-[132px]'} ${featureItem?.imageUrl ? 'bg-night' : 'bg-brand'}`}
     >
       {featureItem?.imageUrl ? (
         <>
           {media(featureItem, 'absolute inset-0 w-full h-full object-cover')}
-          <div className="absolute inset-0 bg-gradient-to-t from-[#073561]/75 via-[#0B4A8D]/25 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-t from-[#073561]/80 via-[#0B4A8D]/30 to-transparent" />
         </>
       ) : null}
-      <div className="relative p-4 min-h-[132px] flex items-center justify-between gap-3.5">
+      <div className={`relative p-3 flex flex-col gap-2 ${wide ? '' : 'h-full justify-between'}`}>
         <div className="min-w-0">
-          {badge ? <span className="inline-block text-[11px] font-semibold uppercase tracking-wide bg-brand-mid text-white rounded-full px-2.5 py-0.5 mb-1.5">{badge}</span> : null}
-          <div className="font-display font-semibold text-[19px] leading-6">{promoTitle}</div>
-          <div className="mt-1.5 text-[11px] leading-[15px] text-white/80">{promoSub}</div>
+          {badge ? <span className="inline-block text-[10px] font-semibold uppercase tracking-wide bg-brand-mid text-white rounded-full px-2 py-0.5 mb-1">{badge}</span> : null}
+          <div className="font-display font-semibold text-[14px] leading-[18px] line-clamp-2">{promoTitle}</div>
+          {promoBody ? <div className="mt-1 text-[11px] leading-[14px] text-white/75 line-clamp-2">{promoBody}</div> : null}
         </div>
-        <span className="w-9 h-9 flex-none rounded-[11px] border border-white/45 flex items-center justify-center font-display text-[10px] leading-none font-bold">
-          6<span className="brand-dot" aria-hidden="true" />7
+        <span className="inline-flex items-center gap-0.5 text-[11px] leading-4 font-semibold text-white/90">
+          {promoCta}
+          <ChevronRight size={12} strokeWidth={2.2} />
         </span>
       </div>
     </button>
   )
+
+  const voucherDate = (day: number) => new Date(day * 86_400_000).toLocaleDateString('ru-RU')
+  // Купоны живут в том же рельсе: срок годности виден прямо в карточке.
+  const voucherCards = vouchers.map((v) => (
+    <button
+      key={v[0]}
+      type="button"
+      onClick={() => nav('/promos')}
+      className="text-left rounded-2xl bg-white border border-line shadow-card p-3 h-[132px] flex flex-col justify-between"
+    >
+      <span className="inline-flex items-center gap-1.5 text-[10px] leading-3 font-semibold uppercase tracking-[0.08em] text-brand">
+        <Ticket size={14} strokeWidth={1.9} /> Купон
+      </span>
+      <span className="font-display font-semibold text-[20px] leading-6 text-ink num">
+        {v[1] === 'p' ? `Скидка ${v[2]}%` : `Скидка ${v[2]} ₽`}
+      </span>
+      <span className="text-[11px] leading-4 text-ink-secondary num">до {voucherDate(v[3])}</span>
+    </button>
+  ))
 
   return (
     <div className="pb-4">
@@ -134,7 +160,8 @@ export default function CardPage() {
           </>
         ) : null}
         <div className="relative z-10">
-          <div className="flex items-center justify-between gap-2 min-h-11">
+          <p className="text-[12px] leading-4 text-white/60">{greeting}</p>
+          <div className="mt-1 flex items-center justify-between gap-2 min-h-10">
             <AppLogo tone="onDark" size="sm" />
             <div className="flex items-center gap-1.5 flex-none">
               {/* Подарок — компактный чип справа, только когда он реально доступен. */}
@@ -157,7 +184,7 @@ export default function CardPage() {
             </div>
           </div>
 
-          <p className="mt-3.5 font-display font-semibold text-[19px] leading-[26px] tracking-[-0.01em] max-w-[250px]">
+          <p className="mt-2.5 font-display font-semibold text-[19px] leading-[26px] tracking-[-0.01em] max-w-[250px]">
             {progressPhrase({ n: N, marks, freeAvailable: me?.freeAvailable ?? 0 })}
           </p>
           {/* Аудит F-02: главное отличие — без SMS и регистрации — должно читаться на главной, а не только в онбординге. */}
@@ -235,7 +262,21 @@ export default function CardPage() {
 
         {msg && <p className={`text-sm ${msg.ok ? 'text-ok' : 'text-bad'}`}>{msg.text}</p>}
 
-        {promo}
+        <section>
+          <div className="section-head">
+            <h2>Акции</h2>
+            <button type="button" className="section-more" onClick={() => nav('/promos')}>
+              Ещё <ChevronRight size={12} strokeWidth={2.2} className="inline align-[-1px]" />
+            </button>
+          </div>
+          {/* Один промо-блок без купонов — на всю ширину; с купонами — рельс вбок. */}
+          {vouchers.length > 0 ? (
+            <div className="rail scrollbar-none">
+              {promo(false)}
+              {voucherCards}
+            </div>
+          ) : promo(true)}
+        </section>
 
         {me && (
           <div className="bg-white border border-line rounded-2xl shadow-card divide-y divide-line">
@@ -266,20 +307,6 @@ export default function CardPage() {
 
         {/* Аудит F-07: вместо двух баннеров — одна компактная строка настройки. */}
         <AppSetup restore={!saved && !!me} onSaveCode={() => nav('/me')} />
-
-        {vouchers.length > 0 && (
-          <div className="space-y-2">
-            <h2 className="text-base font-semibold text-ink flex items-center gap-1.5">
-              <Ticket size={18} strokeWidth={1.75} className="text-brand" /> Купоны
-            </h2>
-            {vouchers.map((v) => (
-              <div key={v[0]} className="card flex justify-between items-center !py-3 !mb-0">
-                <b className="text-[15px] num">{v[1] === 'p' ? `Скидка ${v[2]}%` : `Скидка ${v[2]} ₽`}</b>
-                <span className="text-ink-tertiary text-[13px] num">до {new Date(v[3] * 86_400_000).toLocaleDateString('ru-RU')}</span>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
       {qrOpen && proof ? (

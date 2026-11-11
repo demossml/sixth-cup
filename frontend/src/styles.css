@@ -209,9 +209,12 @@ html, body, #root {
    Арт марки — только sticker-scratch (ассет владельца), без своих кружков. */
 .stamps {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  height: 40px;
+  /* Высота стабильна для типовой карты (5 шагов) и растёт только если в конфиге
+     больше марок, чем влезает в строку — вместо горизонтального переполнения. */
+  min-height: 40px;
   margin-top: 12px;
 }
 .stamp {
@@ -228,9 +231,19 @@ html, body, #root {
   display: block;
   object-fit: contain;
 }
+/* Несобранный шаг: пунктирное кольцо-разметка, без ассета и без иконки. */
+.stamp-slot {
+  width: 38px;
+  height: 38px;
+  flex: none;
+  border-radius: 999px;
+  border: 1.5px dashed rgba(255, 255, 255, 0.36);
+  background: rgba(255, 255, 255, 0.08);
+}
 @media (max-width: 340px) {
   .stamp,
-  .stamp img { width: 32px; height: 32px; }
+  .stamp img,
+  .stamp-slot { width: 32px; height: 32px; }
 }
 /* Появление новой марки: 160 мс, только она. */
 @keyframes stamp-fresh-in {
@@ -261,6 +274,58 @@ html, body, #root {
   font-weight: 600;
   white-space: nowrap;
   box-shadow: 0 1px 2px rgba(7, 53, 97, 0.2);
+}
+
+/* Домашний экран: чуть тонированный фон, чтобы белые карточки читались
+   отдельными плоскостями (приём Luckin). Остальные экраны остаются белыми. */
+.page-tint {
+  background: #F3F7FD;
+}
+
+/* ── Секция с рельсом (Luckin: заголовок + «Ещё» + горизонтальные карточки) ── */
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.section-head h2 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+  color: #101B2D;
+}
+.section-head .section-more {
+  flex: none;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  color: #0B4A8D;
+  background: none;
+  border: 0;
+  padding: 2px 0;
+  cursor: pointer;
+}
+/* Рельс выезжает до края экрана: последняя карточка «подглядывает». */
+.rail {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  margin-right: -16px;
+  padding-right: 16px;
+  padding-bottom: 2px;
+}
+.rail > * {
+  scroll-snap-align: start;
+  flex: none;
+  width: 168px;
+}
+@media (max-width: 340px) {
+  .rail > * { width: 148px; }
 }
 
 /* ── Expanded QR: слой внутри экрана, без крестика ──────────────────────── */
