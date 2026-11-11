@@ -293,3 +293,55 @@ describe('F9: импорт пишет в модель v2, а не в cost_*', ()
     expect(item).toEqual({ unit: 'ml', cost: 10 }) // 95 ₽ / 1000 мл = 9,5 коп → округление до 10
   })
 })
+
+describe('F10: склейка дублей позиций', () => {
+  it('находит группу дублей и предлагает оставить самую используемую', async () => {
+    const a = await createItem('Дубль Молоко QA', 'ml', { manualCostKop: 9 })
+    const b = await createItem('дубль молоко QA', 'ml', { manualCostKop: 12 })
+    const card = await admin('POST', '/cost/tech-cards', { name: 'Дубль карта QA', lines: [{ stockItemId: b, qtyBrutto: 50 }] })
+    expect(card.status).toBe(200)
+
+    const dup = await admin('GET', '/cost/items/duplicates')
+    expect(dup.status).toBe(200)
+    const group = dup.json.groups.find((g: { name: string }) => /дубль молоко qa/i.test(g.name))
+    expect(group.items).toHaveLength(2)
+    expect(group.suggestedKeepId).toBe(b) // у b есть карта
+
+    const merged = await admin('POST', '/cost/items/merge', { keepId: b, mergeIds: [a] })
+    expect(merged.status).toBe(200)
+    expect(merged.json.merged).toBe(1)
+    const left = db.prepare(`SELECT COUNT(*) AS n FROM stock_items WHERE lower(name)='дубль молоко qa'`).get() as { n: number }
+    expect(left.n).toBe(1)
+    // карта смотрит на оставшуюся позицию
+    const line = db
+      .prepare(
+        `SELECT l.stock_item_id AS itemId FROM tech_card_lines l JOIN tech_card_versions v ON v.id=l.version_id WHERE v.card_id=?`,
+      )
+      .get(card.json.card.id) as { itemId: number }
+    expect(line.itemId).toBe(b)
+  })
+
+  it('переносит поставки: средневзвешенная считается по обеим позициям', async () => {
+    const a = await createItem('Дубль Сироп QA', 'g')
+    const b = await createItem('дубль сироп QA', 'g')
+    await receive(a, 100, 20)
+    await receive(b, 100, 40)
+    const merged = await admin('POST', '/cost/items/merge', { keepId: b, mergeIds: [a] })
+    expect(merged.json.moved.invoices).toBe(1)
+    const list = await admin('GET', '/cost/items?q=дубль сироп QA')
+    expect(list.json.items).toHaveLength(1)
+    expect(list.json.items[0].costRub).toBeCloseTo(0.3, 2) // (100×0,2 + 100×0,4) / 200
+  })
+
+  it('разные единицы и разные имена склеить нельзя', async () => {
+    const g = await createItem('Дубль Вес QA', 'g')
+    const ml = await createItem('Дубль Вес QA', 'ml')
+    const bad1 = await admin('POST', '/cost/items/merge', { keepId: g, mergeIds: [ml] })
+    expect(bad1.status).toBe(400)
+    expect(String(bad1.json.error?.message ?? bad1.json.error ?? '')).toMatch(/разные единицы/)
+
+    const other = await createItem('Совсем другое QA', 'g')
+    const bad2 = await admin('POST', '/cost/items/merge', { keepId: g, mergeIds: [other] })
+    expect(bad2.status).toBe(400)
+  })
+})

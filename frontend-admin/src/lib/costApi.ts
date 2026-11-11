@@ -145,6 +145,22 @@ export const costApi = {
     api<{ id: number }>('/stock/items', { method: 'POST', body }),
   updateItem: (id: number, body: { manualCostRub?: number | null; weightPerPcKg?: number | null; densityKgL?: number | null; notes?: string | null }) =>
     api(`/cost/items/${id}`, { method: 'PUT', body }),
+  duplicates: () =>
+    api<{
+      groups: {
+        key: string
+        name: string
+        unit: Unit
+        items: { id: number; name: string; costRub: number | null; costSource: string; cards: number }[]
+        suggestedKeepId: number
+      }[]
+      total: number
+    }>('/cost/items/duplicates'),
+  mergeItems: (keepId: number, mergeIds: number[]) =>
+    api<{ merged: number; moved: Record<string, number> }>('/cost/items/merge', {
+      method: 'POST',
+      body: { keepId, mergeIds },
+    }),
   priceHistory: (id: number) =>
     api<{ history: { at: number; costRub: number | null; source: string }[]; purchases: { at: number; qty: number; unitCostRub: number | null; number: string | null }[] }>(
       `/cost/items/${id}/price-history`,

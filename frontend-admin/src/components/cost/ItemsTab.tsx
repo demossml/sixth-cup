@@ -6,7 +6,7 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 
-import { Badge, Button, Card, Drawer, EmptyState, ErrorBox, Input, Select, Skeleton, useToast } from '../../ui/kit'
+import { Badge, Button, Card, ConfirmDialog, Drawer, EmptyState, ErrorBox, Input, Select, Skeleton, useToast } from '../../ui/kit'
 import { Plus, RefreshCw, Search, Upload } from 'lucide-react'
 
 import { costApi, type CostItem } from '../../lib/costApi'
@@ -20,6 +20,10 @@ export default function ItemsTab({ onImport, reloadKey = 0 }: { onImport?: () =>
   const [problemsOnly, setProblemsOnly] = useState(false)
   const [draft, setDraft] = useState<Record<number, { price: string; weight: string }>>({})
   const [createOpen, setCreateOpen] = useState(false)
+  /** Дубли: их наличие — сигнал, что импорт/ручной ввод разошлись. */
+  const [dups, setDups] = useState<Awaited<ReturnType<typeof costApi.duplicates>> | null>(null)
+  const [dupsOpen, setDupsOpen] = useState(false)
+  const [mergePlan, setMergePlan] = useState<{ keepId: number; mergeIds: number[]; name: string } | null>(null)
   const [created, setCreated] = useState({ name: '', unit: 'g' as 'g' | 'ml' | 'pcs', price: '' })
   const [history, setHistory] = useState<{ item: CostItem; rows: { at: number; costRub: number | null; source: string }[]; purchases: { at: number; qty: number; unitCostRub: number | null }[] } | null>(null)
 
@@ -29,6 +33,10 @@ export default function ItemsTab({ onImport, reloadKey = 0 }: { onImport?: () =>
       .items({ q: q || undefined })
       .then((r) => setItems(r.items))
       .catch((e) => setError(e instanceof Error ? e : new Error('Не удалось загрузить ингредиенты')))
+    costApi
+      .duplicates()
+      .then(setDups)
+      .catch(() => setDups(null))
   }
 
   useEffect(() => {
@@ -84,6 +92,11 @@ export default function ItemsTab({ onImport, reloadKey = 0 }: { onImport?: () =>
         <Button variant="secondary" onClick={() => setCreateOpen(true)}>
           <Plus size={14} /> Позиция
         </Button>
+        {!!dups?.total && (
+          <Button variant="secondary" onClick={() => setDupsOpen(true)}>
+            Дубли: {dups.total}
+          </Button>
+        )}
         {onImport && (
           <Button onClick={onImport}>
             <Upload size={14} /> Загрузить
@@ -155,6 +168,68 @@ export default function ItemsTab({ onImport, reloadKey = 0 }: { onImport?: () =>
           </Card>
         ))}
       </div>
+
+      <Drawer open={dupsOpen} onClose={() => setDupsOpen(false)} title="Дубли позиций склада">
+        <p className="mb-3 text-sm text-ink-secondary">
+          Склейка переносит карты, нормы, поставки и историю цен на одну позицию — средневзвешенная цена
+          начнёт считаться по всем документам. Действие необратимо.
+        </p>
+        <div className="grid gap-2">
+          {(dups?.groups ?? []).map((g) => (
+            <div key={g.key} className="rounded-xl border border-line p-3">
+              <div className="mb-1 text-sm font-semibold">
+                {g.name} <span className="text-ink-tertiary">({g.unit})</span>
+              </div>
+              <div className="mb-2 grid gap-1">
+                {g.items.map((i) => (
+                  <div key={i.id} className="flex items-center gap-2 text-[13px]">
+                    <span className={i.id === g.suggestedKeepId ? 'font-semibold' : ''}>#{i.id}</span>
+                    <span className="text-ink-secondary">{money(i.costRub)}</span>
+                    <span className="text-ink-tertiary">карт: {i.cards}</span>
+                    {i.id === g.suggestedKeepId && <Badge tone="ok">оставить</Badge>}
+                  </div>
+                ))}
+              </div>
+              <Button
+                variant="secondary"
+                onClick={() =>
+                  setMergePlan({
+                    keepId: g.suggestedKeepId,
+                    mergeIds: g.items.filter((i) => i.id !== g.suggestedKeepId).map((i) => i.id),
+                    name: g.name,
+                  })
+                }
+              >
+                Склеить в #{g.suggestedKeepId}
+              </Button>
+            </div>
+          ))}
+        </div>
+      </Drawer>
+
+      <ConfirmDialog
+        open={mergePlan !== null}
+        title={`Склеить «${mergePlan?.name ?? ''}»?`}
+        confirmLabel="Склеить"
+        busy={false}
+        onCancel={() => setMergePlan(null)}
+        onConfirm={async () => {
+          if (!mergePlan) return
+          try {
+            const r = await costApi.mergeItems(mergePlan.keepId, mergePlan.mergeIds)
+            toast.push(`Склеено позиций: ${r.merged}. Перенесено строк карт: ${r.moved.lines ?? 0}`, 'ok')
+            setMergePlan(null)
+            setDupsOpen(false)
+            load()
+          } catch (e) {
+            toast.push(e instanceof Error ? e.message : 'Не удалось склеить', 'bad')
+            setMergePlan(null)
+          }
+        }}
+      >
+        Останется одна позиция (#{mergePlan?.keepId}). Карты, поставки и история цен перейдут на неё,
+        лишние позиции удалятся.
+      </ConfirmDialog>
 
       <Drawer
         open={createOpen}

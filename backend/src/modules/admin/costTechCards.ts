@@ -1054,3 +1054,149 @@ adminCostTechCards
       return c.json({ ok: true, created })
     },
   )
+
+/* ───────────────── F10: склейка дублей позиций склада ───────────────── */
+
+/**
+ * Дубли появляются естественно: импорт принёс «Молоко», руками завели «молоко».
+ * Склейка переносит ВСЕ ссылки на одну позицию (карты, нормы, документы, историю),
+ * чтобы средневзвешенная цена считалась по всем поставкам, и убирает лишние строки.
+ */
+export function mergeStockItems(keepId: number, rawMergeIds: number[]): {
+  merged: number
+  moved: Record<string, number>
+} {
+  const keep = itemById(keepId)
+  if (!keep) throw bad('Позиция, которую оставляем, не найдена', 404)
+  const ids = [...new Set(rawMergeIds)].filter((id) => id !== keepId)
+  if (!ids.length) throw bad('Нечего склеивать', 400)
+
+  const norm = (s: string) => s.trim().toLowerCase()
+  for (const id of ids) {
+    const other = itemById(id)
+    if (!other) throw bad(`Позиция ${id} не найдена`, 404)
+    if (other.unit !== keep.unit) {
+      throw bad(`Нельзя склеить «${other.name}» (${other.unit}) и «${keep.name}» (${keep.unit}): разные единицы`, 400)
+    }
+    if (norm(other.name) !== norm(keep.name)) {
+      throw bad(`Нельзя склеить разные позиции: «${other.name}» и «${keep.name}»`, 400)
+    }
+  }
+
+  const placeholders = ids.map(() => '?').join(',')
+  const moved: Record<string, number> = {}
+
+  db.transaction(() => {
+    moved.lines = db
+      .prepare(`UPDATE tech_card_lines SET stock_item_id=? WHERE stock_item_id IN (${placeholders})`)
+      .run(keepId, ...ids).changes
+    // Нормы склада: сначала переносим (UNIQUE(product_id, stock_item_id)), потом убираем старые.
+    db.prepare(
+      `INSERT OR REPLACE INTO product_stock_norms(product_id, stock_item_id, qty)
+       SELECT product_id, ?, qty FROM product_stock_norms WHERE stock_item_id IN (${placeholders})`,
+    ).run(keepId, ...ids)
+    db.prepare(`DELETE FROM product_stock_norms WHERE stock_item_id IN (${placeholders})`).run(...ids)
+    // Документы тоже переводим на оставшуюся позицию: иначе DELETE упрётся в FK,
+    // а средневзвешенная не увидит поставки склеенной позиции.
+    const repoint = (table: string) =>
+      db.prepare(`UPDATE ${table} SET stock_item_id=? WHERE stock_item_id IN (${placeholders})`).run(keepId, ...ids).changes
+    moved.invoices = repoint('purchase_invoice_lines')
+    moved.orderLines = repoint('purchase_order_lines')
+    moved.returnLines = repoint('supplier_return_lines')
+    moved.inventoryLines = repoint('inventory_lines')
+    moved.writeoffLines = repoint('stock_writeoff_lines')
+    moved.batches = db
+      .prepare(`UPDATE stock_batches SET stock_item_id=? WHERE stock_item_id IN (${placeholders})`)
+      .run(keepId, ...ids).changes
+    moved.movements = db
+      .prepare(`UPDATE stock_movements SET stock_item_id=? WHERE stock_item_id IN (${placeholders})`)
+      .run(keepId, ...ids).changes
+    moved.history = db
+      .prepare(`UPDATE stock_item_cost_history SET stock_item_id=? WHERE stock_item_id IN (${placeholders})`)
+      .run(keepId, ...ids).changes
+    // Ручную цену берём, если у основной её нет.
+    if (keep.manualCostKop == null) {
+      const donor = db
+        .prepare(
+          `SELECT manual_cost_kop AS v FROM stock_items WHERE id IN (${placeholders}) AND manual_cost_kop IS NOT NULL ORDER BY id LIMIT 1`,
+        )
+        .get(...ids) as { v: number } | undefined
+      if (donor) db.prepare(`UPDATE stock_items SET manual_cost_kop=?, updated_at=? WHERE id=?`).run(donor.v, now(), keepId)
+    }
+    db.prepare(`DELETE FROM stock_items WHERE id IN (${placeholders})`).run(...ids)
+  })()
+
+  return { merged: ids.length, moved }
+}
+
+adminCostTechCards
+  /** Группы дублей: одинаковые имя (без регистра) и единица. */
+  .get('/cost/items/duplicates', (c) => {
+    const rows = db
+      .prepare(
+        `SELECT id, name, unit, manual_cost_kop AS manualCostKop
+           FROM stock_items WHERE active=1 ORDER BY lower(trim(name)), unit, id`,
+      )
+      .all() as { id: number; name: string; unit: Unit; manualCostKop: number | null }[]
+    const costs = unitCostMap()
+    const used = new Map(
+      (
+        db
+          .prepare(
+            `SELECT l.stock_item_id AS itemId, COUNT(DISTINCT v.card_id) AS n
+               FROM tech_card_lines l JOIN tech_card_versions v ON v.id=l.version_id
+              GROUP BY l.stock_item_id`,
+          )
+          .all() as { itemId: number; n: number }[]
+      ).map((r) => [r.itemId, r.n]),
+    )
+    const groups = new Map<string, typeof rows>()
+    for (const r of rows) {
+      const key = `${r.name.trim().toLowerCase()}|${r.unit}`
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key)!.push(r)
+    }
+    const duplicates = [...groups.values()]
+      .filter((g) => g.length > 1)
+      .map((g) => ({
+        key: `${g[0]!.name.trim().toLowerCase()}|${g[0]!.unit}`,
+        name: g[0]!.name,
+        unit: g[0]!.unit,
+        items: g.map((i) => ({
+          id: i.id,
+          name: i.name,
+          costRub: rub(costs.get(i.id)?.costKop ?? null),
+          costSource: costs.get(i.id)?.source ?? 'none',
+          cards: used.get(i.id) ?? 0,
+        })),
+        // Рекомендация: та, у которой больше карт, затем с ценой из накладных, затем меньший id.
+        suggestedKeepId:
+          [...g].sort((a, b) => {
+            const ca = used.get(a.id) ?? 0
+            const cb = used.get(b.id) ?? 0
+            if (ca !== cb) return cb - ca
+            const sa = costs.get(a.id)?.source === 'invoice' ? 1 : 0
+            const sb = costs.get(b.id)?.source === 'invoice' ? 1 : 0
+            if (sa !== sb) return sb - sa
+            return a.id - b.id
+          })[0]!.id,
+      }))
+    return c.json({ groups: duplicates, total: duplicates.reduce((s, g) => s + g.items.length - 1, 0) })
+  })
+
+  .post(
+    '/cost/items/merge',
+    zValidator(
+      'json',
+      z.object({
+        keepId: z.number().int().positive(),
+        mergeIds: z.array(z.number().int().positive()).min(1),
+      }),
+    ),
+    (c) => {
+      requireWrite(c)
+      const p = c.req.valid('json')
+      const r = mergeStockItems(p.keepId, p.mergeIds)
+      return c.json({ ok: true, ...r })
+    },
+  )
