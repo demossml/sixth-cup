@@ -247,12 +247,13 @@ export default function CardPage() {
 
         {dealCount > 0 && (
           <section>
-            <div className="section-head">
-              <h2>Акции</h2>
-              <button type="button" className="section-more" onClick={() => nav('/promos')}>
-                Ещё <ChevronRight size={12} strokeWidth={2.2} className="inline align-[-1px]" />
-              </button>
-            </div>
+            {/* Никаких «Акции» и «Ещё»: одна карточка говорит сама за себя, а подпись
+                нужна только чтобы разделить несколько карточек в рельсе. */}
+            {dealCount > 1 ? (
+              <div className="section-head">
+                <h2>Для вас</h2>
+              </div>
+            ) : null}
             {dealsWide ? (
               deals_all.map((d) => (
                 <DealCard

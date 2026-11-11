@@ -274,7 +274,7 @@ html, body, #root {
   background: #F3F7FD;
 }
 
-/* ── Секция с рельсом (Luckin: заголовок + «Ещё» + горизонтальные карточки) ── */
+/* ── Секция с рельсом (заголовок появляется только при нескольких карточках) ── */
 .section-head {
   display: flex;
   align-items: baseline;
@@ -288,17 +288,6 @@ html, body, #root {
   line-height: 20px;
   font-weight: 600;
   color: #101B2D;
-}
-.section-head .section-more {
-  flex: none;
-  font-size: 12px;
-  line-height: 16px;
-  font-weight: 600;
-  color: #0B4A8D;
-  background: none;
-  border: 0;
-  padding: 2px 0;
-  cursor: pointer;
 }
 /* Рельс выезжает до края экрана: последняя карточка «подглядывает». */
 .rail {
