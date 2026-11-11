@@ -643,3 +643,96 @@ export function menuEngineering(
     thresholds: { popularityQty, marginPerUnitKop: marginThreshold, popularityFactor: factor },
   }
 }
+
+/* ───────── распределение постоянных расходов по структуре продаж (план или факт) ───────── */
+
+export type OverheadKind = 'electricity' | 'salary' | 'rent' | 'tax' | 'other'
+
+/** Сколько единиц позиции продаём (план) или продали (факт) и на какую выручку. */
+export type SalesMixRow = { cardId: number; units: number; revenueKop: number }
+
+export type OverheadAllocationRow = {
+  cardId: number
+  units: number
+  /** Доля позиции в базе распределения, %. Сумма долей = 100. */
+  sharePct: number
+  /** Постоянные расходы, которые «сидят» в позиции за период, копейки. */
+  overheadKop: number
+  /** То же на одну единицу, копейки. */
+  perUnitKop: number
+  /** Разбивка по статьям на одну единицу — «сколько аренды в этой чашке». */
+  breakdown: { kind: OverheadKind; perUnitKop: number }[]
+}
+
+export type OverheadAllocationResult = {
+  rows: OverheadAllocationRow[]
+  /** База: по выручке, по количеству или её нет. */
+  basis: 'revenue' | 'units' | 'none'
+  totalKop: number
+  totalUnits: number
+  totalRevenueKop: number
+}
+
+/**
+ * Раскладывает постоянные расходы месяца по позициям меню.
+ *
+ * Ключевое отличие от «сумма / всё количество»: каждая позиция получает **свою** долю
+ * расходов (по доле в выручке или по доле в количестве), а внутри позиции сумма делится
+ * на её собственный план продаж. Поэтому капучино с 70 % продаж забирает 70 % аренды,
+ * и в чашке эспрессо аренды меньше, а не «2 500 ₽ в каждой».
+ *
+ * Если базы нет (ни продаж, ни плана) — `basis: 'none'` и нули: UI должен честно попросить
+ * заполнить план, а не показывать выдуманное число.
+ */
+export function allocateOverheads(input: {
+  /** Статьи расходов за месяц (уже приведённые к месяцу), копейки. */
+  articles: { kind: OverheadKind; amountKop: number }[]
+  mode: 'units' | 'revenue'
+  mix: SalesMixRow[]
+}): OverheadAllocationResult {
+  const totalKop = input.articles.reduce((s, a) => s + Math.max(0, a.amountKop), 0)
+  const rows = input.mix
+    .map((m) => ({ cardId: m.cardId, units: Math.max(0, m.units), revenueKop: Math.max(0, m.revenueKop) }))
+    .filter((m) => m.units > 0)
+
+  const totalUnits = rows.reduce((s, m) => s + m.units, 0)
+  const totalRevenueKop = rows.reduce((s, m) => s + m.revenueKop, 0)
+
+  // По выручке распределяем только если выручка вообще известна, иначе честно падаем на количество.
+  const basis: 'revenue' | 'units' | 'none' =
+    totalUnits <= 0 ? 'none' : input.mode === 'revenue' && totalRevenueKop > 0 ? 'revenue' : 'units'
+
+  if (basis === 'none' || totalKop <= 0) {
+    return {
+      rows: rows.map((m) => ({ cardId: m.cardId, units: m.units, sharePct: 0, overheadKop: 0, perUnitKop: 0, breakdown: [] })),
+      basis,
+      totalKop,
+      totalUnits,
+      totalRevenueKop,
+    }
+  }
+
+  const weightOf = (m: SalesMixRow) => (basis === 'revenue' ? m.revenueKop : m.units)
+  const totalWeight = rows.reduce((s, m) => s + weightOf(m), 0)
+
+  return {
+    rows: rows.map((m) => {
+      const share = totalWeight > 0 ? weightOf(m) / totalWeight : 0
+      const overheadKop = totalKop * share
+      return {
+        cardId: m.cardId,
+        units: m.units,
+        sharePct: round(share * 100, 1),
+        overheadKop: round(overheadKop, 2),
+        perUnitKop: round(overheadKop / m.units, 2),
+        breakdown: input.articles
+          .filter((a) => a.amountKop > 0)
+          .map((a) => ({ kind: a.kind, perUnitKop: round((a.amountKop * share) / m.units, 2) })),
+      }
+    }),
+    basis,
+    totalKop,
+    totalUnits,
+    totalRevenueKop,
+  }
+}

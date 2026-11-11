@@ -9,16 +9,9 @@ import { useEffect, useState } from 'react'
 import { Badge, Button, Card, EmptyState, ErrorBox, Input, Select, Skeleton, useToast } from '../../ui/kit'
 import { Plus, RefreshCw, Trash2 } from 'lucide-react'
 
-import { costApi, type OverheadRow, type OverheadsState } from '../../lib/costApi'
-import { money } from '../../lib/costMath'
+import { costApi, type OverheadRow, type OverheadsState, type SalesPlan } from '../../lib/costApi'
+import { OVERHEAD_KIND_LABELS, money, pct } from '../../lib/costMath'
 
-const KIND_LABEL: Record<OverheadRow['kind'], string> = {
-  electricity: 'Электричество',
-  salary: 'Зарплата',
-  rent: 'Аренда',
-  tax: 'Налоги',
-  other: 'Другое',
-}
 
 const PERIOD_LABEL: Record<OverheadRow['period'], string> = { month: 'в месяц', quarter: 'в квартал', year: 'в год' }
 
@@ -30,6 +23,19 @@ export default function OverheadsTab({ reloadKey = 0 }: { reloadKey?: number }) 
   const [newRow, setNewRow] = useState<{ name: string; kind: OverheadRow['kind']; amount: string }>({ name: '', kind: 'other', amount: '' })
   const [planned, setPlanned] = useState('')
   const [busy, setBusy] = useState(false)
+  // F15: план продаж по позициям — по нему расходы делятся между блюдами.
+  const [plan, setPlan] = useState<SalesPlan | null>(null)
+  const [planDraft, setPlanDraft] = useState<Record<number, string>>({})
+
+  const loadPlan = () => {
+    costApi
+      .salesPlan()
+      .then((p) => {
+        setPlan(p)
+        setPlanDraft(Object.fromEntries(p.rows.map((r) => [r.cardId, r.plannedUnits ? String(r.plannedUnits) : ''])))
+      })
+      .catch(() => setPlan(null))
+  }
 
   const load = () => {
     setError(null)
@@ -39,6 +45,7 @@ export default function OverheadsTab({ reloadKey = 0 }: { reloadKey?: number }) 
         setState(s)
         setPlanned(s.plannedUnitsPerMonth ? String(s.plannedUnitsPerMonth) : '')
         setDraft({})
+        loadPlan()
       })
       .catch((e) => setError(e instanceof Error ? e : new Error('Не удалось загрузить расходы')))
   }
@@ -59,6 +66,23 @@ export default function OverheadsTab({ reloadKey = 0 }: { reloadKey?: number }) 
       toast.push(`«${row.name}»: ${money(Number(raw))} ${PERIOD_LABEL[row.period]}`, 'ok')
     } catch (e) {
       toast.push(e instanceof Error ? e.message : 'Не удалось сохранить', 'bad')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const savePlan = async () => {
+    if (!plan) return
+    setBusy(true)
+    try {
+      const rows = plan.rows.map((r) => ({ cardId: r.cardId, unitsPerMonth: Number(planDraft[r.cardId]) || 0 }))
+      const p = await costApi.saveSalesPlan(rows)
+      setPlan(p)
+      const over = await costApi.overheads()
+      setState(over)
+      toast.push(`План сохранён: ${p.totals.plannedUnits} шт/мес`, 'ok')
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Не удалось сохранить план', 'bad')
     } finally {
       setBusy(false)
     }
@@ -131,7 +155,7 @@ export default function OverheadsTab({ reloadKey = 0 }: { reloadKey?: number }) 
               <div className="min-w-[160px] flex-1">
                 <div className="text-sm font-semibold">{row.name}</div>
                 <div className="text-[11px] text-ink-tertiary">
-                  {KIND_LABEL[row.kind]} · {PERIOD_LABEL[row.period]}
+                  {OVERHEAD_KIND_LABELS[row.kind]} · {PERIOD_LABEL[row.period]}
                 </div>
               </div>
               <label className="text-[11px] text-ink-tertiary">
@@ -189,7 +213,7 @@ export default function OverheadsTab({ reloadKey = 0 }: { reloadKey?: number }) 
               <option value="revenue">пропорционально выручке</option>
             </Select>
           </Field2>
-          <Field2 label="План продаж, шт/мес (если продаж ещё нет)">
+          <Field2 label="Общий план, шт/мес (если план по позициям не заполнен)">
             <div className="flex gap-2">
               <Input
                 className="w-32"
@@ -222,6 +246,108 @@ export default function OverheadsTab({ reloadKey = 0 }: { reloadKey?: number }) 
         </p>
       </Card>
 
+      {plan && plan.rows.length > 0 && (
+        <Card className="mt-3">
+          <div className="mb-1 text-sm font-semibold">План продаж по позициям</div>
+          <p className="mb-2 text-[12px] text-ink-secondary">
+            Укажите, сколько штук каждой позиции планируете за месяц. Расходы делятся между позициями по их доле
+            ({plan.mode === 'revenue' ? 'пропорционально выручке' : 'поровну по количеству'}), а внутри позиции — на её
+            собственный план. Так в дорогом капучино аренды больше, чем в редком эспрессо.
+          </p>
+
+          {plan.source === 'sales' && (
+            <div className="mb-2 rounded-lg border border-line bg-surface-2 px-3 py-2 text-[12px] text-ink-secondary">
+              Сейчас база — фактически{' '}
+              <b>продажи за {plan.windowDays} дн.</b> ({plan.totals.actualUnits} шт). План пригодится, когда чеков не будет.
+            </div>
+          )}
+          {plan.source === 'none' && (
+            <div className="mb-2 rounded-lg border border-amber bg-surface-2 px-3 py-2 text-[12px]">
+              Пока не заполнен ни план, ни продажи — расходы раскладываются на общий объём из поля выше.
+            </div>
+          )}
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-ink-tertiary">
+                  <th className="px-2 py-2">Позиция</th>
+                  <th className="px-2 py-2 text-right">Цена</th>
+                  <th className="px-2 py-2 text-right">План, шт/мес</th>
+                  <th className="px-2 py-2 text-right">Доля</th>
+                  <th className="px-2 py-2 text-right">План. выручка</th>
+                  <th className="px-2 py-2 text-right">Постоянные на порцию</th>
+                </tr>
+              </thead>
+              <tbody>
+                {plan.rows.map((r) => (
+                  <tr key={r.cardId} className="border-b border-line/60">
+                    <td className="px-2 py-2">{r.name}</td>
+                    <td className="px-2 py-2 text-right">{money(r.retailRub)}</td>
+                    <td className="px-2 py-2 text-right">
+                      <Input
+                        className="ml-auto w-24 text-right"
+                        type="number"
+                        min="0"
+                        step="1"
+                        aria-label={`План продаж: ${r.name}`}
+                        value={planDraft[r.cardId] ?? ''}
+                        onChange={(e) => setPlanDraft((d) => ({ ...d, [r.cardId]: e.target.value }))}
+                      />
+                    </td>
+                    <td className="px-2 py-2 text-right">{pct(r.sharePct)}</td>
+                    <td className="px-2 py-2 text-right">{money(r.planRevenueRub)}</td>
+                    <td className="px-2 py-2 text-right">
+                      <div className="font-semibold">{money(r.overheadPerUnitRub)}</div>
+                      {r.breakdownRub.length > 0 && (
+                        <div className="text-[10px] text-ink-tertiary">
+                          {r.breakdownRub.map((b) => `${b.name} ${money(b.perUnitRub)}`).join(' · ')}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="text-[12px] font-semibold">
+                  <td className="px-2 py-2">Итого</td>
+                  <td className="px-2 py-2" />
+                  <td className="px-2 py-2 text-right">{plan.totals.plannedUnits} шт</td>
+                  <td className="px-2 py-2 text-right">100 %</td>
+                  <td className="px-2 py-2 text-right">{money(plan.totalRevenueRub)}</td>
+                  <td className="px-2 py-2 text-right">{money(plan.totalRub)} за месяц</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <Button loading={busy} onClick={() => void savePlan()}>
+              Сохранить план
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                const total = Number(planned) || 0
+                if (!total || !plan) return
+                // Быстрый способ: задать общий план и доли в процентах — считаем штуки.
+                const shares = plan.rows.map((r) => ({ id: r.cardId, share: Number(planDraft[r.cardId]) || 0 }))
+                const sum = shares.reduce((s2, r) => s2 + r.share, 0)
+                if (sum <= 0) return
+                setPlanDraft(Object.fromEntries(shares.map((r) => [r.id, String(Math.round((total * r.share) / sum))])))
+                toast.push('Доли пересчитаны в штуки — проверьте и сохраните')
+              }}
+              aria-label="Пересчитать проценты в штуки"
+            >
+              Доли → штуки от общего плана
+            </Button>
+            <span className="text-[11px] text-ink-tertiary">
+              База: {plan.basisLabel} · сумма постоянных {money(plan.totalRub)}
+            </span>
+          </div>
+        </Card>
+      )}
+
       <Card className="mt-3">
         <div className="mb-2 text-sm font-semibold">Добавить статью</div>
         <div className="flex flex-wrap items-end gap-2">
@@ -233,7 +359,7 @@ export default function OverheadsTab({ reloadKey = 0 }: { reloadKey?: number }) 
             onChange={(e) => setNewRow((r) => ({ ...r, name: e.target.value }))}
           />
           <Select value={newRow.kind} aria-label="Тип статьи" onChange={(e) => setNewRow((r) => ({ ...r, kind: e.target.value as OverheadRow['kind'] }))}>
-            {Object.entries(KIND_LABEL).map(([v, l]) => (
+            {Object.entries(OVERHEAD_KIND_LABELS).map(([v, l]) => (
               <option key={v} value={v}>
                 {l}
               </option>

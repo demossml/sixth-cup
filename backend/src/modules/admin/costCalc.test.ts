@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  allocateOverheads,
   cardInsights,
   cardTotals,
   convertQty,
@@ -367,5 +368,105 @@ describe('меню-инжиниринг: продажи × маржа', () => {
     expect(r.totals.counted).toBe(0)
     expect(r.thresholds.popularityQty).toBeNull()
     expect(r.thresholds.marginPerUnitKop).toBeNull()
+  })
+})
+
+describe('распределение постоянных расходов по структуре продаж', () => {
+  const articles = [
+    { kind: 'rent' as const, amountKop: 150_000_00 },
+    { kind: 'salary' as const, amountKop: 90_000_00 },
+    { kind: 'tax' as const, amountKop: 10_000_00 },
+  ]
+
+  it('по количеству: у всех позиций одинаковая надбавка на единицу', () => {
+    const r = allocateOverheads({
+      articles,
+      mode: 'units',
+      mix: [
+        { cardId: 1, units: 70, revenueKop: 70 * 30_000 },
+        { cardId: 2, units: 20, revenueKop: 20 * 15_000 },
+        { cardId: 3, units: 10, revenueKop: 10 * 35_000 },
+      ],
+    })
+    expect(r.basis).toBe('units')
+    expect(r.totalKop).toBe(250_000_00)
+    // 250 000 ₽ / 100 шт = 2 500 ₽ на любую порцию — это и есть «поровну на единицу».
+    for (const row of r.rows) expect(row.perUnitKop).toBeCloseTo(2_500_00, 0)
+    expect(r.rows.reduce((s2, x) => s2 + x.sharePct, 0)).toBeCloseTo(100, 1)
+  })
+
+  it('по выручке: дорогая позиция забирает больше расходов, дешёвая — меньше', () => {
+    const r = allocateOverheads({
+      articles,
+      mode: 'revenue',
+      mix: [
+        { cardId: 1, units: 70, revenueKop: 70 * 30_000 }, // капучино 300 ₽
+        { cardId: 2, units: 20, revenueKop: 20 * 15_000 }, // эспрессо 150 ₽
+        { cardId: 3, units: 10, revenueKop: 10 * 35_000 }, // латте 350 ₽
+      ],
+    })
+    expect(r.basis).toBe('revenue')
+    const byId = new Map(r.rows.map((x) => [x.cardId, x]))
+    const cap = byId.get(1)!
+    const esp = byId.get(2)!
+    const lat = byId.get(3)!
+    // Доли = плановая выручка: 21 000 / 3 000 / 3 500 из 27 500.
+    expect(cap.sharePct).toBeCloseTo(76.4, 1)
+    expect(esp.sharePct).toBeCloseTo(10.9, 1)
+    expect(lat.sharePct).toBeCloseTo(12.7, 1)
+    expect(cap.perUnitKop).toBeGreaterThan(esp.perUnitKop)
+    expect(lat.perUnitKop).toBeGreaterThan(cap.perUnitKop) // латте дороже капучино
+    // Сумма расходов по позициям равна общей сумме.
+    expect(r.rows.reduce((s2, x) => s2 + x.overheadKop, 0)).toBeCloseTo(250_000_00, 0)
+  })
+
+  it('разбивка по статьям складывается в надбавку позиции', () => {
+    const r = allocateOverheads({
+      articles,
+      mode: 'revenue',
+      mix: [{ cardId: 1, units: 100, revenueKop: 100 * 20_000 }],
+    })
+    const row = r.rows[0]!
+    const sum = row.breakdown.reduce((s2, b) => s2 + b.perUnitKop, 0)
+    expect(row.breakdown.map((b) => b.kind).sort()).toEqual(['rent', 'salary', 'tax'])
+    expect(sum).toBeCloseTo(row.perUnitKop, 0)
+    expect(row.breakdown.find((b) => b.kind === 'rent')!.perUnitKop).toBeCloseTo(1_500_00, 0)
+  })
+
+  it('позиции без плана не участвуют в делении', () => {
+    const r = allocateOverheads({
+      articles,
+      mode: 'units',
+      mix: [
+        { cardId: 1, units: 50, revenueKop: 0 },
+        { cardId: 2, units: 0, revenueKop: 0 },
+      ],
+    })
+    expect(r.rows).toHaveLength(1)
+    expect(r.rows[0]!.cardId).toBe(1)
+    expect(r.rows[0]!.sharePct).toBeCloseTo(100, 1)
+  })
+
+  it('нет базы или нет расходов — нули, а не выдуманные числа', () => {
+    const empty = allocateOverheads({ articles, mode: 'units', mix: [] })
+    expect(empty.basis).toBe('none')
+    expect(empty.rows).toHaveLength(0)
+
+    const noMoney = allocateOverheads({
+      articles: [],
+      mode: 'units',
+      mix: [{ cardId: 1, units: 10, revenueKop: 1000 }],
+    })
+    expect(noMoney.rows[0]!.perUnitKop).toBe(0)
+  })
+
+  it('режим «по выручке» без выручки честно падает на количество', () => {
+    const r = allocateOverheads({
+      articles,
+      mode: 'revenue',
+      mix: [{ cardId: 1, units: 10, revenueKop: 0 }, { cardId: 2, units: 30, revenueKop: 0 }],
+    })
+    expect(r.basis).toBe('units')
+    expect(r.rows[0]!.perUnitKop).toBeCloseTo(250_000_00 / 40, 0)
   })
 })

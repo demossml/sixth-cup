@@ -67,6 +67,14 @@ export function pct(v: number | null | undefined): string {
 export const UNIT_LABELS: Record<string, string> = { kg: 'кг', g: 'г', l: 'л', ml: 'мл', pcs: 'шт' }
 
 export const KIND_LABELS: Record<string, string> = { dish: 'Блюдо', semi: 'Заготовка', modifier: 'Модификатор' }
+/** Статьи постоянных расходов — один словарь для «Расходов», карт и ТТК. */
+export const OVERHEAD_KIND_LABELS: Record<string, string> = {
+  electricity: 'Электричество',
+  salary: 'Зарплата',
+  rent: 'Аренда',
+  tax: 'Налоги',
+  other: 'Другое',
+}
 
 export const WRITE_OFF_LABELS: Record<string, string> = {
   ingredients: 'списывать ингредиенты',

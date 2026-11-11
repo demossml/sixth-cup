@@ -51,6 +51,8 @@ const card = (over: Partial<TechCard> = {}): TechCard => ({
   fullCostPerUnitRub: 55,
   fullFoodCostPct: 22,
   fullMarginRub: 195,
+  overheadSharePct: null,
+  overheadBreakdownRub: [],
   missingPrices: false,
   insights: [],
   lines: [line()],

@@ -36,7 +36,17 @@ import {
   type WriteOffMode,
 } from '../../lib/costApi'
 import { api } from '../../api/client'
-import { COST_SOURCE_LABELS, KIND_LABELS, UNIT_LABELS, WRITE_OFF_LABELS, lineCostRub, lineNumbers, money, pct } from '../../lib/costMath'
+import {
+  COST_SOURCE_LABELS,
+  KIND_LABELS,
+  OVERHEAD_KIND_LABELS,
+  UNIT_LABELS,
+  WRITE_OFF_LABELS,
+  lineCostRub,
+  lineNumbers,
+  money,
+  pct,
+} from '../../lib/costMath'
 
 type DraftLine = {
   key: string
@@ -632,6 +642,14 @@ function TechCardEditor({
               <div className="text-[11px] uppercase tracking-wide text-ink-tertiary">Маржа с расходами</div>
               <div className="text-sm font-semibold">{money(card.fullMarginRub)}</div>
             </div>
+            {(card.overheadBreakdownRub.length > 0 || card.overheadSharePct != null) && (
+              <div className="text-[11px] text-ink-tertiary sm:col-span-4">
+                {card.overheadSharePct != null && <>доля позиции в продажах {pct(card.overheadSharePct)} · </>}
+                {card.overheadBreakdownRub
+                  .map((b) => `${OVERHEAD_KIND_LABELS[b.kind] ?? b.kind} ${money(b.perUnitRub)}`)
+                  .join(' · ')}
+              </div>
+            )}
           </div>
         )}
       </Card>

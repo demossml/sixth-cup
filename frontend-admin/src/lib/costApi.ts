@@ -77,6 +77,10 @@ export type TechCard = {
   fullCostPerUnitRub: number | null
   fullFoodCostPct: number | null
   fullMarginRub: number | null
+  /** Доля позиции в структуре продаж, % (null — когда базы нет). */
+  overheadSharePct: number | null
+  /** Из чего складываются постоянные в этой порции. */
+  overheadBreakdownRub: { kind: OverheadKind; perUnitRub: number | null }[]
   missingPrices: boolean
   insights: Insight[]
   lines: CardLine[]
@@ -192,6 +196,40 @@ export type MenuEngineering = {
   note: string
 }
 
+/** F15: план продаж по позициям — по нему раскладываются постоянные расходы. */
+export type OverheadKind = 'electricity' | 'salary' | 'rent' | 'tax' | 'other'
+
+export type SalesPlanRow = {
+  cardId: number
+  name: string
+  kind: CardKind | null
+  retailRub: number | null
+  /** План владельца, шт/мес. */
+  plannedUnits: number
+  /** Факт продаж за окно, шт. */
+  actualUnits: number
+  /** Что реально пошло в расчёт базы. */
+  unitsUsed: number
+  sharePct: number
+  planRevenueRub: number | null
+  overheadPerUnitRub: number | null
+  breakdownRub: { kind: OverheadKind; name: string; perUnitRub: number | null }[]
+}
+
+export type SalesPlan = {
+  mode: 'units' | 'revenue'
+  enabled: boolean
+  windowDays: number
+  /** Откуда структура продаж: чеки, план по позициям или ничего. */
+  source: 'sales' | 'plan' | 'none'
+  basisLabel: string
+  totalRub: number | null
+  totalUnits: number
+  totalRevenueRub: number | null
+  rows: SalesPlanRow[]
+  totals: { plannedUnits: number; actualUnits: number; unitsUsed: number }
+}
+
 const qs = (params: Record<string, string | number | undefined>) => {
   const parts = Object.entries(params)
     .filter(([, v]) => v !== undefined && v !== '')
@@ -285,6 +323,9 @@ export const costApi = {
     }>('/cost/overview'),
   menuEngineering: (params: { days?: number; storeUuid?: string } = {}) =>
     api<MenuEngineering>(`/cost/menu-engineering${qs({ days: params.days, storeUuid: params.storeUuid })}`),
+  salesPlan: () => api<SalesPlan>('/cost/sales-plan'),
+  saveSalesPlan: (rows: { cardId: number; unitsPerMonth: number }[]) =>
+    api<SalesPlan>('/cost/sales-plan', { method: 'PUT', body: { rows } }),
   overheads: () => api<OverheadsState>('/cost/overheads'),
   createOverhead: (body: { name: string; kind?: OverheadRow['kind']; amountRub?: number; period?: OverheadRow['period'] }) =>
     api<{ id: number; overheads: OverheadsState }>('/cost/overheads', { method: 'POST', body }),

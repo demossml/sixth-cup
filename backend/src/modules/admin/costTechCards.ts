@@ -12,6 +12,7 @@ import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import { parseTechcardBuffer, parseTechcardText, type ParsedRecipe } from './techcardImport'
 import {
+  allocateOverheads,
   cardInsights,
   cardTotals,
   costPerUnitKop,
@@ -283,7 +284,7 @@ export function serializeCard(id: number, opts: { versionId?: number } = {}) {
   const retail = card.retailPriceKop ?? retailFromMarkup(costPerUnit, card.markupPct)
   const fc = foodCostPct(costPerUnit, retail)
   // Полная себестоимость = сырьё + доля постоянных расходов (если владелец включил флаг).
-  const overheadPerUnit = overheadForCard(overhead, retail)
+  const overheadPerUnit = overheadForCard(overhead, card.id, retail)
   const fullCostPerUnit = costPerUnit != null && overheadPerUnit != null ? costPerUnit + overheadPerUnit : costPerUnit
   const fullFc = foodCostPct(fullCostPerUnit, retail)
 
@@ -315,6 +316,13 @@ export function serializeCard(id: number, opts: { versionId?: number } = {}) {
     fullCostPerUnitRub: rub(fullCostPerUnit),
     fullFoodCostPct: fullFc,
     fullMarginRub: rub(marginKop(fullCostPerUnit, retail)),
+    /** Доля позиции в структуре продаж, % — видно, почему расходов именно столько. */
+    overheadSharePct: overhead.allocationByCard.get(card.id)?.sharePct ?? null,
+    /** Из чего складываются постоянные в этой порции: аренда, зарплата, электричество, налоги. */
+    overheadBreakdownRub: (overhead.allocationByCard.get(card.id)?.breakdown ?? []).map((b) => ({
+      kind: b.kind,
+      perUnitRub: rub(b.perUnitKop),
+    })),
     missingPrices: totals.missing,
     insights: cardInsights({
       costKop: costPerUnit,
@@ -1264,6 +1272,70 @@ export function overheadRows(): OverheadRow[] {
     .all() as OverheadRow[]
 }
 
+/** План продаж по позициям: сколько единиц каждой карты планируем в месяц. */
+export function planRows(): Map<number, number> {
+  const rows = db.prepare(`SELECT card_id AS cardId, units_per_month AS units FROM cost_sales_plan`).all() as {
+    cardId: number
+    units: number
+  }[]
+  return new Map(rows.map((r) => [r.cardId, Number(r.units) || 0]))
+}
+
+/**
+ * Факт продаж по картам за окно: сначала привязка к товару кассы, если её нет — по имени.
+ *
+ * ВАЖНО: `LOWER()` в SQLite не трогает кириллицу, поэтому имена нормализуем в JS —
+ * иначе «Латте» из чека никогда не совпадёт с «латте» из карты.
+ */
+export function salesByCard(days: number, store?: string | null): Map<number, { qty: number; revenue: number }> {
+  const since = now() - days * DAY_MS
+  const storeSql = store ? 'AND store_uuid = ?' : ''
+  const args = store ? [since, store] : [since]
+
+  const byProduct = new Map<number, { qty: number; revenue: number }>()
+  const productRows = db
+    .prepare(
+      `SELECT product_id AS productId, COALESCE(SUM(qty),0) AS qty, COALESCE(SUM(sum_kopecks),0) AS revenue
+         FROM sales_lines
+        WHERE closed_at >= ? AND product_id IS NOT NULL ${storeSql}
+        GROUP BY product_id`,
+    )
+    .all(...args) as { productId: number; qty: number; revenue: number }[]
+  for (const r of productRows) byProduct.set(r.productId, { qty: Number(r.qty) || 0, revenue: Number(r.revenue) || 0 })
+
+  const byName = new Map<string, { qty: number; revenue: number }>()
+  const nameRows = db
+    .prepare(
+      `SELECT COALESCE(name_snapshot,'') AS name, COALESCE(SUM(qty),0) AS qty, COALESCE(SUM(sum_kopecks),0) AS revenue
+         FROM sales_lines
+        WHERE closed_at >= ? AND COALESCE(TRIM(name_snapshot),'') <> '' ${storeSql}
+        GROUP BY 1`,
+    )
+    .all(...args) as { name: string; qty: number; revenue: number }[]
+  for (const r of nameRows) {
+    const key = r.name.trim().toLowerCase()
+    if (!key) continue
+    const cur = byName.get(key) ?? { qty: 0, revenue: 0 }
+    cur.qty += Number(r.qty) || 0
+    cur.revenue += Number(r.revenue) || 0
+    byName.set(key, cur)
+  }
+
+  const cards = db.prepare(`SELECT id, name, product_id AS productId FROM tech_cards`).all() as {
+    id: number
+    name: string
+    productId: number | null
+  }[]
+  const out = new Map<number, { qty: number; revenue: number }>()
+  for (const card of cards) {
+    const hit =
+      (card.productId != null ? byProduct.get(card.productId) : undefined) ??
+      byName.get(card.name.trim().toLowerCase())
+    if (hit && hit.qty > 0) out.set(card.id, hit)
+  }
+  return out
+}
+
 /**
  * Контекст распределения: сумма постоянных за месяц, база (продажи/план) и цена одной единицы.
  * Считается один раз на запрос — карт может быть сотня, а база у них общая.
@@ -1294,6 +1366,34 @@ export function overheadContext() {
     plannedUnits: planned,
   })
 
+  // ── структура продаж по позициям: факт чеков важнее плана, план важнее «поровну» ──
+  const cards = db
+    .prepare(
+      `SELECT id, name, retail_price_kop AS retailKop, markup_pct AS markupPct FROM tech_cards ORDER BY name COLLATE NOCASE`,
+    )
+    .all() as { id: number; name: string; retailKop: number | null; markupPct: number }[]
+  const plan = planRows()
+  const sold = salesByCard(days)
+  const useSales = [...sold.values()].some((v) => v.qty > 0)
+
+  const mix = cards.map((c) => {
+    const fact = sold.get(c.id)
+    const plannedUnits = plan.get(c.id) ?? 0
+    const priceKop = c.retailKop ?? 0
+    if (useSales) return { cardId: c.id, units: fact?.qty ?? 0, revenueKop: fact?.revenue ?? 0 }
+    return { cardId: c.id, units: plannedUnits, revenueKop: plannedUnits * priceKop }
+  })
+  const mixUnits = mix.reduce((s, m) => s + m.units, 0)
+
+  const allocation = allocateOverheads({
+    articles: rows.map((r) => ({ kind: r.kind as 'other', amountKop: perMonth(r) })),
+    mode,
+    mix,
+  })
+  const byCard = new Map(allocation.rows.map((r) => [r.cardId, r]))
+  // Ни факта, ни плана по позициям — старое «всё на общий объём», чтобы цифры не пропадали.
+  const uniformKop = !useSales && mixUnits <= 0 ? base.perUnitKop : null
+
   return {
     enabled,
     rows,
@@ -1305,24 +1405,53 @@ export function overheadContext() {
     soldUnits: Number(sales.units) || 0,
     revenueKop: Number(sales.revenue) || 0,
     basis: base.basis,
-    /** Подпись в UI: откуда база — из продаж, из плана или её нет. */
+    /** Подпись в UI: откуда база — из чеков, из плана по позициям или её нет. */
     basisLabel:
-      base.basis === 'sales'
-        ? `по продажам за ${days} дн.: ${Math.round(sales.units)} шт`
+      allocation.basis !== 'none'
+        ? useSales
+          ? `по продажам за ${days} дн.: ${Math.round(allocation.totalUnits)} шт`
+          : `по плану позиций: ${Math.round(allocation.totalUnits)} шт/мес`
         : base.basis === 'planned'
           ? `по плану: ${Math.round(planned)} шт/мес`
-          : 'нужен объём продаж или план',
+          : 'нужен объём продаж или план по позициям',
     /** Включён ли учёт в себестоимости (флаг владельца). */
     appliedKop: enabled ? base.perUnitKop : null,
     perUnitKop: base.perUnitKop,
+    /** Распределение по позициям: у каждой карты своя доля расходов. */
+    allocation,
+    allocationByCard: byCard,
+    /** Куда падать, когда плана по позициям нет. */
+    uniformKop,
+    mixSource: (useSales ? 'sales' : mixUnits > 0 ? 'plan' : 'none') as 'sales' | 'plan' | 'none',
+    planRows: plan,
   }
 }
 
-/** Постоянные расходы на одну единицу карты: в режиме «по выручке» зависят от цены. */
-function overheadForCard(ctx: ReturnType<typeof overheadContext>, priceKop: number | null): number | null {
+/**
+ * Постоянные расходы на одну единицу карты.
+ *
+ * Если есть структура продаж (чеки или план по позициям) — берём долю именно этой карты:
+ * у капучино с 70 % продаж аренды в чашке больше, чем у редкого эспрессо.
+ * Если структуры нет — прежний расчёт «на общий объём», чтобы цифры не пропадали.
+ */
+function overheadForCard(
+  ctx: ReturnType<typeof overheadContext>,
+  cardId: number,
+  priceKop: number | null,
+): number | null {
   if (!ctx.enabled || ctx.totalKop <= 0) return null
-  if (ctx.mode === 'revenue') {
-    if (priceKop == null || priceKop <= 0) return null
+  const own = ctx.allocationByCard.get(cardId)
+  if (own && own.units > 0) return own.perUnitKop
+  if (ctx.uniformKop != null) return ctx.uniformKop
+  // Позиции нет в структуре продаж (ещё не продаётся/не в плане) — оцениваем её так, как если бы
+  // она встала в ту же структуру: по своей цене (режим «по выручке») или по среднему объёму.
+  if (ctx.mode === 'revenue' && priceKop != null && priceKop > 0 && ctx.allocation.basis === 'revenue') {
+    if (ctx.allocation.totalRevenueKop > 0) return (ctx.totalKop * priceKop) / ctx.allocation.totalRevenueKop
+  }
+  if (ctx.allocation.basis === 'units' && ctx.allocation.totalUnits > 0) {
+    return ctx.totalKop / ctx.allocation.totalUnits
+  }
+  if (ctx.mode === 'revenue' && priceKop != null && priceKop > 0 && ctx.allocation.basis === 'none') {
     return overheadPerUnit({
       totalKop: ctx.totalKop,
       mode: 'revenue',
@@ -1332,7 +1461,82 @@ function overheadForCard(ctx: ReturnType<typeof overheadContext>, priceKop: numb
       plannedUnits: ctx.plannedUnitsPerMonth,
     }).perUnitKop
   }
-  return ctx.perUnitKop
+  return null
+}
+
+const OVERHEAD_KIND_LABEL: Record<string, string> = {
+  electricity: 'Электричество',
+  salary: 'Зарплата',
+  rent: 'Аренда',
+  tax: 'Налоги',
+  other: 'Другое',
+}
+
+/**
+ * План продаж по позициям: у каждой карты видно свой план, факт и сколько постоянных
+ * расходов в ней «сидит» — с разбивкой по статьям.
+ */
+export function salesPlanState() {
+  const ctx = overheadContext()
+  const cards = db
+    .prepare(
+      `SELECT id, name, kind, retail_price_kop AS retailKop, markup_pct AS markupPct
+         FROM tech_cards ORDER BY name COLLATE NOCASE`,
+    )
+    .all() as { id: number; name: string; kind: string; retailKop: number | null; markupPct: number }[]
+  const sold = salesByCard(ctx.windowDays)
+  const prices = unitCostMap()
+
+  const rows = cards.map((c) => {
+    const alloc = ctx.allocationByCard.get(c.id)
+    const plannedUnits = ctx.planRows.get(c.id) ?? 0
+    const actualUnits = sold.get(c.id)?.qty ?? 0
+    const priceKop = c.retailKop ?? retailFromMarkup(cardCostKop(c.id, prices), c.markupPct)
+    return {
+      cardId: c.id,
+      name: c.name,
+      kind: c.kind,
+      retailRub: rub(priceKop),
+      plannedUnits,
+      actualUnits,
+      unitsUsed: alloc?.units ?? 0,
+      sharePct: alloc?.sharePct ?? 0,
+      planRevenueRub: rub(plannedUnits * (priceKop ?? 0)),
+      overheadPerUnitRub: rub(alloc?.perUnitKop ?? null),
+      breakdownRub: (alloc?.breakdown ?? []).map((b) => ({
+        kind: b.kind,
+        name: OVERHEAD_KIND_LABEL[b.kind] ?? b.kind,
+        perUnitRub: rub(b.perUnitKop),
+      })),
+    }
+  })
+
+  return {
+    mode: ctx.mode,
+    enabled: ctx.enabled,
+    windowDays: ctx.windowDays,
+    /** Откуда взята структура продаж: чеки, план по позициям или ничего. */
+    source: ctx.mixSource,
+    basisLabel: ctx.basisLabel,
+    totalRub: ctx.totalRub,
+    totalUnits: ctx.allocation.totalUnits,
+    totalRevenueRub: rub(ctx.allocation.totalRevenueKop),
+    rows,
+    totals: {
+      plannedUnits: Math.round(rows.reduce((s, r) => s + r.plannedUnits, 0)),
+      actualUnits: Math.round(rows.reduce((s, r) => s + r.actualUnits, 0)),
+      unitsUsed: Math.round(rows.reduce((s, r) => s + r.unitsUsed, 0)),
+    },
+  }
+}
+
+/** Себестоимость единицы карты для расчёта цены по наценке (когда цена не задана). */
+function cardCostKop(cardId: number, costs: Map<number, { costKop: number | null }>): number | null {
+  const card = cardRow(cardId)
+  const version = activeVersion(cardId)
+  if (!card || !version) return null
+  const totals = computeTotals(linesOf(version.id), costs as never, new Map(), new Set([cardId]))
+  return costPerUnitKop(totals.costKop, card.outputQty)
 }
 
 /** Состояние раздела «Расходы» — один формат для чтения и для мутаций, чтобы UI не «терял» цифры. */
@@ -1354,6 +1558,35 @@ export function overheadsState() {
 }
 
 adminCostTechCards
+  .get('/cost/sales-plan', (c) => c.json(salesPlanState()))
+  .put(
+    '/cost/sales-plan',
+    zValidator(
+      'json',
+      z.object({
+        rows: z.array(
+          z.object({ cardId: z.number().int().positive(), unitsPerMonth: z.number().nonnegative() }),
+        ),
+      }),
+    ),
+    (c) => {
+      requireWrite(c)
+      const p = c.req.valid('json')
+      const t = now()
+      const up = db.prepare(
+        `INSERT INTO cost_sales_plan(card_id, units_per_month, updated_at) VALUES(?,?,?)
+         ON CONFLICT(card_id) DO UPDATE SET units_per_month=excluded.units_per_month, updated_at=excluded.updated_at`,
+      )
+      db.transaction(() => {
+        for (const r of p.rows) up.run(r.cardId, r.unitsPerMonth, t)
+      })()
+      // Итог плана по позициям становится общим планом продаж — иначе старые плитки врут.
+      const sum = p.rows.reduce((s, r) => s + r.unitsPerMonth, 0)
+      if (sum > 0) setSettingValue('planned_units_per_month', String(Math.round(sum)))
+      return c.json(salesPlanState())
+    },
+  )
+
   .get('/cost/overheads', (c) => c.json(overheadsState()))
   .post(
     '/cost/overheads',
