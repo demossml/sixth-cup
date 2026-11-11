@@ -92,6 +92,7 @@ import CatalogDiffDrawer from '../components/menuLayout/CatalogDiffDrawer'
 import PriceImportDrawer from '../components/menuLayout/PriceImportDrawer'
 import PrintPreview from '../components/menuLayout/PrintPreview'
 import { priceRowText } from '../lib/priceImport'
+import { createAutosave } from '../lib/autosave'
 import MobileEditor from '../components/menuLayout/MobileEditor'
 import CanvasToolbar from '../components/menuLayout/CanvasToolbar'
 import CanvasViewport from '../components/menuLayout/CanvasViewport'
@@ -125,8 +126,6 @@ type ServerLayout = {
 }
 
 type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error'
-
-const AUTOSAVE_MS = 800
 
 const fmtFrozen = (ms: number | null): string =>
   ms ? ` с ${new Date(ms).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}` : ''
@@ -255,7 +254,43 @@ export default function MenuLayoutEditor() {
   const revRef = useRef(1)
   const [conflict, setConflict] = useState<{ rev: number } | null>(null)
   const hydrated = useRef<number | null>(null)
-  const lastSaved = useRef('')
+  /**
+   * P2-15b: очередь автосохранения живёт в `lib/autosave.ts` — там же её правила и тесты.
+   * Здесь только связываем её с React-состоянием страницы.
+   */
+  const autosave = useMemo(
+    () =>
+      createAutosave<SaveBody, { layout: ServerLayout; savedAt: number }>({
+        save: (body, baseRev) =>
+          api<{ layout: ServerLayout; savedAt: number }>(`/menu-layouts/${numericId}`, {
+            method: 'PUT',
+            body: { ...body, baseRev },
+          }),
+        getRev: () => revRef.current,
+        isConflict: (e) => e instanceof ApiError && e.status === 409,
+        onState: setSave,
+        onSaved: (payload, res) => {
+          revRef.current = res.layout.rev
+          setConflict(null)
+          setSavedAt(res.savedAt)
+          setDrift(res.layout.drift)
+          // Сохранено на сервере — локальный черновик больше не нужен.
+          try {
+            localStorage.removeItem(`menu-layout-draft-${numericId}`)
+          } catch {
+            /* приватный режим */
+          }
+        },
+        onConflict: () => {
+          setConflict({ rev: revRef.current })
+          toast.push('Макет изменили в другом окне — выберите, чью версию оставить', 'bad')
+        },
+        onError: (e) => toast.push(e instanceof Error ? e.message : 'Не удалось сохранить макет', 'bad'),
+      }),
+    [numericId, toast],
+  )
+  // Смена макета в адресе: старая очередь не должна писать в новый документ.
+  useEffect(() => () => autosave.dispose(), [autosave])
   const sheetRef = useRef<HTMLDivElement | null>(null)
   const drag = useRef<{
     id: string
@@ -460,7 +495,7 @@ export default function MenuLayoutEditor() {
     setPriceMode(layout.priceMode)
     setFrozenAt(layout.frozenAt)
     setDrift(layout.drift)
-    lastSaved.current = JSON.stringify({ title: layout.title, theme: layout.theme, doc: docSnapshot(layout.doc) })
+    autosave.markSaved(JSON.stringify({ title: layout.title, theme: layout.theme, doc: docSnapshot(layout.doc) }))
     setSave('idle')
 
     // Черновик прошлой сессии: предлагаем, только если он новее серверного и отличается.
@@ -953,67 +988,11 @@ export default function MenuLayoutEditor() {
     [],
   )
 
-  // ── автосохранение ────────────────────────────────────────────
-  // Очередь из одного запроса: таймер, счётчик версий (устаревший ответ не перебивает новый)
-  // и flush() перед серверными операциями, которые перезаписывают документ.
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const saveSeq = useRef(0)
-  const pending = useRef<{ payload: string; body: SaveBody } | null>(null)
-  const latest = useRef<{ body: SaveBody; payload: string } | null>(null)
-
-  const persist = useCallback(
-    (payload: string, body: SaveBody) => {
-      const seq = ++saveSeq.current
-      setSave('saving')
-      return api<{ layout: ServerLayout; savedAt: number }>(`/menu-layouts/${numericId}`, {
-        method: 'PUT',
-        body: { ...body, baseRev: revRef.current },
-      })
-        .then((res) => {
-          if (seq !== saveSeq.current) return
-          revRef.current = res.layout.rev
-          setConflict(null)
-          lastSaved.current = payload
-          pending.current = null
-          setSave('saved')
-          setSavedAt(res.savedAt)
-          setDrift(res.layout.drift)
-          // Сохранено на сервере — локальный черновик больше не нужен.
-          try {
-            localStorage.removeItem(`menu-layout-draft-${numericId}`)
-          } catch {
-            /* приватный режим */
-          }
-        })
-        .catch((e: unknown) => {
-          if (seq !== saveSeq.current) return
-          setSave('error')
-          if (e instanceof ApiError && e.status === 409) {
-            // Кто-то сохранил раньше: показываем выбор, а не молча затираем.
-            setConflict({ rev: revRef.current })
-            toast.push('Макет изменили в другом окне — выберите, чью версию оставить', 'bad')
-            return
-          }
-          toast.push(e instanceof Error ? e.message : 'Не удалось сохранить макет', 'bad')
-        })
-    },
-    [numericId, toast],
-  )
-
+  // ── автосохранение (P2-15b) ───────────────────────────────────
   /** Дослать несохранённое немедленно: перед seed/sync/freeze и при уходе со страницы. */
   const flush = useCallback(async () => {
-    if (saveTimer.current) {
-      clearTimeout(saveTimer.current)
-      saveTimer.current = null
-    }
-    const job = pending.current
-    if (!job) return
-    if (job.payload === lastSaved.current) {
-      pending.current = null
-      return
-    }
-    await persist(job.payload, job.body)
-  }, [persist])
+    await autosave.flush()
+  }, [autosave])
 
   /** Владелец выбрал «моя версия главнее»: берём актуальный rev и перезаписываем. */
   const overwriteMine = useCallback(async () => {
@@ -1021,13 +1000,11 @@ export default function MenuLayoutEditor() {
       const fresh = await api<{ layout: ServerLayout }>(`/menu-layouts/${numericId}`)
       revRef.current = fresh.layout.rev
       setConflict(null)
-      const job = pending.current ?? latest.current
-      if (job) await persist(job.payload, job.body)
-      else setSave('saved')
+      await autosave.retry()
     } catch (e) {
       toast.push(e instanceof Error ? e.message : 'Не удалось перезаписать макет', 'bad')
     }
-  }, [numericId, persist, toast])
+  }, [numericId, autosave, toast])
 
   /**
    * Принудительно перечитать макет с сервера: hydrate по одному и тому же id сам не срабатывает,
@@ -1047,28 +1024,14 @@ export default function MenuLayoutEditor() {
   useEffect(() => {
     if (!doc) return
     if (conflict) return // пока владелец не выбрал версию, ничего не пишем
-    const body: SaveBody = { title: title.trim() || 'Без названия', theme, doc: docPayload(doc) }
-    const payload = JSON.stringify(body)
-    latest.current = { body, payload }
-    if (payload === lastSaved.current) {
-      pending.current = null
-      return
-    }
-    setSave('dirty')
-    pending.current = { payload, body }
-    if (saveTimer.current) clearTimeout(saveTimer.current)
-    saveTimer.current = setTimeout(() => {
-      saveTimer.current = null
-      const job = pending.current
-      if (job && job.payload !== lastSaved.current) void persist(job.payload, job.body)
-    }, AUTOSAVE_MS)
-  }, [doc, theme, title, numericId, persist, conflict])
+    autosave.schedule({ title: title.trim() || 'Без названия', theme, doc: docPayload(doc) })
+  }, [doc, theme, title, autosave, conflict])
 
   // Ушёл со страницы или свернул вкладку — правки последних 0,8 с не должны пропасть.
   useEffect(() => {
     const flushOnHide = () => {
-      const job = pending.current
-      if (!job || job.payload === lastSaved.current) return
+      const job = autosave.pendingJob()
+      if (!job || job.payload === autosave.savedPayload()) return
       try {
         fetch(`/api/admin/menu-layouts/${numericId}`, {
           method: 'PUT',
@@ -1076,7 +1039,7 @@ export default function MenuLayoutEditor() {
           headers: { 'Content-Type': 'application/json', 'X-Admin-Token': tokenStore.get() },
           body: JSON.stringify(job.body),
         }).catch(() => {})
-        lastSaved.current = job.payload
+        autosave.markSaved(job.payload)
       } catch {
         /* страница уже уходит — молча */
       }
@@ -1091,7 +1054,7 @@ export default function MenuLayoutEditor() {
       document.removeEventListener('visibilitychange', onHidden)
       flushOnHide()
     }
-  }, [numericId])
+  }, [numericId, autosave])
 
   const undo = useCallback(() => {
     if (!doc) return
@@ -1559,7 +1522,7 @@ export default function MenuLayoutEditor() {
       setDoc(docSnapshot(res.layout.doc))
       setHistory(emptyHistory())
       setDrift(res.layout.drift)
-      lastSaved.current = JSON.stringify({ title: res.layout.title, theme: res.layout.theme, doc: docSnapshot(res.layout.doc) })
+      autosave.markSaved(JSON.stringify({ title: res.layout.title, theme: res.layout.theme, doc: docSnapshot(res.layout.doc) }))
       const skipped = res.skippedDuplicate ?? 0
       toast.push(
         `Добавлено ${res.added}${skipped ? `, пропущено дублей ${skipped}` : ''}`,
@@ -1581,7 +1544,7 @@ export default function MenuLayoutEditor() {
       setDoc(docSnapshot(res.layout.doc))
       setHistory(emptyHistory())
       setDrift(res.layout.drift)
-      lastSaved.current = JSON.stringify({ title: res.layout.title, theme: res.layout.theme, doc: docSnapshot(res.layout.doc) })
+      autosave.markSaved(JSON.stringify({ title: res.layout.title, theme: res.layout.theme, doc: docSnapshot(res.layout.doc) }))
       toast.push(res.dropped ? `Лист пересобран, не влезло позиций: ${res.dropped}` : 'Лист пересобран по секциям')
     } catch (e) {
       toast.push(e instanceof Error ? e.message : 'Не удалось пересобрать лист', 'bad')
@@ -1611,7 +1574,7 @@ export default function MenuLayoutEditor() {
       setPriceMode(res.layout.priceMode)
       setFrozenAt(res.layout.frozenAt)
       setDrift(res.layout.drift)
-      lastSaved.current = JSON.stringify({ title: res.layout.title, theme: res.layout.theme, doc: docSnapshot(res.layout.doc) })
+      autosave.markSaved(JSON.stringify({ title: res.layout.title, theme: res.layout.theme, doc: docSnapshot(res.layout.doc) }))
       toast.push(mode === 'frozen' ? 'Цены зафиксированы — печать не изменится' : 'Цены снова живые, из каталога')
     } catch (e) {
       toast.push(e instanceof Error ? e.message : 'Не удалось переключить режим цен', 'bad')
@@ -1781,7 +1744,7 @@ export default function MenuLayoutEditor() {
       revRef.current = res.layout.rev
       setDoc(docSnapshot(res.layout.doc))
       setTheme({ ...DEFAULT_THEME, ...res.layout.theme })
-      lastSaved.current = JSON.stringify({ title: res.layout.title, theme: res.layout.theme, doc: docSnapshot(res.layout.doc) })
+      autosave.markSaved(JSON.stringify({ title: res.layout.title, theme: res.layout.theme, doc: docSnapshot(res.layout.doc) }))
       setFormatOpen(false)
       toast.push(`Шаблон применён: ${templates.find((t) => t.id === templateId)?.name ?? templateId}`)
     } catch (e) {
@@ -1820,7 +1783,7 @@ export default function MenuLayoutEditor() {
       })
       revRef.current = res.layout.rev
       setDoc(docSnapshot(res.layout.doc))
-      lastSaved.current = JSON.stringify({ title: res.layout.title, theme: res.layout.theme, doc: docSnapshot(res.layout.doc) })
+      autosave.markSaved(JSON.stringify({ title: res.layout.title, theme: res.layout.theme, doc: docSnapshot(res.layout.doc) }))
       setSave('saved')
       setSavedAt(res.layout.updatedAt)
       if (res.dropped) toast.push(`Не влезло на лист позиций: ${res.dropped} — уменьшите шрифт или добавьте страницу`, 'bad')
@@ -1859,7 +1822,7 @@ export default function MenuLayoutEditor() {
       })
       revRef.current = res.layout.rev
       setDoc(docSnapshot(res.layout.doc))
-      lastSaved.current = JSON.stringify({ title: res.layout.title, theme: res.layout.theme, doc: docSnapshot(res.layout.doc) })
+      autosave.markSaved(JSON.stringify({ title: res.layout.title, theme: res.layout.theme, doc: docSnapshot(res.layout.doc) }))
       setAiPlan(null)
       setAiPrompt('')
       toast.push(`Применено изменений: ${res.changed}`)
