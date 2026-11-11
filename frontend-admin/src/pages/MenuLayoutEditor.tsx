@@ -88,6 +88,7 @@ import EditorToolbar from '../components/menuLayout/EditorToolbar'
 import ContextMenu from '../components/menuLayout/ContextMenu'
 import FormatDrawer from '../components/menuLayout/FormatDrawer'
 import ShareDrawer from '../components/menuLayout/ShareDrawer'
+import CatalogDiffDrawer from '../components/menuLayout/CatalogDiffDrawer'
 import MobileEditor from '../components/menuLayout/MobileEditor'
 import CanvasToolbar from '../components/menuLayout/CanvasToolbar'
 import CanvasViewport from '../components/menuLayout/CanvasViewport'
@@ -235,6 +236,8 @@ export default function MenuLayoutEditor() {
   const [formatOpen, setFormatOpen] = useState(false)
   /** P2-5: ссылка на просмотр — шторка со списком и отзывом. */
   const [shareOpen, setShareOpen] = useState(false)
+  /** P3-2: предпросмотр изменений каталога перед применением. */
+  const [catalogDiffOpen, setCatalogDiffOpen] = useState(false)
   const [busyUpload, setBusyUpload] = useState(false)
 
   const [history, setHistory] = useState<DocHistory>(emptyHistory)
@@ -1016,12 +1019,20 @@ export default function MenuLayoutEditor() {
     }
   }, [numericId, persist, toast])
 
-  /** «Взять серверную»: принудительно перечитываем макет (hydrate не сработает сам — id тот же). */
-  const takeServerVersion = useCallback(() => {
+  /**
+   * Принудительно перечитать макет с сервера: hydrate по одному и тому же id сам не срабатывает,
+   * поэтому сбрасываем отметку вручную.
+   */
+  const resyncFromServer = useCallback(() => {
     hydrated.current = null
-    setConflict(null)
     reload()
   }, [reload])
+
+  /** «Взять серверную»: принудительно перечитываем макет (hydrate не сработает сам — id тот же). */
+  const takeServerVersion = useCallback(() => {
+    setConflict(null)
+    resyncFromServer()
+  }, [resyncFromServer])
 
   useEffect(() => {
     if (!doc) return
@@ -1522,20 +1533,17 @@ export default function MenuLayoutEditor() {
     }
   }
 
+  /**
+   * P3-2: вместо молчаливого «обновить всё» — сначала показываем, что изменилось.
+   * Применение выбранных строк делает CatalogDiffDrawer (там же перечитывание макета).
+   */
   const syncPrices = async () => {
     try {
+      // Несохранённые правки должны попасть на сервер: diff считается по документу в БД.
       await flush()
-      const res = await api<{ changed: unknown[]; layout: ServerLayout }>(`/menu-layouts/${numericId}/sync-prices`, {
-        method: 'POST',
-        body: {},
-      })
-      setDoc(docSnapshot(res.layout.doc))
-      setHistory(emptyHistory())
-      setDrift(res.layout.drift)
-      lastSaved.current = JSON.stringify({ title: res.layout.title, theme: res.layout.theme, doc: docSnapshot(res.layout.doc) })
-      toast.push(res.changed.length ? `Обновлено цен: ${res.changed.length}` : 'Цены уже совпадают с каталогом')
+      setCatalogDiffOpen(true)
     } catch (e) {
-      toast.push(e instanceof Error ? e.message : 'Не удалось обновить цены', 'bad')
+      toast.push(e instanceof Error ? e.message : 'Не удалось проверить каталог', 'bad')
     }
   }
 
@@ -2198,6 +2206,14 @@ export default function MenuLayoutEditor() {
           onForce={(req: ExportRequest) => enqueueExport({ ...req, force: true })}
         />
       )}
+
+      <CatalogDiffDrawer
+        open={catalogDiffOpen}
+        onClose={() => setCatalogDiffOpen(false)}
+        layoutId={numericId}
+        frozen={priceMode === 'frozen'}
+        onApplied={resyncFromServer}
+      />
 
       <ShareDrawer open={shareOpen} onClose={() => setShareOpen(false)} layoutId={numericId} title={title} />
 

@@ -279,6 +279,34 @@ export function snapshotDoc(doc: MenuDoc): { doc: MenuDoc; changed: { blockId: s
   return { doc: { ...doc, pages }, changed }
 }
 
+/**
+ * Сохранение не должно «съедать» расхождения с каталогом.
+ *
+ * `snapshotDoc` заполняет снапшоты текущими ценами. Если звать его на каждом сохранении,
+ * правка любой плашки молча обнуляет баннер «каталог изменился» и предпросмотр P3-2.
+ * Поэтому старые снапшоты сохраняем, а заполняем только пустые (новые блоки).
+ */
+export function keepSnapshots(prev: MenuDoc, next: MenuDoc): MenuDoc {
+  const before = new Map(prev.pages.flatMap((p) => p.blocks).map((b) => [b.id, b]))
+  return {
+    ...next,
+    pages: next.pages.map((page) => ({
+      ...page,
+      blocks: page.blocks.map((b) => {
+        const was = before.get(b.id)
+        if (!was || was.snapshotPriceRub == null) return b
+        return {
+          ...b,
+          snapshotPriceRub: was.snapshotPriceRub,
+          snapshotName: was.snapshotName ?? b.snapshotName,
+          snapshotImageUrl: was.snapshotImageUrl ?? b.snapshotImageUrl,
+          snapshotSizes: was.snapshotSizes ?? b.snapshotSizes,
+        }
+      }),
+    })),
+  }
+}
+
 /** Картинка блока — только файл из uploads админки: внешние URL не печатаются и тянут IP. */
 const uploadUrlZ = z
   .string()
@@ -565,10 +593,15 @@ export const adminMenuLayouts = new Hono<Env>()
         frozenAt = now
       }
       if (body.priceMode === 'live') frozenAt = null
-      // В live-режиме снапшот обновляем на каждом сохранении: он нужен баннеру «каталог изменился».
+      // В live-режиме снапшот нужен баннеру «каталог изменился» — но обновляем его только
+      // у новых блоков: иначе сохранение стирало бы расхождения, которые владелец ещё не видел.
       if (priceMode === 'live') {
-        const snap = snapshotDoc(doc ?? migrateDocToCanvas(normalizeDoc(jsonParse<unknown>(row.doc_json, emptyDoc()))))
-        doc = snap.doc
+        const prevDoc = migrateDocToCanvas(normalizeDoc(jsonParse<unknown>(row.doc_json, emptyDoc())))
+        const base = doc ?? prevDoc
+        const snap = snapshotDoc(base)
+        // Переход frozen → live: цены «размораживаются» намеренно — берём живые.
+        doc = row.price_mode === 'frozen' ? snap.doc : keepSnapshots(base, snap.doc)
+        frozenAt = null
       }
 
       const theme = body.theme ? normalizeTheme({ ...normalizeTheme(jsonParse<unknown>(row.theme_json, {})), ...body.theme }) : undefined
@@ -751,24 +784,115 @@ export const adminMenuLayouts = new Hono<Env>()
   })
 
   /** Обновляет снапшот цен из каталога и возвращает список расхождений для баннера. */
-  .post('/menu-layouts/:id/sync-prices', (c) => {
-    requireWrite(c.get('adminRole' as never) as string | undefined)
+  /**
+   * P3-2: что изменилось в каталоге — «было → стало» по ценам, названиям и фото.
+   * Только чтение: ничего не пишем, пока владелец не выберет строки.
+   */
+  .get('/menu-layouts/:id/catalog-diff', (c) => {
     const id = Number(c.req.param('id'))
     const row = rowById(id)
     if (!row) throw bad('Макет не найден', 404)
     const doc = normalizeDoc(jsonParse<unknown>(row.doc_json, emptyDoc()))
-    const { doc: next, changed } = snapshotDoc(doc)
-    // frozen: снапшот — это и есть зафиксированные цены, их не переписываем молча.
-    const applied = row.price_mode !== 'frozen'
-    if (applied) {
-      db.prepare('UPDATE menu_layouts SET doc_json=?, updated_at=? WHERE id=?').run(JSON.stringify(next), Date.now(), id)
-    }
-    c.set('audit', {
-      entity: 'menu-layout',
-      entityId: String(id),
-      summary: applied ? `Макет меню: цены обновлены с каталога (${changed.length})` : 'Макет меню: проверка цен каталога',
+    const ids = doc.pages
+      .flatMap((p) => p.blocks.filter((b) => b.type === 'product').map((b) => b.productId))
+      .filter((n): n is number => typeof n === 'number')
+    const catalog = loadCatalogProducts(ids)
+    const changes: CatalogDiffRow[] = []
+    doc.pages.forEach((page, pageIndex) => {
+      for (const b of page.blocks) {
+        if (b.type !== 'product' || b.productId == null) continue
+        const live = catalog.get(b.productId) ?? null
+        if (!live) {
+          changes.push({
+            blockId: b.id,
+            pageId: page.id,
+            pageIndex,
+            productId: b.productId,
+            title: b.titleOverride ?? b.snapshotName ?? `Товар #${b.productId}`,
+            missing: true,
+            price: null,
+            name: null,
+            photo: null,
+            sizes: null,
+            manualPrice: b.priceRubOverride != null,
+          })
+          continue
+        }
+        const livePrice = live.priceRub
+        const price =
+          b.priceRubOverride != null || b.snapshotPriceRub == null || b.snapshotPriceRub === livePrice
+            ? null
+            : { from: b.snapshotPriceRub, to: livePrice }
+        const name =
+          b.titleOverride != null || !b.snapshotName || b.snapshotName === live.name ? null : { from: b.snapshotName, to: live.name }
+        const photo =
+          b.photoUrlOverride != null || !b.snapshotImageUrl || b.snapshotImageUrl === live.imageUrl
+            ? null
+            : { from: b.snapshotImageUrl, to: live.imageUrl }
+        const liveSizes = live.sizes.length > 1 ? live.sizes.map((sz) => `${sz.label}:${sz.priceRub ?? ''}`).join('|') : ''
+        const snapSizes = (b.snapshotSizes ?? []).map((sz) => `${sz.label}:${sz.price ?? ''}`).join('|')
+        const sizes = b.priceRubOverride != null || !snapSizes || snapSizes === liveSizes ? null : { from: snapSizes, to: liveSizes }
+        if (!price && !name && !photo && !sizes) continue
+        changes.push({
+          blockId: b.id,
+          pageId: page.id,
+          pageIndex,
+          productId: b.productId,
+          title: b.titleOverride ?? live.name,
+          missing: false,
+          price,
+          name,
+          photo,
+          sizes,
+          manualPrice: b.priceRubOverride != null,
+        })
+      }
     })
-    return c.json({ ok: true, applied, changed, layout: layoutView(rowById(id)!) })
+    return c.json({ ok: true, changes, frozen: row.price_mode === 'frozen' })
+  })
+
+  .post('/menu-layouts/:id/sync-prices', async (c) => {
+      requireWrite(c.get('adminRole' as never) as string | undefined)
+      const id = Number(c.req.param('id'))
+      const row = rowById(id)
+      if (!row) throw bad('Макет не найден', 404)
+      // Тело необязательно: старый клиент зовёт эндпоинт без него («обновить всё»).
+      const body = (await c.req.json().catch(() => null)) as { blocks?: unknown } | null
+      const only = Array.isArray(body?.blocks)
+        ? body!.blocks.filter((b): b is string => typeof b === 'string' && b.length > 0 && b.length <= 64).slice(0, 500)
+        : null
+      const doc = normalizeDoc(jsonParse<unknown>(row.doc_json, emptyDoc()))
+      const { doc: fresh, changed } = snapshotDoc(doc)
+      // P3-2: обновляем только выбранные строки. Остальные блоки остаются со своими
+      // снапшотами — иначе «выборочное применение» тихо перезаписывало бы всё.
+      const picked = only?.length ? new Set(only) : null
+      const next = picked
+        ? {
+            ...doc,
+            pages: doc.pages.map((page) => ({
+              ...page,
+              blocks: page.blocks.map((b) => {
+                if (!picked.has(b.id)) return b
+                const updated = fresh.pages.flatMap((p) => p.blocks).find((x) => x.id === b.id)
+                return updated ?? b
+              }),
+            })),
+          }
+        : fresh
+      const appliedBlocks = picked ? changed.filter((ch) => picked.has(ch.blockId)) : changed
+      // frozen: снапшот — это и есть зафиксированные цены, их не переписываем молча.
+      const applied = row.price_mode !== 'frozen'
+      if (applied) {
+        db.prepare('UPDATE menu_layouts SET doc_json=?, updated_at=? WHERE id=?').run(JSON.stringify(next), Date.now(), id)
+      }
+      c.set('audit', {
+        entity: 'menu-layout',
+        entityId: String(id),
+        summary: applied
+          ? `Макет меню: цены обновлены с каталога (${appliedBlocks.length}${picked ? ' выборочно' : ''})`
+          : 'Макет меню: проверка цен каталога',
+      })
+      return c.json({ ok: true, applied, changed: appliedBlocks, layout: layoutView(rowById(id)!) })
   })
 
   /** «Собрать из каталога»: одна кнопка — категории и доступные позиции на лист. */
@@ -982,6 +1106,22 @@ export { layoutView, rowById }
 // ── P2-5: просмотр по ссылке ────────────────────────────────────────────
 // Ссылка открывает макет только на чтение и не требует токена админки.
 // Токен случайный (12 байт), отзыв — revoked_at: история остаётся, ссылка гаснет.
+
+/** Строка «было → стало» для P3-2: считается из снапшотов документа и живого каталога. */
+type CatalogDiffRow = {
+  blockId: string
+  pageId: string
+  pageIndex: number
+  productId: number
+  title: string
+  /** Позиции больше нет в каталоге — обновлять нечего, нужно решение человека. */
+  missing: boolean
+  price: { from: number | null; to: number | null } | null
+  name: { from: string; to: string } | null
+  photo: { from: string | null; to: string | null } | null
+  sizes: { from: string; to: string } | null
+  manualPrice: boolean
+}
 
 type ShareRow = { id: number; layout_id: number; token: string; note: string | null; created_at: number; revoked_at: number | null }
 
