@@ -88,9 +88,12 @@ function draftPayload(lines: DraftLine[]): CardPayload['lines'] {
 
 export default function TechCardsTab({
   onOpenSignals,
+  onOpenOverheads,
   initialCardId,
 }: {
   onOpenSignals?: () => void
+  /** Переход во вкладку «Расходы»: аренда, зарплата, электричество, налоги. */
+  onOpenOverheads?: () => void
   /** Открыть конкретную карту сразу (переход из «Сигналов»). */
   initialCardId?: number
 }) {
@@ -119,6 +122,7 @@ export default function TechCardsTab({
     return (
       <TechCardEditor
         cardId={editing}
+        onOpenOverheads={onOpenOverheads}
         onClose={() => {
           setEditing(null)
           load()
@@ -211,7 +215,15 @@ export default function TechCardsTab({
 
 /* ─────────────────────────── редактор карты ─────────────────────────── */
 
-function TechCardEditor({ cardId, onClose }: { cardId: number | 'new'; onClose: () => void }) {
+function TechCardEditor({
+  cardId,
+  onClose,
+  onOpenOverheads,
+}: {
+  cardId: number | 'new'
+  onClose: () => void
+  onOpenOverheads?: () => void
+}) {
   const toast = useToast()
   const isNew = cardId === 'new'
   const [card, setCard] = useState<TechCard | null>(null)
@@ -592,6 +604,16 @@ function TechCardEditor({ cardId, onClose }: { cardId: number | 'new'; onClose: 
             <div className="text-lg font-bold">{money(computed.margin)}</div>
           </div>
         </div>
+        {card && onOpenOverheads && (!card.overheadEnabled || card.overheadPerUnitRub == null) && (
+          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3 text-[12px] text-ink-secondary">
+            <span>
+              Аренда, зарплата, электричество и налоги не учтены — себестоимость только по сырью.
+            </span>
+            <button type="button" className="underline" onClick={onOpenOverheads}>
+              Указать суммы за месяц
+            </button>
+          </div>
+        )}
         {card?.overheadEnabled && card.overheadPerUnitRub != null && (
           <div className="mt-3 grid gap-2 border-t border-line pt-3 sm:grid-cols-4">
             <div>

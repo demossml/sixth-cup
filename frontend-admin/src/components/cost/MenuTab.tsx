@@ -111,7 +111,7 @@ export default function MenuTab({
             </option>
           ))}
         </Select>
-        <div className="inline-flex flex-wrap gap-[2px] rounded-[10px] border border-line bg-surface-2 p-[3px]">
+        <div className="seg-wrap">
           {FILTERS.map((f) => (
             <button
               key={f}

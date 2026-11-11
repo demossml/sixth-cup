@@ -480,7 +480,17 @@ describe('F11: постоянные расходы и флаг учёта', () =
     expect(toggled.json.overheads.perUnitRub).toBe(100)
     expect(toggled.json.overheads.appliedPerUnitRub).toBeNull()
 
+    // Сводка показывает владельцу, заполнены ли аренда/зарплата/налоги: там же кнопка «Указать суммы».
+    const filledOverview = await admin('GET', '/cost/overview')
+    expect(filledOverview.json.overhead.filled).toBe(true)
+    expect(filledOverview.json.overhead.totalRub).toBe(50000)
+
     await admin('PUT', '/cost/settings', { enabled: true, plannedUnitsPerMonth: 0 })
     await resetOverheads()
+
+    const emptyOverview = await admin('GET', '/cost/overview')
+    expect(emptyOverview.json.overhead.filled).toBe(false)
+    expect(emptyOverview.json.overhead.totalRub).toBe(0)
+    expect(emptyOverview.json.overhead.perUnitRub).toBeNull()
   })
 })

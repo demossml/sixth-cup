@@ -897,6 +897,7 @@ export const adminCostTechCards = new Hono()
 
   /** Сводка v2: карты, фудкост, маржа, проблемы — вместо старого /cost/summary. */
   .get('/cost/overview', (c) => {
+    const overhead = overheadContext()
     const ids = (db.prepare(`SELECT id FROM tech_cards ORDER BY name`).all() as { id: number }[]).map((r) => r.id)
     const cards = ids
       .map((id) => serializeCard(id))
@@ -927,7 +928,17 @@ export const adminCostTechCards = new Hono()
       })),
       avgFoodCostPct: avgFoodCost,
       avgFullFoodCostPct: avgFullFoodCost,
-      overheadEnabled: overheadContext().enabled,
+      overheadEnabled: overhead.enabled,
+      // Блок «Постоянные расходы» на сводке: владелец должен видеть, заполнены ли аренда,
+      // зарплата, электричество и налоги, и куда их вписать.
+      overhead: {
+        totalRub: overhead.totalRub,
+        perUnitRub: rub(overhead.perUnitKop),
+        appliedPerUnitRub: rub(overhead.appliedKop),
+        basisLabel: overhead.basisLabel,
+        enabled: overhead.enabled,
+        filled: overhead.totalKop > 0,
+      },
       problems: cards.filter((c) => c.insights.length > 0).length,
       cardsTotal: cards.length,
     })

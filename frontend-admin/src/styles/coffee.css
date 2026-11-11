@@ -231,6 +231,45 @@ svg { display: block; }
 .seg button:hover { color: var(--ink); }
 .seg button.is-on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(21, 26, 36, 0.08); font-weight: 600; }
 
+/* Самодостаточные сегменты (обёртка `.seg-wrap`): вкладки «Себестоимости», фильтры
+   «Прибыльности», разделы импорта. Раньше класс `.seg-item` был только маркером и нигде
+   не описывался — кнопки рендерились голым текстом и «слипались» в одну строку. */
+.seg-wrap {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  max-width: 100%;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.seg-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.seg-item:hover { color: var(--ink); background: var(--surface); }
+.seg-item.is-on {
+  color: var(--ink);
+  font-weight: 700;
+  background: var(--surface);
+  border-color: var(--line);
+  box-shadow: 0 1px 2px rgba(21, 26, 36, 0.08);
+}
+
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
 .card-head { display: flex; align-items: flex-start; gap: 12px; padding: 15px 17px 0; }
 .card-title { font-size: 14px; font-weight: 750; letter-spacing: -0.015em; line-height: 1.3; }

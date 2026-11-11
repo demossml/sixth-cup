@@ -10,7 +10,16 @@ import { csvName } from '../../lib/csv'
 
 type Overview = Awaited<ReturnType<typeof costApi.overview>>
 
-export default function OverviewTab({ onOpenCard, reloadKey = 0 }: { onOpenCard: (id: number) => void; reloadKey?: number }) {
+export default function OverviewTab({
+  onOpenCard,
+  onOpenOverheads,
+  reloadKey = 0,
+}: {
+  onOpenCard: (id: number) => void
+  /** Переход во вкладку «Расходы»: аренда, зарплата, электричество, налоги. */
+  onOpenOverheads: () => void
+  reloadKey?: number
+}) {
   const [data, setData] = useState<Overview | null>(null)
   const [error, setError] = useState<Error | null>(null)
 
@@ -28,7 +37,17 @@ export default function OverviewTab({ onOpenCard, reloadKey = 0 }: { onOpenCard:
   if (!data) return <Skeleton />
 
   if (data.cardsTotal === 0) {
-    return <EmptyState title="Пока нечего считать" text="Заведите техкарты — здесь появится фудкост и маржа по меню." />
+    return (
+      <EmptyState
+        title="Пока нечего считать"
+        text="Заведите техкарты — здесь появится фудкост и маржа по меню."
+        action={
+          <Button variant="secondary" onClick={onOpenOverheads}>
+            Постоянные расходы
+          </Button>
+        }
+      />
+    )
   }
 
   const sorted = [...data.cards].sort((a, b) => (b.foodCostPct ?? -1) - (a.foodCostPct ?? -1))
@@ -89,6 +108,41 @@ export default function OverviewTab({ onOpenCard, reloadKey = 0 }: { onOpenCard:
           CSV
         </Button>
       </div>
+
+      {!data.overhead.filled && (
+        <Card className="mb-3 border-l-4 border-amber">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex-1">
+              <div className="text-sm font-semibold">Аренда, зарплата, электричество и налоги не заполнены</div>
+              <div className="text-[12px] text-ink-secondary">
+                Себестоимость пока считается только по сырью. Впишите суммы за месяц — и в картах появится полная
+                себестоимость и реальная маржа.
+              </div>
+            </div>
+            <Button onClick={onOpenOverheads}>Указать суммы</Button>
+          </div>
+        </Card>
+      )}
+
+      {data.overhead.filled && (
+        <Card className="mb-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex-1">
+              <div className="text-sm font-semibold">
+                Постоянные расходы: {money(data.overhead.totalRub)} в месяц
+              </div>
+              <div className="text-[12px] text-ink-secondary">
+                На одну порцию {money(data.overhead.appliedPerUnitRub ?? data.overhead.perUnitRub)} ·{' '}
+                {data.overhead.basisLabel} ·{' '}
+                {data.overhead.enabled ? 'учитываются в себестоимости' : 'выключены — идут только по сырью'}
+              </div>
+            </div>
+            <Button variant="secondary" onClick={onOpenOverheads}>
+              Изменить
+            </Button>
+          </div>
+        </Card>
+      )}
 
       <Card className="p-0">
         <div className="overflow-x-auto">

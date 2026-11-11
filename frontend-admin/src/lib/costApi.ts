@@ -271,6 +271,15 @@ export const costApi = {
       avgFoodCostPct: number | null
       avgFullFoodCostPct: number | null
       overheadEnabled: boolean
+      /** Постоянные расходы месяца: заполнены ли и сколько ложится на порцию. */
+      overhead: {
+        totalRub: number | null
+        perUnitRub: number | null
+        appliedPerUnitRub: number | null
+        basisLabel: string
+        enabled: boolean
+        filled: boolean
+      }
       problems: number
       cardsTotal: number
     }>('/cost/overview'),

@@ -72,7 +72,7 @@ export default function Cost() {
         }
       />
 
-      <div className="mb-3 inline-flex flex-wrap gap-[2px] rounded-[10px] border border-line bg-surface-2 p-[3px]" role="tablist">
+      <div className="seg-wrap mb-3" role="tablist">
         {TABS.map((t) => (
           <button
             key={t.key}
@@ -112,7 +112,12 @@ export default function Cost() {
       )}
 
       {tab === 'tech' && (
-        <TechCardsTab key={`tech-${reloadKey}`} initialCardId={openCardId ?? undefined} onOpenSignals={() => selectTab('signals')} />
+        <TechCardsTab
+          key={`tech-${reloadKey}`}
+          initialCardId={openCardId ?? undefined}
+          onOpenSignals={() => selectTab('signals')}
+          onOpenOverheads={() => selectTab('overheads')}
+        />
       )}
       {tab === 'items' && <ItemsTab reloadKey={reloadKey} onImport={() => setImportOpen(true)} />}
       {tab === 'overheads' && <OverheadsTab reloadKey={reloadKey} />}
@@ -141,6 +146,7 @@ export default function Cost() {
             setOpenCardId(id)
             selectTab('tech')
           }}
+          onOpenOverheads={() => selectTab('overheads')}
         />
       )}
     </div>

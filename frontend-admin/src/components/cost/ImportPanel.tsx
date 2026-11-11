@@ -104,7 +104,7 @@ export default function ImportPanel({ onClose, onImported }: { onClose: () => vo
         Техкарта из Excel/CSV или текстом — карты создадутся черновиками, ингредиенты появятся в складе.
         Позиции без цены подсветятся в «Сигналах».
       </p>
-      <div className="seg inline-flex flex-wrap gap-[2px] rounded-[10px] border border-line bg-surface-2 p-[3px]">
+      <div className="seg-wrap">
         {sectionBtn('file', 'Excel / файл')}
         {sectionBtn('text', 'Вставить текст')}
         {sectionBtn('ai', 'ИИ-прайс')}
