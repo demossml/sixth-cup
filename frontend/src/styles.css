@@ -179,6 +179,10 @@ html, body, #root {
   from { opacity: .65; transform: translateY(18px); }
   to { opacity: 1; transform: translateY(0); }
 }
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
 /* === APPEND to frontend/src/styles.css (do NOT replace the whole file) === */
 /* Фото в sheet меню: еле заметный дрейф (Ken Burns). Только transform → GPU. */
 @keyframes photo-drift {

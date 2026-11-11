@@ -8,15 +8,18 @@ import { OrderQrScreen } from '../components/order/OrderQrScreen'
 import { useActiveOrder } from '../lib/useActiveOrder'
 import { loadOrderRef, saveOrderRef, type OrderOut } from '../lib/preorderApi'
 import ProgressStamps from '../components/ProgressStamps'
+import PromoSheet from '../components/PromoSheet'
 import Qr from '../components/Qr'
 import QrLayer from '../components/QrLayer'
 import { useApp } from '../lib/app'
 import { formatCardCode } from '../lib/card'
 import { displayNickname } from '../lib/guestName'
 import { greetingFor } from '../lib/greeting'
+import { isVisibleAt, minutesOf } from '../lib/dealWindow'
 import { activeVouchers } from '../lib/proof'
 import { formatRub } from '../lib/money'
 import { friendsWord, progressPhrase } from '../lib/plural'
+import { useNow } from '../lib/useNow'
 import { useWakeLock } from '../lib/wakeLock'
 import AppLogo from '../components/AppLogo'
 import { ChevronRight, Gift, RefreshCw, Ticket, Users, WifiOff } from '../lib/icons'
@@ -41,6 +44,11 @@ export default function CardPage() {
   // Активный заказ: баннер над картой-пропуском и экран заказа по тапу.
   const { order: activeOrder, offline: orderOffline, refresh: refreshOrder } = useActiveOrder()
   const [orderView, setOrderView] = useState<OrderOut | null>(null)
+  // Акция, открытая в модальном окне (tapAction='modal').
+  const [promoOpen, setPromoOpen] = useState<null | { title: string; body?: string; imageUrl?: string | null; mediaType?: 'image' | 'video'; ctaLabel?: string | null; productId?: number | null }>(null)
+  // Время суток обновляем раз в минуту: акция появляется и исчезает по часам телефона.
+  const nowMs = useNow(60_000)
+  const minutesNow = minutesOf(new Date(nowMs))
   const saved = (() => { try { return localStorage.getItem('sc-saved') === '1' } catch { return false } })()
 
   const N = Math.max(1, me?.cupsForFree ?? dir?.cupsForFree ?? 5)
@@ -86,6 +94,8 @@ export default function CardPage() {
     id: number; title: string; body?: string; imageUrl?: string | null; mediaType?: 'image' | 'video'
     placement?: string; badge?: string | null; ctaLabel?: string | null; sortOrder?: number
     productId?: number | null
+    tapAction?: 'modal' | 'product' | 'menu'
+    timeFrom?: number | null; timeTo?: number | null
   }>
   const activeContent = [...content].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id)
   // home_hero — фон существующей шапки, а не отдельный блок над ней.
@@ -95,20 +105,21 @@ export default function CardPage() {
       <img src={item.imageUrl} alt={item.title} className={className} loading="lazy" />
   ) : null
 
-  // Акции на главной — только из админки. Никакого зашитого «каждый N-й стакан»:
-  // заголовок, подпись, CTA и бейдж приходят из `promos` (плейсмент home_feature).
-  // Плейсмент home — легаси-совместимость: берём одну карточку, как раньше.
-  const featured = activeContent.filter((x) => x.placement === 'home_feature')
-  const legacyHome = activeContent.filter((x) => (x.placement || 'home') === 'home')
-  const deals = featured.length > 0 ? featured : legacyHome.slice(0, 1)
+  // Акции на главной — только из админки, только плейсмент «Карточка под QR».
+  // Старый плейсмент home намеренно игнорируется: он дублировал фразу про 6-й стакан.
+  // Фильтр по времени — по часам телефона, поэтому карточка появляется и из кэша.
+  const visibleDeals = activeContent
+    .filter((x) => x.placement === 'home_feature')
+    .filter((x) => isVisibleAt({ from: x.timeFrom, to: x.timeTo }, minutesNow))
 
   // Приветствие: одна строка, имя только если оно осмысленное (у гостя — «Гость»).
   const guestName = displayNickname(me?.nickname)
   const greeting = me ? `${greetingFor()}, ${guestName === 'Гость' ? 'гость' : guestName}` : greetingFor()
 
-  const dealCards = deals.map((d) => {
+  const dealCards = visibleDeals.map((d) => {
     const title = (d.title || d.body || '').trim()
     if (!title) return null
+    const action = d.tapAction || 'modal'
     return {
       key: `deal-${d.id}`,
       title,
@@ -118,8 +129,11 @@ export default function CardPage() {
       imageUrl: d.imageUrl,
       mediaType: d.mediaType,
       mediaIcon: undefined,
-      // Товар задан в админке — ведём на него, иначе в меню.
-      onClick: () => nav(d.productId ? `/menu/${d.productId}` : '/menu'),
+      onClick: () => {
+        if (action === 'product' && d.productId) return nav(`/menu/${d.productId}`)
+        if (action === 'menu') return nav('/menu')
+        setPromoOpen(d)
+      },
     }
   }).filter((x) => x !== null)
 
@@ -331,6 +345,25 @@ export default function CardPage() {
 
       {qrOpen && proof ? (
         <QrLayer proof={proof} cardCode={cardCode} onClose={() => setQrOpen(false)} />
+      ) : null}
+
+      {/* Акция в модальном окне: описание из админки + переход туда, куда указал владелец. */}
+      {promoOpen ? (
+        <PromoSheet
+          item={{
+            title: promoOpen.title,
+            body: promoOpen.body,
+            imageUrl: promoOpen.imageUrl,
+            mediaType: promoOpen.mediaType,
+            ctaLabel: promoOpen.ctaLabel ?? undefined,
+          }}
+          onGo={() => {
+            const target = promoOpen.productId ? `/menu/${promoOpen.productId}` : '/menu'
+            setPromoOpen(null)
+            nav(target)
+          }}
+          onClose={() => setPromoOpen(null)}
+        />
       ) : null}
 
       {orderView ? (

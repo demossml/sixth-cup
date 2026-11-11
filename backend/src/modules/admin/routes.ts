@@ -1763,6 +1763,7 @@ export const adminRoutes = new Hono()
         SELECT id, title, body, icon, sponsor, starts_at AS startsAt, ends_at AS endsAt,
                image_url AS imageUrl, media_type AS mediaType, placement, status, sort_order AS sortOrder,
                cta_label AS ctaLabel, product_id AS productId, badge, kind,
+               tap_action AS tapAction, time_from AS timeFrom, time_to AS timeTo,
                published_at AS publishedAt
         FROM promos ORDER BY sort_order ASC, id DESC
       `).all()
@@ -1793,6 +1794,11 @@ export const adminRoutes = new Hono()
     productId: z.number().int().optional().nullable(),
     badge: z.enum(['new', 'hit', 'seasonal']).optional().nullable(),
     kind: z.enum(['promo', 'featured_product']).optional().default('promo'),
+    // Что делать по тапу: описание в окне, переход к товару или в меню.
+    tapAction: z.enum(['modal', 'product', 'menu']).optional().default('modal'),
+    // Окно показа в минутах от полуночи (480 = 08:00); null = показывать всегда.
+    timeFrom: z.number().int().min(0).max(1439).optional().nullable(),
+    timeTo: z.number().int().min(0).max(1439).optional().nullable(),
   })), (c) => {
     const p = c.req.valid('json')
     const now = Math.floor(Date.now() / 1000)
@@ -1801,12 +1807,13 @@ export const adminRoutes = new Hono()
     const publishedAt = p.status === 'published' ? now : null
     try {
       db.prepare(`
-        INSERT INTO promos(title,body,icon,sponsor,starts_at,ends_at,image_url,media_type,placement,status,sort_order,cta_label,product_id,badge,kind,published_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO promos(title,body,icon,sponsor,starts_at,ends_at,image_url,media_type,placement,status,sort_order,cta_label,product_id,badge,kind,published_at,tap_action,time_from,time_to)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       `).run(
         p.title, p.body ?? '', p.icon, p.sponsor ?? null, starts, ends,
         p.imageUrl ?? null, p.mediaType, p.placement, p.status, p.sortOrder,
         p.ctaLabel ?? null, p.productId ?? null, p.badge ?? null, p.kind, publishedAt,
+        p.tapAction, p.timeFrom ?? null, p.timeTo ?? null,
       )
     } catch {
       db.prepare('INSERT INTO promos(title,body,icon,sponsor,starts_at,ends_at) VALUES(?,?,?,?,?,?)')
@@ -1832,6 +1839,9 @@ export const adminRoutes = new Hono()
     productId: z.number().int().optional().nullable(),
     badge: z.enum(['new', 'hit', 'seasonal']).optional().nullable(),
     kind: z.enum(['promo', 'featured_product']).optional(),
+    tapAction: z.enum(['modal', 'product', 'menu']).optional(),
+    timeFrom: z.number().int().min(0).max(1439).optional().nullable(),
+    timeTo: z.number().int().min(0).max(1439).optional().nullable(),
   })), (c) => {
     const id = Number(c.req.param('id'))
     const p = c.req.valid('json')
@@ -1847,7 +1857,8 @@ export const adminRoutes = new Hono()
     try {
       db.prepare(`
         UPDATE promos SET title=?, body=?, icon=?, sponsor=?, starts_at=?, ends_at=?,
-          image_url=?, media_type=?, placement=?, status=?, sort_order=?, cta_label=?, product_id=?, badge=?, kind=?, published_at=?
+          image_url=?, media_type=?, placement=?, status=?, sort_order=?, cta_label=?, product_id=?, badge=?, kind=?, published_at=?,
+          tap_action=?, time_from=?, time_to=?
         WHERE id=?
       `).run(
         p.title ?? row.title,
@@ -1865,6 +1876,9 @@ export const adminRoutes = new Hono()
         p.badge !== undefined ? p.badge : row.badge,
         p.kind ?? row.kind ?? 'promo',
         publishedAt,
+        p.tapAction ?? row.tap_action ?? 'modal',
+        p.timeFrom !== undefined ? p.timeFrom : row.time_from,
+        p.timeTo !== undefined ? p.timeTo : row.time_to,
         id,
       )
     } catch {

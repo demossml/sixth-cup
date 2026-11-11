@@ -24,6 +24,44 @@ type PromoRow = {
   badge?: string | null
   kind?: string
   productId?: number | null
+  tapAction?: 'modal' | 'product' | 'menu'
+  timeFrom?: number | null
+  timeTo?: number | null
+}
+
+/** Минуты от полуночи → «ЧЧ:ММ» для input[type=time]. */
+const toHM = (m: number | null | undefined) =>
+  m == null ? '' : `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+
+/** «ЧЧ:ММ» → минуты от полуночи (пусто → null = без ограничения). */
+const fromHM = (v: string) => {
+  if (!v) return null
+  const [h, m] = v.split(':')
+  const hh = Number(h)
+  const mm = Number(m ?? 0)
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null
+  return Math.min(1439, Math.max(0, hh * 60 + mm))
+}
+
+/** Пресеты показа: значения сравниваем с точностью до минуты. */
+const WINDOWS: Array<{ key: string; label: string; from: number | null; to: number | null }> = [
+  { key: 'all', label: 'Весь день', from: null, to: null },
+  { key: 'morning', label: 'Утро 06:00–12:00', from: 360, to: 720 },
+  { key: 'lunch', label: 'Обед 12:00–17:00', from: 720, to: 1020 },
+  { key: 'evening', label: 'Вечер 17:00–23:00', from: 1020, to: 1380 },
+  { key: 'custom', label: 'Своё время', from: null, to: null },
+]
+
+const windowKey = (from: number | null | undefined, to: number | null | undefined) => {
+  if (from == null && to == null) return 'all'
+  const hit = WINDOWS.find((w) => w.key !== 'all' && w.key !== 'custom' && w.from === from && w.to === to)
+  return hit?.key ?? 'custom'
+}
+
+const TAP_LABEL: Record<string, string> = {
+  modal: 'описание в окне',
+  product: 'переход к товару',
+  menu: 'переход в меню',
 }
 
 const PLACEMENT_LABEL: Record<string, string> = {
@@ -52,6 +90,9 @@ function Promos() {
     badge: '' as string,
     kind: 'promo' as string,
     productId: '' as string,
+    tapAction: 'modal' as string,
+    timeFrom: null as number | null,
+    timeTo: null as number | null,
   }
   const [edit, setEdit] = useState<(typeof empty & { id?: number }) | null>(null)
   const [del, setDel] = useState<PromoRow | null>(null)
@@ -108,6 +149,10 @@ function Promos() {
                         {PLACEMENT_LABEL[p.placement || 'home'] || p.placement || 'home'} · {p.status || 'published'} ·
                         sort {p.sortOrder ?? 0} · до {fmtDate(p.endsAt * 1000)}
                         {p.productId ? ` · product #${p.productId}` : ''}
+                        {` · тап: ${TAP_LABEL[p.tapAction || 'modal']}`}
+                        {p.timeFrom != null || p.timeTo != null
+                          ? ` · ${toHM(p.timeFrom) || '00:00'}–${toHM(p.timeTo) || '24:00'}`
+                          : ' · весь день'}
                       </div>
                     </div>
                   </div>
@@ -133,6 +178,9 @@ function Promos() {
                         badge: p.badge ?? '',
                         kind: (p.kind as string) || 'promo',
                         productId: p.productId != null ? String(p.productId) : '',
+                        tapAction: p.tapAction || 'modal',
+                        timeFrom: p.timeFrom ?? null,
+                        timeTo: p.timeTo ?? null,
                       })
                     }
                   >
@@ -226,6 +274,46 @@ function Promos() {
                 placeholder="пусто = /menu"
               />
             </Field>
+            <Field label="Что делать по тапу" hint="Для карточки под QR: показать описание в окне или сразу вести к товару/в меню.">
+              <Select value={edit.tapAction} onChange={(e) => setEdit({ ...edit, tapAction: e.target.value })}>
+                <option value="modal">Открыть описание акции (окно)</option>
+                <option value="product">Перейти к товару (ID товара выше)</option>
+                <option value="menu">Открыть меню</option>
+              </Select>
+            </Field>
+            <Field label="Когда показывать" hint="Окно по времени телефона гостя. Если конец меньше начала — показ через полночь.">
+              <Select
+                value={windowKey(edit.timeFrom, edit.timeTo)}
+                onChange={(e) => {
+                  const w = WINDOWS.find((x) => x.key === e.target.value)
+                  if (!w) return
+                  if (w.key === 'custom') return
+                  setEdit({ ...edit, timeFrom: w.from, timeTo: w.to })
+                }}
+              >
+                {WINDOWS.map((w) => (
+                  <option key={w.key} value={w.key}>{w.label}</option>
+                ))}
+              </Select>
+            </Field>
+            {windowKey(edit.timeFrom, edit.timeTo) === 'custom' && (
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="С">
+                  <Input
+                    type="time"
+                    value={toHM(edit.timeFrom)}
+                    onChange={(e) => setEdit({ ...edit, timeFrom: fromHM(e.target.value) })}
+                  />
+                </Field>
+                <Field label="До">
+                  <Input
+                    type="time"
+                    value={toHM(edit.timeTo)}
+                    onChange={(e) => setEdit({ ...edit, timeTo: fromHM(e.target.value) })}
+                  />
+                </Field>
+              </div>
+            )}
             <Field label="Дней действия">
               <Input
                 type="number"
@@ -250,6 +338,9 @@ function Promos() {
                     badge: edit.badge || null,
                     kind: edit.kind,
                     productId: edit.productId !== '' ? Number(edit.productId) : null,
+                    tapAction: edit.tapAction,
+                    timeFrom: edit.timeFrom,
+                    timeTo: edit.timeTo,
                   }
                   if (edit.id) await api(`/promos/${edit.id}`, { method: 'PATCH', body })
                   else await api('/promos', { method: 'POST', body })
