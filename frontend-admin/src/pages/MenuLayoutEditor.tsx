@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router-dom'
 import {
   AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical,
   AlignStartHorizontal, AlignStartVertical, ArrowDown, ArrowLeft, ArrowUp, Check, Download,
-  ChevronDown, ChevronRight, Eye, EyeOff, Grid3x3, GripVertical, History, ImagePlus, Layers, ListTree, Loader2, Lock, LockOpen, Maximize2,
+  ChevronDown, ChevronRight, Eye, EyeOff, Grid3x3, GripVertical, History, Layers, ListTree, Loader2, Lock, LockOpen, Maximize2,
   MessageSquare,
   Minus, Palette, Plus, Redo2, RefreshCw, Search, Sparkles, Trash2, Type, Undo2, Upload, X,
 } from 'lucide-react'
@@ -35,11 +35,6 @@ import {
   findItemByProduct,
   duplicateProducts,
   effectiveType,
-  itemCount,
-  moveItem,
-  removeItem,
-  renameSection,
-  toggleItemHidden,
   formatFull,
   formatLabel,
   formatSize,
@@ -64,7 +59,7 @@ import {
   type Rect,
   type ResizeHandle,
 } from '../lib/menuLayout'
-import { Badge, Button, Banner, Drawer, cx, ErrorBox, Field, Input, Select, Spinner, useToast } from '../ui/kit'
+import { Badge, Button, Banner, Drawer, cx, ErrorBox, Field, Input, Select, useToast } from '../ui/kit'
 import MenuCanvas from '../components/menuLayout/MenuCanvas'
 import ColorField from '../components/menuLayout/ColorField'
 import {
@@ -94,6 +89,8 @@ import ExportModal, { type Blocker } from '../components/menuLayout/ExportModal'
 import ExportJobsPanel from '../components/menuLayout/ExportJobsPanel'
 import PhotoDpiHint from '../components/menuLayout/PhotoDpiHint'
 import EditorSkeleton from '../components/menuLayout/EditorSkeleton'
+import CatalogPane from '../components/menuLayout/panes/CatalogPane'
+import PlacesPane from '../components/menuLayout/panes/PlacesPane'
 
 type SaveBody = { title: string; theme: MenuTheme; doc: MenuDoc }
 
@@ -1696,139 +1693,21 @@ export default function MenuLayoutEditor() {
   /* ── панели ── */
 
   const catalogPane = (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="border-b border-line px-3 py-2.5">
-        <label className="flex min-h-9 items-center gap-2 rounded-lg border border-line bg-white px-2">
-          <Search size={15} className="text-ink-tertiary" aria-hidden />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Найти товар"
-            className="w-full bg-transparent text-[13px] outline-none"
-          />
-        </label>
-        <div className="mt-2 flex items-center gap-1 text-[11px] font-semibold">
-          <button
-            type="button"
-            onClick={() => setShowAllProducts(false)}
-            aria-pressed={!showAllProducts}
-            className={cx(
-              'rounded-full border px-2.5 py-1',
-              !showAllProducts ? 'border-brand bg-brand text-white' : 'border-line text-ink-secondary',
-            )}
-          >
-            Доступные
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowAllProducts(true)}
-            aria-pressed={showAllProducts}
-            className={cx(
-              'rounded-full border px-2.5 py-1',
-              showAllProducts ? 'border-brand bg-brand text-white' : 'border-line text-ink-secondary',
-            )}
-          >
-            Весь каталог
-          </button>
-        </div>
-        <div className="mt-1.5 flex flex-wrap gap-1">
-          <button
-            type="button"
-            onClick={() => setCatFilter('all')}
-            className={cx('rounded-full border px-2.5 py-1 text-[11px] font-semibold', catFilter === 'all' ? 'border-brand bg-brand text-white' : 'border-line text-ink-secondary')}
-          >
-            Все
-          </button>
-          {categories.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              onClick={() => setCatFilter(c.id)}
-              className={cx('rounded-full border px-2.5 py-1 text-[11px] font-semibold', catFilter === c.id ? 'border-brand bg-brand text-white' : 'border-line text-ink-secondary')}
-            >
-              {c.name}
-            </button>
-          ))}
-        </div>
-        <button
-          type="button"
-          onClick={() => void seedFromCatalog()}
-          className="mt-2 w-full rounded-lg border border-dashed border-line px-2 py-1.5 text-[12px] font-semibold text-brand hover:border-brand"
-        >
-          Собрать лист из каталога
-        </button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-2">
-        {catalog.loading && !catalog.data && <Spinner label="Загрузка каталога…" />}
-        {filtered.length === 0 && <p className="px-2 py-3 text-[13px] text-ink-secondary">Ничего не найдено.</p>}
-        <ul className="space-y-1">
-          {filtered.map((p) => (
-            <li key={p.id}>
-              <button
-                type="button"
-                onClick={() => (MENU_LAYOUT_V2 && sections.length > 0 ? addToPlaces(p, sections[0]!.section.id) : addProduct(p))}
-                className="flex w-full items-center gap-2 rounded-lg border border-transparent px-1.5 py-1.5 text-left hover:border-line hover:bg-surface-2"
-              >
-                {p.imageUrl ? (
-                  <img src={p.imageUrl} alt="" className="h-9 w-9 flex-none rounded-md bg-surface-2 object-cover" />
-                ) : (
-                  <span className="grid h-9 w-9 flex-none place-items-center rounded-md bg-surface-2 text-ink-tertiary">
-                    <ImagePlus size={14} aria-hidden />
-                  </span>
-                )}
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13px] font-semibold text-ink">{p.name}</span>
-                  <span className="block truncate text-[11px] text-ink-tertiary">
-                    {p.price} ₽{p.variantLabel ? ` · ${p.variantLabel}` : ''}
-                    {!p.available ? ' · не в продаже' : ''}
-                  </span>
-                </span>
-                <Plus size={15} className="flex-none text-brand" aria-hidden />
-              </button>
-            </li>
-          ))}
-        </ul>
-        <div className="mt-3 rounded-lg border border-dashed border-line p-2">
-          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-tertiary">Добавить на холст</p>
-          <div className="flex flex-wrap gap-1">
-            {(
-              [
-                ['text', 'Текст'],
-                ['image', 'Фото'],
-                ['logo', 'Лого'],
-                ['divider', 'Линия'],
-              ] as [BlockType, string][]
-            ).map(([t, label]) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => addBlock(t)}
-                className="rounded-full border border-line px-2.5 py-1 text-[11px] text-ink-secondary hover:border-brand hover:text-brand"
-              >
-                + {label}
-              </button>
-            ))}
-          </div>
-          {categories.length > 0 && (
-            <>
-              <p className="mt-2 mb-1 text-[11px] font-semibold uppercase tracking-wide text-ink-tertiary">Заголовок категории</p>
-              <div className="flex flex-wrap gap-1">
-                {categories.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => addBlock('category', { categoryId: c.id, titleOverride: c.name })}
-                    className="rounded-full border border-line px-2 py-1 text-[11px] text-ink-secondary hover:border-brand hover:text-brand"
-                  >
-                    {c.name}
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
+    <CatalogPane
+      search={search}
+      setSearch={setSearch}
+      showAllProducts={showAllProducts}
+      setShowAllProducts={setShowAllProducts}
+      catFilter={catFilter}
+      setCatFilter={setCatFilter}
+      categories={categories}
+      filtered={filtered}
+      catalogLoading={catalog.loading && !catalog.data}
+      seedFromCatalog={seedFromCatalog}
+      // Решение «на холст или в Места» остаётся здесь: панель не знает про секции.
+      onPickProduct={(item) => (MENU_LAYOUT_V2 && sections.length > 0 ? addToPlaces(item, sections[0]!.section.id) : addProduct(item))}
+      addBlock={addBlock}
+    />
   )
 
   const layersPane = (
@@ -2137,94 +2016,15 @@ export default function MenuLayoutEditor() {
 
   /** «Места»: дерево секций и позиций — правим смысл, холст пересобирается сам. */
   const placesPane = (
-    <div className="min-h-0 flex-1 overflow-y-auto p-2">
-      {sections.length === 0 && (
-        <p className="p-2 text-[13px] text-ink-secondary">
-          Секций пока нет. Нажмите «Собрать лист из каталога» — категории станут секциями, а позиции можно будет
-          двигать списком.
-        </p>
-      )}
-      <ul className="space-y-2">
-        {sections.map(({ section }) => (
-          <li key={section.id} className="rounded-lg border border-line">
-            <div className="flex items-center gap-1 border-b border-line px-2 py-1.5">
-              <input
-                value={section.title}
-                onChange={(e) => void applySections(renameSection(doc!, section.id, e.target.value))}
-                aria-label={`Название секции ${section.title}`}
-                className="min-w-0 flex-1 truncate border-0 bg-transparent text-[13px] font-semibold outline-none focus:underline"
-              />
-              <span className="flex-none text-[11px] text-ink-tertiary">{itemCount(section)}</span>
-            </div>
-            <ul className="space-y-0.5 p-1">
-              {section.items.map((it, idx) => (
-                <li
-                  key={it.id}
-                  className={cx(
-                    'flex items-center gap-1 rounded px-1 py-0.5',
-                    selectedId === `p-${it.id}` ? 'bg-surface-2' : 'hover:bg-surface-2',
-                    it.hidden && 'opacity-50',
-                  )}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setSelectedId(`p-${it.id}`)}
-                    className="min-w-0 flex-1 truncate text-left text-[12.5px]"
-                  >
-                    {it.titleOverride ?? catalogName(it.productId)}
-                    {it.sizes.length > 1 && <span className="ml-1 text-ink-tertiary">· {it.sizes.length} объёма</span>}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void applySections(moveItem(doc!, section.id, it.id, -1))}
-                    disabled={idx === 0}
-                    className="grid h-6 w-6 place-items-center rounded text-ink-tertiary hover:text-brand disabled:opacity-30"
-                    aria-label="Выше"
-                  >
-                    <ArrowUp size={13} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void applySections(moveItem(doc!, section.id, it.id, 1))}
-                    disabled={idx === section.items.length - 1}
-                    className="grid h-6 w-6 place-items-center rounded text-ink-tertiary hover:text-brand disabled:opacity-30"
-                    aria-label="Ниже"
-                  >
-                    <ArrowDown size={13} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void applySections(toggleItemHidden(doc!, section.id, it.id))}
-                    className="grid h-6 w-6 place-items-center rounded text-ink-tertiary hover:text-brand"
-                    aria-label={it.hidden ? 'Вернуть в меню' : 'Убрать из меню'}
-                  >
-                    {it.hidden ? <EyeOff size={13} /> : <Eye size={13} />}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void applySections(removeItem(doc!, section.id, it.id))}
-                    className="grid h-6 w-6 place-items-center rounded text-ink-tertiary hover:text-bad"
-                    aria-label="Удалить позицию"
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </li>
-              ))}
-              {section.items.length === 0 && <li className="px-1 py-1 text-[12px] text-ink-tertiary">Пусто</li>}
-            </ul>
-          </li>
-        ))}
-      </ul>
-      {sections.length > 0 && (
-        <button
-          type="button"
-          onClick={() => setLeftTab('catalog')}
-          className="mt-2 w-full rounded-lg border border-dashed border-line px-2 py-1.5 text-[12px] font-semibold text-brand hover:border-brand"
-        >
-          Добавить позицию из каталога
-        </button>
-      )}
-    </div>
+    <PlacesPane
+      sections={sections}
+      doc={doc}
+      selectedId={selectedId}
+      setSelectedId={setSelectedId}
+      applySections={applySections}
+      catalogName={catalogName}
+      setLeftTab={setLeftTab}
+    />
   )
 
   const designPane = (
