@@ -143,7 +143,7 @@ export default function CardPage() {
   const dealsWide = dealCount === 1
 
   return (
-    <div className="pb-4">
+    <div className={activeOrder ? 'pb-24' : 'pb-4'}>
       {/* Шапка: логотип + (только офлайн) бейдж, фраза прогресса, стикеры. Кэшбэка здесь нет. */}
       <div
         className={`${dim ? 'hero-night-off' : 'hero-night'} relative isolate overflow-hidden text-white px-4 pb-5 rounded-b-3xl`}
@@ -183,27 +183,14 @@ export default function CardPage() {
           <p className="mt-2.5 font-display font-semibold text-[19px] leading-[26px] tracking-[-0.01em] max-w-[250px]">
             {progressPhrase({ n: N, marks, freeAvailable: me?.freeAvailable ?? 0 })}
           </p>
-          {/* Аудит F-02: главное отличие — без SMS и регистрации — должно читаться на главной, а не только в онбординге. */}
-          <p className="mt-1 text-[12px] leading-4 text-white/75">Без SMS и регистрации — карта уже ваша</p>
 
-          <ProgressStamps n={N} marks={marks} gift={hasGift} />
-          {/* Аудит F-03: прогресс был только в штампах — числом его видно сразу. */}
-          <p className="mt-1.5 text-[11px] leading-4 text-white/70 num">
-            {hasGift ? `Подарок доступен — собрано ${N} из ${N}` : `Собрано ${Math.min(marks, N)} из ${N}`}
-          </p>
+          {/* Полоса марок схлопывается в ноль, пока марок нет: пустых ячеек не
+              рисуем, а резервировать под них 40 px — это дырка в шапке. */}
+          {marks > 0 || hasGift ? <ProgressStamps n={N} marks={marks} gift={hasGift} /> : null}
         </div>
       </div>
 
       <div className="px-4 -mt-3 space-y-3">
-        {/* Заказ важнее приглашения: сначала «что с моим кофе», потом всё остальное.
-            Между картой-пропуском и акцией ничего не вставляем (TITLE-SCREEN-спека). */}
-        <ActiveOrderBanner
-          order={activeOrder}
-          storeName={dir?.stores.find((s) => s.id === activeOrder?.storeId)?.name ?? null}
-          offline={orderOffline}
-          onOpen={(order) => { setOrderView(order); saveOrderRef({ orderId: order.id, qrPayload: loadOrderRef()?.qrPayload ?? null }) }}
-        />
-
         {/* Приглашение, которое не применилось (существующая карта / неверный код). */}
         <InviteNotice />
 
@@ -331,6 +318,15 @@ export default function CardPage() {
         {/* Аудит F-07: вместо двух баннеров — одна компактная строка настройки. */}
         <AppSetup restore={!saved && !!me} onSaveCode={() => nav('/me')} />
       </div>
+
+      {/* Статус заказа — плавающая пилюля над таб-баром: всегда на виду, но не
+          занимает место в потоке (как трекер заказа у Luckin). */}
+      <ActiveOrderBanner
+        variant="floating"
+        order={activeOrder}
+        offline={orderOffline}
+        onOpen={(order) => { setOrderView(order); saveOrderRef({ orderId: order.id, qrPayload: loadOrderRef()?.qrPayload ?? null }) }}
+      />
 
       {qrOpen && proof ? (
         <QrLayer proof={proof} cardCode={cardCode} onClose={() => setQrOpen(false)} />
