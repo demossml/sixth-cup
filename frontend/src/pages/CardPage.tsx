@@ -1,23 +1,23 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import AppSetup from '../components/AppSetup'
-import DealCard from '../components/DealCard'
 import InviteNotice from '../components/InviteNotice'
 import ActiveOrderBanner from '../components/order/ActiveOrderBanner'
 import { OrderQrScreen } from '../components/order/OrderQrScreen'
 import { useActiveOrder } from '../lib/useActiveOrder'
 import { loadOrderRef, saveOrderRef, type OrderOut } from '../lib/preorderApi'
 import ProgressStamps from '../components/ProgressStamps'
+import PromoBanner from '../components/PromoBanner'
 import Qr from '../components/Qr'
 import QrLayer from '../components/QrLayer'
 import { useApp } from '../lib/app'
 import { formatCardCode } from '../lib/card'
 import { displayNickname } from '../lib/guestName'
 import { greetingFor } from '../lib/greeting'
-import { isVisibleAt, minutesOf, weekdayIndex, windowLabel } from '../lib/dealWindow'
+import { isVisibleAt, minutesOf, weekdayIndex } from '../lib/dealWindow'
 import { activeVouchers } from '../lib/proof'
 import { formatRub } from '../lib/money'
-import { friendsWord, progressPhrase } from '../lib/plural'
+import { friendsWord, pluralRu, progressPhrase } from '../lib/plural'
 import { useNow } from '../lib/useNow'
 import { useWakeLock } from '../lib/wakeLock'
 import AppLogo from '../components/AppLogo'
@@ -117,65 +117,35 @@ export default function CardPage() {
   const guestName = displayNickname(me?.nickname)
   const greeting = me ? `${greetingFor()}, ${guestName === 'Гость' ? 'гость' : guestName}` : greetingFor()
 
-  const dealCards = visibleDeals.map((d) => {
-    // Заголовок — первая строка заголовка, иначе первая строка короткого описания,
-    // и только в крайнем случае — обрезанное начало полного (а не весь body целиком).
-    const firstLine = (d.title || '').split('\n').map((x) => x.trim()).find(Boolean)
-      || (d.subtitle || '').split('\n').map((x) => x.trim()).find(Boolean)
-      || ''
-    const fullBody = (d.body || '').trim()
-    const clipped = fullBody.length > 60 ? `${fullBody.slice(0, 60).trimEnd()}…` : fullBody
-    const title = firstLine || clipped
-    if (!title) return null
-
-    // «К товару» без ID товара — тупик: ведём себя как «Подробнее» и подписываем честно.
+  // На главной — ТОЛЬКО баннер, без подписей (требование владельца):
+  // вся информация на плакате, текст акции живёт на экране /promo/:id.
+  // Акция без картинки на главной не показывается — показать нечего.
+  const promoBanners = visibleDeals.filter((d) => !!d.imageUrl).map((d) => {
+    // «К товару» без ID товара — тупик: ведём себя как «Подробнее».
     const declared = d.tapAction || 'modal'
     const action = declared === 'product' && !d.productId ? 'modal' : declared
-
-    // На карточке — короткое описание (или прежний body, если короткого нет).
-    const cardBody = (d.subtitle ?? '').trim() || (d.title ? (d.body ?? '').trim() : '')
-    const win = windowLabel({ from: d.timeFrom, to: d.timeTo })
+    const aria = (d.title || d.subtitle || d.body || '').split('\n').map((x) => x.trim()).find(Boolean) || 'Акция'
     return {
       key: `deal-${d.id}`,
-      title,
-      body: cardBody,
-      cta: action === 'modal' ? 'Подробнее' : (d.ctaLabel?.trim() || 'Открыть'),
-      meta: win === 'весь день' ? '' : win,
-      badge: d.badge,
-      imageUrl: d.imageUrl,
+      title: aria,
+      imageUrl: d.imageUrl as string,
       mediaType: d.mediaType,
       fit: d.imageFit === 'cover' ? 'cover' as const : 'contain' as const,
-      mediaIcon: undefined,
       onClick: () => {
         if (action === 'product' && d.productId) return nav(`/menu/${d.productId}`)
         if (action === 'menu') return nav('/menu')
-        // Описание акции — на отдельном экране, а не в модалке: там есть и условия,
-        // и кнопка действия, и постер целиком.
+        // Описание акции — на отдельном экране: постер целиком, условия, действие.
         nav(`/promo/${d.id}`)
       },
     }
-  }).filter((x) => x !== null)
+  })
+
+  const bannerCount = promoBanners.length
+  // Один баннер — большой на всю ширину, несколько — рельс вбок.
+  const bannerBig = bannerCount === 1
 
   const voucherDate = (day: number) => new Date(day * 86_400_000).toLocaleDateString('ru-RU')
-  // Купоны живут в том же рельсе: срок годности виден прямо в карточке.
-  const voucherCards = vouchers.map((v) => ({
-    key: `voucher-${v[0]}`,
-    title: v[1] === 'p' ? `Скидка ${v[2]}%` : `Скидка ${v[2]} ₽`,
-    body: `до ${voucherDate(v[3])}`,
-    cta: 'Куда применить',
-    meta: '',
-    badge: null,
-    imageUrl: null,
-    mediaType: 'image' as const,
-    fit: 'contain' as const,
-    mediaIcon: <Ticket size={26} strokeWidth={1.7} />,
-    onClick: () => nav('/promos'),
-  }))
-
-  const deals_all = [...dealCards, ...voucherCards]
-  const dealCount = deals_all.length
-  // Одна карточка — широкая (медиа слева), несколько — рельс вбок.
-  const dealsWide = dealCount === 1
+  const voucherLastDate = vouchers.length > 0 ? voucherDate(Math.max(...vouchers.map((v) => v[3]))) : ''
 
   return (
     <div className={activeOrder ? 'pb-24' : 'pb-4'}>
@@ -280,52 +250,56 @@ export default function CardPage() {
 
         {msg && <p className={`text-sm ${msg.ok ? 'text-ok' : 'text-bad'}`}>{msg.text}</p>}
 
-        {dealCount > 0 && (
+        {bannerCount > 0 && (
           <section>
-            {/* Никаких «Акции» и «Ещё»: одна карточка говорит сама за себя, а подпись
-                нужна только чтобы разделить несколько карточек в рельсе. */}
-            {dealCount > 1 ? (
+            {/* На главной — только баннеры. Подпись «Для вас» нужна, когда их несколько. */}
+            {bannerCount > 1 ? (
               <div className="section-head">
                 <h2>Для вас</h2>
               </div>
             ) : null}
-            {dealsWide ? (
-              deals_all.map((d) => (
-                <DealCard
-                  key={d.key}
-                  title={d.title}
-                  body={d.body}
-                  cta={d.cta}
-                  meta={d.meta}
-                  badge={d.badge}
-                  imageUrl={d.imageUrl}
-                  mediaType={d.mediaType}
-                  fit={d.fit}
-                  mediaIcon={d.mediaIcon}
-                  wide
-                  onClick={d.onClick}
-                />
-              ))
+            {bannerBig ? (
+              <PromoBanner
+                title={promoBanners[0].title}
+                imageUrl={promoBanners[0].imageUrl}
+                mediaType={promoBanners[0].mediaType}
+                fit={promoBanners[0].fit}
+                big
+                onClick={promoBanners[0].onClick}
+              />
             ) : (
               <div className="rail scrollbar-none">
-                {deals_all.map((d) => (
-                  <DealCard
-                    key={d.key}
-                    title={d.title}
-                    body={d.body}
-                    cta={d.cta}
-                    meta={d.meta}
-                    badge={d.badge}
-                    imageUrl={d.imageUrl}
-                    mediaType={d.mediaType}
-                    fit={d.fit}
-                    mediaIcon={d.mediaIcon}
-                    onClick={d.onClick}
+                {promoBanners.map((b) => (
+                  <PromoBanner
+                    key={b.key}
+                    title={b.title}
+                    imageUrl={b.imageUrl}
+                    mediaType={b.mediaType}
+                    fit={b.fit}
+                    onClick={b.onClick}
                   />
                 ))}
               </div>
             )}
           </section>
+        )}
+
+        {/* Купоны — служебная строка, без описаний: детали на своём экране. */}
+        {vouchers.length > 0 && (
+          <button
+            type="button"
+            onClick={() => nav('/promos')}
+            className="w-full text-left bg-white border border-line rounded-2xl shadow-card px-3.5 py-2 min-h-14 flex items-center gap-3 active:bg-brand-tint/60"
+          >
+            <Ticket size={20} strokeWidth={1.75} className="text-brand shrink-0" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-[15px] leading-5 font-semibold text-ink">Купоны</span>
+              <span className="block text-[12px] leading-4 text-ink-secondary num">
+                {vouchers.length} {pluralRu(vouchers.length, 'купон', 'купона', 'купонов')} · до {voucherLastDate}
+              </span>
+            </span>
+            <ChevronRight size={18} strokeWidth={1.75} className="text-ink-tertiary shrink-0" />
+          </button>
         )}
 
         {me && (
