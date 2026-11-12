@@ -6,6 +6,7 @@ import { useApi } from '../api/useApi'
 import type { VoucherTemplate } from '../api/types'
 import { fmtDate, fmtNum } from '../lib/format'
 import { createBody, draftError, draftFrom, emptyDraft, patchBody, type TemplateDraft } from '../lib/voucherTemplates'
+import { hasFieldLabels, splitPromoText } from '../lib/promoSplit'
 import { Badge, Banner, Button, Card, ConfirmDialog, Drawer, EmptyState, ErrorBox, Field, Input, PageHeader, Select, Spinner, Tabs, Toggle, useToast } from '../ui/kit'
 
 type PromoRow = {
@@ -69,11 +70,11 @@ const TAP_LABEL: Record<string, string> = {
 
 /**
  * Аудит F-01: владелец вставил в заголовок весь текст вместе с подписями формы,
- * и гости увидели «Краткое описание». Предупреждаем прямо в редакторе.
+ * и гости увидели «Краткое описание». Предупреждаем и предлагаем разложить
+ * склейку по полям одной кнопкой.
  */
-const FIELD_LABEL_LEAK = /(краткое описание|короткое описание|полное описание)/i
 const textHasFieldLabels = (d: { title: string; subtitle?: string; body?: string; terms?: string }) =>
-  [d.title, d.subtitle, d.body, d.terms].some((v) => !!v && FIELD_LABEL_LEAK.test(v))
+  [d.title, d.subtitle, d.body, d.terms].some((v) => hasFieldLabels(v))
 
 const WEEKDAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
 const ALL_DAYS = 127
@@ -271,7 +272,27 @@ function Promos() {
             {textHasFieldLabels(edit) ? (
               <Banner tone="warn">
                 В тексте есть подписи полей («Краткое описание», «Полное описание») — гости увидят их на карточке.
-                Разложите текст по полям выше: заголовок отдельно, описание отдельно.
+                <div className="mt-2">
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      const blob = [edit.title, edit.subtitle, edit.body, edit.terms].filter(Boolean).join('\n')
+                      const r = splitPromoText(blob)
+                      setEdit({
+                        ...edit,
+                        title: r.title || edit.title,
+                        subtitle: r.subtitle || '',
+                        body: r.body || '',
+                        terms: r.terms || '',
+                      })
+                    }}
+                  >
+                    Разложить текст по полям
+                  </Button>
+                </div>
+                <p className="mt-1.5 text-xs text-ink-secondary">
+                  Разберёт склейку на заголовок, короткое и полное описание, условия. Проверьте результат и сохраните.
+                </p>
               </Banner>
             ) : null}
             <Field label="Тип медиа" hint="Фото или короткий ролик. Видео запускается без звука и по кругу.">
