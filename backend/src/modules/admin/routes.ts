@@ -1763,6 +1763,7 @@ export const adminRoutes = new Hono()
         SELECT id, title, body, icon, sponsor, starts_at AS startsAt, ends_at AS endsAt,
                image_url AS imageUrl, media_type AS mediaType, placement, status, sort_order AS sortOrder,
                cta_label AS ctaLabel, product_id AS productId, badge, kind,
+               subtitle, terms,
                tap_action AS tapAction, time_from AS timeFrom, time_to AS timeTo,
                days_mask AS daysMask,
                published_at AS publishedAt
@@ -1781,6 +1782,10 @@ export const adminRoutes = new Hono()
     // Заголовок необязателен: баннер-фон и часть материалов идут без текста.
     title: z.string().max(80).optional().default(''),
     body: z.string().max(500).optional().default(''),
+    // Короткое описание для карточки и условия для окна — отдельные поля,
+    // чтобы весь текст не сваливался в заголовок (аудит F-01).
+    subtitle: z.string().max(140).optional().nullable(),
+    terms: z.string().max(300).optional().nullable(),
     icon: z.string().max(24).default('Sparkles'),
     sponsor: z.string().max(80).optional().nullable(),
     days: z.number().int().min(1).max(365).optional(),
@@ -1810,13 +1815,14 @@ export const adminRoutes = new Hono()
     const publishedAt = p.status === 'published' ? now : null
     try {
       db.prepare(`
-        INSERT INTO promos(title,body,icon,sponsor,starts_at,ends_at,image_url,media_type,placement,status,sort_order,cta_label,product_id,badge,kind,published_at,tap_action,time_from,time_to,days_mask)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO promos(title,body,icon,sponsor,starts_at,ends_at,image_url,media_type,placement,status,sort_order,cta_label,product_id,badge,kind,published_at,tap_action,time_from,time_to,days_mask,subtitle,terms)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       `).run(
         p.title, p.body ?? '', p.icon, p.sponsor ?? null, starts, ends,
         p.imageUrl ?? null, p.mediaType, p.placement, p.status, p.sortOrder,
         p.ctaLabel ?? null, p.productId ?? null, p.badge ?? null, p.kind, publishedAt,
         p.tapAction, p.timeFrom ?? null, p.timeTo ?? null, p.daysMask ?? null,
+        p.subtitle ?? null, p.terms ?? null,
       )
     } catch {
       db.prepare('INSERT INTO promos(title,body,icon,sponsor,starts_at,ends_at) VALUES(?,?,?,?,?,?)')
@@ -1828,6 +1834,8 @@ export const adminRoutes = new Hono()
   .patch('/promos/:id', zValidator('json', z.object({
     title: z.string().max(80).optional(),
     body: z.string().max(500).optional(),
+    subtitle: z.string().max(140).optional().nullable(),
+    terms: z.string().max(300).optional().nullable(),
     icon: z.string().max(24).optional(),
     sponsor: z.string().max(80).optional().nullable(),
     days: z.number().int().min(1).max(365).optional(),
@@ -1862,7 +1870,7 @@ export const adminRoutes = new Hono()
       db.prepare(`
         UPDATE promos SET title=?, body=?, icon=?, sponsor=?, starts_at=?, ends_at=?,
           image_url=?, media_type=?, placement=?, status=?, sort_order=?, cta_label=?, product_id=?, badge=?, kind=?, published_at=?,
-          tap_action=?, time_from=?, time_to=?, days_mask=?
+          tap_action=?, time_from=?, time_to=?, days_mask=?, subtitle=?, terms=?
         WHERE id=?
       `).run(
         p.title ?? row.title,
@@ -1884,6 +1892,8 @@ export const adminRoutes = new Hono()
         p.timeFrom !== undefined ? p.timeFrom : row.time_from,
         p.timeTo !== undefined ? p.timeTo : row.time_to,
         p.daysMask !== undefined ? p.daysMask : row.days_mask,
+        p.subtitle !== undefined ? p.subtitle : row.subtitle,
+        p.terms !== undefined ? p.terms : row.terms,
         id,
       )
     } catch {

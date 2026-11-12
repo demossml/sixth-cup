@@ -78,9 +78,11 @@ export default function DealCard({
         ) : null}
       </span>
 
-      <span className={`block min-w-0 p-2.5 ${wide ? 'flex-1' : ''}`}>
-        <span className="block font-display font-semibold text-[13px] leading-[17px] text-ink line-clamp-2">{title}</span>
-        {body ? <span className="mt-0.5 block text-[11px] leading-[14px] text-ink-secondary line-clamp-2">{body}</span> : null}
+      <span className={`min-w-0 p-2.5 ${wide ? 'flex-1' : ''}`}>
+        {/* ВАЖНО: без `block` — Tailwind line-clamp ставит display:-webkit-box,
+            а `block` побеждает в каскаде и обрезка молча перестаёт работать. */}
+        <span className="font-display font-semibold text-[13px] leading-[17px] text-ink line-clamp-2">{title}</span>
+        {body ? <span className="mt-0.5 text-[11px] leading-[14px] text-ink-secondary line-clamp-2">{body}</span> : null}
         {cta ? (
           <span className="mt-2 inline-flex items-center gap-0.5 text-[11px] leading-4 font-semibold text-brand">
             {cta}

@@ -19,7 +19,6 @@ export default function AppSetup({
   const { visible, canPrompt, ios, install } = useInstall()
   const [hint, setHint] = useState<string | null>(null)
 
-  const installLabel = canPrompt ? 'На экран' : ios ? 'Как установить' : null
   if (!visible && !restore) return null
 
   return (
@@ -28,21 +27,14 @@ export default function AppSetup({
         <span className="text-[12px] leading-4 font-semibold text-ink-secondary">Настроить приложение</span>
 
         <div className="ml-auto flex items-center gap-1">
-          {visible && installLabel ? (
+          {visible && canPrompt ? (
             <button
               type="button"
-              onClick={() => {
-                if (canPrompt) {
-                  setHint(null)
-                  void install()
-                  return
-                }
-                setHint('В Safari нажмите «Поделиться», затем «На экран „Домой“».')
-              }}
-              className="inline-flex items-center gap-1.5 min-h-9 px-2.5 rounded-lg text-[12.5px] font-semibold text-brand active:bg-brand-tint/60"
+              onClick={() => { setHint(null); void install() }}
+              className="inline-flex items-center gap-1.5 min-h-11 px-3 rounded-lg text-[12.5px] font-semibold text-brand active:bg-brand-tint/60"
             >
-              {canPrompt ? <Download size={14} strokeWidth={2} /> : <Smartphone size={14} strokeWidth={2} />}
-              {installLabel}
+              <Download size={14} strokeWidth={2} />
+              На экран
             </button>
           ) : null}
 
@@ -50,7 +42,7 @@ export default function AppSetup({
             <button
               type="button"
               onClick={onSaveCode}
-              className="inline-flex items-center gap-1.5 min-h-9 px-2.5 rounded-lg text-[12.5px] font-semibold text-brand active:bg-brand-tint/60"
+              className="inline-flex items-center gap-1.5 min-h-11 px-3 rounded-lg text-[12.5px] font-semibold text-brand active:bg-brand-tint/60"
             >
               Сохранить код
             </button>
@@ -58,7 +50,16 @@ export default function AppSetup({
         </div>
       </div>
 
-      {hint ? <p className="mt-1 text-[11px] leading-4 text-ink-secondary">{hint}</p> : null}
+      {/* Аудит F-05: на iOS нет beforeinstallprompt — показываем инструкцию сразу,
+          а не кнопку, которая ничего не делает. */}
+      {visible && !canPrompt && ios ? (
+        <p className="mt-1 flex items-start gap-1.5 text-[11px] leading-4 text-ink-secondary">
+          <Smartphone size={12} strokeWidth={2} className="mt-0.5 flex-none text-brand" />
+          В Safari листните: «Поделиться» → «На экран „Домой“».
+        </p>
+      ) : hint ? (
+        <p className="mt-1 text-[11px] leading-4 text-ink-secondary">{hint}</p>
+      ) : null}
     </div>
   )
 }

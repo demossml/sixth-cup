@@ -28,6 +28,8 @@ type PromoRow = {
   timeFrom?: number | null
   timeTo?: number | null
   daysMask?: number | null
+  subtitle?: string | null
+  terms?: string | null
 }
 
 /** Минуты от полуночи → «ЧЧ:ММ» для input[type=time]. */
@@ -65,12 +67,19 @@ const TAP_LABEL: Record<string, string> = {
   menu: 'переход в меню',
 }
 
+/**
+ * Аудит F-01: владелец вставил в заголовок весь текст вместе с подписями формы,
+ * и гости увидели «Краткое описание». Предупреждаем прямо в редакторе.
+ */
+const FIELD_LABEL_LEAK = /(краткое описание|короткое описание|полное описание)/i
+const textHasFieldLabels = (d: { title: string; subtitle?: string; body?: string; terms?: string }) =>
+  [d.title, d.subtitle, d.body, d.terms].some((v) => !!v && FIELD_LABEL_LEAK.test(v))
+
 const WEEKDAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
 const ALL_DAYS = 127
 const WORKDAYS = 31 // Пн–Пт
 const WEEKEND = 96 // Сб, Вс
 
-/** Подпись дней для списка. */
 const daysLabel = (mask: number | null | undefined) => {
   if (mask == null || mask === ALL_DAYS) return 'все дни'
   if (mask === 0) return 'дни не выбраны'
@@ -94,6 +103,8 @@ function Promos() {
   const empty = {
     title: '',
     body: '',
+    subtitle: '',
+    terms: '',
     sponsor: '',
     days: 14,
     imageUrl: '',
@@ -199,6 +210,8 @@ function Promos() {
                         timeFrom: p.timeFrom ?? null,
                         timeTo: p.timeTo ?? null,
                         daysMask: p.daysMask ?? ALL_DAYS,
+                        subtitle: p.subtitle ?? '',
+                        terms: p.terms ?? '',
                       })
                     }
                   >
@@ -235,12 +248,32 @@ function Promos() {
               Фото: JPG/WebP, до 2 МБ, ширина 1200–1600 px; для фона шапки лучше 16:9, изображение будет кадрироваться под экран. Для карточки под QR — 4:3 или 16:9. PNG используйте для графики с прозрачностью.<br />
               Видео: MP4 (H.264) или WebM, до 20 МБ, 5–15 секунд, 720p/1080p, вертикальное 9:16 или горизонтальное 16:9. Автоповтор без звука.
             </Banner>
-            <Field label="Заголовок" hint="Необязательно. Пусто — баннер покажет только фото и подпись кнопки.">
-              <Input value={edit.title} onChange={(e) => setEdit({ ...edit, title: e.target.value })} placeholder="Можно оставить пустым" />
+            <Field label="Заголовок" hint="Коротко: «Утро −30%». Не вставляйте сюда текст целиком — для описания есть поля ниже.">
+              <Input value={edit.title} onChange={(e) => setEdit({ ...edit, title: e.target.value })} placeholder="Например: Утро −30%" />
             </Field>
-            <Field label="Текст">
+            <Field label="Краткое описание (на карточке)" hint="Одна строка, которая видна на главной. Пусто — карточка возьмёт полное описание.">
+              <Input
+                value={edit.subtitle}
+                onChange={(e) => setEdit({ ...edit, subtitle: e.target.value })}
+                placeholder="Например: средний капучино со скидкой 30%"
+              />
+            </Field>
+            <Field label="Полное описание (в окне)">
               <Input value={edit.body} onChange={(e) => setEdit({ ...edit, body: e.target.value })} />
             </Field>
+            <Field label="Условия (в окне, мелким шрифтом)" hint="Что работает, до какого часа, с чем не суммируется.">
+              <Input
+                value={edit.terms}
+                onChange={(e) => setEdit({ ...edit, terms: e.target.value })}
+                placeholder="Например: только средний размер • до 12:00"
+              />
+            </Field>
+            {textHasFieldLabels(edit) ? (
+              <Banner tone="warn">
+                В тексте есть подписи полей («Краткое описание», «Полное описание») — гости увидят их на карточке.
+                Разложите текст по полям выше: заголовок отдельно, описание отдельно.
+              </Banner>
+            ) : null}
             <Field label="Тип медиа" hint="Фото или короткий ролик. Видео запускается без звука и по кругу.">
               <Select value={edit.mediaType} onChange={(e) => setEdit({ ...edit, mediaType: e.target.value as 'image' | 'video' })}>
                 <option value="image">Фотография</option>
@@ -388,6 +421,8 @@ function Promos() {
                     timeFrom: edit.timeFrom,
                     timeTo: edit.timeTo,
                     daysMask: edit.daysMask,
+                    subtitle: edit.subtitle || null,
+                    terms: edit.terms || null,
                   }
                   if (edit.id) await api(`/promos/${edit.id}`, { method: 'PATCH', body })
                   else await api('/promos', { method: 'POST', body })

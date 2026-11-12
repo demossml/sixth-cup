@@ -129,7 +129,7 @@ export function publicDirectory(storeUuid?: string | null) {
   try {
     content = db.prepare(`
       SELECT id, kind, title, body, image_url AS imageUrl, media_type AS mediaType, badge, product_id AS productId,
-             placement, cta_label AS ctaLabel, sort_order AS sortOrder,
+             placement, cta_label AS ctaLabel, sort_order AS sortOrder, subtitle, terms,
              tap_action AS tapAction, time_from AS timeFrom, time_to AS timeTo,
              days_mask AS daysMask,
              starts_at AS startsAt, ends_at AS endsAt

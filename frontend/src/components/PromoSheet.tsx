@@ -11,6 +11,8 @@ import { X, ChevronRight } from '../lib/icons'
 export type PromoSheetItem = {
   title: string
   body?: string
+  /** Условия акции — мелким шрифтом под описанием. */
+  terms?: string | null
   imageUrl?: string | null
   mediaType?: 'image' | 'video'
   ctaLabel?: string
@@ -46,7 +48,7 @@ export default function PromoSheet({ item, onGo, goLabel, onClose }: Props) {
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={item.title}
+        aria-label={item.title?.trim() || 'Акция'}
         onClick={(e) => e.stopPropagation()}
         className="w-full max-w-[480px] bg-white rounded-t-3xl overflow-hidden shadow-lift max-h-[86vh] flex flex-col animate-[sheet-up_180ms_ease-out]"
       >
@@ -59,7 +61,7 @@ export default function PromoSheet({ item, onGo, goLabel, onClose }: Props) {
                 autoPlay muted loop playsInline preload="metadata"
               />
             ) : (
-              <img src={item.imageUrl} alt="" className="w-full h-[180px] object-cover bg-brand-tint" loading="lazy" />
+              <img src={item.imageUrl} alt={item.title || 'Акция'} className="w-full h-[180px] object-cover bg-brand-tint" loading="lazy" />
             )
           ) : (
             <div className="h-[92px] bg-gradient-to-br from-brand-mid via-brand to-brand-deep relative">
@@ -82,6 +84,9 @@ export default function PromoSheet({ item, onGo, goLabel, onClose }: Props) {
           <h2 className="font-display font-semibold text-[19px] leading-6 text-ink">{item.title}</h2>
           {item.body ? (
             <p className="mt-2 text-[14px] leading-5 text-ink-secondary whitespace-pre-line">{item.body}</p>
+          ) : null}
+          {item.terms ? (
+            <p className="mt-2.5 text-[11px] leading-4 text-ink-tertiary whitespace-pre-line">{item.terms}</p>
           ) : null}
         </div>
 

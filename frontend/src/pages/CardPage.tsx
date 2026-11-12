@@ -45,7 +45,10 @@ export default function CardPage() {
   const { order: activeOrder, offline: orderOffline, refresh: refreshOrder } = useActiveOrder()
   const [orderView, setOrderView] = useState<OrderOut | null>(null)
   // Акция, открытая в модальном окне (tapAction='modal').
-  const [promoOpen, setPromoOpen] = useState<null | { title: string; body?: string; imageUrl?: string | null; mediaType?: 'image' | 'video'; ctaLabel?: string | null; productId?: number | null }>(null)
+  const [promoOpen, setPromoOpen] = useState<null | {
+    title: string; body?: string; subtitle?: string | null; terms?: string | null
+    imageUrl?: string | null; mediaType?: 'image' | 'video'; ctaLabel?: string | null; productId?: number | null
+  }>(null)
   // Время суток обновляем раз в минуту: акция появляется и исчезает по часам телефона.
   const nowMs = useNow(60_000)
   const minutesNow = minutesOf(new Date(nowMs))
@@ -98,6 +101,7 @@ export default function CardPage() {
     tapAction?: 'modal' | 'product' | 'menu'
     timeFrom?: number | null; timeTo?: number | null
     daysMask?: number | null
+    subtitle?: string | null; terms?: string | null
   }>
   const activeContent = [...content].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id)
   // home_hero — фон существующей шапки, а не отдельный блок над ней.
@@ -119,14 +123,18 @@ export default function CardPage() {
   const greeting = me ? `${greetingFor()}, ${guestName === 'Гость' ? 'гость' : guestName}` : greetingFor()
 
   const dealCards = visibleDeals.map((d) => {
-    const title = (d.title || d.body || '').trim()
+    // Заголовок — только заголовок; если владелец оставил его пустым, берём короткое.
+    const title = (d.title || d.subtitle || d.body || '').trim()
     if (!title) return null
     const action = d.tapAction || 'modal'
+    // На карточке — короткое описание (или прежний body, если короткого нет).
+    const cardBody = (d.subtitle ?? '').trim() || (d.title ? (d.body ?? '').trim() : '')
     return {
       key: `deal-${d.id}`,
       title,
-      body: d.title ? d.body?.trim() : '',
-      cta: d.ctaLabel?.trim() || '',
+      body: cardBody,
+      // Аудит F-03: подпись на карточке должна совпадать с тем, что случится по тапу.
+      cta: action === 'modal' ? 'Подробнее' : (d.ctaLabel?.trim() || 'Открыть'),
       badge: d.badge,
       imageUrl: d.imageUrl,
       mediaType: d.mediaType,
@@ -353,8 +361,9 @@ export default function CardPage() {
       {promoOpen ? (
         <PromoSheet
           item={{
-            title: promoOpen.title,
+            title: promoOpen.title || promoOpen.subtitle || 'Акция',
             body: promoOpen.body,
+            terms: promoOpen.terms,
             imageUrl: promoOpen.imageUrl,
             mediaType: promoOpen.mediaType,
             ctaLabel: promoOpen.ctaLabel ?? undefined,

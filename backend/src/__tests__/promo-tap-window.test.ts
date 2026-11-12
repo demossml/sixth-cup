@@ -179,3 +179,42 @@ describe('дни недели (CON-2)', () => {
     expect(item!.daysMask).toBe(96)
   })
 })
+
+describe('краткое описание и условия (F-01)', () => {
+  it('сохраняет короткое описание и условия отдельно от полного', async () => {
+    expect((await admin('POST', '/promos', {
+      title: 'Утро −30%',
+      subtitle: 'Средний капучино со скидкой 30%',
+      body: 'Каждый день до 12:00 средний капучино со скидкой 30%.',
+      terms: 'Только средний размер • до 12:00',
+      placement: 'home_feature',
+      status: 'published',
+    })).status).toBe(200)
+
+    const row = db.prepare(
+      'SELECT title, subtitle, body, terms FROM promos ORDER BY id DESC LIMIT 1',
+    ).get() as { title: string; subtitle: string; body: string; terms: string }
+    expect(row.title).toBe('Утро −30%')
+    expect(row.subtitle).toBe('Средний капучино со скидкой 30%')
+    expect(row.body).toContain('Каждый день до 12:00')
+    expect(row.terms).toContain('Только средний размер')
+  })
+
+  it('гость получает subtitle и terms', async () => {
+    const r = await app.request('/api/directory')
+    const body = (await r.json()) as { content: Array<Record<string, unknown>> }
+    const item = body.content.find((x) => x.title === 'Утро −30%')
+    expect(item!.subtitle).toBe('Средний капучино со скидкой 30%')
+    expect(item!.terms).toContain('до 12:00')
+  })
+
+  it('поля можно очистить патчем', async () => {
+    const { id } = lastPromo()
+    expect((await admin('PATCH', `/promos/${id}`, { subtitle: null, terms: null })).status).toBe(200)
+    const row = db.prepare('SELECT subtitle, terms FROM promos WHERE id=?').get(id) as {
+      subtitle: string | null; terms: string | null
+    }
+    expect(row.subtitle).toBeNull()
+    expect(row.terms).toBeNull()
+  })
+})
