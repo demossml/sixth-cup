@@ -264,7 +264,6 @@ export default function CardPage() {
                 imageUrl={promoBanners[0].imageUrl}
                 mediaType={promoBanners[0].mediaType}
                 fit={promoBanners[0].fit}
-                big
                 onClick={promoBanners[0].onClick}
               />
             ) : (

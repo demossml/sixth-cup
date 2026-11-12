@@ -293,9 +293,12 @@ html, body, #root {
   font-weight: 600;
   color: #101B2D;
 }
-/* Рельс выезжает до края экрана: последняя карточка «подглядывает». */
+/* Рельс выезжает до края экрана: последняя карточка «подглядывает».
+   align-items: flex-start — баннеры разной высоты (пропорция берётся из файла),
+   поэтому их нельзя растягивать под самую высокую карточку. */
 .rail {
   display: flex;
+  align-items: flex-start;
   gap: 8px;
   overflow-x: auto;
   overscroll-behavior-x: contain;

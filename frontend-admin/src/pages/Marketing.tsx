@@ -128,12 +128,6 @@ function Promos() {
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null)
   // При смене картинки старые размеры не врём про новую.
   useEffect(() => { setNatural(null) }, [edit?.imageUrl])
-  // Заголовок так, как его увидит гость: заголовок → первая строка короткого → обрезанное полное.
-  const previewTitle = (() => {
-    if (!edit) return ''
-    const firstLine = (s: string) => s.split('\n').map((x) => x.trim()).find(Boolean) || ''
-    return edit.title.trim() || firstLine(edit.subtitle) || firstLine(edit.body).slice(0, 60)
-  })()
   const [del, setDel] = useState<PromoRow | null>(null)
   const now = Math.floor(Date.now() / 1000)
   const act = async (fn: () => Promise<unknown>, ok: string) => {
@@ -328,40 +322,35 @@ function Promos() {
               </Select>
             </Field>
             <div className="rounded-xl border border-line bg-surface-secondary p-3">
-              <p className="text-xs font-semibold text-ink-secondary">Так карточка будет выглядеть на главной (медиа 4:5)</p>
+              <p className="text-xs font-semibold text-ink-secondary">Так баннер будет выглядеть на главной</p>
               <div className="mt-2 w-[168px] rounded-2xl overflow-hidden bg-white border border-line">
-                <div className={`relative aspect-[4/5] ${edit.imageFit === 'cover' ? 'bg-brand' : 'bg-[#F0F6FF]'}`}>
+                <div
+                  className="relative w-full bg-[#F0F6FF]"
+                  style={{ aspectRatio: natural ? String(Math.min(1.6, Math.max(0.6, natural.w / natural.h))) : '4 / 5' }}
+                >
                   {edit.imageUrl ? (
                     <img
                       src={edit.imageUrl}
                       alt=""
-                      className={`absolute inset-0 w-full h-full ${edit.imageFit === 'cover' ? 'object-cover' : 'object-contain'}`}
+                      className="absolute inset-0 w-full h-full object-cover"
                       onLoad={(e) => setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
                     />
                   ) : (
                     <span className="absolute right-2 bottom-1 font-display font-bold text-[26px] leading-none text-brand/20" aria-hidden="true">6·7</span>
                   )}
                 </div>
-                <div className="p-2.5">
-                  <div className="font-semibold text-[13px] leading-[17px] text-ink line-clamp-2">
-                    {previewTitle || 'Заголовок'}
-                  </div>
-                  {edit.subtitle ? (
-                    <div className="mt-0.5 text-[11px] leading-[14px] text-ink-secondary line-clamp-2">{edit.subtitle}</div>
-                  ) : null}
-                  <div className="mt-2 text-[11px] leading-4 font-semibold text-brand">
-                    {edit.tapAction === 'modal' ? 'Подробнее' : (edit.ctaLabel || 'Открыть')}
-                  </div>
-                </div>
               </div>
-              {natural && Math.abs(natural.w / natural.h - 0.8) > 0.08 ? (
-                <p className="mt-2 text-xs text-warn">
-                  Изображение {natural.w}×{natural.h} — это не 4:5.{' '}
-                  {edit.imageFit === 'cover'
-                    ? 'В режиме «заполнить кадр» края обрежутся: для плаката с текстом выберите «целиком».'
-                    : 'Сейчас показывается целиком — постер виден полностью, но по бокам останутся поля.'}
+              {natural ? (
+                <p className="mt-2 text-xs text-ink-secondary">
+                  Файл {natural.w}×{natural.h} — баннер примет эту же форму и заполнит её целиком,
+                  без полей и обрезки.{' '}
+                  {Math.abs(natural.w / natural.h - 0.8) > 0.05
+                    ? 'Для ровного рельса удобнее 4:5 (например 1200×1500).'
+                    : ''}
                 </p>
-              ) : null}
+              ) : (
+                <p className="mt-2 text-xs text-ink-secondary">Загрузите баннер — превью покажет его реальную форму.</p>
+              )}
             </div>
             <Field label="Куда показать (placement)">
               <Select value={edit.placement} onChange={(e) => setEdit({ ...edit, placement: e.target.value })}>

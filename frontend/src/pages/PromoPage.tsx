@@ -18,6 +18,8 @@ export default function PromoPage() {
   const nav = useNavigate()
   const { dir, me, best } = useApp()
   const [qrOpen, setQrOpen] = useState(false)
+  // Пропорция баннера берётся из файла (см. PromoBanner на главной).
+  const [mediaRatio, setMediaRatio] = useState<string>('4 / 5')
   const nowMs = Date.now()
   const minutes = minutesOf(new Date(nowMs))
   const weekday = weekdayIndex(new Date(nowMs))
@@ -83,12 +85,11 @@ export default function PromoPage() {
         </div>
       ) : (
         <>
-          {/* Медиа 4:5 — то же соотношение, что в карточке: постер не режется по-разному. */}
+          {/* Пропорция — из самого файла: баннер заполняет площадь без полей и обрезки. */}
           <div className="px-4">
             <div
-              className={`relative w-full aspect-[4/5] rounded-3xl overflow-hidden shadow-lift ${
-                (item.imageFit ?? 'contain') === 'contain' ? 'bg-brand-soft' : 'bg-brand'
-              }`}
+              className="relative w-full rounded-3xl overflow-hidden shadow-lift bg-brand-soft"
+              style={{ aspectRatio: mediaRatio }}
             >
               {item.imageUrl ? (
                 item.mediaType === 'video' ? (
@@ -102,7 +103,13 @@ export default function PromoPage() {
                   <img
                     src={item.imageUrl}
                     alt={title}
-                    className={`absolute inset-0 w-full h-full ${(item.imageFit ?? 'contain') === 'contain' ? 'object-contain' : 'object-cover'}`}
+                    className="absolute inset-0 w-full h-full object-cover"
+                    onLoad={(e) => {
+                      const img = e.currentTarget
+                      if (img.naturalWidth && img.naturalHeight) {
+                        setMediaRatio(String(Math.min(1.6, Math.max(0.6, img.naturalWidth / img.naturalHeight))))
+                      }
+                    }}
                   />
                 )
               ) : (
