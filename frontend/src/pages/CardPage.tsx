@@ -15,7 +15,7 @@ import { useApp } from '../lib/app'
 import { formatCardCode } from '../lib/card'
 import { displayNickname } from '../lib/guestName'
 import { greetingFor } from '../lib/greeting'
-import { isVisibleAt, minutesOf } from '../lib/dealWindow'
+import { isVisibleAt, minutesOf, weekdayIndex } from '../lib/dealWindow'
 import { activeVouchers } from '../lib/proof'
 import { formatRub } from '../lib/money'
 import { friendsWord, progressPhrase } from '../lib/plural'
@@ -49,6 +49,7 @@ export default function CardPage() {
   // Время суток обновляем раз в минуту: акция появляется и исчезает по часам телефона.
   const nowMs = useNow(60_000)
   const minutesNow = minutesOf(new Date(nowMs))
+  const weekdayNow = weekdayIndex(new Date(nowMs))
   const saved = (() => { try { return localStorage.getItem('sc-saved') === '1' } catch { return false } })()
 
   const N = Math.max(1, me?.cupsForFree ?? dir?.cupsForFree ?? 5)
@@ -96,6 +97,7 @@ export default function CardPage() {
     productId?: number | null
     tapAction?: 'modal' | 'product' | 'menu'
     timeFrom?: number | null; timeTo?: number | null
+    daysMask?: number | null
   }>
   const activeContent = [...content].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id)
   // home_hero — фон существующей шапки, а не отдельный блок над ней.
@@ -110,7 +112,7 @@ export default function CardPage() {
   // Фильтр по времени — по часам телефона, поэтому карточка появляется и из кэша.
   const visibleDeals = activeContent
     .filter((x) => x.placement === 'home_feature')
-    .filter((x) => isVisibleAt({ from: x.timeFrom, to: x.timeTo }, minutesNow))
+    .filter((x) => isVisibleAt({ from: x.timeFrom, to: x.timeTo, daysMask: x.daysMask }, minutesNow, weekdayNow))
 
   // Приветствие: одна строка, имя только если оно осмысленное (у гостя — «Гость»).
   const guestName = displayNickname(me?.nickname)

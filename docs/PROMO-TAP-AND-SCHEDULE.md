@@ -15,6 +15,7 @@
 | **Что делать по тапу** | `tap_action` | `modal` — открыть описание в окне; `product` — перейти к товару; `menu` — открыть меню |
 | ID товара | `product_id` | Куда вести при `tap_action='product'` и по кнопке в окне |
 | **Когда показывать** | `time_from`, `time_to` | Окно по времени суток |
+| **Дни недели** | `days_mask` | Битовая маска дней: бит 0 = Пн … бит 6 = Вс, `NULL` = все дни |
 | Порядок | `sort_order` | Меньше = выше (совпадает с сортировкой на сервере) |
 | Дней действия | `starts_at`, `ends_at` | Календарный срок жизни материала |
 
@@ -39,6 +40,13 @@
 
 Окно (`frontend/src/components/PromoSheet.tsx`): закрывается крестиком, тапом по затемнению и клавишей Escape; пока открыто — страница не скроллится; `role="dialog"`, `aria-modal`, `aria-label` с заголовком.
 
+## Дни недели
+
+- `days_mask` — битовая маска, бит 0 = понедельник, бит 6 = воскресенье.
+- Пресеты в админке: **Все дни** (127), **Будни** (31), **Выходные** (96); любую комбинацию можно собрать чипами Пн…Вс.
+- `NULL` = все дни (поведение старых материалов), `0` = не показывать никогда — в админке подсвечивается предупреждение.
+- Дни и время проверяются **вместе**: акция видна, только если подходит и день, и час.
+
 ## Что изменилось на главной
 
 - Карточки рисуются **только** для плейсмента `home_feature`. Старый плейсмент `home` больше не показывается: он дублировал фразу «6-й стакан — в подарок» из шапки.
@@ -47,16 +55,18 @@
 
 ## Миграция
 
-`backend/src/db/migrations/067_promo_tap_and_window.sql` (+ откат `rollback/067_promo_tap_and_window_rollback.sql`):
+`backend/src/db/migrations/067_promo_tap_and_window.sql` + `068_promo_days_mask.sql` (+ откаты в `rollback/`):
 
 ```sql
 ALTER TABLE promos ADD COLUMN tap_action TEXT NOT NULL DEFAULT 'modal';
 ALTER TABLE promos ADD COLUMN time_from INTEGER;
 ALTER TABLE promos ADD COLUMN time_to INTEGER;
 UPDATE promos SET tap_action = 'product' WHERE product_id IS NOT NULL;  -- сохранить прежнее поведение
+
+ALTER TABLE promos ADD COLUMN days_mask INTEGER;  -- NULL = все дни
 ```
 
 ## Тесты
 
-- `backend/src/__tests__/promo-tap-window.test.ts` (9) — значения по умолчанию, валидация, патч, границы окон, выдача гостю через `/api/directory`.
-- `frontend/src/lib/dealWindow.test.ts` (11) — утро/обед/вечер, окно через полночь, частичные границы, нормализация минут.
+- `backend/src/__tests__/promo-tap-window.test.ts` (15) — значения по умолчанию, валидация, патч, границы окон, маска дней, выдача гостю через `/api/directory`.
+- `frontend/src/lib/dealWindow.test.ts` (19) — утро/обед/вечер, окно через полночь, частичные границы, будни/выходные/один день, нормализация минут.

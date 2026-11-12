@@ -27,6 +27,7 @@ type PromoRow = {
   tapAction?: 'modal' | 'product' | 'menu'
   timeFrom?: number | null
   timeTo?: number | null
+  daysMask?: number | null
 }
 
 /** Минуты от полуночи → «ЧЧ:ММ» для input[type=time]. */
@@ -64,6 +65,20 @@ const TAP_LABEL: Record<string, string> = {
   menu: 'переход в меню',
 }
 
+const WEEKDAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
+const ALL_DAYS = 127
+const WORKDAYS = 31 // Пн–Пт
+const WEEKEND = 96 // Сб, Вс
+
+/** Подпись дней для списка. */
+const daysLabel = (mask: number | null | undefined) => {
+  if (mask == null || mask === ALL_DAYS) return 'все дни'
+  if (mask === 0) return 'дни не выбраны'
+  if (mask === WORKDAYS) return 'будни'
+  if (mask === WEEKEND) return 'выходные'
+  return WEEKDAYS.filter((_, i) => mask & (1 << i)).join(', ')
+}
+
 const PLACEMENT_LABEL: Record<string, string> = {
   home_hero: 'Фон шапки: логотип и чашки над QR',
   home_feature: 'Карточка под QR',
@@ -93,6 +108,7 @@ function Promos() {
     tapAction: 'modal' as string,
     timeFrom: null as number | null,
     timeTo: null as number | null,
+    daysMask: ALL_DAYS as number,
   }
   const [edit, setEdit] = useState<(typeof empty & { id?: number }) | null>(null)
   const [del, setDel] = useState<PromoRow | null>(null)
@@ -153,6 +169,7 @@ function Promos() {
                         {p.timeFrom != null || p.timeTo != null
                           ? ` · ${toHM(p.timeFrom) || '00:00'}–${toHM(p.timeTo) || '24:00'}`
                           : ' · весь день'}
+                        {` · ${daysLabel(p.daysMask)}`}
                       </div>
                     </div>
                   </div>
@@ -181,6 +198,7 @@ function Promos() {
                         tapAction: p.tapAction || 'modal',
                         timeFrom: p.timeFrom ?? null,
                         timeTo: p.timeTo ?? null,
+                        daysMask: p.daysMask ?? ALL_DAYS,
                       })
                     }
                   >
@@ -314,6 +332,34 @@ function Promos() {
                 </Field>
               </div>
             )}
+            <Field label="Дни недели" hint="Окно по часам телефона гостя. Снятые дни — акция не показывается.">
+              <div className="flex flex-wrap gap-1.5">
+                {WEEKDAYS.map((label, i) => {
+                  const on = (edit.daysMask & (1 << i)) !== 0
+                  return (
+                    <button
+                      key={label}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() => setEdit({ ...edit, daysMask: edit.daysMask ^ (1 << i) })}
+                      className={`h-9 min-w-[44px] px-3 rounded-lg text-sm font-semibold border transition-colors ${
+                        on ? 'bg-brand text-white border-brand' : 'bg-white text-ink-secondary border-line'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  )
+                })}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                <Button size="sm" variant="secondary" onClick={() => setEdit({ ...edit, daysMask: ALL_DAYS })}>Все дни</Button>
+                <Button size="sm" variant="secondary" onClick={() => setEdit({ ...edit, daysMask: WORKDAYS })}>Будни</Button>
+                <Button size="sm" variant="secondary" onClick={() => setEdit({ ...edit, daysMask: WEEKEND })}>Выходные</Button>
+              </div>
+              {edit.daysMask === 0 && (
+                <p className="mt-1.5 text-xs text-bad">Ни один день не выбран — акция не покажется гостю.</p>
+              )}
+            </Field>
             <Field label="Дней действия">
               <Input
                 type="number"
@@ -341,6 +387,7 @@ function Promos() {
                     tapAction: edit.tapAction,
                     timeFrom: edit.timeFrom,
                     timeTo: edit.timeTo,
+                    daysMask: edit.daysMask,
                   }
                   if (edit.id) await api(`/promos/${edit.id}`, { method: 'PATCH', body })
                   else await api('/promos', { method: 'POST', body })

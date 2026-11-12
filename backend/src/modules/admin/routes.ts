@@ -1764,6 +1764,7 @@ export const adminRoutes = new Hono()
                image_url AS imageUrl, media_type AS mediaType, placement, status, sort_order AS sortOrder,
                cta_label AS ctaLabel, product_id AS productId, badge, kind,
                tap_action AS tapAction, time_from AS timeFrom, time_to AS timeTo,
+               days_mask AS daysMask,
                published_at AS publishedAt
         FROM promos ORDER BY sort_order ASC, id DESC
       `).all()
@@ -1799,6 +1800,8 @@ export const adminRoutes = new Hono()
     // Окно показа в минутах от полуночи (480 = 08:00); null = показывать всегда.
     timeFrom: z.number().int().min(0).max(1439).optional().nullable(),
     timeTo: z.number().int().min(0).max(1439).optional().nullable(),
+    // Битовая маска дней: бит 0 = Пн … бит 6 = Вс; null = все дни.
+    daysMask: z.number().int().min(0).max(127).optional().nullable(),
   })), (c) => {
     const p = c.req.valid('json')
     const now = Math.floor(Date.now() / 1000)
@@ -1807,13 +1810,13 @@ export const adminRoutes = new Hono()
     const publishedAt = p.status === 'published' ? now : null
     try {
       db.prepare(`
-        INSERT INTO promos(title,body,icon,sponsor,starts_at,ends_at,image_url,media_type,placement,status,sort_order,cta_label,product_id,badge,kind,published_at,tap_action,time_from,time_to)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO promos(title,body,icon,sponsor,starts_at,ends_at,image_url,media_type,placement,status,sort_order,cta_label,product_id,badge,kind,published_at,tap_action,time_from,time_to,days_mask)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       `).run(
         p.title, p.body ?? '', p.icon, p.sponsor ?? null, starts, ends,
         p.imageUrl ?? null, p.mediaType, p.placement, p.status, p.sortOrder,
         p.ctaLabel ?? null, p.productId ?? null, p.badge ?? null, p.kind, publishedAt,
-        p.tapAction, p.timeFrom ?? null, p.timeTo ?? null,
+        p.tapAction, p.timeFrom ?? null, p.timeTo ?? null, p.daysMask ?? null,
       )
     } catch {
       db.prepare('INSERT INTO promos(title,body,icon,sponsor,starts_at,ends_at) VALUES(?,?,?,?,?,?)')
@@ -1842,6 +1845,7 @@ export const adminRoutes = new Hono()
     tapAction: z.enum(['modal', 'product', 'menu']).optional(),
     timeFrom: z.number().int().min(0).max(1439).optional().nullable(),
     timeTo: z.number().int().min(0).max(1439).optional().nullable(),
+    daysMask: z.number().int().min(0).max(127).optional().nullable(),
   })), (c) => {
     const id = Number(c.req.param('id'))
     const p = c.req.valid('json')
@@ -1858,7 +1862,7 @@ export const adminRoutes = new Hono()
       db.prepare(`
         UPDATE promos SET title=?, body=?, icon=?, sponsor=?, starts_at=?, ends_at=?,
           image_url=?, media_type=?, placement=?, status=?, sort_order=?, cta_label=?, product_id=?, badge=?, kind=?, published_at=?,
-          tap_action=?, time_from=?, time_to=?
+          tap_action=?, time_from=?, time_to=?, days_mask=?
         WHERE id=?
       `).run(
         p.title ?? row.title,
@@ -1879,6 +1883,7 @@ export const adminRoutes = new Hono()
         p.tapAction ?? row.tap_action ?? 'modal',
         p.timeFrom !== undefined ? p.timeFrom : row.time_from,
         p.timeTo !== undefined ? p.timeTo : row.time_to,
+        p.daysMask !== undefined ? p.daysMask : row.days_mask,
         id,
       )
     } catch {

@@ -126,3 +126,56 @@ describe('гостевая выдача', () => {
     expect(item!.productId).toBe(7)
   })
 })
+
+describe('дни недели (CON-2)', () => {
+  const lastMask = () =>
+    (db.prepare(`SELECT days_mask AS m FROM promos ORDER BY id DESC LIMIT 1`).get() as { m: number | null }).m
+
+  it('по умолчанию маска пустая — все дни', async () => {
+    expect((await admin('POST', '/promos', { title: 'Всегда', placement: 'home_feature', status: 'published' })).status).toBe(200)
+    expect(lastMask()).toBeNull()
+  })
+
+  it('будни сохраняются как 31', async () => {
+    expect((await admin('POST', '/promos', {
+      title: 'Будни', placement: 'home_feature', status: 'published', daysMask: 31,
+    })).status).toBe(200)
+    expect(lastMask()).toBe(31)
+  })
+
+  it('выходные сохраняются как 96', async () => {
+    expect((await admin('POST', '/promos', {
+      title: 'Выходные', placement: 'home_feature', status: 'published', daysMask: 96,
+    })).status).toBe(200)
+    expect(lastMask()).toBe(96)
+  })
+
+  it('маска вне диапазона отклоняется', async () => {
+    expect((await admin('POST', '/promos', { title: 'X', daysMask: 128 })).status).toBe(400)
+    expect((await admin('POST', '/promos', { title: 'X', daysMask: -1 })).status).toBe(400)
+  })
+
+  it('патч меняет дни, не трогая время', async () => {
+    expect((await admin('POST', '/promos', {
+      title: 'Пн утро', placement: 'home_feature', status: 'published', daysMask: 1, timeFrom: 480, timeTo: 600,
+    })).status).toBe(200)
+    const { id } = lastPromo()
+    expect((await admin('PATCH', `/promos/${id}`, { daysMask: 127 })).status).toBe(200)
+    const row = db.prepare('SELECT days_mask AS m, time_from AS f, time_to AS t FROM promos WHERE id=?').get(id) as {
+      m: number; f: number; t: number
+    }
+    expect(row.m).toBe(127)
+    expect(row.f).toBe(480)
+    expect(row.t).toBe(600)
+  })
+
+  it('гость получает маску дней', async () => {
+    expect((await admin('POST', '/promos', {
+      title: 'Только выходные', placement: 'home_feature', status: 'published', daysMask: 96,
+    })).status).toBe(200)
+    const r = await app.request('/api/directory')
+    const body = (await r.json()) as { content: Array<Record<string, unknown>> }
+    const item = body.content.find((x) => x.title === 'Только выходные')
+    expect(item!.daysMask).toBe(96)
+  })
+})

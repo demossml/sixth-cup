@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isVisibleAt, minutesOf, windowLabel } from './dealWindow'
+import { isVisibleAt, isVisibleOnDay, minutesOf, weekdayIndex, windowLabel } from './dealWindow'
 
 const at = (h: number, m = 0) => h * 60 + m
 
@@ -56,6 +56,55 @@ describe('isVisibleAt', () => {
 
   it('минуты за пределами суток нормализуются', () => {
     expect(isVisibleAt({ from: at(22), to: at(2) }, at(24) + at(1))).toBe(true)
+  })
+})
+
+describe('days', () => {
+  const MON = 0, SAT = 5, SUN = 6
+
+  it('пустая маска и 127 — все дни', () => {
+    expect(isVisibleOnDay(null, MON)).toBe(true)
+    expect(isVisibleOnDay(undefined, SUN)).toBe(true)
+    expect(isVisibleOnDay(127, SAT)).toBe(true)
+  })
+
+  it('будни (31) — только Пн–Пт', () => {
+    expect(isVisibleOnDay(31, MON)).toBe(true)
+    expect(isVisibleOnDay(31, 4)).toBe(true) // Пт
+    expect(isVisibleOnDay(31, SAT)).toBe(false)
+    expect(isVisibleOnDay(31, SUN)).toBe(false)
+  })
+
+  it('выходные (96) — только Сб–Вс', () => {
+    expect(isVisibleOnDay(96, SAT)).toBe(true)
+    expect(isVisibleOnDay(96, SUN)).toBe(true)
+    expect(isVisibleOnDay(96, MON)).toBe(false)
+  })
+
+  it('нулевая маска — не показывать никогда', () => {
+    for (let d = 0; d <= 6; d++) expect(isVisibleOnDay(0, d)).toBe(false)
+  })
+
+  it('один день (1) — только Пн', () => {
+    expect(isVisibleOnDay(1, MON)).toBe(true)
+    expect(isVisibleOnDay(1, 1)).toBe(false)
+  })
+
+  it('дни и время проверяются вместе', () => {
+    const w = { from: at(8), to: at(11), daysMask: 31 } // будни, утро
+    expect(isVisibleAt(w, at(9), MON)).toBe(true)
+    expect(isVisibleAt(w, at(9), SAT)).toBe(false)
+    expect(isVisibleAt(w, at(12), MON)).toBe(false)
+  })
+
+  it('без указания дня дни не мешают (совместимость)', () => {
+    expect(isVisibleAt({ daysMask: 96 }, at(9))).toBe(true)
+  })
+
+  it('weekdayIndex считает Пн–Вс как 0–6', () => {
+    expect(weekdayIndex(new Date(2026, 10, 9))).toBe(0) // Пн 9 ноября 2026
+    expect(weekdayIndex(new Date(2026, 10, 14))).toBe(SAT)
+    expect(weekdayIndex(new Date(2026, 10, 15))).toBe(SUN)
   })
 })
 
