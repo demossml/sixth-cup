@@ -218,3 +218,31 @@ describe('краткое описание и условия (F-01)', () => {
     expect(row.terms).toBeNull()
   })
 })
+
+describe('режим показа изображения (CON-4)', () => {
+  const lastFit = () =>
+    (db.prepare('SELECT image_fit AS f FROM promos ORDER BY id DESC LIMIT 1').get() as { f: string }).f
+
+  it('по умолчанию плакат показывается целиком (contain)', async () => {
+    expect((await admin('POST', '/promos', { title: 'Плакат', placement: 'home_feature', status: 'published' })).status).toBe(200)
+    expect(lastFit()).toBe('contain')
+  })
+
+  it('cover сохраняется для фото товара', async () => {
+    expect((await admin('POST', '/promos', {
+      title: 'Фото', placement: 'home_feature', status: 'published', imageFit: 'cover',
+    })).status).toBe(200)
+    expect(lastFit()).toBe('cover')
+  })
+
+  it('неизвестный режим отклоняется', async () => {
+    expect((await admin('POST', '/promos', { title: 'X', imageFit: 'stretch' })).status).toBe(400)
+  })
+
+  it('гость получает imageFit', async () => {
+    const r = await app.request('/api/directory')
+    const body = (await r.json()) as { content: Array<Record<string, unknown>> }
+    const item = body.content.find((x) => x.title === 'Фото')
+    expect(item!.imageFit).toBe('cover')
+  })
+})

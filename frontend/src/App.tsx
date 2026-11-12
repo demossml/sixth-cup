@@ -10,6 +10,7 @@ import SearchPage from './pages/SearchPage'
 import OnboardingPage from './pages/OnboardingPage'
 import ProfilePage from './pages/ProfilePage'
 import PromosPage from './pages/PromosPage'
+import PromoPage from './pages/PromoPage'
 import InvitePage from './pages/InvitePage'
 import MorePage from './pages/MorePage'
 import LegalPage from './pages/LegalPage'
@@ -165,6 +166,7 @@ export default function App() {
           <Route path="/cart" element={<CartPage />} />
           <Route path="/pick-store" element={<StorePickerPage />} />
           <Route path="/promos" element={<PromosPage />} />
+          <Route path="/promo/:id" element={<PromoPage />} />
           <Route path="/me" element={<ProfilePage />} />
           <Route path="/invite" element={<InvitePage />} />
           <Route path="/more" element={<MorePage />} />

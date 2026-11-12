@@ -16,9 +16,13 @@ type Props = {
   title: string
   body?: string
   cta?: string
+  /** Подпись-метаданные рядом с CTA (например, окно показа «до 12:00»). */
+  meta?: string
   badge?: string | null
   imageUrl?: string | null
   mediaType?: 'image' | 'video'
+  /** contain — готовый плакат целиком, cover — фото заполняет кадр 4:5. */
+  fit?: 'contain' | 'cover'
   /** Иконка поверх градиента, когда картинки нет (например, купон). */
   mediaIcon?: ReactNode
   wide?: boolean
@@ -29,7 +33,7 @@ const badgeText = (b?: string | null) =>
   b === 'new' ? 'Новинка' : b === 'hit' ? 'Хит' : b === 'seasonal' ? 'Сезон' : null
 
 export default function DealCard({
-  title, body, cta, badge, imageUrl, mediaType, mediaIcon, wide = false, onClick,
+  title, body, cta, meta, badge, imageUrl, mediaType, fit = 'contain', mediaIcon, wide = false, onClick,
 }: Props) {
   const chip = badgeText(badge)
   return (
@@ -40,7 +44,13 @@ export default function DealCard({
         wide ? 'w-full flex items-stretch' : 'w-full flex flex-col'
       }`}
     >
-      <span className={`relative block overflow-hidden flex-none ${wide ? 'w-[104px]' : 'h-[92px] w-full'}`}>
+      {/* Медиа всегда 4:5 — и в рельсе, и в широкой карточке: одинаковый кроп
+          на всех экранах. Плакат (contain) не режется, фото (cover) заполняет кадр. */}
+      <span
+        className={`relative block overflow-hidden flex-none aspect-[4/5] ${
+          wide ? 'w-[42%]' : 'w-full'
+        } ${fit === 'contain' ? 'bg-brand-soft' : ''}`}
+      >
         {imageUrl ? (
           mediaType === 'video' ? (
             <video
@@ -52,7 +62,7 @@ export default function DealCard({
             <img
               src={imageUrl}
               alt=""
-              className="absolute inset-0 w-full h-full object-cover"
+              className={`absolute inset-0 w-full h-full ${fit === 'contain' ? 'object-contain' : 'object-cover'}`}
               loading="lazy"
               decoding="async"
             />
@@ -74,6 +84,11 @@ export default function DealCard({
         {chip ? (
           <span className="absolute left-2 top-2 inline-flex items-center h-[20px] px-2 rounded-full bg-white/95 text-[10px] leading-none font-semibold text-brand">
             {chip}
+          </span>
+        ) : null}
+        {meta && !imageUrl ? (
+          <span className="absolute left-2 bottom-2 inline-flex items-center h-[20px] px-2 rounded-full bg-white/95 text-[10px] leading-none font-semibold text-ink num">
+            {meta}
           </span>
         ) : null}
       </span>

@@ -8,14 +8,13 @@ import { OrderQrScreen } from '../components/order/OrderQrScreen'
 import { useActiveOrder } from '../lib/useActiveOrder'
 import { loadOrderRef, saveOrderRef, type OrderOut } from '../lib/preorderApi'
 import ProgressStamps from '../components/ProgressStamps'
-import PromoSheet from '../components/PromoSheet'
 import Qr from '../components/Qr'
 import QrLayer from '../components/QrLayer'
 import { useApp } from '../lib/app'
 import { formatCardCode } from '../lib/card'
 import { displayNickname } from '../lib/guestName'
 import { greetingFor } from '../lib/greeting'
-import { isVisibleAt, minutesOf, weekdayIndex } from '../lib/dealWindow'
+import { isVisibleAt, minutesOf, weekdayIndex, windowLabel } from '../lib/dealWindow'
 import { activeVouchers } from '../lib/proof'
 import { formatRub } from '../lib/money'
 import { friendsWord, progressPhrase } from '../lib/plural'
@@ -44,11 +43,6 @@ export default function CardPage() {
   // Активный заказ: баннер над картой-пропуском и экран заказа по тапу.
   const { order: activeOrder, offline: orderOffline, refresh: refreshOrder } = useActiveOrder()
   const [orderView, setOrderView] = useState<OrderOut | null>(null)
-  // Акция, открытая в модальном окне (tapAction='modal').
-  const [promoOpen, setPromoOpen] = useState<null | {
-    title: string; body?: string; subtitle?: string | null; terms?: string | null
-    imageUrl?: string | null; mediaType?: 'image' | 'video'; ctaLabel?: string | null; productId?: number | null
-  }>(null)
   // Время суток обновляем раз в минуту: акция появляется и исчезает по часам телефона.
   const nowMs = useNow(60_000)
   const minutesNow = minutesOf(new Date(nowMs))
@@ -102,6 +96,7 @@ export default function CardPage() {
     timeFrom?: number | null; timeTo?: number | null
     daysMask?: number | null
     subtitle?: string | null; terms?: string | null
+    imageFit?: 'contain' | 'cover' | null
   }>
   const activeContent = [...content].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id)
   // home_hero — фон существующей шапки, а не отдельный блок над ней.
@@ -123,26 +118,40 @@ export default function CardPage() {
   const greeting = me ? `${greetingFor()}, ${guestName === 'Гость' ? 'гость' : guestName}` : greetingFor()
 
   const dealCards = visibleDeals.map((d) => {
-    // Заголовок — только заголовок; если владелец оставил его пустым, берём короткое.
-    const title = (d.title || d.subtitle || d.body || '').trim()
+    // Заголовок — первая строка заголовка, иначе первая строка короткого описания,
+    // и только в крайнем случае — обрезанное начало полного (а не весь body целиком).
+    const firstLine = (d.title || '').split('\n').map((x) => x.trim()).find(Boolean)
+      || (d.subtitle || '').split('\n').map((x) => x.trim()).find(Boolean)
+      || ''
+    const fullBody = (d.body || '').trim()
+    const clipped = fullBody.length > 60 ? `${fullBody.slice(0, 60).trimEnd()}…` : fullBody
+    const title = firstLine || clipped
     if (!title) return null
-    const action = d.tapAction || 'modal'
+
+    // «К товару» без ID товара — тупик: ведём себя как «Подробнее» и подписываем честно.
+    const declared = d.tapAction || 'modal'
+    const action = declared === 'product' && !d.productId ? 'modal' : declared
+
     // На карточке — короткое описание (или прежний body, если короткого нет).
     const cardBody = (d.subtitle ?? '').trim() || (d.title ? (d.body ?? '').trim() : '')
+    const win = windowLabel({ from: d.timeFrom, to: d.timeTo })
     return {
       key: `deal-${d.id}`,
       title,
       body: cardBody,
-      // Аудит F-03: подпись на карточке должна совпадать с тем, что случится по тапу.
       cta: action === 'modal' ? 'Подробнее' : (d.ctaLabel?.trim() || 'Открыть'),
+      meta: win === 'весь день' ? '' : win,
       badge: d.badge,
       imageUrl: d.imageUrl,
       mediaType: d.mediaType,
+      fit: d.imageFit === 'cover' ? 'cover' as const : 'contain' as const,
       mediaIcon: undefined,
       onClick: () => {
         if (action === 'product' && d.productId) return nav(`/menu/${d.productId}`)
         if (action === 'menu') return nav('/menu')
-        setPromoOpen(d)
+        // Описание акции — на отдельном экране, а не в модалке: там есть и условия,
+        // и кнопка действия, и постер целиком.
+        nav(`/promo/${d.id}`)
       },
     }
   }).filter((x) => x !== null)
@@ -154,9 +163,11 @@ export default function CardPage() {
     title: v[1] === 'p' ? `Скидка ${v[2]}%` : `Скидка ${v[2]} ₽`,
     body: `до ${voucherDate(v[3])}`,
     cta: 'Куда применить',
+    meta: '',
     badge: null,
     imageUrl: null,
     mediaType: 'image' as const,
+    fit: 'contain' as const,
     mediaIcon: <Ticket size={26} strokeWidth={1.7} />,
     onClick: () => nav('/promos'),
   }))
@@ -285,9 +296,11 @@ export default function CardPage() {
                   title={d.title}
                   body={d.body}
                   cta={d.cta}
+                  meta={d.meta}
                   badge={d.badge}
                   imageUrl={d.imageUrl}
                   mediaType={d.mediaType}
+                  fit={d.fit}
                   mediaIcon={d.mediaIcon}
                   wide
                   onClick={d.onClick}
@@ -301,9 +314,11 @@ export default function CardPage() {
                     title={d.title}
                     body={d.body}
                     cta={d.cta}
+                    meta={d.meta}
                     badge={d.badge}
                     imageUrl={d.imageUrl}
                     mediaType={d.mediaType}
+                    fit={d.fit}
                     mediaIcon={d.mediaIcon}
                     onClick={d.onClick}
                   />
@@ -355,26 +370,6 @@ export default function CardPage() {
 
       {qrOpen && proof ? (
         <QrLayer proof={proof} cardCode={cardCode} onClose={() => setQrOpen(false)} />
-      ) : null}
-
-      {/* Акция в модальном окне: описание из админки + переход туда, куда указал владелец. */}
-      {promoOpen ? (
-        <PromoSheet
-          item={{
-            title: promoOpen.title || promoOpen.subtitle || 'Акция',
-            body: promoOpen.body,
-            terms: promoOpen.terms,
-            imageUrl: promoOpen.imageUrl,
-            mediaType: promoOpen.mediaType,
-            ctaLabel: promoOpen.ctaLabel ?? undefined,
-          }}
-          onGo={() => {
-            const target = promoOpen.productId ? `/menu/${promoOpen.productId}` : '/menu'
-            setPromoOpen(null)
-            nav(target)
-          }}
-          onClose={() => setPromoOpen(null)}
-        />
       ) : null}
 
       {orderView ? (
