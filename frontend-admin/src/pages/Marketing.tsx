@@ -128,6 +128,12 @@ function Promos() {
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null)
   // При смене картинки старые размеры не врём про новую.
   useEffect(() => { setNatural(null) }, [edit?.imageUrl])
+  // Подходит ли файл к одной из рамок главной: 16:9 (одна акция) или 4:5 (две и в ленте).
+  const fitsFrame = (() => {
+    if (!natural || !natural.h) return true
+    const r = natural.w / natural.h
+    return Math.abs(r - 16 / 9) / (16 / 9) < 0.06 || Math.abs(r - 0.8) / 0.8 < 0.06
+  })()
   const [del, setDel] = useState<PromoRow | null>(null)
   const now = Math.floor(Date.now() / 1000)
   const act = async (fn: () => Promise<unknown>, ok: string) => {
@@ -312,44 +318,45 @@ function Promos() {
               mediaType={edit.mediaType}
               onChange={(patch) => setEdit((prev) => (prev ? { ...prev, ...patch } : prev))}
             />
-            <Field
-              label="Как показывать изображение"
-              hint="Плакат — показываем целиком, по бокам мягкая подложка. Фото товара — заполняет кадр 4:5, лишнее обрезается."
-            >
-              <Select value={edit.imageFit} onChange={(e) => setEdit({ ...edit, imageFit: e.target.value as 'contain' | 'cover' })}>
-                <option value="contain">Целиком (готовый плакат с текстом)</option>
-                <option value="cover">Заполнить кадр (фото товара)</option>
-              </Select>
-            </Field>
             <div className="rounded-xl border border-line bg-surface-secondary p-3">
-              <p className="text-xs font-semibold text-ink-secondary">Так баннер будет выглядеть на главной</p>
-              <div className="mt-2 w-[168px] rounded-2xl overflow-hidden bg-white border border-line">
-                <div
-                  className="relative w-full bg-[#F0F6FF]"
-                  style={{ aspectRatio: natural ? String(Math.min(1.6, Math.max(0.6, natural.w / natural.h))) : '4 / 5' }}
-                >
-                  {edit.imageUrl ? (
-                    <img
-                      src={edit.imageUrl}
-                      alt=""
-                      className="absolute inset-0 w-full h-full object-cover"
-                      onLoad={(e) => setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
-                    />
-                  ) : (
-                    <span className="absolute right-2 bottom-1 font-display font-bold text-[26px] leading-none text-brand/20" aria-hidden="true">6·7</span>
-                  )}
-                </div>
+              <p className="text-xs font-semibold text-ink-secondary">Как баннер встанет на главной</p>
+              <p className="mt-1 text-xs text-ink-secondary">
+                Место под акции зависит от их количества: одна — широкий кадр 16:9 на всю ширину, две — симметричная
+                пара кадров 4:5, три и больше — лента с прокруткой вбок (кадры 4:5).
+              </p>
+              <div className="mt-2 flex items-end gap-3">
+                {[
+                  { ratio: '16 / 9', w: 'w-[150px]', label: 'одна акция' },
+                  { ratio: '4 / 5', w: 'w-[72px]', label: 'две и больше' },
+                ].map((f) => (
+                  <div key={f.ratio} className="text-center">
+                    <div className={`${f.w} rounded-xl overflow-hidden bg-white border border-line`}>
+                      <div className="relative w-full bg-[#F0F6FF]" style={{ aspectRatio: f.ratio }}>
+                        {edit.imageUrl ? (
+                          <img
+                            src={edit.imageUrl}
+                            alt=""
+                            className="absolute inset-0 w-full h-full object-cover"
+                            onLoad={(e) => setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+                          />
+                        ) : (
+                          <span className="absolute right-1.5 bottom-1 font-display font-bold text-[20px] leading-none text-brand/20" aria-hidden="true">6·7</span>
+                        )}
+                      </div>
+                    </div>
+                    <p className="mt-1 text-[10px] leading-3 text-ink-tertiary">{f.label}</p>
+                  </div>
+                ))}
               </div>
               {natural ? (
-                <p className="mt-2 text-xs text-ink-secondary">
-                  Файл {natural.w}×{natural.h} — баннер примет эту же форму и заполнит её целиком,
-                  без полей и обрезки.{' '}
-                  {Math.abs(natural.w / natural.h - 0.8) > 0.05
-                    ? 'Для ровного рельса удобнее 4:5 (например 1200×1500).'
-                    : ''}
+                <p className={`mt-2 text-xs ${fitsFrame ? 'text-ink-secondary' : 'text-warn'}`}>
+                  Файл {natural.w}×{natural.h}.{' '}
+                  {fitsFrame
+                    ? 'Кадр заполнится целиком, лишних полей не будет.'
+                    : 'Такой формат обрежется: для одной акции нужен 16:9 (например 1600×900), для двух и больше — 4:5 (1200×1500).'}
                 </p>
               ) : (
-                <p className="mt-2 text-xs text-ink-secondary">Загрузите баннер — превью покажет его реальную форму.</p>
+                <p className="mt-2 text-xs text-ink-secondary">Загрузите баннер — здесь появится превью в обеих рамках.</p>
               )}
             </div>
             <Field label="Куда показать (placement)">

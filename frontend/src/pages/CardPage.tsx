@@ -130,7 +130,6 @@ export default function CardPage() {
       title: aria,
       imageUrl: d.imageUrl as string,
       mediaType: d.mediaType,
-      fit: d.imageFit === 'cover' ? 'cover' as const : 'contain' as const,
       onClick: () => {
         if (action === 'product' && d.productId) return nav(`/menu/${d.productId}`)
         if (action === 'menu') return nav('/menu')
@@ -141,8 +140,23 @@ export default function CardPage() {
   })
 
   const bannerCount = promoBanners.length
-  // Один баннер — большой на всю ширину, несколько — рельс вбок.
-  const bannerBig = bannerCount === 1
+  // Раскладка по количеству акций: 1 → 16:9 во всю ширину, 2 → симметричная
+  // пара 4:5, 3+ → горизонтальный рельс (влезает только полтора баннера).
+  const bannerLayout: 'hero' | 'pair' | 'rail' =
+    bannerCount === 1 ? 'hero' : bannerCount === 2 ? 'pair' : 'rail'
+
+  // Один и тот же баннер во всех раскладках — отличается только рамкой и ленивостью.
+  const renderBanner = (b: (typeof promoBanners)[number], variant: 'hero' | 'tile', priority = false) => (
+    <PromoBanner
+      key={b.key}
+      variant={variant}
+      priority={priority}
+      title={b.title}
+      imageUrl={b.imageUrl}
+      mediaType={b.mediaType}
+      onClick={b.onClick}
+    />
+  )
 
   const voucherDate = (day: number) => new Date(day * 86_400_000).toLocaleDateString('ru-RU')
   const voucherLastDate = vouchers.length > 0 ? voucherDate(Math.max(...vouchers.map((v) => v[3]))) : ''
@@ -258,26 +272,15 @@ export default function CardPage() {
                 <h2>Для вас</h2>
               </div>
             ) : null}
-            {bannerBig ? (
-              <PromoBanner
-                title={promoBanners[0].title}
-                imageUrl={promoBanners[0].imageUrl}
-                mediaType={promoBanners[0].mediaType}
-                fit={promoBanners[0].fit}
-                onClick={promoBanners[0].onClick}
-              />
-            ) : (
+            {bannerLayout === 'hero' && renderBanner(promoBanners[0], 'hero', true)}
+            {bannerLayout === 'pair' && (
+              <div className="promo-pair">
+                {promoBanners.map((b, i) => renderBanner(b, 'tile', i === 0))}
+              </div>
+            )}
+            {bannerLayout === 'rail' && (
               <div className="rail scrollbar-none">
-                {promoBanners.map((b) => (
-                  <PromoBanner
-                    key={b.key}
-                    title={b.title}
-                    imageUrl={b.imageUrl}
-                    mediaType={b.mediaType}
-                    fit={b.fit}
-                    onClick={b.onClick}
-                  />
-                ))}
+                {promoBanners.map((b, i) => renderBanner(b, 'tile', i === 0))}
               </div>
             )}
           </section>

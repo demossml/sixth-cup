@@ -1,15 +1,12 @@
-import { useState } from 'react'
-
 /**
  * Баннер акции на главной.
  *
- * По требованию владельца на главной нет текста акции: виден только баннер, и он
- * должен занимать всю свою площадь. Поэтому пропорции баннера берутся **из самого
- * файла** (а не из фиксированных 4:5): загрузили 4:5 — баннер ровно 4:5, 2:3 —
- * ровно 2:3. Ни полей по бокам, ни обрезки.
+ * На главной нет текста акции — только сам баннер (требование владельца), и он
+ * всегда заполняет свою рамку целиком (`object-cover`), без полей и без подложки.
  *
- * Пропорция ограничена разумными рамками (0.6…1.6), чтобы случайный узкий или
- * панорамный файл не сломал высоту экрана.
+ * Рамка зависит от того, сколько акций показывается:
+ * - `hero` — 16:9 во всю ширину экрана: одна акция = один большой баннер;
+ * - `tile` — 4:5: так стоят два баннера в паре и все баннеры в рельсе.
  *
  * Куда ведёт тап — решает админка (`tap_action`): экран акции или сразу напиток.
  */
@@ -17,31 +14,36 @@ type Props = {
   title: string
   imageUrl: string
   mediaType?: 'image' | 'video'
-  /** cover — принудительно кадр 4:5 (видео и «плавающие» фото). */
-  fit?: 'contain' | 'cover'
+  /** hero — 16:9 на всю ширину (одна акция); tile — 4:5 (пара и рельс). */
+  variant?: 'hero' | 'tile'
+  /** Первый баннер грузим сразу, остальные — лениво (рельс не тормозит главную). */
+  priority?: boolean
   onClick: () => void
 }
 
-const MIN_RATIO = 0.6
-const MAX_RATIO = 1.6
-const clamp = (r: number) => Math.min(MAX_RATIO, Math.max(MIN_RATIO, r))
+const FRAME: Record<'hero' | 'tile', string> = {
+  hero: '16 / 9',
+  tile: '4 / 5',
+}
 
-export default function PromoBanner({ title, imageUrl, mediaType, fit = 'contain', onClick }: Props) {
-  // Пока файл не загрузился — 4:5, самый частый формат у владельца.
-  const [ratio, setRatio] = useState(0.8)
-  const fixed = mediaType === 'video' || fit === 'cover'
+export default function PromoBanner({
+  title,
+  imageUrl,
+  mediaType,
+  variant = 'tile',
+  priority = false,
+  onClick,
+}: Props) {
+  const radius = variant === 'hero' ? 'rounded-3xl' : 'rounded-2xl'
 
   return (
     <button
       type="button"
       onClick={onClick}
       aria-label={title || 'Акция'}
-      className="group block w-full rounded-2xl overflow-hidden bg-brand-soft shadow-card active:scale-[0.995] motion-reduce:transition-none"
+      className={`group block w-full ${radius} overflow-hidden bg-brand-soft shadow-card active:scale-[0.995] motion-reduce:transition-none`}
     >
-      <span
-        className="relative block w-full"
-        style={{ aspectRatio: fixed ? '4 / 5' : String(clamp(ratio)) }}
-      >
+      <span className="relative block w-full" style={{ aspectRatio: FRAME[variant] }}>
         {mediaType === 'video' ? (
           <video
             src={imageUrl}
@@ -53,15 +55,11 @@ export default function PromoBanner({ title, imageUrl, mediaType, fit = 'contain
           <img
             src={imageUrl}
             alt=""
-            // Баннер и картинка имеют одну пропорцию → cover даёт полное
-            // заполнение площади без полей и без обрезки.
+            // Кадр фиксированной пропорции: cover заполняет его полностью и
+            // обрезает только лишние края — «полей» внутри баннера не бывает.
             className="absolute inset-0 w-full h-full object-cover"
-            loading="lazy"
+            loading={priority ? 'eager' : 'lazy'}
             decoding="async"
-            onLoad={(e) => {
-              const img = e.currentTarget
-              if (img.naturalWidth && img.naturalHeight) setRatio(img.naturalWidth / img.naturalHeight)
-            }}
           />
         )}
       </span>
