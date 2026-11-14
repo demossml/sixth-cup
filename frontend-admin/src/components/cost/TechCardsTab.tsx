@@ -292,7 +292,7 @@ function TechCardEditor({
   const [outputUnit, setOutputUnit] = useState<Unit>('pcs')
   const [writeOffMode, setWriteOffMode] = useState<WriteOffMode>('ingredients')
   const [productId, setProductId] = useState<number | ''>('')
-  const [products, setProducts] = useState<{ id: number; name: string }[]>([])
+  const [products, setProducts] = useState<{ id: number; name: string; price?: number }[]>([])
   const [retail, setRetail] = useState<number | ''>('')
   const [lines, setLines] = useState<DraftLine[]>([])
   const [items, setItems] = useState<CostItem[]>([])
@@ -333,6 +333,9 @@ function TechCardEditor({
   const itemById = useMemo(() => new Map(items.map((i) => [i.id, i])), [items])
   const semiById = useMemo(() => new Map(semiCards.map((s) => [s.id, s])), [semiCards])
 
+  /** Цена товара каталога: сервер считает фудкост/маржу именно от неё. */
+  const catalogPrice = typeof productId === 'number' ? products.find((p) => p.id === productId)?.price ?? null : null
+
   /** Локальный расчёт строк и итогов: сервер пересчитает то же самое после сохранения. */
   const computed = useMemo(() => {
     let total = 0
@@ -351,10 +354,12 @@ function TechCardEditor({
       return { ...l, numbers: n, cost }
     })
     const perUnit = outputQty > 0 ? total / outputQty : null
-    const retailNum = typeof retail === 'number' ? retail : null
+    // Розница для превью: цена товара каталога важнее снимка в карте — иначе экран
+    // показывал один фудкост, а список после сохранения — другой.
+    const retailNum = catalogPrice && catalogPrice > 0 ? catalogPrice : typeof retail === 'number' ? retail : null
     const foodCost = perUnit != null && retailNum ? Math.round((perUnit / retailNum) * 1000) / 10 : null
-    return { rows, total, perUnit, missing, foodCost, margin: perUnit != null && retailNum != null ? retailNum - perUnit : null }
-  }, [lines, itemById, semiById, outputQty, retail])
+    return { rows, total, perUnit, missing, foodCost, retailNum, margin: perUnit != null && retailNum != null ? retailNum - perUnit : null }
+  }, [lines, itemById, semiById, outputQty, retail, catalogPrice])
 
   /** Блюдо и модификатор без товара каталога не сохраняем — иначе маржа врёт. */
   const canSave = kind === 'semi' || typeof productId === 'number'
@@ -655,9 +660,11 @@ function TechCardEditor({
           <Field
             label="Цена продажи, ₽"
             hint={
-              kind !== 'semi' && typeof productId === 'number'
-                ? 'В расчёте используется цена товара из меню; это значение — только запасное'
-                : undefined
+              catalogPrice && catalogPrice > 0
+                ? `В расчёте — цена товара из меню: ${money(catalogPrice)}`
+                : kind !== 'semi' && typeof productId === 'number'
+                  ? 'У товара не задана цена — используется значение из карты'
+                  : undefined
             }
           >
             <Input
