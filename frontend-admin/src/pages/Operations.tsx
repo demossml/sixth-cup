@@ -78,7 +78,9 @@ export default function Operations() {
   const [sp, setSp] = useSearchParams()
   const view = (sp.get('view') ?? '') as View
   const store = sp.get('store') ?? ''
-  const period = sp.get('period') ?? '7d'
+  // Дефолт — 30 дней: недельный период показывал пустой экран, хотя продажи были
+  // (аудит 14.11.2026: последний чек 9 дней назад и «Операций не найдено»).
+  const period = sp.get('period') ?? '30d'
   const [qInput, setQInput] = useState(sp.get('q') ?? '')
   const q = sp.get('q') ?? ''
   const open = sp.get('open')
@@ -90,7 +92,7 @@ export default function Operations() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  const from = period === 'all' ? undefined : Date.now() - (PERIODS[period] ?? PERIODS['7d'])
+  const from = period === 'all' ? undefined : Date.now() - (PERIODS[period] ?? PERIODS['30d'])
   // `from` is minute-rounded so the query key stays stable between renders.
   const fromKey = from ? Math.floor(from / 60_000) * 60_000 : undefined
   const base = qs({ view: view === 'disputes' ? '' : view, store, q, from: fromKey, limit: 50 })

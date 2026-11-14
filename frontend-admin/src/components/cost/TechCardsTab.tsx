@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import {
   Badge,
+  Banner,
   Button,
   Card,
   ConfirmDialog,
@@ -114,12 +115,17 @@ export default function TechCardsTab({
   const [problemsOnly, setProblemsOnly] = useState(false)
   const [editing, setEditing] = useState<number | 'new' | null>(initialCardId ?? null)
   const [bulkOpen, setBulkOpen] = useState(false)
+  const [totals, setTotals] = useState<{ cards: number; problems: number; withoutProduct: number } | null>(null)
+  const [linking, setLinking] = useState(false)
 
   const load = useCallback(() => {
     setError(null)
     costApi
-      .cards({ q, problems: problemsOnly })
-      .then((r) => setList(r.cards))
+      .cards({ q: q, problems: problemsOnly })
+      .then((r) => {
+        setList(r.cards)
+        setTotals(r.totals)
+      })
       .catch((e) => setError(e instanceof Error ? e : new Error('Не удалось загрузить техкарты')))
   }, [q, problemsOnly])
 
@@ -139,6 +145,31 @@ export default function TechCardsTab({
         }}
       />
     )
+  }
+
+  /** Меню — необязательное. Связываем по точному названию; спорные остаются человеку. */
+  const linkByNames = async () => {
+    setLinking(true)
+    try {
+      const plan = await api<{
+        applied: number
+        matched: { cardName: string; productName: string }[]
+        unresolved: { cardName: string; reason: string }[]
+      }>('/cost/tech-cards/link-products?dry=0', { method: 'POST', body: {} })
+      if (plan.matched.length) {
+        toast.push(
+          `Связано ${plan.matched.length}${plan.unresolved.length ? `, вручную: ${plan.unresolved.length}` : ''}`,
+          plan.unresolved.length ? 'neutral' : 'ok',
+        )
+      } else {
+        toast.push('Однозначных совпадений нет — привяжите товар в карте вручную', 'neutral')
+      }
+      load()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Не удалось связать карты', 'bad')
+    } finally {
+      setLinking(false)
+    }
   }
 
   return (
@@ -164,6 +195,22 @@ export default function TechCardsTab({
 
       {error && <ErrorBox message={error.message} />}
       {!list && !error && <Skeleton />}
+
+      {totals && totals.withoutProduct > 0 && (
+        <div className="mb-3">
+          <Banner tone="warn">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="flex-1">
+                {totals.withoutProduct} карт без товара каталога: фудкост и маржа считаются по цене в карте,
+                а не по меню. Можно связать по названию — однозначные совпадения подтянутся сами.
+              </span>
+              <Button variant="secondary" loading={linking} onClick={() => void linkByNames()}>
+                Связать по названию
+              </Button>
+            </div>
+          </Banner>
+        </div>
+      )}
 
       {list && list.length === 0 && (
         <EmptyState
@@ -193,6 +240,7 @@ export default function TechCardsTab({
                 норма: {c.outputQty} {UNIT_LABELS[c.outputUnit]}
               </span>
               <span>цена: {money(c.retailRub)}</span>
+              {c.productName && <span>товар: {c.productName}</span>}
               <span className={cx(c.foodCostPct != null && c.foodCostPct > 35 ? 'text-bad' : '')}>фудкост: {pct(c.foodCostPct)}</span>
               <span>маржа: {money(c.marginRub)}</span>
               <span>строк: {c.linesCount}</span>
@@ -308,9 +356,16 @@ function TechCardEditor({
     return { rows, total, perUnit, missing, foodCost, margin: perUnit != null && retailNum != null ? retailNum - perUnit : null }
   }, [lines, itemById, semiById, outputQty, retail])
 
+  /** Блюдо и модификатор без товара каталога не сохраняем — иначе маржа врёт. */
+  const canSave = kind === 'semi' || typeof productId === 'number'
+
   const save = async (opts: { publish?: boolean } = {}) => {
     if (!name.trim()) {
       toast.push('Дайте карте название', 'bad')
+      return
+    }
+    if (!canSave) {
+      toast.push('Выберите товар каталога: без него карта не связана с меню', 'bad')
       return
     }
     setBusy(true)
@@ -410,10 +465,10 @@ function TechCardEditor({
               </Button>
             </>
           )}
-          <Button variant="secondary" loading={busy} onClick={() => void save()}>
+          <Button variant="secondary" loading={busy} disabled={!canSave} onClick={() => void save()}>
             Сохранить
           </Button>
-          <Button loading={busy} onClick={() => void save({ publish: true })}>
+          <Button loading={busy} disabled={!canSave} onClick={() => void save({ publish: true })}>
             Опубликовать
           </Button>
         </div>
@@ -459,13 +514,20 @@ function TechCardEditor({
               ))}
             </Select>
           </Field>
-          <Field label="Товар кассы (необязательно)">
+          <Field
+            label="Товар каталога"
+            hint={
+              kind === 'semi'
+                ? 'Заготовке товар не нужен: она живёт внутри себестоимости'
+                : 'Обязателен: по его цене считаются фудкост и маржа'
+            }
+          >
             <Select
               value={productId}
               onChange={(e) => setProductId(e.target.value ? Number(e.target.value) : '')}
-              aria-label="Товар кассы"
+              aria-label="Товар каталога"
             >
-              <option value="">— без привязки —</option>
+              <option value="">— выберите товар —</option>
               {products.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
@@ -590,7 +652,14 @@ function TechCardEditor({
 
       <Card>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Field label="Цена продажи, ₽">
+          <Field
+            label="Цена продажи, ₽"
+            hint={
+              kind !== 'semi' && typeof productId === 'number'
+                ? 'В расчёте используется цена товара из меню; это значение — только запасное'
+                : undefined
+            }
+          >
             <Input
               type="number"
               step="0.01"

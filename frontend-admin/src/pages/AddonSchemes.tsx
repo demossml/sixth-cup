@@ -3,7 +3,7 @@ import { Plus, Trash2 } from 'lucide-react'
 import { api } from '../api/client'
 import { useApi } from '../api/useApi'
 import type { Product, Scheme } from '../api/types'
-import { Button, Check, ConfirmDialog, DataTable, Drawer, EmptyState, ErrorBox, Field, Input, PageHeader, Select, Spinner, Toggle, useToast } from '../ui/kit'
+import { Badge, Banner, Button, Check, ConfirmDialog, DataTable, Drawer, EmptyState, ErrorBox, Field, Input, PageHeader, Select, Spinner, Toggle, useToast } from '../ui/kit'
 import type { Column } from '../ui/kit'
 import { ADDON_GROUPS_FALLBACK, GROUP_KEY_NOTE, defaultMaxCount, draftToOptions, requiredGroups, schemeToDraft, type AddonGroup, type SchemeOptionDraft } from '../lib/addonScheme'
 
@@ -26,11 +26,26 @@ function AddonSchemesInner({ products }: { products: Product[] }) {
   const [preview, setPreview] = useState<{ scheme: { id: number; name: string }; items: any[]; products: any[] } | null>(null)
   const [del, setDel] = useState<Scheme | null>(null)
   const used = (id: number) => products.filter((p) => p.modifierSchemeId === id).length
+  // Схемы без позиций, но уже назначенные товарам: на кассе группа «Дополнительно» будет пустой.
+  const emptyAssigned = (data?.schemes ?? []).filter(
+    (s) => (s.options?.length ?? s.items.length) === 0 && used(s.id) > 0,
+  )
   const addonProducts = products.filter((p) => !p.countsAsCup)
   if (loading && !data) return <Spinner />
   if (error) return <ErrorBox message={error} onRetry={reload} />
   const cols: Column<Scheme>[] = [
-    { key: 'name', header: 'Схема', primary: true, render: (s) => s.name },
+    {
+      key: 'name', header: 'Схема', primary: true, render: (s) => {
+        const count = s.options?.length ?? s.items.length
+        return (
+          <span className="flex flex-wrap items-center gap-2">
+            <span>{s.name}</span>
+            {/* Пустая схема = пустая группа добавок на кассе — молчать об этом нельзя (аудит 14.11.2026). */}
+            {count === 0 && <Badge tone="warn">Пусто — на кассе группы не будет</Badge>}
+          </span>
+        )
+      },
+    },
     { key: 'm', header: 'Позиций', align: 'right', render: (s) => s.options?.length ?? s.items.length },
     {
       key: 'req', header: 'Обязательные', render: (s) => {
@@ -42,6 +57,9 @@ function AddonSchemesInner({ products }: { products: Product[] }) {
     },
     { key: 'p', header: 'Товаров', align: 'right', render: (s) => used(s.id) },
     { key: 'x', header: '', align: 'right', render: (s) => <span className="inline-flex gap-1" onClick={(e) => e.stopPropagation()}>
+      {(s.options?.length ?? s.items.length) === 0 && (
+        <Button size="sm" variant="secondary" onClick={() => openEdit(s)}>Заполнить состав</Button>
+      )}
       <Button size="sm" variant="ghost" onClick={async () => {
         try { setPreview(await api(`/modifier-schemes/${s.id}/preview`)) } catch (e) { toast.push(e instanceof Error ? e.message : 'Ошибка', 'bad') }
       }}>Просмотр</Button>
@@ -60,6 +78,13 @@ function AddonSchemesInner({ products }: { products: Product[] }) {
         <Button icon={<Plus size={16} />} onClick={() => openEdit()}>Новая схема</Button>
         <span className="text-[12px] text-ink/50">Платные позиции — товар из меню (категория «Добавки»); «Без сиропа» / «Обычное» — zero-option без UUID. {GROUP_KEY_NOTE}</span>
       </div>
+      {emptyAssigned.length > 0 && (
+        <div className="mb-3">
+          <Banner tone="warn">
+            {emptyAssigned.length === 1 ? 'Схема' : `${emptyAssigned.length} схемы`} без позиций назначены товарам: «{emptyAssigned.map((s) => s.name).join('», «')}». На кассе группа добавок будет пустой — заполните состав.
+          </Banner>
+        </div>
+      )}
       <DataTable rows={data?.schemes ?? []} columns={cols} rowKey={(s) => s.id} onRowClick={(s) => openEdit(s)} empty={<EmptyState title="Схем пока нет" />} />
       <Drawer open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? 'Схема добавок' : 'Новая схема'}
         footer={<><Button variant="secondary" onClick={() => setEdit(null)}>Отмена</Button><Button disabled={!edit?.name.trim()} onClick={async () => {

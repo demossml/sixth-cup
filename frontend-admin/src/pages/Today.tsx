@@ -6,7 +6,7 @@ import type { Dashboard, StoreHealth } from '../api/types'
 import { useSyncStores } from '../api/useStores'
 import { ago, fmtDateTime, fmtKop, fmtNum } from '../lib/format'
 import { qs } from '../lib/query'
-import { ErrorBox, Skeleton, useToast } from '../ui/kit'
+import { ErrorBox, Skeleton, Drawer, EmptyState, useToast } from '../ui/kit'
 import { CardRef, DocStatusBadge, opResult, typeLabel } from './shared'
 import { SimpleBarChart } from '../components/SimpleChart'
 import { HelpLink } from '../components/HelpLink'
@@ -20,6 +20,9 @@ export default function Today() {
   const [period, setPeriod] = useState<'24h' | 'yesterday' | '7d' | '30d'>('24h')
   const [store, setStore] = useState('')
   const [polling, setPolling] = useState(false)
+  // Счётчик «Ошибки» в таблице касс открывает список упавших документов:
+  // без него «Ошибки 4» ничего не говорит владельцу (аудит 14.11.2026).
+  const [failedOpen, setFailedOpen] = useState(false)
   const toast = useToast()
   const nav = useNavigate()
   const { data, error, loading, reload } = useApi<Dashboard>(`/dashboard${qs({ period, store })}`, { refreshMs: 60_000 })
@@ -27,6 +30,8 @@ export default function Today() {
     points: { t: string; sellDocs: number; cups: number; revenueRub: number }[]
     totals: { sellDocs: number; cups: number }
   }>(`/analytics/series${qs({ period, store })}`)
+  type FailedDoc = { docId: string; storeUuid: string; storeName: string; type: string; at: number; error: string }
+  const failed = useApi<{ docs: FailedDoc[] }>(failedOpen ? `/evotor/failed-docs${qs({ store, limit: 50 })}` : null)
   const { stores: syncStores } = useSyncStores()
 
   const poll = async () => {
@@ -192,7 +197,16 @@ export default function Today() {
               <div className="card-head">
                 <div>
                   <div className="card-title">Требует внимания</div>
-                  <div className="card-sub">Очередь из dashboard</div>
+                  {/* Раньше здесь стояло голое «Очередь 1» — что именно в очереди,
+                      владельцу было непонятно (аудит 14.11.2026). */}
+                  <div className="card-sub" title="Складывается из: ошибки чеков, продажи без карты, замечания dashboard и проблемные кассы.">
+                    {[
+                      failN ? `ошибки чеков: ${failN}` : '',
+                      data.sellWithoutCard ? `без карты: ${data.sellWithoutCard}` : '',
+                      data.exceptions?.length ? `замечания: ${data.exceptions.length}` : '',
+                      problems.length ? `кассы: ${problems.length}` : '',
+                    ].filter(Boolean).join(' · ') || 'пока пусто'}
+                  </div>
                 </div>
                 <div className="right">
                   <span className="att-count">{(data.exceptions?.length ?? 0) + (failN ? 1 : 0) + (data.sellWithoutCard ? 1 : 0)}</span>
@@ -277,7 +291,20 @@ export default function Today() {
                         <td>{s.level}</td>
                         <td>{s.lastFastAt ? ago(s.lastFastAt, data.now) : '—'}</td>
                         <td className="num-r">{s.outboxPending}</td>
-                        <td className="num-r">{s.failedDocs}</td>
+                        <td className="num-r">
+                          {s.failedDocs > 0 ? (
+                            <button
+                              type="button"
+                              className="card-link"
+                              title="Показать упавшие документы"
+                              onClick={() => setFailedOpen(true)}
+                            >
+                              {s.failedDocs}
+                            </button>
+                          ) : (
+                            0
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -363,6 +390,32 @@ export default function Today() {
           </div>
         </>
       )}
+      <Drawer open={failedOpen} onClose={() => setFailedOpen(false)} title="Документы с ошибкой">
+        <p className="card-sub" style={{ marginBottom: 12 }}>
+          Записи, которые касса отдала, а система не смогла обработать. Чашки по ним не начислены.
+        </p>
+        {failed.loading && <Skeleton className="h-20" />}
+        {failed.error && <ErrorBox message={failed.error} onRetry={failed.reload} />}
+        {failed.data && !failed.data.docs.length && (
+          <EmptyState title="Ошибок нет" text="Все документы обработаны." />
+        )}
+        {!!failed.data?.docs.length && (
+          <ul className="att-list">
+            {failed.data.docs.map((d) => (
+              <li key={d.storeUuid + d.docId} className="att-item" style={{ cursor: 'default' }}>
+                <span className="att-ic red" />
+                <span className="att-body">
+                  <span className="att-t">{typeLabel(d.type)} · {d.storeName}</span>
+                  <span className="att-d">{d.error}</span>
+                  <span className="att-d">
+                    {fmtDateTime(d.at)} · {d.docId.slice(0, 8)}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Drawer>
     </section>
   )
 }

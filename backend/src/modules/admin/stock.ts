@@ -370,7 +370,16 @@ export const adminStock = new Hono()
       return { ...it, expectedQty: expected, level }
     })
     const critical = balances.filter((b) => b.level !== 'ok').length
-    return c.json({ balances, summary: { total: balances.length, critical } })
+    // Учёт склада «запущен» только когда был хотя бы один проведённый приход:
+    // иначе нулевые остатки — это не пропажа, а отсутствие документов (аудит 14.11.2026).
+    const n = (sql: string) => Number((db.prepare(sql).get() as { n: number } | undefined)?.n) || 0
+    const accounting = {
+      suppliers: n(`SELECT COUNT(*) AS n FROM suppliers`),
+      postedInvoices: n(`SELECT COUNT(*) AS n FROM purchase_invoices WHERE status='posted'`),
+      draftInvoices: n(`SELECT COUNT(*) AS n FROM purchase_invoices WHERE status='draft'`),
+      started: n(`SELECT COUNT(*) AS n FROM purchase_invoices WHERE status='posted'`) > 0,
+    }
+    return c.json({ balances, summary: { total: balances.length, critical }, accounting })
   })
 
   .get('/stock/expiry', (c) => {

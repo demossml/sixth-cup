@@ -37,6 +37,9 @@ export default function Assistant() {
   const [question, setQuestion] = useState('')
   const [period, setPeriod] = useState('24h')
   const feed = useApi<Feed>('/ai/feed')
+  // Статус модели: раньше здесь всегда висело «включите AI_API_KEY иначе mock»
+  // даже при живом DeepSeek — владелец не понимал, отвечает модель или заглушка.
+  const ai = useApi<{ enabled: boolean; hasKey: boolean; model: string; ready: boolean }>('/ai/settings')
 
   const askFree = async () => {
     if (!question.trim()) {
@@ -211,7 +214,11 @@ export default function Assistant() {
           placeholder="Здесь появится ответ помощника — отредактируйте перед использованием"
         />
         <p className="mt-2 text-xs text-ink-secondary">
-          Включите AI_ASSISTANT=1 и AI_API_KEY на сервере для реальной модели. Иначе работает mock.
+          {ai.data?.ready
+            ? `Отвечает ${ai.data.model} — черновик, ничего не публикуется само. Ключ и модель — в Система → ИИ.`
+            : ai.data
+              ? 'ИИ выключен или нет ключа — вместо ответа будет заглушка. Включите в Система → ИИ.'
+              : 'Проверяем статус модели…'}
         </p>
       </Card>
     </>

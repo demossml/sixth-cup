@@ -60,7 +60,71 @@ async function callProvider(system: string, user: string): Promise<string> {
 }
 
 const SYSTEM =
-  'Ты помощник кофейни 6.7 Coffee. Отвечай по-русски кратко. Не выдумывай выручку. Не раскрывай персональные данные карт. Цифры только из переданного JSON. Это черновик для человека, не приказ.'
+  'Ты помощник кофейни 6.7 Coffee. Отвечай по-русски кратко и по делу. ' +
+  'Правила: (1) цифры только из переданного JSON, ничего не выдумывай; ' +
+  '(2) если данных нет — так и скажи и перечисли, каких полей не хватает; ' +
+  '(3) когда объясняешь процесс, называй реальные экраны админки 6.7: ' +
+  '«Закупки → Поставщики», «Закупки → Новая накладная → Создать черновик → Провести», ' +
+  '«Склад → Остатки / Нормы / Списания», «Себестоимость → Техкарты», «Меню → Товары», ' +
+  '«Касса → Токены», «Клиенты», «Сегодня»; ' +
+  '(4) не раскрывай персональные данные карт; (5) это черновик для человека, а не приказ.'
+
+/** Снимок состояния бизнеса для помощника: только то, что реально есть в БД. */
+export function businessSnapshot(since: number, period: string) {
+  const one = (sql: string, ...a: unknown[]) => (db.prepare(sql).get(...a) as { n: number })?.n ?? 0
+  const ops = db
+    .prepare(
+      `SELECT COUNT(*) AS n, COALESCE(SUM(result_rub),0) AS rub, COALESCE(SUM(cups_counted),0) AS cups
+         FROM loyalty_ops WHERE kind='SELL' AND created_at>=?`,
+    )
+    .get(since) as { n: number; rub: number; cups: number }
+  const unlinked = db
+    .prepare(
+      `SELECT name FROM tech_cards WHERE product_id IS NULL AND kind <> 'semi' ORDER BY name COLLATE NOCASE LIMIT 5`,
+    )
+    .all() as { name: string }[]
+  return {
+    period,
+    sales: {
+      sellDocs: one(`SELECT COUNT(*) AS n FROM evotor_docs WHERE type='SELL' AND received_at>=?`, since),
+      withCard: ops.n,
+      cups: ops.cups,
+      revenueRub: Math.round(Number(ops.rub) || 0),
+      failedDocs: one(`SELECT COUNT(*) AS n FROM evotor_docs WHERE status='FAILED'`),
+    },
+    menu: {
+      products: one(`SELECT COUNT(*) AS n FROM products WHERE available=1`),
+      noPhoto: one(`SELECT COUNT(*) AS n FROM products WHERE available=1 AND (image_url IS NULL OR image_url='')`),
+      noCategory: one(`SELECT COUNT(*) AS n FROM products WHERE available=1 AND (category_id IS NULL OR category_id=0)`),
+      addonSchemesEmpty: one(
+        `SELECT COUNT(*) AS n FROM modifier_schemes s
+          WHERE NOT EXISTS (SELECT 1 FROM modifier_scheme_options o WHERE o.scheme_id=s.id)`,
+      ),
+    },
+    cost: {
+      cards: one(`SELECT COUNT(*) AS n FROM tech_cards`),
+      withoutProduct: one(`SELECT COUNT(*) AS n FROM tech_cards WHERE product_id IS NULL AND kind <> 'semi'`),
+      topUnlinked: unlinked.map((r) => r.name),
+    },
+    stock: {
+      positions: one(`SELECT COUNT(*) AS n FROM stock_items WHERE active=1`),
+      noReceipts: one(
+        `SELECT COUNT(*) AS n FROM stock_items i WHERE i.active=1 AND NOT EXISTS (
+           SELECT 1 FROM purchase_invoice_lines l JOIN purchase_invoices v ON v.id=l.invoice_id
+            WHERE l.stock_item_id=i.id AND v.status='posted')`,
+      ),
+      productsWithoutNorm: one(
+        `SELECT COUNT(*) AS n FROM products p WHERE p.available=1 AND NOT EXISTS (
+           SELECT 1 FROM product_stock_norms n WHERE n.product_id=p.id)`,
+      ),
+    },
+    purchases: {
+      suppliers: one(`SELECT COUNT(*) AS n FROM suppliers`),
+      invoices: one(`SELECT COUNT(*) AS n FROM purchase_invoices`),
+      invoicesDraft: one(`SELECT COUNT(*) AS n FROM purchase_invoices WHERE status='draft'`),
+    },
+  }
+}
 
 export const adminAi = new Hono()
   .get('/ai/settings', (c) => {
@@ -149,14 +213,9 @@ export const adminAi = new Hono()
       requireWriteAi(c)
       const { question, period: per } = c.req.valid('json')
       const { since, period } = periodSince(per || '24h', Date.now())
-      const n = (sql: string, ...a: unknown[]) => (db.prepare(sql).get(...a) as { n: number }).n
-      const snapshot = {
-        period,
-        sellDocs: n(`SELECT COUNT(*) AS n FROM evotor_docs WHERE type='SELL' AND received_at>=?`, since),
-        products: n(`SELECT COUNT(*) AS n FROM products WHERE available=1`),
-        noPhoto: n(`SELECT COUNT(*) AS n FROM products WHERE available=1 AND (image_url IS NULL OR image_url='')`),
-        noCategory: n(`SELECT COUNT(*) AS n FROM products WHERE available=1 AND (category_id IS NULL OR category_id=0)`),
-      }
+      // Снимок шире пяти счётчиков: без склада/техкарт/закупок помощник отвечал
+      // «данных нет» на 4 из 5 операционных вопросов (аудит 14.11.2026).
+      const snapshot = businessSnapshot(since, period)
       const text = await callProvider(SYSTEM, `Данные JSON: ${JSON.stringify(snapshot)}. Вопрос владельца: ${question}`)
       return c.json({ ok: true, provider: resolveAiConfig().hasKey ? 'deepseek' : 'mock', text, snapshot })
     },

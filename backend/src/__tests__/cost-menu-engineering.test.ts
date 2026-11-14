@@ -25,11 +25,22 @@ async function createCard(name: string, opts: { costKop: number; priceRub: numbe
     outputQty: 1,
     outputUnit: 'pcs',
     retailPriceRub: opts.priceRub,
-    productId: opts.productId ?? null,
+    // Блюдо обязано быть привязано к товару каталога (аудит 14.11.2026).
+    // Цена 0 — розница остаётся из retailPriceRub.
+    productId: opts.productId ?? makeProduct(name),
     lines: [{ stockItemId: item, qtyBrutto: 1 }],
   })
   expect(r.status).toBe(200)
   return r.json.card as { id: number; name: string }
+}
+
+/** Товар каталога для привязки карты. */
+function makeProduct(name: string): number {
+  const t = Date.now()
+  return Number(
+    db.prepare(`INSERT INTO products(name, price, created_at, updated_at) VALUES(?,?,?,?)`)
+      .run(`${name} (товар)`, 0, t, t).lastInsertRowid,
+  )
 }
 
 /** Товар кассы: к нему цепляется карта и на него приходят продажи. */
@@ -109,7 +120,10 @@ describe('F12: меню-инжиниринг', () => {
   })
 
   it('без привязки к товару кассы продажи находятся по имени', async () => {
-    await createCard('Латте по имени QA', { costKop: 3_000, priceRub: 200 })
+    const legacy = await createCard('Латте по имени QA', { costKop: 3_000, priceRub: 200 })
+    // Легаси-карта без товара: до аудита 14.11.2026 таких было 12 из 12.
+    // Новые карты без productId API уже не создаёт, но старые должны читаться.
+    db.prepare(`UPDATE tech_cards SET product_id=NULL WHERE id=?`).run(legacy.id)
     // В чеке регистр и пробелы другие: имя из чека должно совпасть с картой.
     sell({ name: '  ЛАТТЕ ПО ИМЕНИ qa ', qty: 10, sumKop: 200_000, productId: null })
 
@@ -166,6 +180,7 @@ describe('F12: меню-инжиниринг', () => {
       name: 'Без цены QA',
       kind: 'dish',
       outputQty: 1,
+      productId: makeProduct('Без цены QA'),
       retailPriceRub: 150,
       lines: [{ stockItemId: bareId, qtyBrutto: 10 }],
     })

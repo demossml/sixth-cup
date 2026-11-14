@@ -292,7 +292,10 @@ export default function Purchases() {
         <Card className="mb-4">
           <div className="mb-3 text-[14px] font-semibold">Новая накладная (черновик, несколько строк)</div>
           {!suppliers.data?.suppliers.length && (
-            <p className="mb-2 text-sm text-warn">Сначала создайте поставщика.</p>
+            <div className="mb-2 flex flex-wrap items-center gap-2 text-sm text-warn">
+              <span>Сначала создайте поставщика — без него накладную не создать.</span>
+              <Button size="sm" variant="secondary" onClick={() => openSupplier()}>Создать поставщика</Button>
+            </div>
           )}
           {!items.data?.items.length && (
             <p className="mb-2 text-sm text-warn">Сначала добавьте позиции на складе.</p>
@@ -441,7 +444,13 @@ export default function Purchases() {
           {suppliers.loading && <div className="p-4"><Skeleton className="h-24" /></div>}
           {suppliers.error && <div className="p-4"><ErrorBox message={suppliers.error} /></div>}
           {suppliers.data && !suppliers.data.suppliers.length && (
-            <EmptyState title="Нет поставщиков" text="Справочник, не свободный текст. Создайте контрагента перед накладной." />
+            <div className="p-6 text-center">
+              <EmptyState
+                title="Нет поставщиков"
+                text="Справочник, не свободный текст. Создайте контрагента перед накладной."
+                action={<Button onClick={() => openSupplier()}>Создать поставщика</Button>}
+              />
+            </div>
           )}
           {!!suppliers.data?.suppliers.length && (
             <ul className="divide-y divide-line">

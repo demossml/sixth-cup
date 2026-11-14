@@ -403,6 +403,16 @@ if (!d) return <Drawer open={false} onClose={onClose} title="" children={null} /
           <option value="">Без добавок</option>
           {schemes.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </Select>
+        {(() => {
+          // Схема без позиций показывает на кассе пустую группу — предупреждаем здесь же.
+          const chosen = schemes.find((s) => s.id === d.modifierSchemeId)
+          const empty = chosen && (chosen.itemsCount ?? chosen.options?.length ?? chosen.items?.length ?? 0) === 0
+          return empty ? (
+            <p className="mt-1 text-[12px] text-warn">
+              В схеме «{chosen!.name}» нет позиций — на кассе группа добавок будет пустой. Заполните состав в разделе «Схемы добавок».
+            </p>
+          ) : null
+        })()}
       </Field>
       <Field
         label="Схема молока"
@@ -836,7 +846,12 @@ export default function MenuProducts() {
       )}
       {products.error && <ErrorBox message={products.error} onRetry={products.reload} />}
       {products.loading && !products.data && <Spinner />}
-      {products.data && (
+      {tab === 'errors' && products.data && rows.length === 0 && (
+        <Banner tone="ok">
+          Ошибок кассы нет: у всех товаров есть связь с Эвотором. Ошибки обработки чеков — в разделе «Сегодня».
+        </Banner>
+      )}
+      {products.data && (tab !== 'errors' || rows.length > 0) && (
         <DataTable
           rows={rows}
           columns={cols}

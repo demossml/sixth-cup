@@ -17,7 +17,8 @@ const SHIFT: NavItem[] = [
   { to: '/', label: 'Сегодня', icon: <LayoutDashboard size={17} />, end: true },
   { to: '/operations', label: 'Операции', icon: <Activity size={17} /> },
   { to: '/customers', label: 'Клиенты', icon: <Users size={17} /> },
-  { to: '/menu', label: 'Меню', icon: <Coffee size={17} /> },
+  // «Каталог и касса» — чтобы не путать с печатным листом (аудит 14.11.2026).
+  { to: '/menu', label: 'Каталог и касса', icon: <Coffee size={17} /> },
 ]
 
 /** Три независимые системы конфигурации товара — отдельные разделы, не вкладки «Меню». */
@@ -33,7 +34,7 @@ const MANAGE: NavItem[] = [
   { to: '/cash', label: 'Касса', icon: <Store size={17} /> },
   { to: '/stock', label: 'Склад', icon: <Box size={17} /> },
   { to: '/cost', label: 'Себестоимость', icon: <Calculator size={17} /> },
-  { to: '/menu-layouts', label: 'Макет меню', icon: <LayoutTemplate size={17} /> },
+  { to: '/menu-layouts', label: 'Лист меню (печать)', icon: <LayoutTemplate size={17} /> },
   { to: '/purchases', label: 'Закупки', icon: <Package size={17} /> },
   { to: '/inventory', label: 'Инвентаризация', icon: <ClipboardList size={17} /> },
   { to: '/staff', label: 'Сотрудники', icon: <Users size={17} /> },
@@ -77,7 +78,7 @@ const TITLES: Record<string, string> = {
   '/': 'Сегодня',
   '/operations': 'Операции',
   '/customers': 'Клиенты',
-  '/menu': 'Меню',
+  '/menu': 'Каталог и касса',
   '/volume-schemes': 'Схемы объёмов',
   '/milk-schemes': 'Схемы молока',
   '/choice-schemes': 'Обязательный выбор',
@@ -86,7 +87,7 @@ const TITLES: Record<string, string> = {
   '/cash': 'Касса',
   '/stock': 'Склад',
   '/cost': 'Себестоимость',
-  '/menu-layouts': 'Макет меню',
+  '/menu-layouts': 'Лист меню (печать)',
   '/purchases': 'Закупки',
   '/inventory': 'Инвентаризация',
   '/staff': 'Сотрудники',

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useApi } from '../api/useApi'
 import { useSyncStores } from '../api/useStores'
-import { qs } from '../lib/query'
+import { analyticsPath, periodLabel } from '../lib/analyticsQuery'
 import { fmtKop, fmtNum } from '../lib/format'
 import {
   PageHeader, Card, EmptyState, ErrorBox, KpiTile, Select, Skeleton, Tabs,
@@ -73,19 +73,21 @@ export default function Analytics() {
   const [store, setStore] = useState('')
   const { stores: syncStores } = useSyncStores()
 
+  // Адреса только через analyticsPath: `?${qs(...)}` давал `/series??period=7d`,
+  // сервер не видел period, и блоки экрана жили в разных периодах (24 ч vs 30 дн).
   const path = useMemo(
-    () => `/analytics/series?${qs({ period, storeUuid: store || undefined })}`,
+    () => analyticsPath('/analytics/series', { period, storeUuid: store }),
     [period, store],
   )
   const byStorePath = useMemo(
-    () => `/analytics/by-store?${qs({ period })}`,
+    () => analyticsPath('/analytics/by-store', { period }),
     [period],
   )
 
   const series = useApi<SeriesResp>(path)
   const byStore = useApi<{ stores?: ByStoreRow[]; rows?: ByStoreRow[] }>(byStorePath)
-  const overviewPath = useMemo(() => `/analytics/overview?${qs({ period, storeUuid: store || undefined })}`, [period, store])
-  const heatmapPath = useMemo(() => `/analytics/heatmap?${qs({ period, storeUuid: store || undefined })}`, [period, store])
+  const overviewPath = useMemo(() => analyticsPath('/analytics/overview', { period, storeUuid: store }), [period, store])
+  const heatmapPath = useMemo(() => analyticsPath('/analytics/heatmap', { period, storeUuid: store }), [period, store])
   const overview = useApi<Overview>(overviewPath)
   const heat = useApi<Heat>(heatmapPath)
 
@@ -191,7 +193,10 @@ export default function Analytics() {
       </Card>
 
       <Card className="mt-4">
-        <div className="mb-3 text-[14px] font-semibold">Обзор периода</div>
+        <div className="mb-3 flex items-center justify-between">
+          <div className="text-[14px] font-semibold">Обзор периода</div>
+          <span className="text-[11px] text-ink-secondary">{periodLabel(period)}</span>
+        </div>
         {overview.loading && <Skeleton className="h-24" />}
         {overview.error && <ErrorBox message={overview.error} onRetry={overview.reload} />}
         {overview.data && (
@@ -260,7 +265,10 @@ export default function Analytics() {
       <Card className="mt-4">
         <div className="mb-3 flex items-center justify-between">
           <div className="text-[14px] font-semibold">Теплокарта по часам</div>
-          {heat.data && <span className="text-[11px] text-ink-secondary">чеков с картой: {heat.data.total}</span>}
+          <span className="text-[11px] text-ink-secondary">
+            {periodLabel(period)}
+            {heat.data ? ` · чеков с картой: ${heat.data.total}` : ''}
+          </span>
         </div>
         {heat.loading && <Skeleton className="h-32" />}
         {heat.error && <ErrorBox message={heat.error} onRetry={heat.reload} />}

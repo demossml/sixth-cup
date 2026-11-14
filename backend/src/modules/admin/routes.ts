@@ -1376,6 +1376,14 @@ export const adminRoutes = new Hono()
   .get('/modifier-schemes', (c) => {
     ensureAddonSchemeSchema(db)
     const schemes = db.prepare('SELECT id, name FROM modifier_schemes ORDER BY id').all() as { id: number; name: string }[]
+    // Схема без позиций на кассе покажет пустую группу добавок — это видно снаружи,
+    // поэтому отдаём счётчики (аудит 14.11.2026: две схемы с 0 позиций на 13 и 25 товарах).
+    const productCountBy = new Map<number, number>(
+      (db.prepare(
+        `SELECT modifier_scheme_id AS id, COUNT(*) AS n FROM products
+          WHERE modifier_scheme_id IS NOT NULL GROUP BY modifier_scheme_id`,
+      ).all() as { id: number; n: number }[]).map((r) => [r.id, r.n]),
+    )
     return c.json({
       schemes: schemes.map((s) => {
         const options = loadSchemeOptions(db, s.id)
@@ -1383,6 +1391,10 @@ export const adminRoutes = new Hono()
         const items = options.length ? schemeItemsFromOptions(options) : loadSchemeItems(db, s.id)
         return {
           ...s,
+          /** Позиций в схеме: 0 — на кассе группа будет пустой. */
+          itemsCount: items.length,
+          /** Сколько товаров уже ссылаются на схему. */
+          productCount: productCountBy.get(s.id) ?? 0,
           items: items.map((i) => ({
             id: i.id,
             schemeId: i.schemeId,

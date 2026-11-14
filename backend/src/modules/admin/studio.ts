@@ -916,7 +916,19 @@ export const adminStudio = new Hono()
       const lastCost = one<{ c: number }>(`SELECT unit_cost_kop c FROM purchase_invoice_lines WHERE stock_item_id=? ORDER BY id DESC LIMIT 1`, id)?.c ?? 0
       return { ...it, total: stockQty(id), byStore, consumed24, lastCount, batches, avgCostKop: Math.round(Number(avgCost)) || Number(lastCost) }
     })
-    return c.json({ stores, items, generatedAt: now() })
+    // Признаки того, что учёт склада вообще запущен: без приходов нулевые остатки —
+    // это не «пропажа», а отсутствие документов (аудит 14.11.2026).
+    const suppliers = Number(one<{ n: number }>(`SELECT COUNT(*) AS n FROM suppliers`)?.n) || 0
+    const postedInvoices =
+      Number(one<{ n: number }>(`SELECT COUNT(*) AS n FROM purchase_invoices WHERE status='posted'`)?.n) || 0
+    const draftInvoices =
+      Number(one<{ n: number }>(`SELECT COUNT(*) AS n FROM purchase_invoices WHERE status='draft'`)?.n) || 0
+    return c.json({
+      stores,
+      items,
+      generatedAt: now(),
+      accounting: { suppliers, postedInvoices, draftInvoices, started: postedInvoices > 0 },
+    })
   })
 
   /* ═════════ INVENTORY: extra operations (existing routes untouched) ═════════ */
@@ -1033,7 +1045,7 @@ export const adminStudio = new Hono()
 
   /* ═════════ ANALYTICS (computed from loyalty_ops / sales_lines / evotor_docs) ═════════ */
   .get('/analytics/overview', (c) => {
-    const { since, until } = periodRange(c.req.query('period'))
+    const { since, until } = periodRange(c.req.query('period') || '7d')
     const store = c.req.query('storeUuid') || null
     const channel = c.req.query('channel') // 'card' → only ops with card
     const sf = store ? 'AND doc_store = ?' : ''
@@ -1076,7 +1088,7 @@ export const adminStudio = new Hono()
   })
 
   .get('/analytics/heatmap', (c) => {
-    const { since, until } = periodRange(c.req.query('period') || '30d')
+    const { since, until } = periodRange(c.req.query('period') || '7d')
     const hs = c.req.query('storeUuid') || null
     const rows = all<{ at: number }>(`SELECT created_at AS at FROM loyalty_ops WHERE kind='SELL' AND created_at>=? AND created_at<? ${hs ? 'AND doc_store = ?' : ''}`, since, until, ...(hs ? [hs] : []))
     const grid: number[][] = Array.from({ length: 7 }, () => Array(24).fill(0))

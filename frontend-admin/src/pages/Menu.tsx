@@ -13,7 +13,7 @@ export default function Menu() {
   const section = (sp.get('section') ?? 'products') as Section
   return (
     <>
-      <PageHeader title="Меню" subtitle="Товары, группы и добавки. Схемы объёмов, молока и добавок — отдельные разделы слева. Нормы списания — в карточке товара" actions={<HelpLink article="logic-coffee" label="Нормы" />} />
+      <PageHeader title="Каталог и касса" subtitle="Товары, группы и добавки — то, что видит гость и касса. Схемы объёмов, молока и добавок — отдельные разделы слева. Нормы списания — в карточке товара. Печатный лист — раздел «Лист меню (печать)»." actions={<HelpLink article="logic-coffee" label="Нормы" />} />
       <Tabs
         items={[
           { key: 'products', label: 'Товары' },

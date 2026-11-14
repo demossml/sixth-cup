@@ -19,11 +19,23 @@ async function createCard(name: string, priceRub: number) {
     name,
     kind: 'dish',
     outputQty: 1,
+    // Блюдо обязано быть привязано к товару каталога. Цена 0 — чтобы розница
+    // осталась из retailPriceRub и ожидания по фудкосту не менялись.
+    productId: makeProduct(name),
     retailPriceRub: priceRub,
     lines: [{ stockItemId: item, qtyBrutto: 10 }],
   })
   expect(r.status).toBe(200)
   return r.json.card.id as number
+}
+
+/** Товар каталога для привязки карты. */
+function makeProduct(name: string, priceRub = 0): number {
+  const t = Date.now()
+  return Number(
+    db.prepare(`INSERT INTO products(name, price, available, created_at, updated_at) VALUES(?,?,1,?,?)`)
+      .run(`${name} (товар)`, priceRub, t, t).lastInsertRowid,
+  )
 }
 
 beforeEach(() => {

@@ -13,6 +13,12 @@ export type CardListItem = {
   kind: CardKind
   status: 'draft' | 'active' | 'archived'
   productId: number | null
+  /** Товар каталога, к которому привязана карта (аудит 14.11.2026). */
+  productName: string | null
+  /** Цена товара в меню — из неё считается фудкост. */
+  catalogPriceRub: number | null
+  /** Откуда взята цена продажи: каталог, снимок карты или наценка. */
+  retailSource: 'catalog' | 'card' | 'markup'
   outputQty: number
   outputUnit: Unit
   costPerUnitRub: number | null
@@ -57,6 +63,10 @@ export type TechCard = {
   outputQty: number
   outputUnit: Unit
   productId: number | null
+  /** Название и цена товара каталога (источник истины для розницы). */
+  productName?: string | null
+  catalogPriceRub?: number | null
+  retailSource?: 'catalog' | 'card' | 'markup'
   status: 'draft' | 'active' | 'archived'
   writeOffMode: WriteOffMode
   retailPriceRub: number | null
@@ -241,7 +251,7 @@ const qs = (params: Record<string, string | number | undefined>) => {
 
 export const costApi = {
   cards: (params: { q?: string; kind?: string; problems?: boolean } = {}) =>
-    api<{ cards: CardListItem[]; totals: { cards: number; problems: number } }>(
+    api<{ cards: CardListItem[]; totals: { cards: number; problems: number; withoutProduct: number } }>(
       `/cost/tech-cards${qs({ q: params.q, kind: params.kind, problems: params.problems ? 1 : undefined })}`,
     ),
   card: (id: number, versionId?: number) =>

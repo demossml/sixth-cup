@@ -186,7 +186,17 @@ export type SchemeOption = {
   priceOverride?: number | null
   sortOrder?: number
 }
-export type Scheme = { id: number; name: string; copyFromId?: number; items: SchemeItem[]; options?: SchemeOption[] }
+export type Scheme = {
+  id: number
+  name: string
+  copyFromId?: number
+  items: SchemeItem[]
+  options?: SchemeOption[]
+  /** Позиций в схеме: 0 — на кассе группа будет пустой. */
+  itemsCount?: number
+  /** Сколько товаров уже ссылаются на схему. */
+  productCount?: number
+}
 export type EvotorStore = {
   uuid: string
   id?: string | number

@@ -24,6 +24,8 @@ type Detail = {
   referrals: { id: number; nickname: string; cardCode: string | null; createdAt: number; paidTotal: number }[]
   receipts: { id: string; amount: number; dp: number; df: number; dcb: number; ts: number }[]
   hints: string[]
+  /** Ставка кэшбэка за покупки приглашённых, % — ноль в KPI не выглядит поломкой. */
+  cashbackPercent?: number
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -84,7 +86,7 @@ export default function CustomerCard() {
       />
       <div className="mb-3 grid grid-cols-2 gap-3 md:grid-cols-4">
         <KpiTile label="Оплаченных чашек" value={fmtNum(u.paidTotal)} sub={`бесплатных использовано: ${u.freeUsed}`} />
-        <KpiTile label="Кэшбэк, ₽" value={fmtKop(u.cashbackBalance)} />
+        <KpiTile label="Кэшбэк, ₽" value={fmtKop(u.cashbackBalance)} sub={data.cashbackPercent ? `${data.cashbackPercent} % с покупок приглашённых` : 'ставка не задана'} />
         <KpiTile label="Приглашено" value={fmtNum(data.referrals.length)} />
         <KpiTile label="Операций с кассы" value={fmtNum(data.ops.length)} sub="последние 50" />
       </div>

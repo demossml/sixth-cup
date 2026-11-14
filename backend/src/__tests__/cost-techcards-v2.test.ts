@@ -20,6 +20,15 @@ async function createItem(name: string, unit: string, extra: { manualCostKop?: n
   return id
 }
 
+/** Товар каталога для привязки карты (цена 0 — розница берётся из карты). */
+function makeProduct(name: string): number {
+  const t = Date.now()
+  return Number(
+    db.prepare(`INSERT INTO products(name, price, available, created_at, updated_at) VALUES(?,?,1,?,?)`)
+      .run(`${name} (товар)`, 0, t, t).lastInsertRowid,
+  )
+}
+
 /** Накладная + проведение — единственный легальный источник цены. */
 async function receive(itemId: number, qty: number, unitCostKop: number) {
   const supplier = await admin('POST', '/suppliers', { name: `Поставщик ${Date.now()}-${Math.random()}` })
@@ -63,6 +72,7 @@ describe('F3: техкарты — создание, версии, публик�
       name: 'Капучино QA',
       kind: 'dish',
       outputQty: 1,
+      productId: makeProduct('Капучино QA'),
       retailPriceRub: 250,
       lines: [
         { stockItemId: bean, qtyBrutto: 18 },
@@ -85,6 +95,7 @@ describe('F3: техкарты — создание, версии, публик�
     const created = await admin('POST', '/cost/tech-cards', {
       name: 'Сироп QA',
       kind: 'modifier',
+      productId: makeProduct('Сироп QA'),
       lines: [{ stockItemId: item, qtyBrutto: 10 }],
     })
     const id = created.json.card.id
@@ -192,8 +203,8 @@ describe('F6: массовые операции', () => {
   it('замена ингредиента с коэффициентом во всех картах', async () => {
     const a = await createItem('Карамель QA', 'g', { manualCostKop: 30 })
     const b = await createItem('Карамель солёная QA', 'g', { manualCostKop: 40 })
-    const c1 = await admin('POST', '/cost/tech-cards', { name: 'Карта 1 QA', lines: [{ stockItemId: a, qtyBrutto: 20 }] })
-    const c2 = await admin('POST', '/cost/tech-cards', { name: 'Карта 2 QA', lines: [{ stockItemId: a, qtyBrutto: 10 }] })
+    const c1 = await admin('POST', '/cost/tech-cards', { name: 'Карта 1 QA', productId: makeProduct('Карта 1 QA'), lines: [{ stockItemId: a, qtyBrutto: 20 }] })
+    const c2 = await admin('POST', '/cost/tech-cards', { name: 'Карта 2 QA', productId: makeProduct('Карта 2 QA'), lines: [{ stockItemId: a, qtyBrutto: 10 }] })
     const res = await admin('POST', '/cost/bulk/replace-ingredient', {
       fromStockItemId: a,
       toStockItemId: b,
@@ -212,6 +223,7 @@ describe('F6: массовые операции', () => {
     const item = await createItem('Картофель QA', 'g', { manualCostKop: 5 })
     const card = await admin('POST', '/cost/tech-cards', {
       name: 'Пюре QA',
+      productId: makeProduct('Пюре QA'),
       lines: [{ stockItemId: item, qtyBrutto: 1200 }],
     })
     const res = await admin('POST', '/cost/bulk/loss-pct', {
@@ -231,6 +243,7 @@ describe('F3: сигналы и сводка', () => {
     const item = await createItem('Без цены QA', 'g')
     const card = await admin('POST', '/cost/tech-cards', {
       name: 'Проблемная QA',
+      productId: makeProduct('Проблемная QA'),
       retailPriceRub: 10,
       lines: [{ stockItemId: item, qtyBrutto: 100 }],
     })
@@ -249,6 +262,7 @@ describe('F3: сигналы и сводка', () => {
     const ok = await createItem('Хорошая цена QA', 'g', { manualCostKop: 10 })
     await admin('POST', '/cost/tech-cards', {
       name: 'Нормальная QA',
+      productId: makeProduct('Нормальная QA'),
       retailPriceRub: 100,
       lines: [{ stockItemId: ok, qtyBrutto: 10 }],
     })
@@ -298,7 +312,7 @@ describe('F10: склейка дублей позиций', () => {
   it('находит группу дублей и предлагает оставить самую используемую', async () => {
     const a = await createItem('Дубль Молоко QA', 'ml', { manualCostKop: 9 })
     const b = await createItem('дубль молоко QA', 'ml', { manualCostKop: 12 })
-    const card = await admin('POST', '/cost/tech-cards', { name: 'Дубль карта QA', lines: [{ stockItemId: b, qtyBrutto: 50 }] })
+    const card = await admin('POST', '/cost/tech-cards', { name: 'Дубль карта QA', productId: makeProduct('Дубль карта QA'), lines: [{ stockItemId: b, qtyBrutto: 50 }] })
     expect(card.status).toBe(200)
 
     const dup = await admin('GET', '/cost/items/duplicates')
@@ -376,6 +390,7 @@ describe('F11: постоянные расходы и флаг учёта', () =
     const item = await createItem('Зерно для расходов QA', 'g', { manualCostKop: 200 })
     const card = await admin('POST', '/cost/tech-cards', {
       name: 'Карта с расходами QA',
+      productId: makeProduct('Карта с расходами QA'),
       retailPriceRub: 500,
       lines: [{ stockItemId: item, qtyBrutto: 10 }],
     })
@@ -391,6 +406,7 @@ describe('F11: постоянные расходы и флаг учёта', () =
     const item = await createItem('Зерно флага QA', 'g', { manualCostKop: 200 })
     const card = await admin('POST', '/cost/tech-cards', {
       name: 'Карта флага QA',
+      productId: makeProduct('Карта флага QA'),
       retailPriceRub: 500,
       lines: [{ stockItemId: item, qtyBrutto: 10 }],
     })
@@ -421,11 +437,13 @@ describe('F11: постоянные расходы и флаг учёта', () =
     const item = await createItem('Зерно выручка QA', 'g', { manualCostKop: 100 })
     const cheap = await admin('POST', '/cost/tech-cards', {
       name: 'Дешёвая QA',
+      productId: makeProduct('Дешёвая QA'),
       retailPriceRub: 100,
       lines: [{ stockItemId: item, qtyBrutto: 10 }],
     })
     const pricey = await admin('POST', '/cost/tech-cards', {
       name: 'Дорогая QA',
+      productId: makeProduct('Дорогая QA'),
       retailPriceRub: 400,
       lines: [{ stockItemId: item, qtyBrutto: 10 }],
     })

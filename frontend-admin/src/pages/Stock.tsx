@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useApi } from '../api/useApi'
 import { api } from '../api/client'
 import {
-  PageHeader, Card, EmptyState, Badge, Button, Input, Select, Field,
+  PageHeader, Card, EmptyState, Badge, Banner, Button, Input, Select, Field,
   ErrorBox, Skeleton, Tabs, useToast, cx, ConfirmDialog,
 } from '../ui/kit'
 import { AlertTriangle, Clock, Plus, RefreshCw } from 'lucide-react'
@@ -17,7 +18,12 @@ type StockItem = {
   minQty: number; expectedQty: number; batchQtyLeft: number; level: 'ok' | 'low' | 'out'
   active: number
 }
-type BalanceResp = { balances: StockItem[]; summary: { total: number; critical: number } }
+type BalanceResp = {
+  balances: StockItem[]
+  summary: { total: number; critical: number }
+  /** Запущен ли учёт: без проведённых приходов нули — это не пропажа (аудит 14.11.2026). */
+  accounting?: { suppliers: number; postedInvoices: number; draftInvoices: number; started: boolean }
+}
 type ExpiryBatch = {
   id: number; itemName: string; unit: string; lotCode: string | null
   qtyLeft: number; expiresAt: number; daysLeft: number; urgency: 'expired' | 'urgent' | 'soon'
@@ -40,6 +46,7 @@ function urgencyBadge(u: string) {
 
 export default function Stock() {
   const toast = useToast()
+  const navigate = useNavigate()
   const [tab, setTab] = useState<'balances' | 'expiry' | 'items' | 'norms' | 'recipes' | 'writeoffs' | 'risk'>('balances')
   const [showForm, setShowForm] = useState(false)
   const [name, setName] = useState('')
@@ -294,6 +301,21 @@ export default function Stock() {
       </ConfirmDialog>
 
       <Tabs items={tabs} value={tab} onChange={setTab} />
+
+      {balances.data?.accounting && !balances.data.accounting.started && (
+        <div className="mb-3">
+          <Banner tone="warn">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="flex-1">
+                Учёт склада не запущен: поставщиков — {balances.data.accounting.suppliers}, проведённых
+                приходов — {balances.data.accounting.postedInvoices}. Нулевые остатки здесь — не «пропажа»,
+                а отсутствие документов: пока нет приходов, списывать и считать нечего.
+              </span>
+              <Button variant="secondary" onClick={() => navigate('/purchases')}>Открыть закупки</Button>
+            </div>
+          </Banner>
+        </div>
+      )}
 
       {tab === 'balances' && (
         <Card pad={false}>

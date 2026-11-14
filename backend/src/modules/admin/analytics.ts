@@ -48,7 +48,9 @@ export const adminAnalytics = new Hono()
   .get('/analytics/series', (c) => {
     ensureStoresSyncColumn()
     const now = Date.now()
-    const { since, until, period } = periodBounds(c.req.query('period'), now)
+    // Дефолт совпадает с вкладкой по умолчанию в админке («7 дней»), чтобы
+    // ряд, обзор и теплокарта не оказывались в разных окнах.
+    const { since, until, period } = periodBounds(c.req.query('period') || '7d', now)
     const store = c.req.query('storeUuid') || c.req.query('store') || undefined
     const grainParam = c.req.query('grain')
     const grain: 'hour' | 'day' =
@@ -160,7 +162,7 @@ export const adminAnalytics = new Hono()
   .get('/analytics/by-store', (c) => {
     ensureStoresSyncColumn()
     const now = Date.now()
-    const { since, until, period } = periodBounds(c.req.query('period'), now)
+    const { since, until, period } = periodBounds(c.req.query('period') || '7d', now)
     const stores = db
       .prepare(
         `SELECT store_uuid AS uuid, name, COALESCE(sync_enabled,0) AS enabled FROM evotor_stores ORDER BY name`,

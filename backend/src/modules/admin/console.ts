@@ -176,6 +176,38 @@ export const adminConsole = new Hono<Env>()
   // ---------- till health ----------
   .get('/evotor/health', (c) => c.json({ now: Date.now(), ...queryStoreHealth() }))
 
+  /**
+   * Список упавших документов Эвотор (read-only).
+   *
+   * На «Сегодня» счётчик «Ошибки» показывал число без расшифровки: владелец видел
+   * «4», но не знал, что именно не обработалось. Отдаём сами документы с
+   * человеческим текстом ошибки (тот же describeEvotorError, что в health).
+   */
+  .get('/evotor/failed-docs', (c) => {
+    const limit = Math.min(200, Math.max(1, Number(c.req.query('limit') || 50)))
+    const store = c.req.query('store') || undefined
+    const rows = db.prepare(`
+      SELECT d.doc_id AS docId, d.store_uuid AS storeUuid, COALESCE(s.name, d.store_uuid) AS storeName,
+             d.type AS type, d.received_at AS at, d.last_error AS rawError
+      FROM evotor_docs d
+      LEFT JOIN evotor_stores s ON s.store_uuid = d.store_uuid
+      WHERE d.status = 'FAILED' ${store ? 'AND d.store_uuid = ?' : ''}
+      ORDER BY d.received_at DESC
+      LIMIT ?`).all(...(store ? [store] : []), limit) as {
+        docId: string; storeUuid: string; storeName: string; type: string; at: number; rawError: string | null
+      }[]
+    return c.json({
+      docs: rows.map((r) => ({
+        docId: r.docId,
+        storeUuid: r.storeUuid,
+        storeName: r.storeName,
+        type: r.type,
+        at: r.at,
+        error: describeEvotorError(r.rawError) ?? 'Ошибка не записана — смотрите «Система → Логи»',
+      })),
+    })
+  })
+
   // ---------- dashboard ----------
   .get('/dashboard', (c) => {
     const now = Date.now()
@@ -402,6 +434,9 @@ export const adminConsole = new Hono<Env>()
     return c.json({
       user, hasPhone: !String(phone).startsWith('guest:'), blocked, preorderBan, invitedBy,
       ops, cashback, vouchers, referrals, receipts, hints,
+      // Ставка нужна, чтобы «Кэшбэк 0» не выглядел поломкой: начисление идёт
+      // только с покупок приглашённых друзей (аудит 14.11.2026).
+      cashbackPercent: config.referralCashbackPercent,
     })
   })
 

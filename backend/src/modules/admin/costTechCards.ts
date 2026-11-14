@@ -78,6 +78,22 @@ function lastInventoryAt(): number | null {
 }
 
 /**
+ * Товар каталога, к которому привязана карта.
+ *
+ * Цена продажи для фудкоста берётся отсюда, а не из снимка карты: в аудите
+ * 14.11.2026 у КАПУЧИНО 250 в карте стояло 250 ₽ при цене товара 190 ₽, и
+ * маржа считалась по цифре, которой в меню нет.
+ */
+function productOf(id: number | null | undefined): { id: number; name: string; priceRub: number } | null {
+  if (!id) return null
+  const row = db.prepare(`SELECT id, name, price FROM products WHERE id=?`).get(id) as
+    | { id: number; name: string; price: number | null }
+    | undefined
+  if (!row) return null
+  return { id: row.id, name: row.name, priceRub: Number(row.price) || 0 }
+}
+
+/**
  * Средневзвешенная цена всех активных позиций: одно окно на весь справочник.
  * Возвращает карту «позиция → копейки за её базовую единицу».
  */
@@ -282,7 +298,17 @@ export function serializeCard(id: number, opts: { versionId?: number } = {}) {
   const totals = computeTotals(lines, costs, memo, new Set([id]))
 
   const costPerUnit = costPerUnitKop(totals.costKop, card.outputQty)
-  const retail = card.retailPriceKop ?? retailFromMarkup(costPerUnit, card.markupPct)
+  // Цена продажи: сначала товар каталога (источник истины), потом снимок карты,
+  // и только затем расчёт от наценки. Так фудкост и маржа не расходятся с меню.
+  const product = productOf(card.productId)
+  const catalogRetail = product && product.priceRub > 0 ? product.priceRub : null
+  // Дальше `retail` везде в копейках — как retailPriceKop и marginKop.
+  const retail =
+    catalogRetail != null
+      ? catalogRetail * 100
+      : card.retailPriceKop ?? retailFromMarkup(costPerUnit, card.markupPct)
+  const retailSource: 'catalog' | 'card' | 'markup' =
+    catalogRetail != null ? 'catalog' : card.retailPriceKop != null ? 'card' : 'markup'
   const fc = foodCostPct(costPerUnit, retail)
   // Полная себестоимость = сырьё + доля постоянных расходов (если владелец включил флаг).
   const overheadPerUnit = overheadForCard(overhead, card.id, retail)
@@ -296,6 +322,12 @@ export function serializeCard(id: number, opts: { versionId?: number } = {}) {
     outputQty: card.outputQty,
     outputUnit: card.outputUnit,
     productId: card.productId,
+    /** Название товара каталога: без него карта в списке выглядит «ничьей». */
+    productName: product?.name ?? null,
+    /** Цена товара из меню — именно она идёт в фудкост и маржу. */
+    catalogPriceRub: catalogRetail,
+    /** Откуда взята цена продажи: каталог, снимок карты или наценка. */
+    retailSource,
     status: card.status,
     writeOffMode: card.writeOffMode,
     retailPriceRub: rub(card.retailPriceKop),
@@ -325,12 +357,19 @@ export function serializeCard(id: number, opts: { versionId?: number } = {}) {
       perUnitRub: rub(b.perUnitKop),
     })),
     missingPrices: totals.missing,
-    insights: cardInsights({
-      costKop: costPerUnit,
-      retailKop: retail,
-      missingPrices: totals.missing,
-      foodCostPct: fc,
-    }),
+    insights: [
+      // Блюдо без товара каталога — главная дыра аудита 14.11.2026: карта считается,
+      // но ни к кассе, ни к цене меню не привязана. Заготовка может быть без товара.
+      ...(card.kind !== 'semi' && !card.productId
+        ? [{ code: 'no_product', text: 'не привязана к товару каталога', tone: 'warn' as const }]
+        : []),
+      ...cardInsights({
+        costKop: costPerUnit,
+        retailKop: retail,
+        missingPrices: totals.missing,
+        foodCostPct: fc,
+      }),
+    ],
     lines: lines.map((l, i) => {
       const input = totals.inputs[i]!
       const resolved = cardTotals([input]).lines[0]!
@@ -387,6 +426,18 @@ const cardZ = z.object({
   markupPct: z.number().min(0).max(10000).optional(),
   lines: z.array(lineZ).optional(),
 })
+
+/**
+ * Блюдо и модификатор обязаны ссылаться на товар каталога: иначе маржа считается
+ * по цене-снимку и не связана ни с кассой, ни с меню (аудит 14.11.2026).
+ * Заготовка (`semi`) живёт только внутри себестоимости и товара не требует.
+ * Импорт техкарт (`/cost/import/*`) пишет в БД напрямую и сюда не попадает.
+ */
+function requireProductFor(kind: string, productId: number | null | undefined) {
+  if (kind === 'semi') return
+  if (!productId) throw bad('Выберите товар каталога: без него техкарта не связана с меню и кассой', 400)
+  if (!productOf(productId)) throw bad(`Товар #${productId} не найден в каталоге`, 400)
+}
 
 function replaceLines(versionId: number, lines: z.infer<typeof lineZ>[]) {
   db.prepare(`DELETE FROM tech_card_lines WHERE version_id=?`).run(versionId)
@@ -466,7 +517,79 @@ export function projectCard(cardId: number): { norms: number; costKop: number | 
 
 /* ─────────────────────────── маршруты ─────────────────────────── */
 
+/**
+ * Нормализация имени для сопоставления «КАПУЧИНО 250» ↔ «Капучино 250 мл».
+ * Регистр, ё/е, пунктуация, «мл»/«г»/«шт» и лишние пробелы не должны мешать.
+ */
+function normalizeName(raw: string): string {
+  // `\b` в JS считается по ASCII, поэтому единицы выкидываем как токены, а не регэкспом.
+  const units = new Set(['мл', 'л', 'г', 'гр', 'кг', 'шт'])
+  return raw
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[^a-zа-я0-9]+/gi, ' ')
+    .split(' ')
+    .filter((t) => t && !units.has(t))
+    .join(' ')
+}
+
+/**
+ * Best-effort связка «карта → товар каталога» по имени.
+ *
+ * Нужна, потому что на проде все 12 карт были без productId. Связываем только
+ * однозначные совпадения; спорные (0 или 2+ товара) остаются человеку — гадать
+ * за владельца нельзя, иначе маржа поедет по чужому товару.
+ */
+function planProductLinks(): {
+  matched: { cardId: number; cardName: string; productId: number; productName: string }[]
+  unresolved: { cardId: number; cardName: string; reason: string }[]
+} {
+  const cards = db
+    .prepare(`SELECT id, name, kind, product_id AS productId FROM tech_cards WHERE product_id IS NULL`)
+    .all() as { id: number; name: string; kind: string; productId: number | null }[]
+  const products = db.prepare(`SELECT id, name FROM products`).all() as { id: number; name: string }[]
+  const byName = new Map<string, { id: number; name: string }[]>()
+  for (const p of products) {
+    const key = normalizeName(p.name)
+    if (!key) continue
+    const list = byName.get(key) ?? []
+    list.push(p)
+    byName.set(key, list)
+  }
+  const matched: { cardId: number; cardName: string; productId: number; productName: string }[] = []
+  const unresolved: { cardId: number; cardName: string; reason: string }[] = []
+  for (const card of cards) {
+    if (card.kind === 'semi') continue // заготовке товар не нужен
+    const key = normalizeName(card.name)
+    const hits = key ? byName.get(key) ?? [] : []
+    if (hits.length === 1) {
+      matched.push({ cardId: card.id, cardName: card.name, productId: hits[0]!.id, productName: hits[0]!.name })
+    } else {
+      unresolved.push({
+        cardId: card.id,
+        cardName: card.name,
+        reason: hits.length === 0 ? 'нет товара с таким названием' : `подходят ${hits.length} товара`,
+      })
+    }
+  }
+  return { matched, unresolved }
+}
+
 export const adminCostTechCards = new Hono()
+
+  /** Предпросмотр/применение связки карт с товарами по названию. */
+  .post('/cost/tech-cards/link-products', (c) => {
+    requireWrite(c)
+    const dry = c.req.query('dry') !== '0'
+    const plan = planProductLinks()
+    if (!dry && plan.matched.length) {
+      const upd = db.prepare(`UPDATE tech_cards SET product_id=?, updated_at=? WHERE id=?`)
+      db.transaction(() => {
+        for (const m of plan.matched) upd.run(m.productId, now(), m.cardId)
+      })()
+    }
+    return c.json({ applied: !dry ? plan.matched.length : 0, ...plan })
+  })
 
   .get('/cost/tech-cards', (c) => {
     const q = (c.req.query('q') || '').trim().toLowerCase()
@@ -491,6 +614,9 @@ export const adminCostTechCards = new Hono()
         kind: c!.kind,
         status: c!.status,
         productId: c!.productId,
+        productName: c!.productName,
+        catalogPriceRub: c!.catalogPriceRub,
+        retailSource: c!.retailSource,
         outputQty: c!.outputQty,
         outputUnit: c!.outputUnit,
         costPerUnitRub: c!.costPerUnitRub,
@@ -507,12 +633,13 @@ export const adminCostTechCards = new Hono()
       totals: {
         cards: filtered.length,
         problems: cards.filter((c) => c!.insights.length > 0).length,
+        /** Сколько блюд и модификаторов не привязано к товару каталога — видно в шапке. */
+        withoutProduct: cards.filter((c) => c!.kind !== 'semi' && !c!.productId).length,
       },
     })
   })
 
-  .get('/cost/tech-cards/:id', (c) => {
-    const id = Number(c.req.param('id'))
+  .get('/cost/tech-cards/:id', (c) => {    const id = Number(c.req.param('id'))
     const versionId = c.req.query('versionId') ? Number(c.req.query('versionId')) : undefined
     const card = serializeCard(id, { versionId })
     if (!card) throw bad('Техкарта не найдена', 404)
@@ -522,6 +649,7 @@ export const adminCostTechCards = new Hono()
   .post('/cost/tech-cards', zValidator('json', cardZ), (c) => {
     requireWrite(c)
     const p = c.req.valid('json')
+    requireProductFor(p.kind ?? 'dish', p.productId)
     const t = now()
     const id = db.transaction(() => {
       const info = db
@@ -560,6 +688,11 @@ export const adminCostTechCards = new Hono()
     const cur = cardRow(id)
     if (!cur) throw bad('Техкарта не найдена', 404)
     const p = c.req.valid('json')
+    // Правка без привязки к товару не проходит — иначе карта снова «ничья».
+    requireProductFor(
+      p.kind ?? cur.kind,
+      p.productId !== undefined ? p.productId : cur.productId,
+    )
     const t = now()
     db.transaction(() => {
       db.prepare(

@@ -104,11 +104,11 @@ export default function MenuLayouts() {
   return (
     <>
       <PageHeader
-        title="Макет меню"
-        subtitle="Соберите лист для гостя или типографии из товаров каталога — без вёрстки в Illustrator."
+        title="Лист меню (печать)"
+        subtitle="Печатный лист для гостя или типографии из товаров каталога. Это не касса: цены и фото подтягиваются из «Каталог и касса», правки здесь их не меняют."
         actions={
           <Button icon={<Plus size={16} />} onClick={() => { setTitle(''); setCreating(true) }}>
-            Новый макет
+            Новый лист
           </Button>
         }
       />
