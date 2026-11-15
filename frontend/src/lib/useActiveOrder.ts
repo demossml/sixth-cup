@@ -62,6 +62,8 @@ export function useActiveOrder(): ActiveOrder {
 
     const timer = setInterval(() => {
       if (document.hidden) return
+      // Офлайн: заказ не изменится, а каждый запрос — ошибка в консоли (ERR_NAME_NOT_RESOLVED).
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return
       void refresh()
     }, POLL_MS)
 

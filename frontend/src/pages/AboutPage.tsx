@@ -4,6 +4,13 @@ import { ru } from '../copy/ru'
 import { vibrationEnabled, setVibrationEnabled } from '../lib/haptics'
 import { ArrowLeft, Smartphone } from '../lib/icons'
 
+/** Вшивается Vite (`define` в vite.config.ts): без него экран не мог показать версию. */
+declare const __APP_VERSION__: string
+declare const __APP_BUILD__: string
+
+const version = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : ''
+const build = typeof __APP_BUILD__ === 'string' ? __APP_BUILD__ : ''
+
 export default function AboutPage() {
   const [vib, setVib] = useState(() => vibrationEnabled())
   return (
@@ -17,6 +24,11 @@ export default function AboutPage() {
           <img src="/logo-mark.png" alt="" width={64} height={64} className="w-16 h-16 rounded-2xl mx-auto bg-white ring-1 ring-black/5" />
           <p className="font-display text-[18px] font-semibold mt-3">6<span className="brand-dot" aria-hidden /><span className="sr-only">.</span>7 Coffee</p>
           <p className="text-[13px] text-ink-secondary mt-1">Хороший кофе ближе, чем ты думаешь</p>
+          {version ? (
+            <p className="text-[12px] leading-4 text-ink-tertiary mt-2 num">
+              Версия {version}{build ? ` · сборка ${build}` : ''}
+            </p>
+          ) : null}
         </div>
         <div className="bg-white border border-line rounded-2xl shadow-card overflow-hidden">
           <button type="button" className="flex items-center gap-3 px-3.5 py-3 min-h-14 w-full text-left active:bg-brand-tint/60"

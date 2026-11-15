@@ -3,6 +3,7 @@ import { db } from '../../db'
 import { requireAuth, type AuthEnv } from '../../middleware/auth'
 import { buildCardProof, ensureCard } from './proof'
 import { freeEarned } from './rules'
+import { activeVouchers } from '../vouchers/service'
 import { config } from '../../config'
 
 function hitCardRate(userId: number): boolean {
@@ -25,6 +26,9 @@ export function stateView(userId: number) {
     cupsTowardFree: card.paid_total % config.cupsForFree,
     freeAvailable: Math.max(0, freeEarned(card.paid_total) - card.free_used),
     cupsForFree: config.cupsForFree,
+    // Гость видит свои купоны на главной: без этого поля блок купонов в PWA
+    // не мог появиться никогда (аудит PWA 15.11.2026).
+    vouchers: activeVouchers(userId),
     ...friendsView(userId),
   }
 }
@@ -55,6 +59,7 @@ function cardView(userId: number) {
     cupsTowardFree: card.paid_total % config.cupsForFree,
     freeAvailable: Math.max(0, earned - card.free_used),
     cupsForFree: config.cupsForFree,
+    vouchers: activeVouchers(userId),
     ...friendsView(userId),
   }
 }

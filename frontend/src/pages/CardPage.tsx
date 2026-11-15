@@ -203,6 +203,14 @@ export default function CardPage() {
             {progressPhrase({ n: N, marks, freeAvailable: me?.freeAvailable ?? 0 })}
           </p>
 
+          {/* Счётчик марок виден всегда, в том числе «0 из 5»: при нуле полоса марок
+              схлопнута, и без этой строки гость не понимал, сколько уже собрано (аудит F-03). */}
+          {!hasGift ? (
+            <p className="mt-0.5 text-[12px] leading-4 text-white/70 num">
+              {marks} из {N}
+            </p>
+          ) : null}
+
           {/* Полоса марок схлопывается в ноль, пока марок нет: пустых ячеек не
               рисуем, а резервировать под них 40 px — это дырка в шапке. */}
           {marks > 0 || hasGift ? <ProgressStamps n={N} marks={marks} gift={hasGift} /> : null}

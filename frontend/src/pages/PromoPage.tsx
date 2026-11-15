@@ -3,6 +3,8 @@ import { useNavigate, useParams } from 'react-router-dom'
 import QrLayer from '../components/QrLayer'
 import { useApp } from '../lib/app'
 import { isVisibleAt, minutesOf, weekdayIndex, windowLabel } from '../lib/dealWindow'
+import { promoText } from '../lib/promoText'
+import { daysLabel } from '../lib/promoStatus'
 import { ChevronLeft, ChevronRight, QrCode } from '../lib/icons'
 
 /**
@@ -44,12 +46,13 @@ export default function PromoPage() {
   const cardCode = me?.cardCode ?? ''
 
   const firstLine = (s?: string | null) => (s || '').split('\n').map((x) => x.trim()).find(Boolean) || ''
-  const rawTitle = (item?.title || '').trim()
-  const title = rawTitle || firstLine(item?.subtitle) || firstLine(item?.body).slice(0, 60) || 'Акция'
-  const bodyRaw = (item?.body || '').trim()
-  // Если заголовок пришлось взять из описания — не показываем его же ещё раз.
-  const body = bodyRaw && !bodyRaw.startsWith(title) ? bodyRaw : ''
-  const terms = (item?.terms || '').trim()
+  // Текст акции разбираем: заголовок не должен быть обрезанным по букве `body`,
+  // а «Условия • …» — отдельным блоком, а не частью описания.
+  const text = promoText({ title: item?.title, subtitle: item?.subtitle, body: item?.body, terms: item?.terms })
+  const title = text.title
+  const body = text.lead
+  const terms = text.terms
+  const subtitle = (item?.subtitle || '').trim() && text.title !== (item?.subtitle || '').trim() ? item?.subtitle : ''
   const action = item?.tapAction || 'modal'
   const goLabel = action === 'product' && item?.productId
     ? (item.ctaLabel?.trim() || 'Перейти к товару')
@@ -124,8 +127,8 @@ export default function PromoPage() {
 
           <div className="px-4 pt-4">
             <h1 className="font-display font-semibold text-[22px] leading-7 text-ink">{title}</h1>
-            {item.subtitle ? (
-              <p className="mt-1.5 text-[14px] leading-5 text-ink-secondary">{item.subtitle}</p>
+            {subtitle ? (
+              <p className="mt-1.5 text-[14px] leading-5 text-ink-secondary">{subtitle}</p>
             ) : null}
             {body ? (
               <p className="mt-3 text-[15px] leading-[22px] text-ink whitespace-pre-line">{body}</p>
@@ -135,13 +138,23 @@ export default function PromoPage() {
               <p className="text-[11px] leading-4 font-semibold uppercase tracking-[0.08em] text-ink-secondary">
                 Когда действует
               </p>
-              <p className="mt-1 text-[13px] leading-5 text-ink num">{windowLabel({ from: item.timeFrom, to: item.timeTo })}</p>
-              {terms ? (
+              <p className="mt-1 text-[13px] leading-5 text-ink num">
+                {windowLabel({ from: item.timeFrom, to: item.timeTo })}
+                {daysLabel(item.daysMask) ? ` · ${daysLabel(item.daysMask)}` : ''}
+              </p>
+              {terms.length ? (
                 <>
                   <p className="mt-3 text-[11px] leading-4 font-semibold uppercase tracking-[0.08em] text-ink-secondary">
                     Условия
                   </p>
-                  <p className="mt-1 text-[13px] leading-5 text-ink whitespace-pre-line">{terms}</p>
+                  <ul className="mt-1 space-y-1">
+                    {terms.map((t) => (
+                      <li key={t} className="text-[13px] leading-5 text-ink flex gap-1.5">
+                        <span className="text-ink-tertiary" aria-hidden="true">•</span>
+                        <span>{t}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </>
               ) : null}
             </div>

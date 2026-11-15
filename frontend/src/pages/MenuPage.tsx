@@ -7,6 +7,7 @@ import {
   buildMenuItems,
   itemsCountLabel,
   pickPopular,
+  searchItems,
   storeHours,
   type MenuDirectory,
   type MenuItem,
@@ -43,6 +44,9 @@ export default function MenuPage({ catalog = false }: Props) {
   const nav = useNavigate()
   const [catId, setCatId] = useState<number | 'all'>('all')
   const [sort, setSort] = useState<'menu' | 'price'>('menu')
+  // Поиск живёт прямо в меню: гость не должен догадываться, что иконка ведёт на другой экран.
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [query, setQuery] = useState('')
   const [loadError, setLoadError] = useState(false)
   const [waited, setWaited] = useState(false)
   const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine)
@@ -99,6 +103,10 @@ export default function MenuPage({ catalog = false }: Props) {
     // «По цене» — от дешёвого: у позиций с объёмами берём минимальную цену.
     return [...byCat].sort((a, b) => (a.product.priceFrom ?? a.product.price) - (b.product.priceFrom ?? b.product.price))
   }, [items, catId, sort])
+
+  const searching = query.trim().length > 0
+  // Во время поиска ищем по всему меню, а не только в выбранной категории.
+  const results = useMemo(() => (searching ? searchItems(items, query) : []), [items, query, searching])
 
   const selectCategory = useCallback((id: number | 'all') => setCatId(id), [])
 
@@ -162,8 +170,8 @@ export default function MenuPage({ catalog = false }: Props) {
     (heroContent?.productId != null ? items.find((i) => i.product.id === heroContent.productId) : null) ??
     items.find((i) => i.badge === 'seasonal') ??
     null
-  const showHero = !catalog && catId === 'all' && !!heroProduct
-  const showPopular = !catalog && catId === 'all' && popular.length > 0
+  const showHero = !catalog && catId === 'all' && !!heroProduct && !searching
+  const showPopular = !catalog && catId === 'all' && popular.length > 0 && !searching
   const cartCount = cart.reduce((s, l) => s + l.quantity, 0)
   const hours = store ? storeHours(store) : null
 
@@ -179,10 +187,13 @@ export default function MenuPage({ catalog = false }: Props) {
       ) : (
         <MenuHeader
           store={store ?? (stores.length === 1 ? stores[0] : null)}
-          searchOpen={false}
-          query=""
-          onQuery={() => {}}
-          onToggleSearch={() => nav('/search')}
+          searchOpen={searchOpen}
+          query={query}
+          onQuery={setQuery}
+          onToggleSearch={(open) => {
+            setSearchOpen(open)
+            if (!open) setQuery('')
+          }}
           onChangeStore={() => nav('/pick-store')}
         />
       )}
@@ -236,8 +247,10 @@ export default function MenuPage({ catalog = false }: Props) {
         </section>
       )}
 
-      <div className="sticky top-0 z-20 bg-page/95 backdrop-blur-sm px-4 pb-3 pt-3 mt-3">
-        <CategoryChips categories={categories} active={catId} onSelect={selectCategory} />
+      {/* Пока идёт поиск, категории не нужны: они вернут гостя в общий список. */}
+      {!searching && (
+        <div className="sticky top-0 z-20 bg-page/95 backdrop-blur-sm px-4 pb-3 pt-3 mt-3">
+          <CategoryChips categories={categories} active={catId} onSelect={selectCategory} />
         {catalog && (
           <div className="mt-2 flex items-center justify-between gap-3">
             <span className="text-[12px] leading-4 text-ink-secondary num">{itemsCountLabel(visible.length)}</span>
@@ -259,6 +272,7 @@ export default function MenuPage({ catalog = false }: Props) {
           </div>
         )}
       </div>
+      )}
 
       {showPopular && (
         <section aria-labelledby="menu-popular" className="mb-4">
@@ -276,7 +290,29 @@ export default function MenuPage({ catalog = false }: Props) {
         </section>
       )}
 
-      {visible.length > 0 ? (
+      {searching ? (
+        results.length > 0 ? (
+          <div className="mt-3">
+            <h2 className="px-4 mb-2 text-[18px] leading-6 font-semibold text-ink num">
+              Найдено: {results.length}
+            </h2>
+            <div className="grid grid-cols-2 gap-3 px-4">
+              {results.map((it, i) => (
+                <ProductCard key={it.product.id} item={it} onSelect={openItem} eager={i < 2} defer={i >= 6} />
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="px-4 mt-3">
+            <StateBlock
+              title="Ничего не нашлось"
+              body={`По запросу «${query.trim()}» позиций нет. Попробуйте «капучино», «раф» или «сырник».`}
+              actionLabel="Очистить поиск"
+              onAction={() => setQuery('')}
+            />
+          </div>
+        )
+      ) : visible.length > 0 ? (
         <div className={showPopular ? 'mt-4' : 'mt-3'}>
           {showPopular && <h2 className="px-4 mb-2 text-[18px] leading-6 font-semibold text-ink">Всё меню</h2>}
           <div className="grid grid-cols-2 gap-3 px-4">

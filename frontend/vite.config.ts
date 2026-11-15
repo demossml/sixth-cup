@@ -1,8 +1,15 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
+import pkg from './package.json'
 
 export default defineConfig({
+  // Версия и дата сборки вшиваются в бандл: экран «О приложении» обещал версию,
+  // но показывать было нечего (аудит PWA 15.11.2026).
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+    __APP_BUILD__: JSON.stringify(new Date().toISOString().slice(0, 10)),
+  },
   optimizeDeps: { include: ['phaser'] },
   plugins: [
     react(),

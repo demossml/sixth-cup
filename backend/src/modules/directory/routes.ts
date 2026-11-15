@@ -113,6 +113,18 @@ export function publicDirectory(storeUuid?: string | null) {
   )
   products = products.filter((p) => !groupFolderIds.has(Number(p.id)))
 
+  // «От N ₽» должно совпадать с ценами вариантов, которые видит гость.
+  // Раньше брали MIN(product_volume_prices), а у SKU-группы там висят устаревшие цены
+  // схемы объёмов: «Капучино 250 мл» = 190 ₽, но priceFrom = 220 ₽ (аудит PWA 15.11.2026).
+  const groupMinPrice = new Map<number, number>()
+  for (const p of products) {
+    const gid = p.groupId != null ? Number(p.groupId) : null
+    if (gid == null || p.soldOut) continue
+    const price = Number(p.price) || 0
+    const cur = groupMinPrice.get(gid)
+    if (cur == null || price < cur) groupMinPrice.set(gid, price)
+  }
+
   const modifiers = db.prepare(`
     SELECT id, name, price, group_key AS groupKey, sort_order AS sortOrder
     FROM modifiers WHERE available=1 ORDER BY sort_order, id
@@ -244,8 +256,9 @@ export function publicDirectory(storeUuid?: string | null) {
       posterUrl: absUrl(p.posterUrl as string | null),
       /** Есть выбор объёма (схема объёмов или группа SKU) — на карточке пишем «от N ₽». */
       hasVolumes: p.volumeSchemeId != null,
-      /** Минимальная цена объёма: из цен объёмов, иначе базовая цена товара. */
-      priceFrom: p.minVolumePrice != null ? Number(p.minVolumePrice) : Number(p.price) || 0,
+      /** Минимальная цена объёма: минимум по SKU-группе, иначе по схеме объёмов, иначе цена товара. */
+      priceFrom: (p.groupId != null ? groupMinPrice.get(Number(p.groupId)) : undefined) ??
+        (p.minVolumePrice != null ? Number(p.minVolumePrice) : Number(p.price) || 0),
       groupId: p.groupId ?? null,
       variantLabel: p.variantLabel ?? null,
       variantSort: p.variantSort ?? 0,

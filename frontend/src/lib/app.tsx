@@ -114,15 +114,39 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     reload().then(() => sync())
-    const run = () => { void sync() }
-    const onVisible = () => { if (!document.hidden) run() }
-    window.addEventListener('online', run)
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let delay = 60_000
+    const canFetch = () => typeof navigator === 'undefined' || navigator.onLine !== false
+    /**
+     * Фоновое обновление раз в минуту. Аудит PWA 15.11.2026 видел в консоли
+     * `ERR_NAME_NOT_RESOLVED` каждые 60 секунд: опрос шёл даже в офлайне и в скрытой
+     * вкладке, а после неудачи бил с той же частотой. Теперь:
+     *  • офлайн и скрытая вкладка не опрашиваются вовсе;
+     *  • после неудачи пауза удваивается до 8 минут и возвращается к минуте при успехе.
+     */
+    const run = async () => {
+      if (document.hidden || !canFetch()) return
+      try {
+        const r = await sync()
+        delay = r === 'offline' || r === 'error' ? Math.min(8 * 60_000, delay * 2) : 60_000
+      } catch {
+        delay = Math.min(8 * 60_000, delay * 2)
+      }
+    }
+    const tick = () => {
+      timer = setTimeout(async () => {
+        await run()
+        tick()
+      }, delay)
+    }
+    tick()
+    const onVisible = () => { if (!document.hidden) void run() }
+    window.addEventListener('online', onVisible)
     document.addEventListener('visibilitychange', onVisible)
-    const timer = setInterval(run, 60_000)
     return () => {
-      window.removeEventListener('online', run)
+      window.removeEventListener('online', onVisible)
       document.removeEventListener('visibilitychange', onVisible)
-      clearInterval(timer)
+      if (timer) clearTimeout(timer)
     }
   }, [reload, sync])
 
