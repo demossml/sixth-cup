@@ -39,6 +39,7 @@ const cfg = (over: Partial<ProductConfig> = {}): ProductConfig => ({
     ],
   },
   choice: {
+    schemeId: 3,
     title: 'Корица',
     options: [
       { id: 7, label: 'С корицей', isDefault: false },
@@ -164,16 +165,36 @@ describe('строка корзины', () => {
     })
     expect(selectionModifiers(c, sel)).toEqual([
       { groupKey: 'milk', modifierId: '2', name: 'Кокосовое', price: 40 },
-      { groupKey: 'choice', modifierId: '7', name: 'С корицей', price: 0 },
       { groupKey: 'addon', modifierId: '21', name: 'Ваниль', price: 30 },
       { groupKey: 'addon', modifierId: '21', name: 'Ваниль', price: 30 },
     ])
+  })
+
+  it('обязательный выбор уходит в choices, а не в платные модификаторы', () => {
+    const c = cfg()
+    const sel: Selection = { ...initialSelection(c), choiceId: 7 }
+    const line = toCartLine(c, sel, 1)
+    expect(line.choices).toEqual([{ schemeId: 3, optionId: '7' }])
+    expect(selectionModifiers(c, sel).some((m) => m.modifierId === '7')).toBe(false)
+  })
+
+  it('цена строки не зависит от варианта корицы', () => {
+    const c = cfg()
+    const withCinnamon = toCartLine(c, { ...initialSelection(c), choiceId: 7 }, 1)
+    const withoutCinnamon = toCartLine(c, { ...initialSelection(c), choiceId: 8 }, 1)
+    expect(withCinnamon.unitPriceEstimate).toBe(withoutCinnamon.unitPriceEstimate)
   })
 
   it('бесплатное молоко не уходит модификатором', () => {
     const c = cfg()
     const sel = { ...initialSelection(c), milkId: 1 }
     expect(selectionModifiers(c, sel).some((m) => m.groupKey === 'milk')).toBe(false)
+  })
+
+  it('объём не дублируется в названии, если он уже есть в названии товара', () => {
+    const c = cfg({ name: 'Капучино 300 мл' })
+    const line = toCartLine(c, { ...initialSelection(c), volumeId: 'sku:11' }, 1)
+    expect(line.name).toBe('Капучино 300 мл')
   })
 })
 
@@ -199,5 +220,14 @@ describe('restoreSelection — «Изменить» из корзины', () => 
     const line = toCartLine(base, initialSelection(base), 1)
     const broken = { ...line, modifiers: [{ groupKey: 'syrup', modifierId: '1', name: 'X' }] }
     expect(restoreSelection(base, broken)?.addons).toEqual({})
+  })
+
+  it('старая корзина с выбором в modifiers всё равно восстанавливает корицу', () => {
+    const legacy = {
+      ...toCartLine(base, initialSelection(base), 1),
+      choices: undefined,
+      modifiers: [{ groupKey: 'choice', modifierId: '7', name: 'С корицей', price: 0 }],
+    }
+    expect(restoreSelection(base, legacy)?.choiceId).toBe(7)
   })
 })

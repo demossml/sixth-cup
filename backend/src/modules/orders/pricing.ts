@@ -10,6 +10,7 @@
 import type Database from 'better-sqlite3'
 import { buildCatalogToppings, type CatalogTopping } from '../catalog/addonScheme'
 import { getMilkScheme } from '../catalog/milkScheme'
+import { choiceForProduct, ensureChoiceSchemeSchema } from '../catalog/choiceScheme'
 
 /** enough of better-sqlite3 for the price lookups; тестовые обёртки не обязаны быть полным Database. */
 type Db = Database.Database
@@ -47,6 +48,20 @@ export class ModifierError extends Error {
     super(message)
     this.code = code
   }
+}
+
+/** Обязательный выбор без цены: `{ schemeId, optionId }` — единое имя на API и клиенте. */
+export type ChoiceInLike = { schemeId?: number | null; optionId: string | number }
+
+/**
+ * Единый вход для резолвера: обязательный выбор и платные добавки в одном списке.
+ * Выбор всегда идёт с `groupKey: 'choice'`, поэтому его id не может быть принят за сироп.
+ */
+export function modifierInputs(item: { modifiers?: ModifierInLike[]; choices?: ChoiceInLike[] }): ModifierInLike[] {
+  return [
+    ...(item.modifiers ?? []),
+    ...(item.choices ?? []).map((c) => ({ modifierId: c.optionId, groupKey: 'choice' as const })),
+  ]
 }
 
 /**
@@ -88,10 +103,22 @@ function milkSchemeForProduct(db: Db, productId: number): number | null {
   }
 }
 
-/** Все допустимые опции позиции: добавки, молоко (с ценами) — по id опции. */
+function choiceSchemeForProduct(db: Db, productId: number): number | null {
+  try {
+    const row = db.prepare('SELECT choice_scheme_id AS id FROM products WHERE id=?').get(productId) as
+      | { id: number | null }
+      | undefined
+    return row?.id ?? null
+  } catch {
+    return null
+  }
+}
+
+/** Все допустимые опции позиции: добавки, молоко (с ценами), обязательный выбор (без цены). */
 function allowedOptions(db: Db, productId: number): {
   addons: Map<number, CatalogTopping>
   milk: Map<number, { label: string; priceRub: number; productId: number | null }>
+  choices: Map<number, { label: string }>
 } {
   const addons = new Map<number, CatalogTopping>()
   const schemeId = addonSchemeForProduct(db, productId)
@@ -102,13 +129,23 @@ function allowedOptions(db: Db, productId: number): {
   const milk = new Map<number, { label: string; priceRub: number; productId: number | null }>()
   const milkSchemeId = milkSchemeForProduct(db, productId)
   const scheme = milkSchemeId != null ? getMilkScheme(milkSchemeId, db as Database.Database) : null
-  if (scheme && !scheme.active) return { addons, milk }
+  // Обязательный выбор (корица) — отдельная схема без цен. Его id НЕЛЬЗЯ путать с id добавок:
+  // именно эта путаница накручивала 40–50 ₽ за «С корицей» (аудит PWA 15.11.2026).
+  const choices = new Map<number, { label: string }>()
+  try {
+    ensureChoiceSchemeSchema(db as Database.Database)
+    const ch = choiceForProduct(db as Database.Database, choiceSchemeForProduct(db, productId))
+    for (const o of ch?.options ?? []) choices.set(Number(o.id), { label: o.label })
+  } catch {
+    /* старая БД без схем выбора — блока просто нет */
+  }
+  if (scheme && !scheme.active) return { addons, milk, choices }
   for (const v of scheme?.variants ?? []) {
     if (!v.active) continue
     const price = v.isFree ? 0 : productPrice(db, v.productId)
     milk.set(Number(v.id), { label: String(v.label), priceRub: price, productId: v.productId })
   }
-  return { addons, milk }
+  return { addons, milk, choices }
 }
 
 function productPrice(db: Db, productId: number | null): number {
@@ -128,11 +165,28 @@ export function resolveItemModifiers(
   basePrice: number,
   modifiers: ModifierInLike[] = [],
 ): ResolvedItem {
-  const { addons, milk } = allowedOptions(db, skuProductId)
+  const { addons, milk, choices } = allowedOptions(db, skuProductId)
   const out: ResolvedModifier[] = []
   const warnings: string[] = []
   const counts = new Map<string, number>()
   let unitPrice = Number(basePrice) || 0
+  let choiceTaken = false
+
+  const pushChoice = (id: string) => {
+    const c = choices.get(Number(id))
+    if (!c) return false
+    if (choiceTaken) return true // второй вариант одной схемы игнорируем, цену он не меняет
+    choiceTaken = true
+    out.push({
+      groupKey: 'choice',
+      optionId: id,
+      name: c.label,
+      priceRub: 0,
+      productId: null,
+      zeroOption: true,
+    })
+    return true
+  }
 
   for (const m of modifiers) {
     const id = String(m.modifierId ?? '')
@@ -154,8 +208,18 @@ export function resolveItemModifiers(
       continue
     }
 
+    // Обязательный выбор без цены (корица): цена не меняется, даже если его id совпадает с id сиропа.
+    if (group === 'choice') {
+      if (!pushChoice(id)) throw new ModifierError('choice_not_allowed', `Вариант выбора недоступен: ${id}`)
+      continue
+    }
+
     const t = addons.get(Number(id))
-    if (!t) throw new ModifierError('modifier_not_allowed', `Добавка недоступна для этой позиции: ${id}`)
+    if (!t) {
+      // Совместимость: старый клиент шлёт выбор без groupKey — не тарифицируем его как сироп.
+      if (pushChoice(id)) continue
+      throw new ModifierError('modifier_not_allowed', `Добавка недоступна для этой позиции: ${id}`)
+    }
     const seen = (counts.get(id) ?? 0) + 1
     if (seen > Math.max(1, Number(t.maxCount) || 1)) {
       throw new ModifierError('modifier_limit', `«${t.name}» можно добавить не больше ${t.maxCount} раз`)

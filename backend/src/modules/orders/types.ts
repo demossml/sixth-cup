@@ -26,6 +26,8 @@ export type ItemIn = {
   quantity: number
   volumeId?: string | null
   modifiers?: ModifierIn[]
+  /** Обязательный выбор без цены (корица): отдельно от платных добавок. */
+  choices?: Array<{ schemeId?: number | null; optionId: string | number }>
 }
 
 export type CreateOrderBody = {

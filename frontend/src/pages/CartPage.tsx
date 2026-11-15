@@ -6,6 +6,7 @@ import { formatPrice, hoursLabel, storeHours, type MenuDirectory } from '../lib/
 import {
   clearCart,
   createOrder,
+  lineChoices,
   loadCart,
   saveCart,
   saveOrderRef,
@@ -69,7 +70,9 @@ export default function CartPage() {
           quantity: l.quantity,
           volumeId: l.volumeId ?? null,
           // Молоко и платные добавки влияют на сумму — считаем их на сервере, а не на клиенте.
-          modifiers: (l.modifiers ?? []).map((m) => ({ modifierId: String(m.modifierId) })),
+          modifiers: (l.modifiers ?? []).filter((m) => m.groupKey !== 'choice').map((m) => ({ modifierId: String(m.modifierId) })),
+          // Обязательный выбор (корица) едет отдельно: он не должен менять сумму.
+          choices: lineChoices(l),
         })),
         benefit,
       ).then((r) => {
@@ -110,10 +113,13 @@ export default function CartPage() {
         quantity: l.quantity,
         volumeId: l.volumeId,
         // Только выбор: цену и название добавки считает сервер — клиентская цена не истина.
-        modifiers: l.modifiers.map((m) => ({
-          groupKey: m.groupKey,
-          modifierId: m.modifierId,
-        })),
+        modifiers: l.modifiers
+          .filter((m) => m.groupKey !== 'choice')
+          .map((m) => ({
+            groupKey: m.groupKey,
+            modifierId: m.modifierId,
+          })),
+        choices: lineChoices(l),
       })),
       quoteToken: quote?.quoteToken ?? null,
     })

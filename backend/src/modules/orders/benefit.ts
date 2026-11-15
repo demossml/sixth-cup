@@ -15,7 +15,7 @@ import type Database from 'better-sqlite3'
 import { activeVouchers, todayDay } from '../vouchers/service'
 import { freeEarned } from '../loyalty/rules'
 import { config } from '../../config'
-import { ModifierError, resolveItemModifiers } from './pricing'
+import { ModifierError, modifierInputs, resolveItemModifiers } from './pricing'
 
 type Db = {
   prepare: (sql: string) => {
@@ -78,6 +78,8 @@ export type QuoteItemIn = {
   volumeId?: string | null
   /** Молоко/сиропы/топпинги: id опции схемы, как в `/api/directory/config`. */
   modifiers?: Array<{ modifierId: string | number; groupKey?: string | null }>
+  /** Обязательный выбор без цены: отдельно от платных добавок. */
+  choices?: Array<{ schemeId?: number | null; optionId: string | number }>
 }
 
 /**
@@ -98,7 +100,10 @@ function priceItems(db: Db, items: QuoteItemIn[]): QuoteItem[] {
         db as never,
         Number(p.id),
         Number(p.price) || 0,
-        (it.modifiers ?? []).map((m) => ({ modifierId: m.modifierId, groupKey: m.groupKey ?? null })),
+        modifierInputs({
+          modifiers: (it.modifiers ?? []).map((m) => ({ modifierId: m.modifierId, groupKey: m.groupKey ?? null })),
+          choices: it.choices ?? [],
+        }),
       ).unitPrice
     } catch (e) {
       // Цена добавки не резолвится (чужая схема) — это ошибка клиента, а не «повезло».

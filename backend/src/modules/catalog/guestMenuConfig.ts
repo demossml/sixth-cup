@@ -72,6 +72,8 @@ export type GuestAddonGroup = {
 }
 
 export type GuestChoice = {
+  /** id схемы выбора: клиент шлёт его в `choices`, чтобы сервер не угадывал схему по id опции. */
+  schemeId: number | null
   title: string
   options: { id: number; label: string; isDefault: boolean }[]
 }
@@ -301,6 +303,7 @@ export function guestMenuConfig(db: Database.Database, productId: number): Guest
     choice:
       choice && choice.options.length >= 2
         ? {
+            schemeId: p.choice_scheme_id != null ? Number(p.choice_scheme_id) : null,
             title: choice.title || 'Выберите вариант',
             options: choice.options.map((o) => ({ id: Number(o.id), label: o.label, isDefault: !!o.isDefault })),
           }

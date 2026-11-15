@@ -5,7 +5,7 @@
  * Всё, что здесь есть, приходит из админки: объёмы (схема объёмов или SKU-группа),
  * молоко (схема молока), обязательный выбор без цены и добавки (схема добавок).
  */
-import type { CartModifier, CartLine } from './preorderApi'
+import type { CartChoice, CartModifier, CartLine } from './preorderApi'
 
 /** Тот же базовый URL, что у остальных запросов PWA (см. `preorderApi`). */
 const base = () => (import.meta as { env?: { VITE_API_BASE?: string } }).env?.VITE_API_BASE || ''
@@ -56,7 +56,8 @@ export type ProductConfig = {
   carbsG: number | null
   volumes: VolumeOption[]
   milk: { required: boolean; options: MilkOption[] } | null
-  choice: { title: string; options: ChoiceOption[] } | null
+  /** Обязательный выбор без цены (корица). `schemeId` приходит с сервера для канонического `choices`. */
+  choice: { schemeId?: number | null; title: string; options: ChoiceOption[] } | null
   addons: AddonGroup[] | null
 }
 
@@ -172,15 +173,14 @@ export function selectionText(cfg: ProductConfig, sel: Selection): string {
   return parts.join(' · ')
 }
 
-/** Модификаторы для заказа: молоко, обязательный выбор и добавки отдельными строками. */
+/** Модификаторы для заказа: только молоко и платные добавки. Выбор — в `selectionChoices`. */
 export function selectionModifiers(cfg: ProductConfig, sel: Selection): CartModifier[] {
   const out: CartModifier[] = []
   const milk = selectedMilk(cfg, sel)
   if (milk && milk.priceRub > 0) {
     out.push({ groupKey: 'milk', modifierId: String(milk.id), name: milk.label, price: milk.priceRub })
   }
-  const choice = cfg.choice?.options.find((o) => o.id === sel.choiceId)
-  if (choice) out.push({ groupKey: 'choice', modifierId: String(choice.id), name: choice.label, price: 0 })
+  // ВАЖНО: обязательный выбор НЕ едет в modifiers — его id совпадает с id сиропов и его тарифицировало.
   for (const [id, qty] of Object.entries(sel.addons)) {
     const option = findAddon(cfg, Number(id))
     if (!option || option.zeroOption || qty <= 0) continue
@@ -189,6 +189,13 @@ export function selectionModifiers(cfg: ProductConfig, sel: Selection): CartModi
     }
   }
   return out
+}
+
+/** Обязательный выбор отдельным полем: `{ schemeId, optionId }`, цена всегда 0. */
+export function selectionChoices(cfg: ProductConfig, sel: Selection): CartChoice[] {
+  const choice = cfg.choice?.options.find((o) => o.id === sel.choiceId)
+  if (!choice) return []
+  return [{ schemeId: cfg.choice?.schemeId ?? null, optionId: String(choice.id) }]
 }
 
 /** Ключ строки: одинаковый товар с разной конфигурацией не схлопывается. */
@@ -201,18 +208,28 @@ export function selectionKey(cfg: ProductConfig, sel: Selection): string {
   return [cfg.productId, sel.volumeId, sel.milkId ?? '-', sel.choiceId ?? '-', addons].join('|')
 }
 
+/** Заголовок строки: объём добавляется только если его нет в названии (иначе «Капучино 250 мл 250 мл»). */
+export function lineTitle(name: string, volumeLabel?: string | null): string {
+  const base = String(name ?? '').trim()
+  const label = String(volumeLabel ?? '').trim()
+  if (!label) return base
+  if (!base) return label
+  return base.toLowerCase().includes(label.toLowerCase()) ? base : `${base} ${label}`
+}
+
 /** Строка корзины из карточки товара. */
 export function toCartLine(cfg: ProductConfig, sel: Selection, quantity = 1): CartLine {
   const volume = selectedVolume(cfg, sel)
   return {
     key: selectionKey(cfg, sel),
     productId: String(cfg.productId),
-    name: volume?.label ? `${cfg.name} ${volume.label}`.trim() : cfg.name,
+    name: lineTitle(cfg.name, volume?.label),
     quantity,
     volumeId: volume?.skuProductId != null ? String(volume.skuProductId) : undefined,
     volumeLabel: volume?.label || undefined,
     unitPriceEstimate: selectionPrice(cfg, sel),
     modifiers: selectionModifiers(cfg, sel),
+    choices: selectionChoices(cfg, sel),
     configText: selectionText(cfg, sel),
   }
 }
@@ -258,7 +275,13 @@ export type QuoteResult = QuoteResponse | { ok: false; error: string; message?: 
 /** Серверный расчёт корзины. `error` — человеческий текст или код (`benefit_stale` и т.п.). */
 export async function fetchQuote(
   storeId: number,
-  items: Array<{ productId: string; quantity: number; volumeId?: string | null; modifiers?: { modifierId: string }[] }>,
+  items: Array<{
+    productId: string
+    quantity: number
+    volumeId?: string | null
+    modifiers?: { modifierId: string }[]
+    choices?: CartChoice[]
+  }>,
   benefit: BenefitChoice,
 ): Promise<QuoteResult> {
   try {
@@ -301,7 +324,8 @@ export function restoreSelection(cfg: ProductConfig, line: CartLine): Selection 
     null
   const mods = line.modifiers ?? []
   const milkId = mods.find((m) => m.groupKey === 'milk')?.modifierId
-  const choiceId = mods.find((m) => m.groupKey === 'choice')?.modifierId
+  // Новые строки: выбор в `choices`; старые корзины в localStorage — в modifiers с groupKey 'choice'.
+  const choiceId = line.choices?.[0]?.optionId ?? mods.find((m) => m.groupKey === 'choice')?.modifierId
   const addons: Record<number, number> = {}
   for (const m of mods) {
     if (m.groupKey !== 'addon') continue

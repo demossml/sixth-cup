@@ -3,7 +3,7 @@ import { getPreorderSettings } from '../../lib/preorderSettings'
 import { parseBenefit } from './benefit'
 import { notifyOrderStatus } from '../push/service'
 import type { CreateOrderBody, ItemOut, ModifierOut, OrderOut, PreorderStatus } from './types'
-import { resolveItemModifiers } from './pricing'
+import { modifierInputs, resolveItemModifiers } from './pricing'
 import { ACTIVE_STATUSES, ALLOWED_TRANSITIONS } from './types'
 
 type Db = {
@@ -282,7 +282,7 @@ function resolveLine(
   const skuProductId = Number(p.id)
   // Цена и состав — серверные: клиент присылает только выбор опций (цена 0 в запросе ничего не занижает).
   // Один резолвер с quote: иначе корзина и заказ расходятся по сумме (B-07).
-  const resolved = resolveItemModifiers(db as never, skuProductId, Number(p.price) || 0, item.modifiers ?? [])
+  const resolved = resolveItemModifiers(db as never, skuProductId, Number(p.price) || 0, modifierInputs(item))
   const mods: ModifierOut[] = resolved.modifiers.map((m) => {
     const uuid = m.zeroOption || m.priceRub <= 0 ? null : evotorUuidForProduct(db, m.productId, storeUuids)
     return {

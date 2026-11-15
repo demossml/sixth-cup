@@ -1,6 +1,20 @@
 /** Guest pre-order API client for PWA */
 
+/** Обязательный выбор без цены (корица): отдельное поле, не модификатор. */
+export type CartChoice = { schemeId?: number | null; optionId: string }
+
 export type CartModifier = { groupKey: string; modifierId: string; name?: string; price?: number }
+
+/**
+ * Выбор строки для API. Новые корзины хранят его в `choices`, старые (localStorage) —
+ * в `modifiers` с `groupKey: 'choice'`; вторые читаем как выбор, а не как добавку.
+ */
+export function lineChoices(line: { modifiers?: CartModifier[]; choices?: CartChoice[] }): CartChoice[] {
+  if (line.choices?.length) return line.choices
+  return (line.modifiers ?? [])
+    .filter((m) => m.groupKey === 'choice')
+    .map((m) => ({ optionId: String(m.modifierId) }))
+}
 export type CartLine = {
   key: string
   productId: string
@@ -10,6 +24,8 @@ export type CartLine = {
   volumeLabel?: string
   unitPriceEstimate: number
   modifiers: CartModifier[]
+  /** Обязательный выбор без цены; для старых корзин в localStorage может быть undefined. */
+  choices?: CartChoice[]
   configText: string
 }
 
@@ -81,10 +97,12 @@ export async function createPreorder(body: {
     quantity: number
     volumeId?: string
     /**
-     * Модификаторы строки: молоко, обязательный выбор, добавки.
-     * Цену и название считает сервер по каталогу; поля `name`/`priceRub` — справочные.
+     * Модификаторы строки: молоко и добавки (с ценами каталога).
+     * Обязательный выбор сюда НЕ входит — он в `choices` и всегда стоит 0 ₽.
      */
     modifiers?: Array<{ groupKey: string; modifierId: string; name?: string | null; priceRub?: number | null; productId?: number | null }>
+    /** Обязательный выбор без цены: `{ schemeId, optionId }`. */
+    choices?: CartChoice[]
   }>
 }): Promise<{ ok: true; order: OrderOut; qrPayload: string } | { ok: false; error: string; message: string }> {
   const { res, data } = await jsonFetch('/api/orders', { method: 'POST', body: JSON.stringify(body) })
