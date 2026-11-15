@@ -10,6 +10,9 @@ import { isVisibleAt, isVisibleOnDay, minutesOf, weekdayIndex } from './dealWind
 export type PromoWhen = {
   from?: number | null
   to?: number | null
+  /** Имена полей как в `/api/directory`: там окно называется `timeFrom`/`timeTo`. */
+  timeFrom?: number | null
+  timeTo?: number | null
   daysMask?: number | null
   /** Unix-время (сек) начала/конца периода публикации — даты, а не часы. */
   startsAt?: number | null
@@ -24,6 +27,12 @@ export type PromoStatus = {
   /** Начнётся позже (время или дата) — рисуем приглушённо, но не «закончилась». */
   upcoming: boolean
 }
+
+/** Окно может прийти как `from/to` или как `timeFrom/timeTo` — принимаем оба. */
+const windowOf = (w: PromoWhen) => ({
+  from: w.from ?? w.timeFrom ?? null,
+  to: w.to ?? w.timeTo ?? null,
+})
 
 const DAY_NAMES = ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс']
 
@@ -45,6 +54,7 @@ export function promoStatus(when: PromoWhen, now: Date = new Date()): PromoStatu
   const sec = Math.floor(now.getTime() / 1000)
   const minutes = minutesOf(now)
   const weekday = weekdayIndex(now)
+  const { from, to } = windowOf(when)
 
   if (when.startsAt != null && sec < Number(when.startsAt)) {
     return { visible: false, label: `Начнётся ${ddmm(Number(when.startsAt))}`, upcoming: true }
@@ -56,12 +66,10 @@ export function promoStatus(when: PromoWhen, now: Date = new Date()): PromoStatu
     const days = daysLabel(when.daysMask)
     return { visible: false, label: days === 'выключена' ? 'Не показывается' : `Только ${days}`, upcoming: true }
   }
-  if (isVisibleAt({ from: when.from, to: when.to, daysMask: when.daysMask }, minutes, weekday)) {
+  if (isVisibleAt({ from, to, daysMask: when.daysMask }, minutes, weekday)) {
     return { visible: true, label: 'Сейчас действует', upcoming: false }
   }
 
-  const from = when.from ?? null
-  const to = when.to ?? null
   // Окно ещё не открылось (в т.ч. окно через полночь: сейчас между `to` и `from`).
   if (from != null && minutes < from) {
     return { visible: false, label: `Начнётся в ${hm(from)}`, upcoming: true }

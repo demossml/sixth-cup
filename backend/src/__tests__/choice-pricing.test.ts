@@ -169,6 +169,33 @@ describe('Обязательный выбор не тарифицируется'
     expect(r.body.error).toBe('choice_not_allowed')
   })
 
+  it('коллизия id: опция выбора и сироп с одним id — без groupKey деньги не берём', async () => {
+    // На проде «С корицей» и «Сироп ваниль» получили одинаковый optionId — разные таблицы
+    // опций нумеруются независимо. Воспроизводим ровно это: добавляем в схему добавок
+    // опцию с id, который уже занят вариантом выбора.
+    const colliding = Number(choiceOptions[0].id)
+    const schemeId = Number(
+      (db.prepare('SELECT modifier_scheme_id AS id FROM products WHERE id=?').get(SKU) as { id: number }).id,
+    )
+    db.prepare(
+      `INSERT INTO modifier_scheme_options(id, scheme_id, kind, modifier_id, name, group_key, is_default, required, max_count, sort_order)
+       VALUES(?,?,?,?,?,?,0,0,2,99)`,
+    ).run(colliding, schemeId, 'modifier', VANILLA, 'Ваниль-collide', 'syrup')
+    expect(db.prepare('SELECT id FROM modifier_scheme_options WHERE id=?').get(colliding)).toBeTruthy()
+
+    const free = await quote([
+      { productId: String(SKU), quantity: 1, modifiers: [{ modifierId: String(colliding) }] },
+    ])
+    expect(free.status).toBe(200)
+    expect(free.body.subtotal).toBe(250)
+
+    // С явным groupKey тот же id — уже платный сироп.
+    const paid = await quote([
+      { productId: String(SKU), quantity: 1, modifiers: [{ modifierId: String(colliding), groupKey: 'syrup' }] },
+    ])
+    expect(paid.body.subtotal).toBe(290)
+  })
+
   it('заказ принимается с той же суммой, что и quote (без расхождения)', async () => {
     const items = [{ productId: String(SKU), quantity: 1, choices: [{ optionId: String(choiceOptions[0].id) }] }]
     const q = await quote(items)

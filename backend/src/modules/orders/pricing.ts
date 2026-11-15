@@ -214,12 +214,20 @@ export function resolveItemModifiers(
       continue
     }
 
+    // Без groupKey id неоднозначен: у старого клиента выбор и сироп могли иметь одинаковый id.
+    // При совпадении трактуем как выбор: лучше недобрать в оценке, чем взять 40 ₽ за «С корицей».
+    if (!group && choices.has(Number(id))) {
+      pushChoice(id)
+      continue
+    }
+
     const t = addons.get(Number(id))
     if (!t) {
       // Совместимость: старый клиент шлёт выбор без groupKey — не тарифицируем его как сироп.
       if (pushChoice(id)) continue
       throw new ModifierError('modifier_not_allowed', `Добавка недоступна для этой позиции: ${id}`)
     }
+
     const seen = (counts.get(id) ?? 0) + 1
     if (seen > Math.max(1, Number(t.maxCount) || 1)) {
       throw new ModifierError('modifier_limit', `«${t.name}» можно добавить не больше ${t.maxCount} раз`)

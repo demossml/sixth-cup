@@ -61,6 +61,16 @@ describe('promoStatus', () => {
     expect(promoStatus({ from: 1320, to: 120 }, at(1, 0)).visible).toBe(true)
     expect(promoStatus({ from: 1320, to: 120 }, at(15, 0)).label).toBe('Начнётся в 22:00')
   })
+
+  it('поля из /api/directory (timeFrom/timeTo) понимаются так же', () => {
+    // Ровно этот баг и был: список читал промо из каталога, где окно называется иначе,
+    // и показывал «Сейчас действует» для акции, которая кончилась в 12:00.
+    const ended = promoStatus({ timeFrom: 360, timeTo: 720, daysMask: 127 }, at(17, 17))
+    expect(ended.visible).toBe(false)
+    expect(ended.label).toBe('Завершилась в 12:00')
+    const active = promoStatus({ timeFrom: 1020, timeTo: 1380, daysMask: 127 }, at(17, 17))
+    expect(active.visible).toBe(true)
+  })
 })
 
 describe('daysLabel', () => {
