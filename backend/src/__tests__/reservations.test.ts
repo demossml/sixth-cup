@@ -96,8 +96,9 @@ describe('QR is identity, backend is state', () => {
     db.prepare('UPDATE cards SET paid_total=5 WHERE user_id=(SELECT id FROM users WHERE card_code=?)').run(g.card.cardCode)
     const r = await resolve('dev-A', g.card.cardCode)
     expect(r.data.kind).toBe('code')
-    expect(r.data.freeAvailable).toBe(0)
     expect(r.data.reservationId).toBeNull()
+    expect(r.data.freeStatus).toBe('NONE')
+    expect(r.data.canRedeem).toBe(false)
   })
 
   // L-00 contract: списание возможно ТОЛЬКО при подписанном QR с резервом.
@@ -213,5 +214,100 @@ describe('manual card number as the guest sees it', () => {
     const garbage = await resolve('dev-manual', 'abcdef')
     expect(garbage.status).toBe(404)
     expect(garbage.data).toMatchObject({ ok: false, error: 'invalid_card' })
+  })
+})
+
+/**
+ * Дисплей ≠ выдача: числовой код показывает реальный прогресс и баланс,
+ * но не даёт кассе ничего резервировать или списывать.
+ */
+describe('resolve kind=code: показываем прогресс, не выдаём free', () => {
+  const reservationsOf = (cardId: string) =>
+    db.prepare('SELECT id, status FROM loyalty_reservations WHERE card_id=?').all(cardId) as { id: string; status: string }[]
+
+  it('код с чашками и кешбэком отдаёт цифры с карты, но не создаёт резерв', async () => {
+    const g = await guest()
+    const user = db.prepare('SELECT id FROM users WHERE card_code=?').get(g.card.cardCode) as { id: number; card_id: string }
+    // 7 оплаченных при 5 чашках до подарка: прогресс 2 из 5 и 1 доступный подарок
+    db.prepare('UPDATE cards SET paid_total=7, free_used=0 WHERE user_id=?').run(user.id)
+    db.prepare('UPDATE users SET cashback_balance=5000 WHERE id=?').run(user.id)
+    const before = reservationsOf(user.card_id)
+
+    const r = await resolve('dev-C', g.card.cardCode)
+
+    expect(r.status).toBe(200)
+    expect(r.data.kind).toBe('code')
+    expect(r.data.paidCups).toBe(2)
+    expect(r.data.cupsForFree).toBe(5)
+    expect(r.data.freeAvailable).toBe(1) // не 0: прогресс реальный
+    expect(r.data.cashback).toBe(5000) // баланс с карты, без принудительного 0
+    expect(r.data.cashbackReserved).toBe(0)
+    expect(r.data.freeStatus).toBe('NONE')
+    expect(r.data.reservationId).toBeNull()
+    expect(r.data.reservationExpiresAt).toBeNull()
+    expect(r.data.vouchers).toEqual([])
+    expect(r.data.canRedeem).toBe(false)
+
+    // в БД не появилось ни одной новой брони
+    expect(reservationsOf(user.card_id)).toEqual(before)
+  })
+
+  it('повторный ввод кода ничего не резервирует и не меняет карту', async () => {
+    const g = await guest()
+    const user = db.prepare('SELECT id FROM users WHERE card_code=?').get(g.card.cardCode) as { id: number; card_id: string }
+    db.prepare('UPDATE cards SET paid_total=5, free_used=0 WHERE user_id=?').run(user.id)
+
+    const a = await resolve('dev-C', g.card.cardCode)
+    const b = await resolve('dev-D', g.card.cardCode)
+
+    for (const r of [a, b]) {
+      expect(r.data.freeStatus).toBe('NONE')
+      expect(r.data.freeAvailable).toBe(1)
+      expect(r.data.canRedeem).toBe(false)
+      expect(r.data.reservationId).toBeNull()
+    }
+    expect(reservationsOf(user.card_id)).toEqual([])
+  })
+
+  it('QR рядом с тем же гостем по-прежнему резервирует и разрешает списание', async () => {
+    const g = await guest()
+    const user = db.prepare('SELECT id FROM users WHERE card_code=?').get(g.card.cardCode) as { id: number }
+
+    // сначала код — только цифры
+    const byCode = await resolve('dev-C', g.card.cardCode)
+    expect(byCode.data.canRedeem).toBe(false)
+
+    db.prepare('UPDATE cards SET paid_total=5, free_used=0 WHERE user_id=?').run(user.id)
+    const byToken = await resolve('dev-T', g.card.card)
+
+    expect(byToken.data.kind).toBe('token')
+    expect(byToken.data.freeStatus).toBe('RESERVED')
+    expect(byToken.data.freeAvailable).toBe(1)
+    expect(byToken.data.reservationId).toMatch(/^R-/)
+    expect(byToken.data.canRedeem).toBe(true)
+  })
+
+  it('QR со второго терминала: ALREADY_RESERVED, но canRedeem остаётся true', async () => {
+    const g = await guest()
+    const user = db.prepare('SELECT id FROM users WHERE card_code=?').get(g.card.cardCode) as { id: number }
+    db.prepare('UPDATE cards SET paid_total=5, free_used=0 WHERE user_id=?').run(user.id)
+
+    await resolve('dev-A', g.card.card)
+    const other = await resolve('dev-B', g.card.card)
+
+    expect(other.data.freeStatus).toBe('ALREADY_RESERVED')
+    expect(other.data.reservationId).toBeNull()
+    expect(other.data.canRedeem).toBe(true)
+  })
+
+  it('QR без доступного free: canRedeem true, freeStatus NONE', async () => {
+    const g = await guest()
+    const user = db.prepare('SELECT id FROM users WHERE card_code=?').get(g.card.cardCode) as { id: number }
+    db.prepare('UPDATE cards SET paid_total=3, free_used=0 WHERE user_id=?').run(user.id)
+
+    const r = await resolve('dev-A', g.card.card)
+    expect(r.data.freeAvailable).toBe(0)
+    expect(r.data.freeStatus).toBe('NONE')
+    expect(r.data.canRedeem).toBe(true)
   })
 })

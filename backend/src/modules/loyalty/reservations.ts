@@ -28,6 +28,12 @@ export type ResolveResult =
       freeStatus: 'RESERVED' | 'ALREADY_RESERVED' | 'NONE'
       /** Ваучеры к предъявлению (только QR: числовой код ничего не гасит и не показывает). */
       vouchers: ResolveVoucher[]
+      /**
+       * `false` — касса может только идентифицировать карту и показать цифры:
+       * резерв/списание free, кешбэка и ваучеров недоступны (числовой код).
+       * `true` — подписанный QR, резерв оформлен (или уже был оформлен).
+       */
+      canRedeem: boolean
     }
 
 type UserRow = { id: number; card_id: string; card_code: string; cashback_balance: number }
@@ -51,9 +57,12 @@ export function newReservationId(): string {
 }
 
 /**
- * Identify the customer and (for a signed QR only) reserve the available benefit.
- * A manually typed numeric code identifies the card for accrual only: it never
- * reserves or spends bonuses, because card numbers are guessable.
+ * Identify the customer. Числовой код — identify + display, QR — identify + reserve/redeem.
+ *
+ * Numeric code (`kind === 'code'`) отдаёт реальный прогресс с карты (paidCups, cupsForFree,
+ * freeAvailable, cashback), но никогда не создаёт резерв и не отдаёт ваучеры: номера карт
+ * подбираются перебором, поэтому списание возможно только по подписанному QR.
+ * Явный флаг `canRedeem: false` отличает «показали» от «можно списать» для кассы.
  */
 export function resolveAndReserve(input: ResolveInput, now = Date.now()): ResolveResult {
   const found = findUser(input.code)
@@ -76,7 +85,17 @@ export function resolveAndReserve(input: ResolveInput, now = Date.now()): Resolv
     cashback: user.cashback_balance,
   }
   if (kind === 'code') {
-    return { ...base, freeAvailable: 0, cashback: 0, cashbackReserved: 0, reservationId: null, reservationExpiresAt: null, freeStatus: 'NONE', vouchers: [] }
+    // Только идентификация и показ: прогресс и балансы берём с карты как есть,
+    // но ничего не резервируем и ваучеры не отдаём (дисплей ≠ выдача).
+    return {
+      ...base,
+      cashbackReserved: 0,
+      reservationId: null,
+      reservationExpiresAt: null,
+      freeStatus: 'NONE',
+      vouchers: [],
+      canRedeem: false,
+    }
   }
 
   const nowSec = Math.floor(now / 1000)
@@ -96,16 +115,16 @@ export function resolveAndReserve(input: ResolveInput, now = Date.now()): Resolv
       if (same) {
         db.prepare('UPDATE loyalty_reservations SET expires_at=?, benefit_voucher_ids=? WHERE id=?')
           .run(nowSec + ttl, offerIds, active.id)
-        return { ...base, freeAvailable: active.benefit_free ? 1 : 0, cashbackReserved: active.benefit_cb, reservationId: active.id, reservationExpiresAt: nowSec + ttl, freeStatus: active.benefit_free ? 'RESERVED' as const : 'NONE' as const, vouchers: offer }
+        return { ...base, freeAvailable: active.benefit_free ? 1 : 0, cashbackReserved: active.benefit_cb, reservationId: active.id, reservationExpiresAt: nowSec + ttl, freeStatus: active.benefit_free ? 'RESERVED' as const : 'NONE' as const, vouchers: offer, canRedeem: true }
       }
-      return { ...base, freeAvailable: 0, cashback: 0, cashbackReserved: 0, reservationId: null, reservationExpiresAt: null, freeStatus: 'ALREADY_RESERVED' as const, vouchers: [] }
+      return { ...base, freeAvailable: 0, cashback: 0, cashbackReserved: 0, reservationId: null, reservationExpiresAt: null, freeStatus: 'ALREADY_RESERVED' as const, vouchers: [], canRedeem: true }
     }
     const id = newReservationId()
     const free = freeAvailable > 0 ? 1 : 0
     const cb = Math.max(0, user.cashback_balance)
     db.prepare(`INSERT INTO loyalty_reservations(id,card_id,benefit_free,benefit_cb,benefit_voucher_ids,store_uuid,device_uuid,status,created_at,expires_at) VALUES(?,?,?,?,?,?,?, 'RESERVED', ?,?)`)
       .run(id, user.card_id, free, cb, offerIds, input.storeUuid ?? null, input.deviceUuid ?? null, nowSec, nowSec + ttl)
-    return { ...base, freeAvailable: free, cashbackReserved: cb, reservationId: id, reservationExpiresAt: nowSec + ttl, freeStatus: free ? 'RESERVED' as const : 'NONE' as const, vouchers: offer }
+    return { ...base, freeAvailable: free, cashbackReserved: cb, reservationId: id, reservationExpiresAt: nowSec + ttl, freeStatus: free ? 'RESERVED' as const : 'NONE' as const, vouchers: offer, canRedeem: true }
   })()
 }
 
