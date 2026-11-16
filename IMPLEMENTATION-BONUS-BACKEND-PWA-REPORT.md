@@ -3,7 +3,7 @@
 Дата: 16.11.2026. Серия PROMPTS-BONUS-BACKEND-PWA-SEQUENTIAL (STEP-0 … STEP-9).
 
 ```
-HEAD before/after: 3165470 → (см. коммит ниже, feat(loyalty): phone register, global/individual cashback %, full-balance spend)
+HEAD before/after: 3165470 → 736c60b (feat(loyalty): phone register, global/individual cashback %, full-balance spend)
 Migrations:        071_loyalty_bonus.sql (loyalty_settings, users.bonus_percent_bps/pd_consent_at/pd_consent_version/phone_bound_at, bonus_percent_audit)
 Flags:             LOYALTY_BONUS_MODE (default '1' = бонусный контур; '0' = старые чашки)
 Endpoints:         POST /api/devices/customers/lookup, POST /api/devices/customers/register,
