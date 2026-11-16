@@ -32,6 +32,7 @@ function meFingerprint(m: Me | null): string | null {
     cupsTowardFree: m.cupsTowardFree ?? null,
     freeAvailable: m.freeAvailable ?? null,
     cupsForFree: m.cupsForFree ?? null,
+    bonusMode: m.bonusMode ?? null,
     fromFriendsRub: m.fromFriendsRub ?? null,
     fromFriendsKopecks: m.fromFriendsKopecks ?? null,
     friendsCount: m.friendsCount ?? null,

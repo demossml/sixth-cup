@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Eye } from 'lucide-react'
 import { api } from '../api/client'
@@ -6,7 +6,7 @@ import { useApi } from '../api/useApi'
 import type { VoucherTemplate } from '../api/types'
 import { fmtDate, fmtDateTime, fmtKop, fmtKopFixed, fmtNum, shortId } from '../lib/format'
 import { banText, banUntilText } from '../lib/preorder'
-import { Badge, Banner, Button, Card, ConfirmDialog, cx, ErrorBox, KpiTile, PageHeader, Select, Spinner, useToast } from '../ui/kit'
+import { Badge, Banner, Button, Card, ConfirmDialog, cx, ErrorBox, Input, KpiTile, PageHeader, Select, Spinner, useToast } from '../ui/kit'
 
 type Detail = {
   user: { id: number; nickname: string; cardId: string | null; cardCode: string | null; inviteCode: string; invitedBy: number | null; cashbackBalance: number; createdAt: number; paidTotal: number; freeUsed: number; seq: number }
@@ -26,6 +26,30 @@ type Detail = {
   hints: string[]
   /** Ставка кэшбэка за покупки приглашённых, % — ноль в KPI не выглядит поломкой. */
   cashbackPercent?: number
+  /** BONUS-LOYALTY: индивидуальный процент (null = наследует глобальный) и что реально применяется. */
+  bonusPercent?: number | null
+  effectivePercent?: number
+  earnSource?: 'individual' | 'global'
+  phoneMasked?: string | null
+}
+
+type Movement = {
+  id: number
+  operation: string
+  cupsDelta: number
+  freeDelta: number
+  cashbackDelta: number
+  sourceType: string
+  sourceId: string
+  createdAt: number
+}
+
+/** Человеческая подпись источника движения бонусов — без внутренних кодов базиса. */
+const MOVEMENT_LABEL: Record<string, string> = {
+  EVOTOR_BONUS_EARN: 'Начисление с чека',
+  EVOTOR_SELL: 'Списание в чеке',
+  EVOTOR_PAYBACK: 'Возврат чека',
+  ADMIN_ADJUST: 'Корректировка админом',
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -44,6 +68,15 @@ export default function CustomerCard() {
   const [liftOpen, setLiftOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [phone, setPhone] = useState<string | null | undefined>(undefined)
+  // BONUS-LOYALTY: индивидуальный процент клиента и история движений бонусов.
+  const [percent, setPercent] = useState('')
+  const [savingPercent, setSavingPercent] = useState(false)
+  const ledger = useApi<{ balanceKopecks: number; movements: Movement[] }>(`/customers/${id}/ledger`)
+
+  useEffect(() => {
+    if (!data) return
+    setPercent(data.bonusPercent == null ? '' : String(data.bonusPercent).replace('.', ','))
+  }, [data])
 
   if (loading && !data) return <Spinner />
   if (error) return <ErrorBox message={error} onRetry={reload} />
@@ -76,6 +109,27 @@ export default function CustomerCard() {
   const activeTpl = (tpl.data?.templates ?? []).filter((t) => t.active !== false)
   const selTpl = activeTpl.find((t) => t.code === code)
 
+  const setBonusPercent = async (next: number | null) => {
+    setSavingPercent(true)
+    try {
+      await api(`/customers/${u.id}/bonus-percent`, { method: 'PUT', body: { percent: next } })
+      toast.push(next == null ? 'Индивидуальный процент сброшен' : 'Процент клиента сохранён')
+      reload()
+      ledger.reload()
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Не удалось сохранить процент', 'bad')
+    } finally {
+      setSavingPercent(false)
+    }
+  }
+  const savePercent = () => {
+    const raw = percent.replace(',', '.').trim()
+    if (!raw) { toast.push('Введите процент или нажмите «Сбросить»', 'bad'); return }
+    const parsed = Number(raw)
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) { toast.push('Процент должен быть от 0 до 100', 'bad'); return }
+    void setBonusPercent(parsed)
+  }
+
   return (
     <>
       <button type="button" onClick={() => nav(-1)} className="mb-2 inline-flex min-h-[40px] items-center gap-1 text-sm font-medium text-brand"><ArrowLeft size={16} /> Назад</button>
@@ -93,6 +147,54 @@ export default function CustomerCard() {
       {data.hints.length > 0 && (
         <Banner tone="neutral"><ul className="list-disc space-y-1 pl-4">{data.hints.map((h) => <li key={h}>{h}</li>)}</ul></Banner>
       )}
+
+      <Section title="Бонусы">
+        <div className="mb-3 grid grid-cols-2 gap-3 md:grid-cols-3">
+          <KpiTile label="Баланс бонусов" value={`${fmtKopFixed(u.cashbackBalance)} ₽`} sub="списывается до 100 % чека" />
+          <KpiTile
+            label="Начисляется"
+            value={`${String(data.effectivePercent ?? 0).replace('.', ',')} %`}
+            sub={data.earnSource === 'individual' ? 'индивидуальный процент' : 'глобальный процент'}
+          />
+          <KpiTile label="Индивидуальный" value={data.bonusPercent == null ? 'не задан' : `${String(data.bonusPercent).replace('.', ',')} %`} />
+        </div>
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="flex flex-col gap-1">
+            <span className="text-[13px] text-ink-secondary">Индивидуальный процент, %</span>
+            <Input
+              className="w-28"
+              value={percent}
+              inputMode="decimal"
+              placeholder="как у всех"
+              onChange={(e) => setPercent(e.target.value)}
+              aria-label="Индивидуальный процент начисления"
+            />
+          </label>
+          <Button size="sm" loading={savingPercent} onClick={savePercent}>Сохранить</Button>
+          <Button size="sm" variant="secondary" disabled={savingPercent} onClick={() => void setBonusPercent(null)}>Сбросить</Button>
+        </div>
+        <p className="mt-2 text-sm text-ink-secondary">
+          Пустое значение — клиент получает общий процент из раздела «Бонусы». Любое изменение попадает в журнал действий.
+        </p>
+      </Section>
+
+      <Section title="Движения бонусов">
+        {!ledger.data?.movements.length ? none : (
+          <ul className="divide-y divide-line text-sm">
+            {ledger.data.movements.map((m) => (
+              <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                <span>
+                  {MOVEMENT_LABEL[m.sourceType] ?? m.sourceType}
+                  <span className="text-ink-secondary"> · {fmtDateTime(m.createdAt)} · {m.operation}</span>
+                </span>
+                <b className={cx('tabular-nums', m.cashbackDelta < 0 ? 'text-bad' : 'text-ok')}>
+                  {m.cashbackDelta > 0 ? '+' : ''}{fmtKopFixed(m.cashbackDelta)} ₽
+                </b>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Section>
 
       <Section title="Предзаказ">
         {data.preorderBan ? (

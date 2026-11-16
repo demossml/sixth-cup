@@ -33,6 +33,12 @@ export const config = {
   aiModel: process.env.AI_MODEL || 'deepseek-chat',
   adminAllowReset: process.env.ADMIN_ALLOW_RESET != null ? process.env.ADMIN_ALLOW_RESET === '1' : isDev,
   cupsForFree: Number(process.env.CUPS_FOR_FREE ?? 5),
+  /**
+   * BONUS-LOYALTY (вариант B): кэшбэк в процентах вместо «N чашек — подарок».
+   * Включён по умолчанию для новых выкладок; `LOYALTY_BONUS_MODE=0` возвращает
+   * прежний подарочный контур (free-gift) без миграции данных.
+   */
+  loyaltyBonusMode: (process.env.LOYALTY_BONUS_MODE ?? '1') === '1',
   cardQrTtlSec: Number(process.env.CARD_QR_TTL_SEC ?? 30 * 86400),
   /** Time a till reservation holds a bonus before it is released. */
   reservationTtlSec: Number(process.env.RESERVATION_TTL_SEC ?? 90),

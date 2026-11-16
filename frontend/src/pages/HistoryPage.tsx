@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { getJwt } from '../api'
+import { useApp } from '../lib/app'
 import { formatRub } from '../lib/money'
 import { cupsWord } from '../lib/plural'
 import { fmtClock } from '../lib/syncStatus'
@@ -13,6 +14,18 @@ type Item = {
 type Response = { items: Item[]; nextCursor: string | null }
 type Cache = { items: Item[]; at: number }
 const CACHE_KEY = 'sc-history-cache'
+
+/** Движения бонусов (BONUS-LOYALTY): GET /api/loyalty/ledger — только свой баланс. */
+type Movement = { id: number; kind: string; cashbackDelta: number; source: string; sourceId: string; at: string }
+type BonusLedger = { balanceKopecks: number; items: Movement[] }
+
+/** Подписи источников: без этого гость видел бы внутренние коды вроде EVOTOR_SELL. */
+const SOURCE_LABEL: Record<string, string> = {
+  EVOTOR_BONUS_EARN: 'Начисление с покупки',
+  EVOTOR_SELL: 'Списание на кассе',
+  EVOTOR_PAYBACK: 'Возврат покупки',
+  ADMIN_ADJUST: 'Корректировка',
+}
 
 function readCache(): Cache | null {
   try {
@@ -74,6 +87,20 @@ export default function HistoryPage() {
 
   useEffect(() => { void load() }, [load])
 
+  // Бонусный контур: отдельный список движений баланса (начисления и списания).
+  const { me } = useApp()
+  const bonusMode = me?.bonusMode === true
+  const [bonus, setBonus] = useState<BonusLedger | null>(null)
+  useEffect(() => {
+    if (!bonusMode) { setBonus(null); return }
+    let alive = true
+    fetch('/api/loyalty/ledger?limit=50', { headers: { Authorization: `Bearer ${getJwt()}` } })
+      .then((r) => (r.ok ? (r.json() as Promise<BonusLedger>) : null))
+      .then((d) => { if (alive && d) setBonus(d) })
+      .catch(() => { /* офлайн — блок просто не показываем */ })
+    return () => { alive = false }
+  }, [bonusMode])
+
   const groups: { label: string; rows: Item[] }[] = []
   for (const it of items) {
     const label = dayLabel(it.at)
@@ -92,6 +119,30 @@ export default function HistoryPage() {
       </header>
       <div className="p-4 space-y-3">
         {error && <p className="rounded-xl bg-warn-bg p-3 text-sm text-warn">{error}</p>}
+        {bonusMode && bonus && bonus.items.length > 0 && (
+          <section className="space-y-2">
+            <h2 className="text-[12px] leading-4 font-semibold tracking-wide text-ink-secondary px-1">Бонусы</h2>
+            <article className="card !mb-0">
+              <b className="text-sm text-ink num">Баланс: {formatRub(bonus.balanceKopecks)} ₽</b>
+              <p className="text-xs text-ink-secondary mt-1">Списать можно до 100 % чека, не больше баланса.</p>
+            </article>
+            {bonus.items.slice(0, 20).map((m) => (
+              <article key={`bonus-${m.id}`} className="card !mb-0 flex gap-3 items-start">
+                <div className="min-w-0 flex-1">
+                  <b className="text-sm text-ink">{SOURCE_LABEL[m.source] ?? m.kind}</b>
+                  <p className="text-xs text-ink-secondary mt-1">
+                    {new Date(m.at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}
+                    {' · '}
+                    {new Date(m.at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+                  </p>
+                </div>
+                <div className={'text-right text-[15px] font-display font-semibold num ' + (m.cashbackDelta < 0 ? 'text-bad' : 'text-ok')}>
+                  {m.cashbackDelta > 0 ? '+' : '−'}{formatRub(Math.abs(m.cashbackDelta))} ₽
+                </div>
+              </article>
+            ))}
+          </section>
+        )}
         {!items.length && !busy && !error && (
           <div className="card text-center py-8">
             <b>Пока нет подтверждённых операций</b>

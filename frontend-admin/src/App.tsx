@@ -19,6 +19,7 @@ const AddonSchemes = lazy(() => import('./pages/AddonSchemes'))
 const Cash = lazy(() => import('./pages/Cash'))
 const Marketing = lazy(() => import('./pages/Marketing'))
 const Referrals = lazy(() => import('./pages/Referrals'))
+const Loyalty = lazy(() => import('./pages/Loyalty'))
 const Compare = lazy(() => import('./pages/Compare'))
 const BusinessEvents = lazy(() => import('./pages/BusinessEvents'))
 const Assistant = lazy(() => import('./pages/Assistant'))
@@ -126,6 +127,7 @@ export default function App() {
             <Route path="cash" element={<Cash />} />
             <Route path="marketing" element={<Marketing />} />
             <Route path="referrals" element={<Referrals />} />
+            <Route path="loyalty" element={<Loyalty />} />
             <Route path="analytics" element={<Analytics />} />
             <Route path="compare" element={<Compare />} />
             <Route path="events" element={<BusinessEvents />} />

@@ -19,6 +19,8 @@ import { applyOnlineSale } from './sales'
 import { checkEvotorProxyAuth, evotorProxyStrict } from '../../middleware/evotorProxy'
 import { config } from '../../config'
 import { resolveAndReserve } from '../loyalty/reservations'
+import { customerByPhone, registerByPhone } from '../loyalty/customers'
+import { maskPhone, normalizePhoneRu } from '../loyalty/phone'
 import { log, maskCode, shortId } from '../../lib/logBuffer'
 import { allowLogIngest, entryZ, ingest } from '../logs/routes'
 import { clientIp } from '../../lib/clientIp'
@@ -52,6 +54,26 @@ function allowAttempt(key: string, max: number, windowMs: number): boolean {
 
 /** 32–64 символа base64url/base64/hex: так выглядит ключ терминала, мусор не принимаем. */
 const PUBLIC_KEY_RE = /^[A-Za-z0-9+/=_-]{32,64}$/
+
+/**
+ * Лимит на кассовые операции идентификации клиента по устройству/точке.
+ * Отдельный от resolve ключ: поиск по телефону дешевле, но тоже под лимитом.
+ */
+function hitDeviceRate(key: string, max: number, windowMs: number, label: string): void {
+  const now = Date.now()
+  const row = db.prepare('SELECT count, window_start FROM rate_limits WHERE key=?').get(key) as
+    | { count: number; window_start: number }
+    | undefined
+  if (!row || now - row.window_start > windowMs) {
+    db.prepare('INSERT OR REPLACE INTO rate_limits(key,count,window_start) VALUES(?,?,?)').run(key, 1, now)
+    return
+  }
+  if (row.count >= max) {
+    log.warn(`${label} rate-limited`, { key: key.slice(0, 24) })
+    throw bad('Too many requests', 429)
+  }
+  db.prepare('UPDATE rate_limits SET count=count+1 WHERE key=?').run(key)
+}
 
 export const deviceRoutes = new Hono<DeviceEnv>()
   .get('/ping', (c) => {
@@ -107,7 +129,11 @@ export const deviceRoutes = new Hono<DeviceEnv>()
     })
   .post('/loyalty/resolve',
     evotorProxyStrict,
-    zValidator('json', z.object({ code: z.string().min(1).max(4000) })),
+    zValidator('json', z.object({
+      code: z.string().min(1).max(4000).optional(),
+      /** Клиент найден по телефону (lookup/register) — резолвим без QR. */
+      phone: z.string().min(3).max(40).optional(),
+    }).refine((v) => Boolean(v.code || v.phone), { message: 'code или phone обязательны' })),
     (c) => {
       // Reserving bonuses must never be reachable without the shared proxy secret.
       if (!config.evotorProxyToken) throw bad('proxy_not_configured', 503)
@@ -125,17 +151,62 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         db.prepare('UPDATE rate_limits SET count=count+1 WHERE key=?').run(key)
       }
       const code = c.req.valid('json').code
-      const r = resolveAndReserve({ code, storeUuid, deviceUuid })
+      const r = resolveAndReserve({ code, phone: c.req.valid('json').phone, storeUuid, deviceUuid })
       const who = { store: shortId(storeUuid), dev: shortId(deviceUuid) }
       if (r.ok) {
         log.info('loyalty resolve ok', {
           card: maskCode(r.cardCode), kind: r.kind, free: r.freeAvailable, cbKop: r.cashbackReserved,
-          freeStatus: r.freeStatus, res: shortId(r.reservationId, 6), vouchers: r.vouchers.length, ...who,
+          freeStatus: r.freeStatus, res: shortId(r.reservationId, 6), vouchers: r.vouchers.length,
+          canRedeem: r.canRedeem ? 1 : 0, ...who,
         })
       } else {
-        log.warn(`loyalty resolve fail: ${r.error}`, { card: maskCode(code), ...who })
+        log.warn(`loyalty resolve fail: ${r.error}`, { card: maskCode(code ?? 'phone'), ...who })
       }
       return c.json(r, r.ok ? 200 : 404)
+    })
+  /**
+   * POST /api/devices/customers/lookup — кассир ищет клиента по телефону.
+   * Только чтение: ничего не резервирует, не создаёт и не меняет.
+   * Ответ: `{ ok, found, …customer }` (found=false — номера нет в базе).
+   */
+  .post('/customers/lookup',
+    evotorProxyStrict,
+    zValidator('json', z.object({ phone: z.string().min(3).max(40) })),
+    (c) => {
+      const storeUuid = (c.req.header('X-Evotor-Store-Uuid') ?? '').slice(0, 64) || undefined
+      const deviceUuid = (c.req.header('X-Evotor-Device-UUID') ?? '').slice(0, 64) || undefined
+      hitDeviceRate(`cust-lookup:${deviceUuid ?? storeUuid ?? 'any'}`, 120, 60_000, 'customer lookup')
+      const phone = normalizePhoneRu(c.req.valid('json').phone)
+      if (!phone) throw bad('Некорректный номер телефона', 400)
+      const customer = customerByPhone(phone)
+      log.info('customer lookup', { found: customer ? 1 : 0, masked: maskPhone(phone), dev: shortId(deviceUuid) })
+      return c.json(customer ? { ok: true, found: true, ...customer } : { ok: true, found: false })
+    })
+  /**
+   * POST /api/devices/customers/register — выдать карту по телефону с кассы.
+   * Требует явного согласия на обработку ПД (`pdConsent === true`) и версии согласия.
+   * Идемпотентно: повторный вызов с тем же номером вернёт того же клиента (`created: false`).
+   */
+  .post('/customers/register',
+    evotorProxyStrict,
+    zValidator('json', z.object({
+      phone: z.string().min(3).max(40),
+      pdConsent: z.boolean().optional(),
+      pdConsentVersion: z.string().max(32).optional(),
+    })),
+    (c) => {
+      const storeUuid = (c.req.header('X-Evotor-Store-Uuid') ?? '').slice(0, 64) || undefined
+      const deviceUuid = (c.req.header('X-Evotor-Device-UUID') ?? '').slice(0, 64) || undefined
+      hitDeviceRate(`cust-register:${deviceUuid ?? storeUuid ?? 'any'}`, 30, 60_000, 'customer register')
+      const body = c.req.valid('json')
+      const { customer, created } = registerByPhone({
+        phone: body.phone,
+        pdConsent: body.pdConsent === true,
+        pdConsentVersion: body.pdConsentVersion ?? '',
+        source: `device:${shortId(deviceUuid ?? storeUuid ?? 'any', 6)}`,
+      })
+      log.info('customer register', { created: created ? 1 : 0, user: customer.userId, dev: shortId(deviceUuid) })
+      return c.json({ ok: true, found: true, created, ...customer })
     })
   /**
    * POST /api/devices/logs — till (Evotor APK) reports scan / resolve / discount events.

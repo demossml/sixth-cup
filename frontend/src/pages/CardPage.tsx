@@ -60,6 +60,10 @@ export default function CardPage() {
   const proof = best?.token
   const cardCode = me?.cardCode ?? ''
   const cashback = me?.cashbackBalance ?? 0
+  // BONUS-LOYALTY: сервер сам говорит, какой контур включён. В бонусном режиме
+  // чашки не копятся — в шапке баланс в рублях, а не «2 из 5».
+  const bonusMode = me?.bonusMode === true
+  const earnPercent = me?.effectiveEarnPercent
 
   useWakeLock(!!proof)
 
@@ -200,12 +204,20 @@ export default function CardPage() {
           </div>
 
           <p className="mt-2.5 font-display font-semibold text-[19px] leading-[26px] tracking-[-0.01em] max-w-[250px]">
-            {progressPhrase({ n: N, marks, freeAvailable: me?.freeAvailable ?? 0 })}
+            {bonusMode
+              ? (cashback > 0 ? `У вас ${formatRub(cashback)} ₽ бонусов` : 'Бонусы копятся с каждой покупки')
+              : progressPhrase({ n: N, marks, freeAvailable: me?.freeAvailable ?? 0 })}
           </p>
 
           {/* Счётчик марок виден всегда, в том числе «0 из 5»: при нуле полоса марок
-              схлопнута, и без этой строки гость не понимал, сколько уже собрано (аудит F-03). */}
-          {!hasGift ? (
+              схлопнута, и без этой строки гость не понимал, сколько уже собрано (аудит F-03).
+              В бонусном режиме чашек нет — вместо счётчика пояснение про процент. */}
+          {bonusMode ? (
+            <p className="mt-0.5 text-[12px] leading-4 text-white/70 num">
+              {earnPercent ? `Начисляем ${String(earnPercent).replace('.', ',')} % с покупки · платить можно до 100 %` : 'Платить бонусами можно до 100 % чека'}
+            </p>
+          ) : null}
+          {!bonusMode && !hasGift ? (
             <p className="mt-0.5 text-[12px] leading-4 text-white/70 num">
               {marks} из {N}
             </p>
@@ -213,7 +225,7 @@ export default function CardPage() {
 
           {/* Полоса марок схлопывается в ноль, пока марок нет: пустых ячеек не
               рисуем, а резервировать под них 40 px — это дырка в шапке. */}
-          {marks > 0 || hasGift ? <ProgressStamps n={N} marks={marks} gift={hasGift} /> : null}
+          {!bonusMode && (marks > 0 || hasGift) ? <ProgressStamps n={N} marks={marks} gift={hasGift} /> : null}
         </div>
       </div>
 
@@ -257,7 +269,7 @@ export default function CardPage() {
               </span>
               {cashback > 0 ? (
                 <span className="block mt-px text-[11px] leading-[15px] text-ink-secondary num">
-                  Кэшбэк {formatRub(cashback)} ₽ · у бариста
+                  {bonusMode ? `Бонусы ${formatRub(cashback)} ₽ · списываются на кассе` : `Кэшбэк ${formatRub(cashback)} ₽ · у бариста`}
                 </span>
               ) : null}
               {/* Аудит F-10, вариант 1: QR на карте — компактный «якорь», подпись честно говорит,

@@ -6,6 +6,7 @@ import {
   LayoutDashboard, LogOut, ClipboardList, Package, Search, Settings, Menu,
   Share2, Store, Users, X, MoreHorizontal, Milk, Ruler, Layers,
   ListChecks, ClipboardCheck, Calculator, LayoutTemplate,
+  Coins,
 } from 'lucide-react'
 import { useApi } from '../api/useApi'
 import type { Health } from '../api/types'
@@ -40,6 +41,7 @@ const MANAGE: NavItem[] = [
   { to: '/staff', label: 'Сотрудники', icon: <Users size={17} /> },
   { to: '/marketing', label: 'Контент', icon: <Gift size={17} /> },
   { to: '/referrals', label: 'Рефералка', icon: <Share2 size={17} /> },
+  { to: '/loyalty', label: 'Бонусы', icon: <Coins size={17} /> },
 ]
 
 const ANALYTICS: NavItem[] = [
@@ -93,6 +95,7 @@ const TITLES: Record<string, string> = {
   '/staff': 'Сотрудники',
   '/marketing': 'Контент',
   '/referrals': 'Рефералка',
+  '/loyalty': 'Бонусы',
   '/analytics': 'Аналитика',
   '/compare': 'Сравнение',
   '/events': 'События',

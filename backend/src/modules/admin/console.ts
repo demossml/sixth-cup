@@ -16,6 +16,11 @@ import { log } from '../../lib/logBuffer'
 import { createTemplate, grantVoucher, listTemplates, templateCreateZ, templatePatchZ, updateTemplate } from '../vouchers/service'
 import { pushMetrics } from '../push/service'
 import { activeBan } from '../orders/service'
+import {
+  MAX_EARN_PERCENT, bpsToPercent, earnSourceOf, effectiveEarnBps, getGlobalEarnBps,
+  percentToBps, setGlobalEarnBps, setUserBonusBps,
+} from '../loyalty/settings'
+import { maskPhone, normalizePhoneRu } from '../loyalty/phone'
 import { enqueueProductSync } from './enqueue'
 import { writeAudit } from './audit'
 import type { AuditInput } from './audit'
@@ -357,23 +362,44 @@ export const adminConsole = new Hono<Env>()
     const sorts: Record<string, string> = { created: 'u.id', paid: 'paidTotal', cups: 'cups', cashback: 'u.cashback_balance', referrals: 'referrals' }
     const sort = sorts[c.req.query('sort') ?? ''] ?? 'u.id'
     const dir = c.req.query('dir') === 'asc' ? 'ASC' : 'DESC'
-    const q = (c.req.query('q') ?? '').trim()
+    const q = (c.req.query('q') ?? c.req.query('query') ?? '').trim()
     let where = ''
     const args: unknown[] = []
     if (q) {
-      if (/^\d+$/.test(q)) { where = 'WHERE (u.card_code = ? OR u.id = ?)'; args.push(q, Number(q)) }
-      else { where = `WHERE (u.nickname LIKE ? ESCAPE '\\' OR u.card_code LIKE ? ESCAPE '\\' OR u.invite_code = ?)`; const l = '%' + likeEscape(q) + '%'; args.push(l, likeEscape(q) + '%', q) }
+      const phone = normalizePhoneRu(q)
+      if (phone) {
+        // Телефон в любом формате (+7 999 … / 8 999 … / слитно) — ищем по нормализованному.
+        where = 'WHERE (u.phone = ? OR u.card_code = ? OR u.id = ?)'
+        args.push(phone, q, Number(q))
+      } else if (/^\d+$/.test(q)) {
+        where = 'WHERE (u.card_code = ? OR u.id = ?)'
+        args.push(q, Number(q))
+      } else {
+        where = `WHERE (u.nickname LIKE ? ESCAPE '\\' OR u.card_code LIKE ? ESCAPE '\\' OR u.invite_code = ?)`
+        const l = '%' + likeEscape(q) + '%'
+        args.push(l, likeEscape(q) + '%', q)
+      }
     }
     const total = (db.prepare(`SELECT COUNT(*) AS n FROM users u ${where}`).get(...args) as { n: number }).n
     const rows = db.prepare(`
       SELECT u.id, u.nickname, u.card_code AS cardCode, u.invite_code AS inviteCode, u.invited_by AS invitedBy,
-             u.cashback_balance AS cashbackBalance, u.created_at AS createdAt,
+             u.cashback_balance AS cashbackBalance, u.created_at AS createdAt, u.bonus_percent_bps AS bonusPercentBps,
              COALESCE(cd.paid_total,0) AS paidTotal, COALESCE(cd.free_used,0) AS freeUsed,
              (SELECT COALESCE(SUM(lo.cups_counted),0) FROM loyalty_ops lo WHERE lo.card_id = u.card_id AND lo.kind='SELL') AS cups,
              (SELECT COUNT(*) FROM users r WHERE r.invited_by = u.id) AS referrals
       FROM users u LEFT JOIN cards cd ON cd.user_id = u.id
-      ${where} ORDER BY ${sort} ${dir}, u.id DESC LIMIT ? OFFSET ?`).all(...args, limit, offset)
-    return c.json({ customers: rows, total, limit, offset })
+      ${where} ORDER BY ${sort} ${dir}, u.id DESC LIMIT ? OFFSET ?`).all(...args, limit, offset) as Record<string, unknown>[]
+    // Индивидуальный процент в bps → человеческие проценты + флаг источника.
+    const customers = rows.map((row) => {
+      const bonus = row.bonusPercentBps == null ? null : Number(row.bonusPercentBps)
+      return {
+        ...row,
+        bonusPercentBps: bonus,
+        bonusPercent: bonus == null ? null : bpsToPercent(bonus),
+        effectivePercent: bpsToPercent(bonus ?? getGlobalEarnBps(db)),
+      }
+    })
+    return c.json({ customers, total, limit, offset })
   })
 
   .get('/customers/:id', (c) => {
@@ -381,6 +407,7 @@ export const adminConsole = new Hono<Env>()
     const u = db.prepare(`
       SELECT u.id, u.nickname, u.card_id AS cardId, u.card_code AS cardCode, u.invite_code AS inviteCode, u.invited_by AS invitedBy,
              u.cashback_balance AS cashbackBalance, u.created_at AS createdAt, u.phone,
+             u.bonus_percent_bps AS bonusPercentBps,
              COALESCE(cd.paid_total,0) AS paidTotal, COALESCE(cd.free_used,0) AS freeUsed, COALESCE(cd.seq,0) AS seq
       FROM users u LEFT JOIN cards cd ON cd.user_id = u.id WHERE u.id = ?`).get(id) as (Record<string, unknown> & { cardId: string | null; invitedBy: number | null; phone: string; cardCode: string | null }) | undefined
     if (!u) throw bad('Клиент не найден', 404)
@@ -429,11 +456,21 @@ export const adminConsole = new Hono<Env>()
     if (!ops.length) hints.push('За этой картой нет ни одной операции с кассы Эвотор.')
     const zero = ops.filter((o) => o.kind === 'SELL' && !o.cups).length
     if (zero) hints.push(`Операций без начисленных чашек: ${zero}. Проверьте, что у проданных товаров стоит «считается чашкой».`)
-    hints.push('Карта, введённая на кассе вручную по номеру, не резервирует бонусы (кэшбэк и бесплатные позиции) — так устроено.')
+    if (!config.loyaltyBonusMode) {
+      hints.push('Карта, введённая на кассе вручную по номеру, не резервирует бонусы (кэшбэк и бесплатные позиции) — так устроено.')
+    }
 
+    const bonusPercentBps = (u as { bonusPercentBps?: number | null }).bonusPercentBps
+    const individual = bonusPercentBps == null ? null : Number(bonusPercentBps)
     return c.json({
       user, hasPhone: !String(phone).startsWith('guest:'), blocked, preorderBan, invitedBy,
       ops, cashback, vouchers, referrals, receipts, hints,
+      // BONUS-LOYALTY: процент начисления и его источник + маска телефона (без сырого номера).
+      bonusPercentBps: individual,
+      bonusPercent: individual == null ? null : bpsToPercent(individual),
+      effectivePercent: bpsToPercent(effectiveEarnBps(db, id)),
+      earnSource: earnSourceOf(db, id),
+      phoneMasked: String(phone).startsWith('guest:') ? null : maskPhone(phone),
       // Ставка нужна, чтобы «Кэшбэк 0» не выглядел поломкой: начисление идёт
       // только с покупок приглашённых друзей (аудит 14.11.2026).
       cashbackPercent: config.referralCashbackPercent,
@@ -617,8 +654,108 @@ export const adminConsole = new Hono<Env>()
     },
   )
 
-  /* ---------- 3.4 сбойные документы лояльности ---------- */
+  /* ---------- BONUS-LOYALTY: глобальный и индивидуальный процент ---------- */
 
+  /** Глобальный процент начисления бонусов (вариант B). */
+  .get('/loyalty/settings', (c) => {
+    const row = (() => {
+      try {
+        return db
+          .prepare('SELECT earn_percent_bps AS bps, updated_at AS updatedAt, updated_by AS updatedBy FROM loyalty_settings WHERE id=1')
+          .get() as { bps: number | null; updatedAt: number | null; updatedBy: string | null } | undefined
+      } catch {
+        return undefined // старая БД без миграции 071
+      }
+    })()
+    const bps = getGlobalEarnBps(db)
+    return c.json({
+      settings: {
+        earnBps: bps,
+        earnPercent: bpsToPercent(bps),
+        maxPercent: MAX_EARN_PERCENT,
+        updatedAt: row?.updatedAt ?? null,
+        updatedBy: row?.updatedBy ?? null,
+        bonusMode: config.loyaltyBonusMode,
+      },
+    })
+  })
+
+  /** Изменить глобальный процент. Деньги — только владелец. */
+  .put('/loyalty/settings', zValidator('json', z.object({ earnPercent: z.number().min(0).max(MAX_EARN_PERCENT) })), (c) => {
+    const role = (c.get('adminRole' as never) as string | undefined) ?? 'owner'
+    if (role === 'viewer') throw bad('Недостаточно прав для изменения процента начисления', 403)
+    const { earnPercent } = c.req.valid('json')
+    const bps = percentToBps(earnPercent)
+    if (bps == null) throw bad(`Процент должен быть от 0 до ${MAX_EARN_PERCENT}`, 400)
+    const before = getGlobalEarnBps(db)
+    const saved = setGlobalEarnBps(db, bps, role)
+    c.set('audit', {
+      entity: 'loyalty-settings',
+      entityId: '1',
+      summary: `Процент начисления бонусов: ${bpsToPercent(before)} % → ${bpsToPercent(saved)} %`,
+      before: { earnPercent: bpsToPercent(before) },
+      after: { earnPercent: bpsToPercent(saved) },
+    })
+    return c.json({ ok: true, settings: { earnBps: saved, earnPercent: bpsToPercent(saved), maxPercent: MAX_EARN_PERCENT } })
+  })
+
+  /** Индивидуальный процент клиента: `percent: null` — вернуть глобальный. */
+  .put(
+    '/customers/:id/bonus-percent',
+    zValidator('json', z.object({ percent: z.number().min(0).max(MAX_EARN_PERCENT).nullable() })),
+    (c) => {
+      const role = (c.get('adminRole' as never) as string | undefined) ?? 'owner'
+      if (role === 'viewer') throw bad('Недостаточно прав для изменения процента клиента', 403)
+      const id = Number(c.req.param('id'))
+      if (!Number.isInteger(id) || id <= 0) throw bad('Некорректный клиент', 400)
+      if (!db.prepare('SELECT 1 FROM users WHERE id=?').get(id)) throw bad('Клиент не найден', 404)
+      const { percent } = c.req.valid('json')
+      const bps = percent == null ? null : percentToBps(percent)
+      if (percent != null && bps == null) throw bad(`Процент должен быть от 0 до ${MAX_EARN_PERCENT}`, 400)
+      const { oldBps, newBps } = setUserBonusBps(db, id, bps, role)
+      c.set('audit', {
+        entity: 'customers',
+        entityId: String(id),
+        summary:
+          percent == null
+            ? 'Индивидуальный процент сброшен к глобальному'
+            : `Индивидуальный процент: ${bpsToPercent(newBps ?? 0)} %`,
+        before: { bonusPercent: oldBps == null ? null : bpsToPercent(oldBps) },
+        after: { bonusPercent: newBps == null ? null : bpsToPercent(newBps) },
+      })
+      return c.json({
+        ok: true,
+        bonusPercentBps: newBps,
+        bonusPercent: newBps == null ? null : bpsToPercent(newBps),
+        effectivePercent: bpsToPercent(effectiveEarnBps(db, id)),
+        earnSource: earnSourceOf(db, id),
+      })
+    },
+  )
+
+  /** Последние движения бонусного баланса клиента (для карточки и PWA). */
+  .get('/customers/:id/ledger', (c) => {
+    const id = Number(c.req.param('id'))
+    if (!Number.isInteger(id) || id <= 0) throw bad('Некорректный клиент', 400)
+    const user = db.prepare('SELECT card_id AS cardId, cashback_balance AS balance FROM users WHERE id=?').get(id) as
+      | { cardId: string | null; balance: number }
+      | undefined
+    if (!user) throw bad('Клиент не найден', 404)
+    const limit = Math.min(200, Math.max(1, Number(c.req.query('limit') ?? 50)))
+    const movements = user.cardId
+      ? (db
+          .prepare(
+            `SELECT l.id, l.operation, l.cups_delta AS cupsDelta, l.free_delta AS freeDelta,
+                    l.cashback_delta AS cashbackDelta, l.source_type AS sourceType, l.source_id AS sourceId,
+                    l.created_at AS createdAt
+               FROM loyalty_ledger l WHERE l.card_id=? ORDER BY l.id DESC LIMIT ?`,
+          )
+          .all(user.cardId, limit) as Record<string, unknown>[])
+      : []
+    return c.json({ balanceKopecks: Number(user.balance ?? 0), movements })
+  })
+
+  /* ---------- 3.4 сбойные документы лояльности ---------- */
   /** Список FAILED-документов с телом, сохранённым для повтора. */
   .get('/loyalty/failed', (c) => {
     const limit = Math.min(200, Math.max(1, Number(c.req.query('limit') ?? 50)))

@@ -2,7 +2,14 @@
  * 3.2: возврат сторнирует лояльность даже если в PAYBACK нет `extras.sc`.
  * Проверка идёт через PollService — как в продакшене, а не прямым вызовом handlePayback.
  */
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+// Подарочный контур (чашки). Бонусный режим покрыт `loyalty-bonus-*.test.ts`.
+// `vi.hoisted` выполняется раньше импортов, иначе config прочитает флаг до установки.
+vi.hoisted(() => {
+  process.env.LOYALTY_BONUS_MODE = '0'
+})
+
 import { db } from '../db'
 import { PollService } from '../integrations/evotor/sync/PollService'
 import { createToken } from '../integrations/evotor/tokenStore'

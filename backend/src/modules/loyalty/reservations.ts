@@ -7,8 +7,17 @@ import { freeEarned } from './rules'
 import { log, shortId } from '../../lib/logBuffer'
 import { vouchersForResolve } from '../vouchers/service'
 import type { ResolveVoucher } from '../vouchers/service'
+import { bpsToPercent, effectiveEarnBps } from './settings'
+import { findUserByPhone } from './customers'
 
-export type ResolveInput = { code: string; storeUuid?: string; deviceUuid?: string }
+export type ResolveInput = {
+  /** QR-токен или числовой код карты. Может быть пустым, если передан `phone`. */
+  code?: string
+  /** Альтернатива коду: кассир нашёл клиента по телефону и резолвит его без QR. */
+  phone?: string
+  storeUuid?: string
+  deviceUuid?: string
+}
 
 export type ResolveResult =
   | { ok: false; error: 'invalid_card' | 'card_not_found' | 'card_blocked' }
@@ -18,8 +27,13 @@ export type ResolveResult =
       kind: 'token' | 'code'
       paidCups: number
       cupsForFree: number
+      /** Свободные чашки по подарку. В bonus mode подарок выключен → 0. */
       freeAvailable: number
       cashback: number
+      /** Баланс кэшбэка в копейках (то же, что `cashback`, но имя явно про единицы). */
+      balanceKopecks: number
+      /** Процент начисления для этого гостя (individual → global), в процентах. */
+      effectiveEarnPercent: number
       /** Cashback in kopecks that this reservation allows to spend. */
       cashbackReserved: number
       reservationId: string | null
@@ -52,20 +66,35 @@ function findUser(code: string): { user: UserRow; kind: 'token' | 'code' } | 'in
   return user ? { user, kind: 'code' } : 'missing'
 }
 
+/** Идентификация по телефону (касса нашла клиента через lookup). Политика — как у кода. */
+function findByPhone(phone: string): { user: UserRow; kind: 'code' } | 'invalid' | 'missing' {
+  const row = findUserByPhone(phone)
+  if (!row) return 'missing'
+  const user = db.prepare('SELECT id, card_id, card_code, cashback_balance FROM users WHERE id=?').get(row.id) as
+    | UserRow
+    | undefined
+  return user ? { user, kind: 'code' } : 'missing'
+}
+
 export function newReservationId(): string {
   return 'R-' + randomBytes(9).toString('base64url')
 }
 
 /**
- * Identify the customer. Числовой код — identify + display, QR — identify + reserve/redeem.
+ * Identify the customer. Числовой код/телефон — identify + display, QR — identify + reserve.
  *
- * Numeric code (`kind === 'code'`) отдаёт реальный прогресс с карты (paidCups, cupsForFree,
- * freeAvailable, cashback), но никогда не создаёт резерв и не отдаёт ваучеры: номера карт
- * подбираются перебором, поэтому списание возможно только по подписанному QR.
- * Явный флаг `canRedeem: false` отличает «показали» от «можно списать» для кассы.
+ * Политика списания (зафиксирована владельцем):
+ *  • `BONUS_SPEND` — кэшбэк можно списать после успешной идентификации (телефон/код/QR)
+ *    и только в пределах баланса и суммы чека (clamp делает SellHandler);
+ *  • `FREE_GIFT` — подарок за чашки выдаётся только в старом контуре
+ *    (`LOYALTY_BONUS_MODE=0`); в bonus mode он выключен и не резервируется.
+ *
+ * Numeric code (`kind === 'code'`) никогда не создаёт резерв и не отдаёт ваучеры:
+ * номера карт подбираются перебором. `canRedeem` говорит кассе, можно ли списывать.
  */
 export function resolveAndReserve(input: ResolveInput, now = Date.now()): ResolveResult {
-  const found = findUser(input.code)
+  const code = String(input.code ?? '').trim()
+  const found = code ? findUser(code) : input.phone ? findByPhone(input.phone) : 'invalid'
   if (found === 'invalid') return { ok: false, error: 'invalid_card' }
   if (found === 'missing') return { ok: false, error: 'card_not_found' }
   const { user, kind } = found
@@ -74,15 +103,20 @@ export function resolveAndReserve(input: ResolveInput, now = Date.now()): Resolv
   const card = (db.prepare('SELECT paid_total, free_used FROM cards WHERE user_id=?').get(user.id) ?? { paid_total: 0, free_used: 0 }) as {
     paid_total: number; free_used: number
   }
-  const freeAvailable = Math.max(0, freeEarned(card.paid_total) - card.free_used)
+  const freeAvailCard = Math.max(0, freeEarned(card.paid_total) - card.free_used)
+  const bonusMode = config.loyaltyBonusMode
+  const balance = Math.max(0, Number(user.cashback_balance) || 0)
   const base = {
     ok: true as const,
     cardCode: user.card_code,
     kind,
     paidCups: card.paid_total % config.cupsForFree,
     cupsForFree: config.cupsForFree,
-    freeAvailable,
-    cashback: user.cashback_balance,
+    // В bonus mode подарок выключен: показывать «свободные чашки» кассе нельзя.
+    freeAvailable: bonusMode ? 0 : freeAvailCard,
+    cashback: balance,
+    balanceKopecks: balance,
+    effectiveEarnPercent: bpsToPercent(effectiveEarnBps(db, user.id)),
   }
   if (kind === 'code') {
     // Только идентификация и показ: прогресс и балансы берём с карты как есть,
@@ -94,7 +128,9 @@ export function resolveAndReserve(input: ResolveInput, now = Date.now()): Resolv
       reservationExpiresAt: null,
       freeStatus: 'NONE',
       vouchers: [],
-      canRedeem: false,
+      // В bonus mode списание по коду разрешено политикой (баланс > 0);
+      // в старом контуре — нельзя, там списание только по подписанному QR.
+      canRedeem: bonusMode && balance > 0,
     }
   }
 
@@ -115,13 +151,14 @@ export function resolveAndReserve(input: ResolveInput, now = Date.now()): Resolv
       if (same) {
         db.prepare('UPDATE loyalty_reservations SET expires_at=?, benefit_voucher_ids=? WHERE id=?')
           .run(nowSec + ttl, offerIds, active.id)
-        return { ...base, freeAvailable: active.benefit_free ? 1 : 0, cashbackReserved: active.benefit_cb, reservationId: active.id, reservationExpiresAt: nowSec + ttl, freeStatus: active.benefit_free ? 'RESERVED' as const : 'NONE' as const, vouchers: offer, canRedeem: true }
+        return { ...base, freeAvailable: base.freeAvailable && active.benefit_free ? 1 : 0, cashbackReserved: active.benefit_cb, reservationId: active.id, reservationExpiresAt: nowSec + ttl, freeStatus: active.benefit_free ? 'RESERVED' as const : 'NONE' as const, vouchers: offer, canRedeem: true }
       }
-      return { ...base, freeAvailable: 0, cashback: 0, cashbackReserved: 0, reservationId: null, reservationExpiresAt: null, freeStatus: 'ALREADY_RESERVED' as const, vouchers: [], canRedeem: true }
+      return { ...base, freeAvailable: 0, cashback: 0, balanceKopecks: 0, cashbackReserved: 0, reservationId: null, reservationExpiresAt: null, freeStatus: 'ALREADY_RESERVED' as const, vouchers: [], canRedeem: true }
     }
     const id = newReservationId()
-    const free = freeAvailable > 0 ? 1 : 0
-    const cb = Math.max(0, user.cashback_balance)
+    // bonus mode: подарок не резервируем, держим весь баланс под кэшбэк (clamp — на SELL).
+    const free = !bonusMode && freeAvailCard > 0 ? 1 : 0
+    const cb = balance
     db.prepare(`INSERT INTO loyalty_reservations(id,card_id,benefit_free,benefit_cb,benefit_voucher_ids,store_uuid,device_uuid,status,created_at,expires_at) VALUES(?,?,?,?,?,?,?, 'RESERVED', ?,?)`)
       .run(id, user.card_id, free, cb, offerIds, input.storeUuid ?? null, input.deviceUuid ?? null, nowSec, nowSec + ttl)
     return { ...base, freeAvailable: free, cashbackReserved: cb, reservationId: id, reservationExpiresAt: nowSec + ttl, freeStatus: free ? 'RESERVED' as const : 'NONE' as const, vouchers: offer, canRedeem: true }

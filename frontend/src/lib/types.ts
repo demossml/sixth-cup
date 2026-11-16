@@ -71,6 +71,10 @@ export type Me = {
   id: number; cardId: string; cardCode: string; nickname: string; inviteCode: string; cashbackBalance: number
   /** Серверное состояние лояльности (источник истины — backend). */
   cupsTowardFree?: number; freeAvailable?: number; cupsForFree?: number
+  /** BONUS-LOYALTY: сервер в бонусном режиме — вместо чашек показываем баланс в ₽. */
+  bonusMode?: boolean
+  /** Процент начисления, который реально применяется к этому гостю. */
+  effectiveEarnPercent?: number
   fromFriendsRub?: number; fromFriendsKopecks?: number; friendsCount?: number
   vouchers?: Voucher[]
 }

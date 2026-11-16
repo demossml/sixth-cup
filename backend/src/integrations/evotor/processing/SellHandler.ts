@@ -2,6 +2,8 @@ import type Database from 'better-sqlite3'
 import { verifyServerToken } from '../../../lib/crypto'
 import { normalizeCardCode } from '../../../modules/loyalty/proof'
 import { cashbackOf, freeEarned } from '../../../modules/loyalty/rules'
+import { earnKopecks, effectiveEarnBps } from '../../../modules/loyalty/settings'
+import { config } from '../../../config'
 import { consumeReservation } from '../../../modules/loyalty/reservations'
 import { bindQueueNumber } from '../../../modules/queue/numbers'
 import { extractScRaw } from '../loyaltyExtras'
@@ -351,7 +353,21 @@ export function handleSell(db: Database.Database, storeUuid: string, doc: Record
     ? consumeReservation(db, reservationOp, user.card_id, storeUuid, docId)
     : { free: 0, cb: 0, voucherIds: [] as number[] }
   const appliedFree = Math.min(reserved.free, claimedFree, freeAvail, cups)
-  const appliedCb = Math.min(reserved.cb, claimedCb, user.cashback_balance, amount)
+  /**
+   * BONUS-LOYALTY (вариант B):
+   *  • BONUS_SPEND — кэшбэк можно списать после успешной идентификации (QR, код или телефон),
+   *    потолок — баланс гостя и вся сумма чека (до 100 %), не меньше;
+   *  • в старом контуре (флаг выключен) — только по резерву подписанного QR, как раньше.
+   * Дальше касса не может повлиять на сумму: всё режется здесь.
+   */
+  const bonusMode = config.loyaltyBonusMode
+  const spendCapKopecks = bonusMode
+    ? Math.min(user.cashback_balance, amount)
+    : Math.min(reserved.cb, user.cashback_balance, amount)
+  const appliedCb = Math.min(claimedCb, spendCapKopecks)
+  // Процент начисления: individual → global. База — деньги, реально оплаченные после бонусов.
+  const earnBps = effectiveEarnBps(db, user.id)
+  const earn = bonusMode ? earnKopecks(Math.max(0, amount - appliedCb), earnBps) : 0
   const sequenceMatches = true
   const paidCups = Math.max(0, cups - appliedFree)
   const now = Date.now()
@@ -395,8 +411,14 @@ export function handleSell(db: Database.Database, storeUuid: string, doc: Record
       storeUuid, docId, 'SELL', cardId, opClaimed, typeof sc.q === 'number' ? sc.q : null,
       appliedFree, appliedCb, redeemedVoucher != null ? String(redeemedVoucher) : null, null, amount / 100, cups, now,
     )
-    db.prepare(`UPDATE cards SET paid_total=paid_total+?, free_used=free_used+?, seq=seq+1, updated_at=? WHERE user_id=?`)
-      .run(paidCups, appliedFree, now, user.id)
+    // В bonus mode чашки-подарки не копятся: seq двигаем (защита от повторного чека),
+    // paid_total/free_used не трогаем. В старом контуре — как раньше.
+    if (bonusMode) {
+      db.prepare('UPDATE cards SET seq=seq+1, updated_at=? WHERE user_id=?').run(now, user.id)
+    } else {
+      db.prepare(`UPDATE cards SET paid_total=paid_total+?, free_used=free_used+?, seq=seq+1, updated_at=? WHERE user_id=?`)
+        .run(paidCups, appliedFree, now, user.id)
+    }
     // L-09: приветственный ваучер выдаётся на первой платной чашке в ЛЮБОМ канале.
     // grantVoucherOnce идемпотентен, отсутствие шаблона не должно ронять продажу.
     if (paidCups > 0 && state.paid_total <= 0) {
@@ -405,7 +427,18 @@ export function handleSell(db: Database.Database, storeUuid: string, doc: Record
     if (appliedCb > 0) {
       db.prepare('UPDATE users SET cashback_balance=cashback_balance-? WHERE id=?').run(appliedCb, user.id)
     }
-    if (paidCups || appliedFree || appliedCb) {
+    if (bonusMode) {
+      // Раздельные строки журнала: списание и начисление — разные операции.
+      if (appliedCb > 0) {
+        db.prepare(`INSERT INTO loyalty_ledger(card_id,operation,cups_delta,free_delta,cashback_delta,source_type,source_id,created_at)
+          VALUES(?,?,?,?,?,?,?,?)`).run(cardId, 'SPEND', 0, 0, -appliedCb, 'EVOTOR_SELL', docId, now)
+      }
+      if (earn > 0) {
+        db.prepare('UPDATE users SET cashback_balance=cashback_balance+? WHERE id=?').run(earn, user.id)
+        db.prepare(`INSERT INTO loyalty_ledger(card_id,operation,cups_delta,free_delta,cashback_delta,source_type,source_id,created_at)
+          VALUES(?,?,?,?,?,?,?,?)`).run(cardId, 'EARN', 0, 0, earn, 'EVOTOR_BONUS_EARN', docId, now)
+      }
+    } else if (paidCups || appliedFree || appliedCb) {
       db.prepare(`INSERT INTO loyalty_ledger(card_id,operation,cups_delta,free_delta,cashback_delta,source_type,source_id,created_at)
         VALUES(?,?,?,?,?,?,?,?)`).run(cardId, 'EARN', paidCups, appliedFree, -appliedCb, 'EVOTOR_SELL', docId, now)
     }
@@ -514,6 +547,47 @@ export function handlePayback(db: Database.Database, storeUuid: string, doc: Rec
     if (cb > 0) db.prepare('UPDATE users SET cashback_balance=cashback_balance+? WHERE id=?').run(cb, user.id)
     db.prepare(`INSERT INTO loyalty_ledger(card_id,operation,cups_delta,free_delta,cashback_delta,source_type,source_id,created_at)
       VALUES(?,?,?,?,?,?,?,?)`).run(user.card_id, 'REVERSAL', -Math.max(0, cups - free), -free, cb, 'EVOTOR_PAYBACK', docId, now)
+    // BONUS-LOYALTY: возврат пропорционально снимает и начисленный процент.
+    // Считаем «сколько процента уже сторнировано по этому SELL» по PAYBACK-документам
+    // (loyalty_ops.op_claimed = baseId → ledger.source_id = paybackId).
+    if (config.loyaltyBonusMode) {
+      const earned = db
+        .prepare(
+          `SELECT COALESCE(SUM(cashback_delta),0) AS sum FROM loyalty_ledger
+            WHERE card_id=? AND source_type='EVOTOR_BONUS_EARN' AND source_id=? AND cashback_delta>0`,
+        )
+        .get(user.card_id, baseId) as { sum: number }
+      const alreadyReversed = db
+        .prepare(
+          `SELECT COALESCE(SUM(-l.cashback_delta),0) AS sum
+             FROM loyalty_ledger l
+             JOIN loyalty_ops o ON o.doc_store=? AND o.doc_id=l.source_id AND o.kind='PAYBACK'
+            WHERE l.card_id=? AND l.source_type='EVOTOR_BONUS_EARN' AND l.cashback_delta<0 AND o.op_claimed=?`,
+        )
+        .get(storeUuid, user.card_id, baseId) as { sum: number }
+      const target = Math.floor(Math.max(0, Number(earned.sum) || 0) * cumFrac)
+      const delta = Math.max(0, target - Math.max(0, Number(alreadyReversed.sum) || 0))
+      if (delta > 0) {
+        const balanceNow = Number(
+          (db.prepare('SELECT cashback_balance FROM users WHERE id=?').get(user.id) as { cashback_balance: number }).cashback_balance ?? 0,
+        )
+        const actual = Math.min(delta, Math.max(0, balanceNow))
+        if (actual < delta) {
+          db.prepare(`INSERT INTO disputes(kind,user_id,receipt_id,details,created_at) VALUES(?,?,?,?,?)`).run(
+            'bonus_earn_reversal_shortfall',
+            user.id,
+            baseId,
+            JSON.stringify({ requested: delta, actual, balance: balanceNow, payback: docId }),
+            now,
+          )
+        }
+        if (actual > 0) {
+          db.prepare('UPDATE users SET cashback_balance=cashback_balance-? WHERE id=?').run(actual, user.id)
+          db.prepare(`INSERT INTO loyalty_ledger(card_id,operation,cups_delta,free_delta,cashback_delta,source_type,source_id,created_at)
+            VALUES(?,?,?,?,?,?,?,?)`).run(user.card_id, 'REVERSAL', 0, 0, -actual, 'EVOTOR_BONUS_EARN', docId, now)
+        }
+      }
+    }
     const refs = db.prepare('SELECT beneficiary_id, amount FROM cashback_ledger WHERE receipt_id=? AND amount>0').all(baseId) as { beneficiary_id: number; amount: number }[]
     // L-01: в ledger пишем фактически снятую сумму, а не «идеальную». Иначе Σ ledger
     // расходится с балансом, когда пригласивший уже потратил бонус. Недобор фиксируем спором.

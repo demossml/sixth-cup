@@ -13,6 +13,8 @@ process.env.KEYS_PATH = join(dir, 'keys.json')
 process.env.UPLOADS_DIR = join(dir, 'uploads')
 process.env.ADMIN_TOKEN = 'test-admin'
 process.env.NODE_ENV = 'development'
+// Подарочный контур (чашки). Бонусный режим покрыт `loyalty-bonus-*.test.ts`.
+process.env.LOYALTY_BONUS_MODE = '0'
 process.env.EVOTOR_PROXY_TOKEN = 'proxy-secret'
 
 const { app } = await import('../app')
