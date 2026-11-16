@@ -13,7 +13,8 @@ Endpoints:         POST /api/devices/customers/lookup, POST /api/devices/custome
                    PUT /api/admin/customers/:id/bonus-percent,
                    GET /api/admin/customers/:id/ledger,
                    GET /api/admin/customers?query= (телефон/карта/id)
-SellHandler earn base rule: earn = floor(max(0, суммаЧека − списанныеБонусы) × bps / 10000),
+SellHandler earn base rule: earn = floor(полнаяСуммаЧека × bps / 10000) и ТОЛЬКО при appliedCb = 0
+                   (списал хоть копейку — начисления за чек нет; FIX 16.11.2026),
                    строка журнала EVOTOR_BONUS_EARN; PAYBACK сторнирует earn пропорционально доле возврата
 Spend cap:         100% of check (min(баланс, сумма чека))
 Admin UI:          yes (раздел «Бонусы» + блок бонусов в карточке клиента)

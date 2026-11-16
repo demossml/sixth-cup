@@ -367,7 +367,14 @@ export function handleSell(db: Database.Database, storeUuid: string, doc: Record
   const appliedCb = Math.min(claimedCb, spendCapKopecks)
   // Процент начисления: individual → global. База — деньги, реально оплаченные после бонусов.
   const earnBps = effectiveEarnBps(db, user.id)
-  const earn = bonusMode ? earnKopecks(Math.max(0, amount - appliedCb), earnBps) : 0
+  /**
+   * FIX 16.11.2026 (правило владельца): бонусы начисляются **только за чек, оплаченный
+   * деньгами целиком**. Как только гость списал часть бонусами (`appliedCb > 0`) —
+   * начисления за этот чек нет вообще, а не «с остатка». Иначе процент превращался
+   * в скидку поверх скидки: списал 100 % и получил процент с нуля, списал 90 % —
+   * получил процент почти со всей суммы заново.
+   */
+  const earn = bonusMode && appliedCb === 0 ? earnKopecks(amount, earnBps) : 0
   const sequenceMatches = true
   const paidCups = Math.max(0, cups - appliedFree)
   const now = Date.now()

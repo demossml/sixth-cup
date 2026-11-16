@@ -92,7 +92,7 @@ beforeEach(async () => {
 describe('SELL в бонусном режиме', () => {
   it('начисляет глобальные 5% с оплаченной суммы и не двигает чашки', () => {
     expect(handleSell(db, STORE, sellDoc('s1')).processed).toBe(true)
-    expect(balance()).toBe(5000) // 5% от 1000 ₽
+    expect(balance()).toBe(5000) // 5% от 1000 ₽ (списания бонусов нет)
     expect(ledger('EVOTOR_BONUS_EARN')).toEqual([{ d: 5000 }])
     expect(cupsOf()).toEqual({ p: 0, f: 0 }) // подарочные чашки не копятся
   })
@@ -103,13 +103,21 @@ describe('SELL в бонусном режиме', () => {
     expect(balance()).toBe(7500) // 7.5% от 1000 ₽
   })
 
-  it('списывает весь баланс, если он меньше чека, и начисляет с остатка', () => {
+  it('списал часть чека бонусами — начисления нет, баланс только уменьшается', () => {
     setBalance(20000)
     handleSell(db, STORE, sellDoc('s3', { cb: 100000 }))
-    // списали 200 ₽ из 1000 ₽, начислили 5% от 800 ₽ = 40 ₽
-    expect(balance()).toBe(4000)
+    // списали 200 ₽ из 1000 ₽ → процент за этот чек не начисляется вообще (FIX 16.11.2026)
+    expect(balance()).toBe(0)
     expect(ledger('EVOTOR_SELL')).toEqual([{ d: -20000 }])
-    expect(ledger('EVOTOR_BONUS_EARN')).toEqual([{ d: 4000 }])
+    expect(ledger('EVOTOR_BONUS_EARN')).toEqual([])
+  })
+
+  it('списал ровно 1 копейку — начисления тоже нет', () => {
+    setBalance(1)
+    handleSell(db, STORE, sellDoc('s3a', { cb: 100000 }))
+    expect(balance()).toBe(0)
+    expect(ledger('EVOTOR_SELL')).toEqual([{ d: -1 }])
+    expect(ledger('EVOTOR_BONUS_EARN')).toEqual([])
   })
 
   it('чек целиком оплачен бонусами — процент не начисляется', () => {
@@ -151,6 +159,15 @@ describe('GET /api/loyalty/ledger (PWA)', () => {
 })
 
 describe('PAYBACK в бонусном режиме', () => {
+  it('чек со списанием: возврат возвращает списанное, но не начисляет процент', () => {
+    setBalance(20000)
+    handleSell(db, STORE, sellDoc('p0', { cb: 100000 })) // списали 200 ₽, earn = 0
+    expect(balance()).toBe(0)
+    expect(handlePayback(db, STORE, paybackDoc('p0-back', 'p0', 100000)).processed).toBe(true)
+    expect(balance()).toBe(20000) // только возврат списанного
+    expect(ledger('EVOTOR_BONUS_EARN')).toEqual([])
+  })
+
   it('полный возврат сторнирует начисленный процент', () => {
     handleSell(db, STORE, sellDoc('p1'))
     expect(balance()).toBe(5000)
