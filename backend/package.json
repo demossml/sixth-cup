@@ -30,7 +30,9 @@
     "sharp": "^0.33.5",
     "web-push": "^4.0.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
-    "zod": "^3.23.0"
+    "zod": "^3.23.0",
+    "@sixth-cup/menu-core": "0.1.0",
+    "nodemailer": "^10.3.1"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
@@ -40,6 +42,7 @@
     "tsup": "^8.3.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.9"
+    "vitest": "^2.1.9",
+    "@types/nodemailer": "^8.0.2"
   }
 }

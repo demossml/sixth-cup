@@ -229,6 +229,7 @@ if (!config.isDev) {
         webmanifest: 'application/manifest+json',
         woff2: 'font/woff2',
         woff: 'font/woff',
+        ttf: 'font/ttf',
         jpg: 'image/jpeg',
         jpeg: 'image/jpeg',
         webp: 'image/webp',

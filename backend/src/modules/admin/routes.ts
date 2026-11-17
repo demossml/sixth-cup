@@ -80,6 +80,7 @@ import { adminStock } from './stock'
 import { adminCost } from './cost'
 import { adminCostTechCards } from './costTechCards'
 import { adminMenuLayouts } from './menuLayouts'
+import { adminPoster } from './poster'
 import { adminMenuAssets } from './menuAssets'
 import { adminStudio } from './studio'
 import { getAiSettingsPublic } from '../../lib/aiSettings'
@@ -2040,6 +2041,7 @@ adminRoutes.route('/', adminConsole)
 adminRoutes.route('/', adminStudio) // before adminStock: /inventory/overview must win over /inventory/:id
 adminRoutes.route('/', adminStock)
 adminRoutes.route('/', adminCost)
+adminRoutes.route('/', adminPoster) // конструктор «Меню и Ценники» (/poster.html)
 adminRoutes.route('/', adminCostTechCards) // F3: техкарты v2 (/cost/tech-cards, /cost/items, /cost/insights)
 adminRoutes.route('/', adminMenuLayouts)
 adminRoutes.route('/', adminMenuAssets)

@@ -122,6 +122,9 @@ svg { display: block; }
 }
 .nav-item.is-next { color: #99a4b7; }
 .nav-item.is-next:hover { color: #e4e8ef; }
+/* Внешнее приложение (новая вкладка): стрелка справа, тише основной иконки. */
+.nav-item .ext { margin-left: auto; opacity: 0.6; }
+.nav-item:hover .ext { opacity: 1; }
 .side-sep { height: 1px; background: rgba(255, 255, 255, 0.08); margin: 12px 4px; }
 .side-foot { margin-top: auto; padding-top: 12px; }
 .side-status {
@@ -665,7 +668,7 @@ tbody tr.clickable { cursor: pointer; }
   .brand { padding: 0 0 16px; }
   .brand img { width: 36px; height: 36px; }
   /* Icon rail applies to the sidebar only: the mobile «Ещё» sheet reuses .nav-item and must keep labels. */
-  .side .brand-text, .side .nav-cap, .side .nav-item span.label, .side .nav-item .count, .side .nav-item .ai, .side .user-text, .side .user .out { display: none; }
+  .side .brand-text, .side .nav-cap, .side .nav-item span.label, .side .nav-item .count, .side .nav-item .ai, .side .nav-item .ext, .side .user-text, .side .user .out { display: none; }
   .nav { width: 100%; }
   .side .nav-item { justify-content: center; padding: 0; min-height: 38px; }
   .side .nav-item svg { width: 19px; height: 19px; }

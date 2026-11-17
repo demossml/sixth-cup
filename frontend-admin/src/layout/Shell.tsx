@@ -6,13 +6,17 @@ import {
   LayoutDashboard, LogOut, ClipboardList, Package, Search, Settings, Menu,
   Share2, Store, Users, X, MoreHorizontal, Milk, Ruler, Layers,
   ListChecks, ClipboardCheck, Calculator, LayoutTemplate,
-  Coins,
+  Coins, Tags, ArrowUpRight,
 } from 'lucide-react'
 import { useApi } from '../api/useApi'
 import type { Health } from '../api/types'
 import { ago } from '../lib/format'
 
-type NavItem = { to: string; label: string; icon: ReactNode; end?: boolean; badge?: 'ai' }
+/** `external` — отдельное приложение: открывается в новой вкладке, а не маршрутом админки. */
+type NavItem = { to: string; label: string; icon: ReactNode; end?: boolean; badge?: 'ai'; external?: boolean }
+
+/** Конструктор меню и ценников — отдельная страница этой же админки (src/poster), вход общий. */
+const MENU_POSTER_URL = '/poster.html'
 
 const SHIFT: NavItem[] = [
   { to: '/', label: 'Сегодня', icon: <LayoutDashboard size={17} />, end: true },
@@ -36,6 +40,7 @@ const MANAGE: NavItem[] = [
   { to: '/stock', label: 'Склад', icon: <Box size={17} /> },
   { to: '/cost', label: 'Себестоимость', icon: <Calculator size={17} /> },
   { to: '/menu-layouts', label: 'Лист меню (печать)', icon: <LayoutTemplate size={17} /> },
+  { to: MENU_POSTER_URL, label: 'Меню и Ценники', icon: <Tags size={17} />, external: true },
   { to: '/purchases', label: 'Закупки', icon: <Package size={17} /> },
   { to: '/inventory', label: 'Инвентаризация', icon: <ClipboardList size={17} /> },
   { to: '/staff', label: 'Сотрудники', icon: <Users size={17} /> },
@@ -108,7 +113,22 @@ function NavGroup({ title, items, onNavigate }: { title: string; items: NavItem[
   return (
     <>
       <div className="nav-cap">{title}</div>
-      {items.map((item) => (
+      {items.map((item) => item.external ? (
+        <a
+          key={item.to}
+          href={item.to}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="nav-item"
+          title={`${item.label} — откроется в новой вкладке`}
+          onClick={onNavigate}
+        >
+          {item.icon}
+          <span className="label">{item.label}</span>
+          <ArrowUpRight size={14} className="ext" aria-hidden />
+          <span className="sr-only"> (откроется в новой вкладке)</span>
+        </a>
+      ) : (
         <NavLink
           key={item.to}
           to={item.to}
