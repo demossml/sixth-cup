@@ -29,6 +29,7 @@ export function makeFontBook(bytes: Record<Weight, Uint8Array>): FontBook {
   const fonts = {} as Record<Weight, FkFont>;
   for (const w of WEIGHTS) fonts[w] = fontkit.create(bytes[w]) as unknown as FkFont;
   const cache = new Map<string, number>();
+  const sides = new Map<string, { lsb: number; rsb: number }>();
   return {
     bytes,
     capHeight: fonts.Regular.capHeight / fonts.Regular.unitsPerEm,
@@ -44,16 +45,21 @@ export function makeFontBook(bytes: Record<Weight, Uint8Array>): FontBook {
       // трекинг добавляется после каждого знака, кроме последнего (так же рисует PDF)
       return units * size + tracking * size * (Array.from(text).length - 1);
     },
+    // Свесы считаются в долях кегля один раз на строку и начертание: f.layout — самое дорогое в вёрстке,
+    // а при подгонке под лист одни и те же строки меряются в каждой попытке (без кэша — ~50 мс на меню).
     bearings(text, weight, size) {
       if (!text) return { lsb: 0, rsb: 0 };
-      const f = fonts[weight];
-      const g = f.layout(text).glyphs;
-      const first = g[0];
-      const last = g[g.length - 1];
-      return {
-        lsb: (first.bbox.minX / f.unitsPerEm) * size,
-        rsb: ((last.advanceWidth - last.bbox.maxX) / f.unitsPerEm) * size,
-      };
+      const key = weight + "\u0000" + text;
+      let b = sides.get(key);
+      if (!b) {
+        const f = fonts[weight];
+        const g = f.layout(text).glyphs;
+        const first = g[0];
+        const last = g[g.length - 1];
+        b = first && last ? { lsb: first.bbox.minX / f.unitsPerEm, rsb: (last.advanceWidth - last.bbox.maxX) / f.unitsPerEm } : { lsb: 0, rsb: 0 };
+        sides.set(key, b);
+      }
+      return { lsb: b.lsb * size, rsb: b.rsb * size };
     },
   };
 }

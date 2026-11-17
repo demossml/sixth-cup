@@ -1,4 +1,4 @@
-import { cafeLabel, resolveTag, sizeLabel, variationBlocks, type Doc, type Group, type Item, type Price, type Variation, type Workspace } from "./model";
+import { cafeLabel, printedGroup, resolveTag, sizeLabel, variationBlocks, type Doc, type Group, type Item, type Price, type Variation, type Workspace } from "./model";
 
 // Журнал: человеческое описание того, что изменилось между двумя версиями меню.
 
@@ -48,7 +48,10 @@ function itemDiff(g: Group, a: Item, b: Item, out: string[]) {
   if (orderChanged(a.variations.map((v) => v.id), b.variations.map((v) => v.id))) out.push(`${q(b.name)}: изменён порядок вариаций`);
 }
 
-function groupDiff(a: Group, b: Group, out: string[], moved: Set<string> = new Set()) {
+function groupDiff(a0: Group, b0: Group, out: string[], moved: Set<string> = new Set()) {
+  // пустые строки-заготовки — не изменения: «добавлена позиция» появится, когда в неё что-то введут
+  const a = printedGroup(a0);
+  const b = printedGroup(b0);
   if (a.title !== b.title) out.push(`Группа ${q(a.title)} переименована в ${q(b.title)}`);
   if (a.style !== b.style) out.push(`Группа ${q(b.title)}: изменён вид`);
   if (a.columns.join("|") !== b.columns.join("|")) out.push(`Группа ${q(b.title)}: объёмы ${a.columns.join(" / ")} → ${b.columns.join(" / ")}`);

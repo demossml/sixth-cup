@@ -1,4 +1,4 @@
-import { addonGroups, addonLine, resolveTag, variationBlocks, type Doc, type PriceNotice, type SentMark, type Workspace } from "./model";
+import { addonGroups, addonLine, printedGroup, resolveTag, variationBlocks, type Doc, type PriceNotice, type SentMark, type Workspace } from "./model";
 
 // Отпечаток документа — хэш всего, что попадает в его PDF. Документ «изменён», если отпечаток
 // не совпадает с тем, что был при последней отправке в типографию. Шрифты для этого не нужны.
@@ -17,6 +17,7 @@ export function renderInput(ws: Workspace, doc: Doc): unknown {
       groups: doc.groupIds
         .map((id) => ws.groups.find((g) => g.id === id))
         .filter(Boolean)
+        .map((g) => printedGroup(g!)) // пустые строки-заготовки на лист не идут
         .map((g) => ({
           t: g!.title,
           s: g!.style,

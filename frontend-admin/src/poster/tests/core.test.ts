@@ -7,7 +7,7 @@ import { createFromTemplate, menuTemplates, templatePreview } from "@/lib/templa
 import { MENU as M, PRINTER_MARGIN } from "@/lib/layout/design";
 import { FIT_MIN, layoutMenu } from "@/lib/layout/menu";
 import { layoutTag } from "@/lib/layout/tag";
-import { addCafe, applyPriceUpdates, cafeLabel, sameTemplate, tagTemplates, addonGroups, addonJoins, addonLine, cafeGroups, contactServes, groupAddons, splitAddons, cafeMenus, deepCopyMenu, menuFamily, migrateWorkspace, removeFormat, removeMenu, resolveTag, syncSharedPrices, variationTitle, type MenuDoc, type TagDoc, type Workspace } from "@/lib/model";
+import { addCafe, applyPriceUpdates, cafeLabel, sameTemplate, tagTemplates, addonGroups, addonJoins, addonLine, cafeGroups, contactServes, groupAddons, splitAddons, cafeMenus, deepCopyMenu, menuFamily, migrateWorkspace, removeFormat, removeMenu, moveVariation, moveVariationTo, nestItem, resolveTag, unnestVariation, syncSharedPrices, unshareVariation, variationTitle, variationBlocks, type Item, type MenuDoc, type TagDoc, type Workspace } from "@/lib/model";
 import { sceneToPdf } from "@/lib/render/pdf";
 import { previewHeight, sceneToSvg } from "@/lib/render/svg";
 import { changedTexts, layoutSent } from "@/lib/snapshot";
@@ -198,9 +198,269 @@ describe("вёрстка меню", () => {
     const vertical = scene.els.filter((e) => e.kind === "line" && e.x1 === e.x2);
     expect(vertical.length).toBeGreaterThan(2);
   });
+
+  it("узкий список с несколькими объёмами остаётся узким: цены у правого края списка", () => {
+    const ws = seedWorkspace();
+    const doc = menus(ws)[1]; // «Не кофе»: внизу узкий список «К кофе»
+    const g = ws.groups.find((x) => doc.groupIds.includes(x.id) && x.style === "compact")!;
+    const rules = (scene: ReturnType<typeof layoutMenu>) =>
+      scene.els.filter((e) => e.kind === "line" && e.y1 === e.y2 && e.width === M.compact.rule * (scene.fit ?? 1)).map((e) => (e.kind === "line" ? [e.x1, e.x2] : []));
+    const before = layoutMenu(ws, doc, fb);
+    g.columns = ["0.2", "0.3"];
+    g.items.forEach((it, i) => {
+      it.name = `Позиция ${i + 1}`;
+      it.prices = [911 + i, i % 2 ? null : 977 + i];
+    });
+    const after = layoutMenu(ws, doc, fb);
+    expect(after.warnings).toEqual([]);
+    // ширина линеек списка та же, а не во всю ширину листа
+    expect(rules(after).length).toBeGreaterThan(0);
+    expect(rules(after)).toEqual(rules(before));
+    const k = after.fit ?? 1;
+    const priceRight = (txt: string) => {
+      const e = after.els.find((x) => x.kind === "text" && x.text === txt);
+      return e?.kind === "text" ? e.x + fb.measure(e.text, e.weight, e.size) - fb.bearings(e.text, e.weight, e.size).rsb : NaN;
+    };
+    // вторая колонка — у правого края списка, первая — на шаг левее
+    expect(priceRight("977")).toBeCloseTo(M.compact.priceRight, 3);
+    expect(priceRight("911")).toBeCloseTo(M.compact.priceRight - M.compact.colPitch * k, 3);
+    // подписи обоих объёмов на строке заголовка
+    expect(after.els.some((e) => e.kind === "text" && e.text === "0.2")).toBe(true);
+    expect(after.els.some((e) => e.kind === "text" && e.text === "0.3")).toBe(true);
+    // пунктир между колонками — как в таблице, внутри списка; у позиций без второй цены он прерывается
+    const inList = (scene: ReturnType<typeof layoutMenu>) => {
+      const title = scene.els.find((e) => e.kind === "text" && e.text === g.title.toUpperCase());
+      const top = title?.kind === "text" ? title.y - 10 : Infinity;
+      return scene.els.filter((e) => e.kind === "line" && e.x1 === e.x2 && e.dash && e.y1 > top && e.x1 > M.compact.x1 && e.x1 < M.compact.x2);
+    };
+    expect(inList(before)).toHaveLength(0);
+    const seps = inList(after);
+    expect(seps.length).toBeGreaterThan(1);
+    expect(new Set(seps.map((e) => (e.kind === "line" ? e.x1 : 0))).size).toBe(1);
+  });
+
+  it("вариации в узком списке: с отступом, под пунктиром в ширину списка, общая цена — одна", () => {
+    const ws = seedWorkspace();
+    const doc = menus(ws)[1];
+    const g = ws.groups.find((x) => doc.groupIds.includes(x.id) && x.style === "compact")!;
+    const it0 = g.items[0];
+    it0.variations = [
+      { id: "v-a", name: "С ветчиной", prices: [915] },
+      { id: "v-b", name: "С сыром", prices: [915], sharePrice: true },
+      { id: "v-c", name: "С лососем", prices: [935] },
+    ];
+    const scene = layoutMenu(ws, doc, fb);
+    expect(scene.warnings).toEqual([]);
+    const find = (txt: string) => scene.els.find((e) => e.kind === "text" && e.text === txt);
+    const item = find(it0.name.toUpperCase());
+    const a = find("С ВЕТЧИНОЙ");
+    const b = find("С СЫРОМ");
+    const c = find("С ЛОСОСЕМ");
+    if (item?.kind !== "text" || a?.kind !== "text" || b?.kind !== "text" || c?.kind !== "text") throw new Error("нет строк вариаций");
+    const k = scene.fit ?? 1;
+    // вариации — правее названия позиции, по строке на каждую, ниже позиции
+    expect(a.x).toBeGreaterThan(item.x + 3);
+    expect(b.x).toBeCloseTo(a.x, 1);
+    expect(a.y - item.y).toBeCloseTo(M.compact.pitch * k, 3);
+    expect(c.y - b.y).toBeCloseTo(M.compact.pitch * k, 3);
+    // общая цена у двух вариаций — одна, по центру их блока
+    const shared = scene.els.filter((e) => e.kind === "text" && e.text === "915");
+    expect(shared).toHaveLength(1);
+    expect(shared[0].kind === "text" && shared[0].y).toBeCloseTo((a.y + b.y) / 2, 3);
+    expect(scene.els.filter((e) => e.kind === "text" && e.text === "935")).toHaveLength(1);
+    // над каждым блоком вариаций — пунктир в ширину списка
+    const dashed = scene.els.filter((e) => e.kind === "line" && e.y1 === e.y2 && e.dash && e.x1 === M.compact.x1 && e.x2 === M.compact.x2);
+    expect(dashed).toHaveLength(2);
+  });
+
+  it("пустая колонка объёма не сдвигает цены от правого края — и при уменьшенном тексте", () => {
+    const priceRights = (ws: Workspace) => {
+      const scene = layoutMenu(ws, menus(ws)[0], fb);
+      const xs = scene.els.flatMap((e) => (e.kind === "text" && /^\d+$/.test(e.text) ? [e.x + fb.measure(e.text, e.weight, e.size, e.tracking)] : []));
+      return { fit: scene.fit, right: Math.max(...xs), texts: scene.els.flatMap((e) => (e.kind === "text" ? [e.text] : [])) };
+    };
+    const ws = seedWorkspace();
+    // много позиций — текст уменьшается
+    const g = ws.groups[0];
+    for (let i = 0; i < 6; i++) g.items.push({ ...structuredClone(g.items[g.items.length - 1]), id: `extra-${i}`, variations: [] });
+    const before = priceRights(ws);
+    expect(before.fit).toBeLessThan(1);
+    // добавили объём и не заполнили: ни подписи, ни цен
+    g.columns.push("");
+    for (const it of g.items) {
+      it.prices.push(null);
+      for (const v of it.variations) v.prices.push(null);
+    }
+    const after = priceRights(ws);
+    expect(after.fit).toBe(before.fit);
+    expect(after.right).toBeCloseTo(before.right, 3);
+    expect(after.texts).toEqual(before.texts);
+  });
 });
 
 describe("вариации", () => {
+  describe("позиция, перетащенная на товар, становится его вариацией", () => {
+    it("встаёт последней вариацией, цены — по колонкам товара, ценник идёт за ней", () => {
+      const ws = seedWorkspace();
+      const coffee = ws.groups.find((g) => g.style === "hero")!;
+      const flat = coffee.items.find((i) => i.variations.length === 0)!;
+      const target = coffee.items[0];
+      const before = target.variations.length;
+      ws.documents.push({ id: "t-nest", kind: "tag", cafeId: ws.cafes[0].id, name: "", size: { w: 89.3, h: 45.2 }, showInfo: false, createdAt: "", ref: { groupId: coffee.id, itemId: flat.id, column: 0 } });
+      expect(nestItem(ws, coffee.id, flat.id, coffee.id, target.id)).toBe(true);
+      expect(coffee.items.some((i) => i.id === flat.id)).toBe(false);
+      const v = target.variations[target.variations.length - 1];
+      expect(target.variations).toHaveLength(before + 1);
+      expect(v).toMatchObject({ id: flat.id, name: flat.name });
+      expect(v.prices).toHaveLength(coffee.columns.length);
+      expect(v.sharePrice).toBeUndefined(); // своя цена, а не общая с вариацией выше
+      const tag = ws.documents.find((d) => d.id === "t-nest");
+      expect(tag?.kind === "tag" && tag.ref).toMatchObject({ groupId: coffee.id, itemId: target.id, variationId: flat.id });
+    });
+
+    it("добавка на товар — её цена в первой колонке; на добавку и на саму себя — нельзя", () => {
+      const ws = seedWorkspace();
+      const addons = ws.groups.find((g) => g.style === "addons")!;
+      const coffee = ws.groups.find((g) => g.style === "hero")!;
+      const syrup = addons.items[0];
+      const target = coffee.items[0];
+      expect(nestItem(ws, coffee.id, target.id, addons.id, syrup.id)).toBe(false);
+      expect(nestItem(ws, coffee.id, target.id, coffee.id, target.id)).toBe(false);
+      expect(nestItem(ws, addons.id, syrup.id, coffee.id, target.id)).toBe(true);
+      const v = target.variations[target.variations.length - 1];
+      expect(v.prices).toEqual([syrup.prices[0], ...Array(coffee.columns.length - 1).fill(null)]);
+    });
+
+    it("вариации позиции идут следом, первая — без общей цены с ней", () => {
+      const ws = seedWorkspace();
+      const coffee = ws.groups.find((g) => g.style === "hero")!;
+      const [a, b] = coffee.items.filter((i) => i.variations.length > 0);
+      const n = a.variations.length;
+      expect(nestItem(ws, coffee.id, a.id, coffee.id, b.id)).toBe(true);
+      const tail = b.variations.slice(-(n + 1));
+      expect(tail.map((v) => v.name)).toEqual([a.name, ...a.variations.map((v) => v.name)]);
+      expect(tail[1].sharePrice).toBeUndefined();
+    });
+  });
+
+  describe("вариацию переносят к другому товару или выносят в позицию", () => {
+    it("на другой товар — встаёт последней, своей ценой; блок с общей ценой у прежнего товара не рвётся", () => {
+      const ws = seedWorkspace();
+      const coffee = ws.groups.find((g) => g.style === "hero")!;
+      const [a, b] = coffee.items.filter((i) => i.variations.length > 1);
+      const head = a.variations[0];
+      const second = a.variations[1];
+      const blockPrice = [...head.prices];
+      ws.documents.push({ id: "t-v", kind: "tag", cafeId: ws.cafes[0].id, name: "", size: { w: 89.3, h: 45.2 }, showInfo: false, createdAt: "", ref: { groupId: coffee.id, itemId: a.id, variationId: head.id, column: 1 } });
+      expect(moveVariationTo(ws, coffee.id, a.id, head.id, coffee.id, b.id)).toBe(true);
+      const moved = b.variations[b.variations.length - 1];
+      expect(moved).toMatchObject({ id: head.id, name: head.name, prices: blockPrice });
+      expect(moved.sharePrice).toBeUndefined();
+      // во главе блока у прежнего товара — следующая, с той же ценой
+      expect(a.variations[0].id).toBe(second.id);
+      expect(a.variations[0].sharePrice).toBeUndefined();
+      expect(a.variations[0].prices).toEqual(blockPrice);
+      const tag = ws.documents.find((d) => d.id === "t-v");
+      expect(tag?.kind === "tag" && tag.ref).toMatchObject({ itemId: b.id, variationId: head.id, column: 1 });
+      expect(moveVariationTo(ws, coffee.id, b.id, moved.id, coffee.id, b.id)).toBe(false); // на свой же товар — нет
+    });
+
+    it("в список позиций — становится отдельной позицией на месте, ценник — на неё", () => {
+      const ws = seedWorkspace();
+      const coffee = ws.groups.find((g) => g.style === "hero")!;
+      const a = coffee.items.find((i) => i.variations.length > 0)!;
+      const v = a.variations[a.variations.length - 1];
+      const anchor = coffee.items[coffee.items.length - 1];
+      ws.documents.push({ id: "t-u", kind: "tag", cafeId: ws.cafes[0].id, name: "", size: { w: 89.3, h: 45.2 }, showInfo: false, createdAt: "", ref: { groupId: coffee.id, itemId: a.id, variationId: v.id, column: 0 } });
+      const id = unnestVariation(ws, coffee.id, a.id, v.id, coffee.id, anchor.id, true);
+      expect(id).toBeTruthy();
+      expect(a.variations.some((x) => x.id === v.id)).toBe(false);
+      const last = coffee.items[coffee.items.length - 1];
+      expect(last).toMatchObject({ id, name: v.name, variations: [] });
+      expect(last.prices).toHaveLength(coffee.columns.length);
+      const tag = ws.documents.find((d) => d.id === "t-u");
+      expect(tag?.kind === "tag" && tag.ref).toEqual({ groupId: coffee.id, itemId: id, column: 0 });
+    });
+
+    it("в добавки — одна цена, первая непустая", () => {
+      const ws = seedWorkspace();
+      const coffee = ws.groups.find((g) => g.style === "hero")!;
+      const addons = ws.groups.find((g) => g.style === "addons")!;
+      const a = coffee.items.find((i) => i.variations.length > 0)!;
+      const v = a.variations[0];
+      const p = v.prices.find((x) => x != null);
+      const id = unnestVariation(ws, coffee.id, a.id, v.id, addons.id);
+      expect(addons.items[addons.items.length - 1]).toMatchObject({ id, prices: [p] });
+    });
+  });
+
+  describe("общая цена при перестановке и своей цене", () => {
+    // «Капучино»: Овсяное 260 и Безлактозное — общая цена; новая вариация без цены — внизу
+    const make = (): Item => {
+      const it: Item = {
+        id: "i", name: "Капучино", prices: [200, 230, 260],
+        variations: [
+          { id: "a", name: "Овсяное", prices: [260, 290, 320] },
+          { id: "b", name: "Безлактозное", prices: [260, 290, 320], sharePrice: true },
+          { id: "n", name: "Кокосовое", prices: [null, null, null] },
+        ],
+      };
+      return it;
+    };
+    const names = (it: Item) => variationBlocks(it.variations).map((b) => b.map((v) => v.id).join("+"));
+    const price = (it: Item, id: string) => it.variations.find((v) => v.id === id)!.prices;
+
+    it("новая, поставленная между двумя с общей ценой, присоединяется и берёт их цену", () => {
+      const it = make();
+      moveVariation(it, 2, 1);
+      expect(names(it)).toEqual(["a+n+b"]);
+      expect(price(it, "n")).toEqual([260, 290, 320]);
+    });
+
+    it("её можно сдвинуть последней — связь не обрывается", () => {
+      const it = make();
+      moveVariation(it, 2, 1);
+      moveVariation(it, 1, 2);
+      expect(names(it)).toEqual(["a+b+n"]);
+      expect(price(it, "n")).toEqual([260, 290, 320]);
+    });
+
+    it("своя цена у последней отключает только её связь", () => {
+      const it = make();
+      moveVariation(it, 2, 1);
+      moveVariation(it, 1, 2);
+      unshareVariation(it, "n");
+      it.variations[2].prices = [270, 300, 330];
+      syncSharedPrices(it);
+      expect(names(it)).toEqual(["a+b", "n"]);
+      expect(price(it, "b")).toEqual([260, 290, 320]);
+    });
+
+    it("своя цена у вариации в середине блока не меняет цены вариаций ниже", () => {
+      const it = make();
+      moveVariation(it, 2, 1); // a+n+b
+      unshareVariation(it, "n");
+      it.variations[1].prices = [270, 300, 330];
+      syncSharedPrices(it);
+      expect(names(it)).toEqual(["a", "n", "b"]);
+      expect(price(it, "b")).toEqual([260, 290, 320]);
+    });
+
+    it("вынесенная из блока отвязывается и сохраняет свою цену; без первой блок не прилипает к чужой цене", () => {
+      const it = make();
+      it.variations.unshift({ id: "x", name: "Обычное", prices: [200, 230, 260] }); // x, a+b, n
+      moveVariation(it, 2, 3); // b — вниз, под n
+      expect(names(it)).toEqual(["x", "a", "n", "b"]);
+      expect(price(it, "b")).toEqual([260, 290, 320]);
+
+      const it2 = make();
+      it2.variations.unshift({ id: "x", name: "Обычное", prices: [200, 230, 260] }); // x, a+b, n
+      moveVariation(it2, 1, 3); // первую блока (a) — в конец
+      expect(names(it2)).toEqual(["x", "b", "n", "a"]);
+      expect(price(it2, "b")).toEqual([260, 290, 320]);
+    });
+  });
+
   const priceTexts = (ws: Workspace) =>
     layoutMenu(ws, menus(ws)[0], fb).els.filter((e) => e.kind === "text" && /^\d+$/.test(e.text)).length;
 
@@ -682,5 +942,18 @@ describe("что изменилось с прошлой отправки", () =>
     expect(c.other).toEqual(["размер 90×45 → 70×35", "дата"]);
     delete t.lastSent!.snap;
     expect(docChanges(ws, t).state).toBe("unknown");
+  });
+});
+
+describe("шрифты: кэш свесов", () => {
+  it("bearings из кэша совпадают с первым замером и масштабируются по кеглю", () => {
+    const fb = nodeFontBook();
+    const a = fb.bearings("Капучино", "Medium", 10);
+    const b = fb.bearings("Капучино", "Medium", 10); // второй раз — из кэша
+    const c = fb.bearings("Капучино", "Medium", 20);
+    expect(b).toEqual(a);
+    expect(c.lsb).toBeCloseTo(a.lsb * 2, 6);
+    expect(c.rsb).toBeCloseTo(a.rsb * 2, 6);
+    expect(fb.bearings("", "Medium", 10)).toEqual({ lsb: 0, rsb: 0 });
   });
 });

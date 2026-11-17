@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { linkByNames, linkToMilk, linkToProduct, matchSizes, syncCatalogPrices, volumeMl, type Catalog, type CatalogProduct } from "./catalog";
+import { linkByNames, linkToMilk, linkToProduct, matchSizes, priceOrigin, setManualColumn, syncCatalogPrices, volumeMl, type Catalog, type CatalogProduct } from "./catalog";
 import { seedWorkspace } from "./seed";
 
 const cappuccino = (p250 = 200, p350 = 230, p450 = 260): CatalogProduct => ({
@@ -75,6 +75,20 @@ describe("syncCatalogPrices", () => {
     expect(item.prices[0]).toBe(200);
   });
 
+  it("leaves a «menu only» column alone and takes it back from the base when the mark is removed", () => {
+    const { ws, item } = setup();
+    item.prices[1] = 199;
+    setManualColumn(item, 1, true);
+    expect(item.link?.manual).toEqual([1]);
+    const r = syncCatalogPrices(ws, { products: [cappuccino(210, 240, 270)] });
+    expect(item.prices).toEqual([210, 199, 270]);
+    expect(r.changed).toBe(2);
+    setManualColumn(item, 1, false);
+    expect(item.link?.manual).toBeUndefined();
+    syncCatalogPrices(ws, { products: [cappuccino(210, 240, 270)] });
+    expect(item.prices[1]).toBe(240);
+  });
+
   it("prices a milk variation as base size plus surcharge; joined variations keep the block price", () => {
     const { ws, item } = setup();
     const oat = item.variations.find((v) => v.name === "Овсяное")!;
@@ -120,5 +134,28 @@ describe("linking", () => {
     expect(addon.prices).toEqual([45]);
     expect(n).toBe(3);
     expect(linkByNames(ws.groups, { products: [cappuccino(), syrup] })).toBe(0);
+  });
+});
+
+describe("priceOrigin", () => {
+  const withDates = (): CatalogProduct => ({ ...cappuccino(), sizes: cappuccino().sizes.map((x, i) => ({ ...x, updatedAt: 1_700_000_000_000 + i })) });
+
+  it("describes a base price, a «menu only» price and a manual row", () => {
+    const { ws, item } = setup(withDates());
+    const catalog: Catalog = { products: [withDates()] };
+    const db = priceOrigin(catalog, item, item, 1);
+    expect(db).toMatchObject({ kind: "db", via: "product", dbPrice: 230, adminPath: "/menu?product=12", dbKey: { ref: "g:1", key: "p:12" } });
+    expect(db.size?.updatedAt).toBe(1_700_000_000_001);
+    setManualColumn(item, 1, true);
+    expect(priceOrigin(catalog, item, item, 1).kind).toBe("own");
+    const plain = ws.groups.flatMap((g) => g.items).find((i) => !i.link)!;
+    expect(priceOrigin(catalog, plain, plain, 0)).toMatchObject({ kind: "manual", adminPath: null, dbKey: null });
+  });
+
+  it("does not offer to write a milk price to the base", () => {
+    const { item } = setup();
+    const oat = item.variations.find((v) => v.name === "Овсяное")!;
+    linkToMilk(oat, cappuccino().milk[0], item);
+    expect(priceOrigin({ products: [cappuccino()] }, item, oat, 0)).toMatchObject({ kind: "db", via: "milk", dbPrice: 260, surcharge: 60, dbKey: null });
   });
 });

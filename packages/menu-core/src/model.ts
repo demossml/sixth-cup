@@ -35,17 +35,20 @@ export interface Variation extends Line {
  * Привязка строки к товару каталога sixth-cup. ref — «g:<id группы>» или «p:<id товара>»;
  * sizes — какой размер товара стоит в какой колонке группы (ключ размера из каталога, null — колонка пустая).
  * missing — товара или размера в базе больше нет: печатается последняя известная цена.
+ * manual — колонки, где цену поставили «только для меню»: сверка с базой их не трогает.
  */
 export interface CatalogLink {
   ref: string;
   sizes: (string | null)[];
   missing?: boolean;
+  manual?: number[];
 }
 
 /** Вариация — вид молока товара основы: цена каждой колонки = цена основы + доплата за молоко. */
 export interface MilkLink {
   milkId: number;
   missing?: boolean;
+  manual?: number[];
 }
 
 /** Блоки вариаций: первая в блоке задаёт цену, следующие с sharePrice к ней присоединяются. */
@@ -67,6 +70,216 @@ export function variationPrices(vars: Variation[], id: string): Price[] | undefi
 /** Держит сохранённые цены присоединённых вариаций равными цене блока. */
 export function syncSharedPrices(item: Item) {
   for (const b of variationBlocks(item.variations)) for (const v of b.slice(1)) v.prices = [...b[0].prices];
+}
+
+/**
+ * Отвязать вариацию от общей цены. Вариации ниже, присоединённые через неё, остаются блоком с прежней
+ * общей ценой (первая из них становится во главе блока): цены других строк молча не меняются.
+ * Цены самой вариации не трогает — их ставит вызывающий.
+ */
+export function unshareVariation(item: Item, id: string) {
+  const vars = item.variations;
+  const i = vars.findIndex((v) => v.id === id);
+  if (i < 0) return;
+  vars[i].sharePrice = undefined;
+  const next = vars[i + 1];
+  if (next?.sharePrice) next.sharePrice = undefined; // её цены уже равны цене блока — она и становится его началом
+}
+
+/**
+ * Переставить вариацию с from на to (как arrayMove) с учётом общей цены:
+ *  — вставленная внутрь блока (под ней — присоединённая вариация) присоединяется к нему и берёт его цену;
+ *  — присоединённая, оставшаяся сразу под своим блоком (например, переставленная последней), остаётся в нём;
+ *  — унесённая из блока отвязывается и сохраняет ту цену, что у неё была;
+ *  — если унесли первую вариацию блока, первой становится следующая — цены остальных не меняются.
+ */
+export function moveVariation(item: Item, from: number, to: number) {
+  const vars = item.variations;
+  if (from === to || from < 0 || from >= vars.length || to < 0 || to >= vars.length) return;
+  const block = variationBlocks(vars).find((b) => b.some((v) => v.id === vars[from].id))!;
+  const v = vars[from];
+  const head = block[0] === v;
+  vars.splice(from, 1);
+  // ушла первая вариация блока — следующая встаёт во главе, а не прилипает к вариации выше
+  if (head && vars[from]?.sharePrice) vars[from].sharePrice = undefined;
+  vars.splice(to, 0, v);
+  const above = vars[to - 1];
+  const below = vars[to + 1];
+  if (to > 0 && below?.sharePrice) v.sharePrice = true;
+  else if (v.sharePrice && !(above && block.includes(above))) v.sharePrice = undefined;
+  if (vars[0]) vars[0].sharePrice = undefined; // первой не с кем делить цену
+  syncSharedPrices(item);
+}
+
+/**
+ * Позицию перетащили на другую — она становится её вариацией (в конце списка), её собственные вариации — следом.
+ * Цены раскладываются по колонкам таблицы товара (у добавки — одна цена, она встаёт в первую колонку).
+ * Привязка к виду молока прежней основы не переносится — у новой основы своё молоко; цены остаются.
+ * Ценники на позицию и её вариации переходят на новые вариации. false — так нельзя (та же позиция, добавки).
+ */
+export function nestItem(ws: Workspace, fromGroupId: string, itemId: string, toGroupId: string, targetId: string): boolean {
+  const from = ws.groups.find((g) => g.id === fromGroupId);
+  const to = ws.groups.find((g) => g.id === toGroupId);
+  if (!from || !to || to.style === "addons" || itemId === targetId) return false;
+  const idx = from.items.findIndex((i) => i.id === itemId);
+  const target = to.items.find((i) => i.id === targetId);
+  if (idx < 0 || !target) return false;
+  const item = from.items[idx];
+  const n = Math.max(1, to.columns.length);
+  const fit = <T,>(xs: (T | null)[] | undefined): (T | null)[] => Array.from({ length: n }, (_, k) => xs?.[k] ?? null);
+  const fitLink = (l: CatalogLink | MilkLink | undefined): CatalogLink | undefined => {
+    if (!l || "milkId" in l) return undefined;
+    const manual = l.manual?.filter((k) => k < n);
+    return { ...l, sizes: fit(l.sizes), ...(manual?.length ? { manual } : { manual: undefined }) };
+  };
+  const head: Variation = {
+    id: item.id, // тот же id — ценники на позицию остаются на ней, уже как на вариации
+    name: item.name,
+    prices: fit(item.prices),
+    ...(item.allergen ? { allergen: true } : {}),
+    ...(item.note ? { note: item.note } : {}),
+    ...(item.link ? { link: fitLink(item.link) } : {}),
+  };
+  const rest: Variation[] = item.variations.map((v) => ({ ...v, prices: fit(v.prices), link: fitLink(v.link) }));
+  if (rest[0]) rest[0].sharePrice = undefined; // была первой — не присоединяем её к цене новой вариации выше; блоки ниже сохраняются
+  const taken = new Set(target.variations.map((v) => v.id));
+  for (const v of [head, ...rest]) if (taken.has(v.id)) v.id = `${v.id}-${Math.random().toString(36).slice(2, 7)}`;
+  from.items.splice(idx, 1);
+  target.variations.push(head, ...rest);
+  syncSharedPrices(target);
+  for (const d of ws.documents) {
+    if (d.kind !== "tag" || d.ref?.itemId !== item.id) continue;
+    const varId = d.ref.variationId ? rest[item.variations.findIndex((v) => v.id === d.ref!.variationId)]?.id : head.id;
+    d.ref = { ...d.ref, groupId: to.id, itemId: target.id, variationId: varId ?? head.id };
+  }
+  return true;
+}
+
+/** Убрать вариацию из позиции; если она была первой в блоке с общей ценой, первой становится следующая (цены остальных не меняются). */
+function detachVariation(item: Item, idx: number): Variation {
+  const vars = item.variations;
+  const v = vars[idx];
+  const head = idx === 0 || !v.sharePrice;
+  vars.splice(idx, 1);
+  if (head && vars[idx]?.sharePrice) vars[idx].sharePrice = undefined;
+  if (vars[0]) vars[0].sharePrice = undefined;
+  return v;
+}
+
+/** Цены и привязка к базе — под колонки другой таблицы; вид молока прежней основы не переносится. */
+function fitToGroup<T extends { prices: Price[]; link?: CatalogLink | MilkLink }>(x: T, to: Group): T {
+  const n = to.style === "addons" ? 1 : Math.max(1, to.columns.length);
+  const prices = to.style === "addons" ? [x.prices.find((p) => p != null) ?? null] : Array.from({ length: n }, (_, k) => x.prices[k] ?? null);
+  let link: CatalogLink | undefined;
+  if (x.link && !("milkId" in x.link)) {
+    const l = x.link;
+    const first = l.sizes.findIndex((z, k) => z != null && x.prices[k] != null);
+    const sizes = to.style === "addons" ? [l.sizes[first < 0 ? 0 : first] ?? null] : Array.from({ length: n }, (_, k) => l.sizes[k] ?? null);
+    const manual = to.style === "addons" ? (l.manual?.includes(first) ? [0] : undefined) : l.manual?.filter((k) => k < n);
+    link = { ...l, sizes, manual: manual?.length ? manual : undefined };
+  }
+  return { ...x, prices, link };
+}
+
+/**
+ * Вариацию перетащили на другой товар — она переезжает к нему последней вариацией (своя цена, не общая).
+ * Ценники на неё идут следом. false — так нельзя (тот же товар, добавки).
+ */
+export function moveVariationTo(ws: Workspace, fromGroupId: string, itemId: string, varId: string, toGroupId: string, targetId: string): boolean {
+  const from = ws.groups.find((g) => g.id === fromGroupId);
+  const to = ws.groups.find((g) => g.id === toGroupId);
+  const item = from?.items.find((i) => i.id === itemId);
+  const target = to?.items.find((i) => i.id === targetId);
+  const idx = item?.variations.findIndex((v) => v.id === varId) ?? -1;
+  if (!from || !to || !item || !target || to.style === "addons" || item === target || idx < 0) return false;
+  const v = fitToGroup({ ...detachVariation(item, idx), sharePrice: undefined }, to);
+  if (target.variations.some((x) => x.id === v.id)) v.id = `${v.id}-${Math.random().toString(36).slice(2, 7)}`;
+  target.variations.push(v);
+  syncSharedPrices(item);
+  syncSharedPrices(target);
+  for (const d of ws.documents)
+    if (d.kind === "tag" && d.ref?.itemId === item.id && d.ref.variationId === varId) d.ref = { ...d.ref, groupId: to.id, itemId: target.id, variationId: v.id };
+  return true;
+}
+
+/**
+ * Вариацию вынесли из товара в список позиций — она становится отдельной позицией (перед beforeId / после него,
+ * без beforeId — в конец таблицы). Цена — её собственная, по колонкам таблицы. Ценники на неё идут следом.
+ */
+export function unnestVariation(ws: Workspace, fromGroupId: string, itemId: string, varId: string, toGroupId: string, atItemId?: string, after = false): string | null {
+  const from = ws.groups.find((g) => g.id === fromGroupId);
+  const to = ws.groups.find((g) => g.id === toGroupId);
+  const item = from?.items.find((i) => i.id === itemId);
+  const idx = item?.variations.findIndex((v) => v.id === varId) ?? -1;
+  if (!from || !to || !item || idx < 0) return null;
+  const v = detachVariation(item, idx);
+  const ids = new Set(ws.groups.flatMap((g) => g.items.map((i) => i.id)));
+  const id = ids.has(v.id) ? `${v.id}-${Math.random().toString(36).slice(2, 7)}` : v.id;
+  const fitted = fitToGroup({ prices: v.prices, link: v.link }, to);
+  const next: Item = {
+    id,
+    name: v.name,
+    prices: fitted.prices,
+    variations: [],
+    ...(v.allergen ? { allergen: true } : {}),
+    ...(v.note ? { note: v.note } : {}),
+    ...(fitted.link ? { link: fitted.link as CatalogLink } : {}),
+  };
+  const at = atItemId ? to.items.findIndex((i) => i.id === atItemId) : -1;
+  to.items.splice(at < 0 ? to.items.length : at + (after ? 1 : 0), 0, next);
+  syncSharedPrices(item);
+  for (const d of ws.documents)
+    if (d.kind === "tag" && d.ref?.itemId === item.id && d.ref.variationId === varId) d.ref = { groupId: to.id, itemId: id, column: d.ref.column };
+  return id;
+}
+
+/**
+ * Вынуть вариации из списка, не задев цены остальных: если уходит первая вариация блока,
+ * во главе блока встаёт следующая оставшаяся, а не прилипает к вариации выше.
+ */
+function takeVariations(item: Item, ids: string[]): Variation[] {
+  for (const b of variationBlocks(item.variations)) {
+    if (!ids.includes(b[0].id)) continue;
+    const next = b.find((v) => !ids.includes(v.id));
+    if (next) next.sharePrice = undefined;
+  }
+  const taken = item.variations.filter((v) => ids.includes(v.id));
+  item.variations = item.variations.filter((v) => !ids.includes(v.id));
+  return taken;
+}
+
+/**
+ * Дать выбранным вариациям общую цену: встают подряд за первой из них и присоединяются к ней.
+ * Цена блока — цена первой; если у неё цен нет совсем — первой выбранной, у которой они есть.
+ */
+export function shareVariations(item: Item, ids: string[]) {
+  const picked = item.variations.filter((v) => ids.includes(v.id));
+  if (picked.length < 2) return;
+  const [head, ...rest] = picked;
+  const source = head.prices.some((p) => p != null) ? head : picked.find((v) => v.prices.some((p) => p != null));
+  const prices = variationPrices(item.variations, (source ?? head).id) ?? head.prices;
+  takeVariations(item, rest.map((v) => v.id));
+  item.variations.splice(item.variations.indexOf(head) + 1, 0, ...rest);
+  if (!head.sharePrice) head.prices = [...prices];
+  for (const v of rest) v.sharePrice = true;
+  syncSharedPrices(item);
+}
+
+/** Своя цена у выбранных вариаций: каждая печатается отдельно; цена, что была у блока, остаётся у каждой. */
+export function splitVariations(item: Item, ids: string[]) {
+  item.variations.forEach((v, i) => {
+    if (!ids.includes(v.id)) return;
+    v.sharePrice = undefined;
+    const next = item.variations[i + 1];
+    if (next?.sharePrice) next.sharePrice = undefined;
+  });
+}
+
+/** Удалить выбранные вариации; блоки с общей ценой у оставшихся сохраняются. */
+export function removeVariations(item: Item, ids: string[]) {
+  takeVariations(item, ids);
+  if (item.variations[0]) item.variations[0].sharePrice = undefined;
+  syncSharedPrices(item);
 }
 
 /** Все кафе называются одинаково; отличает их адрес. */
@@ -132,7 +345,7 @@ export interface Item {
    */
   split?: boolean;
   priceNotice?: PriceNotice;
-  /** Цена из базы sixth-cup — руками не правится. См. catalog.ts. */
+  /** Цена из базы sixth-cup; колонки из link.manual — свои цены только для меню. См. catalog.ts. */
   link?: CatalogLink;
 }
 
@@ -165,6 +378,19 @@ export function applyPriceUpdates(ws: Workspace, updates: PriceUpdate[], at = ne
     }
   }
   return changed;
+}
+
+/**
+ * Пустая позиция — ни названия, ни надписи, ни цен, ни вариаций. Это заготовка в редакторе (пустая строка,
+ * которую перетащили на место): на лист, в отпечаток документа и в журнал изменений она не попадает, пока в неё не ввели данные.
+ */
+export function isBlankItem(it: Item): boolean {
+  return !it.name.trim() && !it.note?.trim() && it.prices.every((p) => p == null) && it.variations.length === 0;
+}
+
+/** Таблица так, как она печатается: без пустых позиций. */
+export function printedGroup(g: Group): Group {
+  return g.items.some(isBlankItem) ? { ...g, items: g.items.filter((it) => !isBlankItem(it)) } : g;
 }
 
 /** Добавка стоит в одной группе с добавкой выше: цена та же и группу не разбивали вручную. */
@@ -225,7 +451,7 @@ export function splitAddons(g: Group, ids: string[]) {
 /**
  * hero    — крупный заголовок листа («Кофе», «Не кофе»), таблица на всю ширину
  * section — синий подзаголовок («Холодные»), таблица на всю ширину
- * compact — узкий список по центру с одной ценой («К кофе»)
+ * compact — узкий список по центру («К кофе»), ширина не зависит от числа объёмов
  * addons  — синие добавки «+40 Сироп …» внизу листа
  */
 export type GroupStyle = "hero" | "section" | "compact" | "addons";

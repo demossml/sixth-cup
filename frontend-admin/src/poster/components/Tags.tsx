@@ -4,6 +4,7 @@ import { printStatus, type PrintStatus } from "@/lib/fingerprint";
 import { cafeGroups, findItem, resolveTag, sameTemplate, sizeLabel, tagTemplates, type TagDoc, type TagTemplate, type Workspace } from "@/lib/model";
 import { CafeTitle, useCafe } from "./cafe";
 import { gridKeyDown } from "./gridNav";
+import { SelectionAction, SelectionBar, SortHeader, SortSelect, Tab, Tabs, ariaSort, sortRows, useSort, type Sort } from "./kit";
 import { Select } from "./Select";
 import { TagEditor, newTag } from "./TagEditor";
 import { useSweep, type Sweep } from "./sweep";
@@ -17,6 +18,10 @@ const NAV = { pick: 0, open: 1, size: 5, more: 30 };
 const tplLabel = (t: TagTemplate) => sizeLabel(t.size);
 
 type Filter = PrintStatus | "all";
+const TAG_SORT = ["name", "price", "size", "status"] as const;
+type TagSortKey = (typeof TAG_SORT)[number];
+/** «по возрастанию» статуса — от того, что ждёт печати, к напечатанному */
+const STATUS_ORDER: Record<PrintStatus, number> = { pending: 0, ordered: 1, ok: 2 };
 
 /** Ценники кафе в порядке позиций меню; копии других размеров — сразу за оригиналом; без привязки — в конце. */
 function cafeTags(ws: Workspace, cafeId: string): TagDoc[] {
@@ -69,6 +74,17 @@ export function Tags() {
   const setPick = (id: string, on: boolean) => setSelIds((p) => (on ? (p.includes(id) ? p : [...p, id]) : p.filter((x) => x !== id)));
   const sweep = useSweep((id) => sel.includes(id), setPick);
   const templates = tagTemplates(ws);
+  // сортировка по колонкам — общая для таблиц всех кафе; «как было» — порядок позиций меню
+  const [sort, setSort, putSort] = useSort<TagSortKey>("tags", TAG_SORT);
+  const sortBy = useMemo(
+    () => ({
+      name: (t: TagDoc) => resolveTag(ws, t).name,
+      price: (t: TagDoc) => resolveTag(ws, t).price,
+      size: (t: TagDoc) => t.size.w * t.size.h,
+      status: (t: TagDoc) => STATUS_ORDER[printStatus(ws, t)],
+    }),
+    [ws],
+  );
 
   const create = (cafeId: string) => {
     const t = newTag(ws, cafeId);
@@ -95,87 +111,54 @@ export function Tags() {
         )}
       </header>
 
-      {n > 0 ? (
-        <div className="bulk" role="toolbar" aria-label="Действия с выбранными ценниками">
-          <span className="bulk-n">
-            Выбрано {n} {tagsWord}
-          </span>
-          <Select
-            className="btn small bulk-size"
-            variant="quiet"
-            label="Изменить размер выбранных"
-            value=""
-            display="Изменить размер"
-            onChange={(id) => {
-              const t = templates.find((x) => x.id === id);
-              if (t) each((d) => ((d.size = { ...t.size }), (d.design = t.design === "classic" ? undefined : t.design)));
-            }}
-            options={templates.map((t) => ({ value: t.id, label: `${tplLabel(t)} мм`, action: true }))}
-          />
-          <button className="btn small" onClick={() => (dateInput.current?.showPicker ? dateInput.current.showPicker() : dateInput.current?.focus())}>
-            Изменить дату
-          </button>
-          <input
-            ref={dateInput}
-            className="bulk-date"
-            type="date"
-            tabIndex={-1}
-            aria-label="Новая дата изготовления для выбранных"
-            onChange={(e) => {
-              const v = e.target.value;
-              if (v) each((d) => ((d.date = v), (d.showInfo = true)));
-              e.target.value = "";
-            }}
-          />
-          <button
-            className="btn small danger"
-            onClick={() => {
-              offerUndo(`Удалено: ${n} ${tagsWord}`, ws);
-              update((w) => {
-                w.documents = w.documents.filter((x) => !sel.includes(x.id)).map((x) => (x.copyOf && sel.includes(x.copyOf) ? { ...x, copyOf: undefined } : x));
-              });
-              setSelIds([]);
-            }}
-          >
-            Удалить
-          </button>
-          <button className="icon-btn small bulk-close" onClick={() => setSelIds([])} aria-label="Снять выбор">
-            <Icon name="close" size={16} />
-          </button>
+      {all.length > 0 && (
+        <div className="tags-bar">
+          <Tabs mode="filter" label="Фильтр по статусу" value={only} onValueChange={(v) => setOnly(v as typeof only)}>
+            {(
+              [
+                ["all", "Все", all.length],
+                ["pending", "Ожидают печати", counts.pending],
+                ["ordered", "Заказ отправлен", counts.ordered],
+              ] as const
+            ).map(([k, l, c]) => (
+              <Tab key={k} value={k} count={c}>
+                {l}
+              </Tab>
+            ))}
+          </Tabs>
+          {!many && cafes[0] && (
+            <button
+              className={`btn dark small tags-bar-add ${addHidden ? "on" : ""}`}
+              inert={!addHidden ? "" : undefined}
+              aria-label="Ценник"
+              onClick={() => create(cafes[0].id)}
+            >
+              <Icon name="plus" size={16} />
+              <span className="tags-bar-add-text">Ценник</span>
+            </button>
+          )}
         </div>
-      ) : (
-        all.length > 0 && (
-          <div className="tags-bar">
-            <div className="seg" role="group" aria-label="Фильтр по статусу">
-              {(
-                [
-                  ["all", "Все", all.length],
-                  ["pending", "Ожидают печати", counts.pending],
-                  ["ordered", "Заказ отправлен", counts.ordered],
-                ] as const
-              ).map(([k, l, c]) => (
-                <button key={k} aria-pressed={only === k} className={only === k ? "active" : ""} onClick={() => setOnly(k)}>
-                  {l} <span className="count">{c}</span>
-                </button>
-              ))}
-            </div>
-            {!many && cafes[0] && (
-              <button
-                className={`btn dark small tags-bar-add ${addHidden ? "on" : ""}`}
-                inert={!addHidden ? "" : undefined}
-                aria-label="Ценник"
-                onClick={() => create(cafes[0].id)}
-              >
-                <Icon name="plus" size={16} />
-                <span className="tags-bar-add-text">Ценник</span>
-              </button>
-            )}
-          </div>
-        )
+      )}
+
+      {/* на телефоне заголовков колонок нет — та же сортировка списком */}
+      {all.length > 1 && (
+        <div className="tags-sort">
+          <SortSelect
+            sort={sort}
+            onChange={putSort}
+            original="По порядку меню"
+            columns={[
+              { key: "name", label: "Товар", asc: "от А до Я", desc: "от Я до А" },
+              { key: "price", label: "Цена", asc: "сначала дешёвые", desc: "сначала дорогие" },
+              { key: "size", label: "Размер", asc: "сначала маленькие", desc: "сначала большие" },
+              { key: "status", label: "Статус", asc: "сначала ожидают печати", desc: "сначала напечатанные" },
+            ]}
+          />
+        </div>
       )}
 
       {byCafe.map(({ cafe, rows }) => {
-        const shown = visible(rows);
+        const shown = sortRows(visible(rows), sort, sortBy);
         return (
           <section key={cafe.id} className="cafe-block">
             {many && (
@@ -195,6 +178,8 @@ export function Tags() {
             ) : (
               <TagTable
                 rows={shown}
+                sort={sort}
+                onSort={setSort}
                 onOpen={setOpen}
                 sel={sel}
                 sweep={sweep}
@@ -205,17 +190,63 @@ export function Tags() {
         );
       })}
 
+      {n > 0 && (
+        <SelectionBar count={n} label="Действия с выбранными ценниками" onClear={() => setSelIds([])}>
+          <Select
+            className="selbar-select"
+            variant="quiet"
+            label="Изменить размер выбранных"
+            value=""
+            display="Размер"
+            onChange={(id) => {
+              const t = templates.find((x) => x.id === id);
+              if (t) each((d) => ((d.size = { ...t.size }), (d.design = t.design === "classic" ? undefined : t.design)));
+            }}
+            options={templates.map((t) => ({ value: t.id, label: `${tplLabel(t)} мм`, action: true }))}
+          />
+          <SelectionAction onClick={() => (dateInput.current?.showPicker ? dateInput.current.showPicker() : dateInput.current?.focus())}>Дата</SelectionAction>
+          <SelectionAction
+            danger
+            onClick={() => {
+              offerUndo(`Удалено: ${n} ${tagsWord}`, ws);
+              update((w) => {
+                w.documents = w.documents.filter((x) => !sel.includes(x.id)).map((x) => (x.copyOf && sel.includes(x.copyOf) ? { ...x, copyOf: undefined } : x));
+              });
+              setSelIds([]);
+            }}
+          >
+            {`Удалить ${n} ${tagsWord}`}
+          </SelectionAction>
+        </SelectionBar>
+      )}
+      {/* скрытое поле даты: «Дата» на панели открывает его календарь */}
+      <input
+        ref={dateInput}
+        className="bulk-date"
+        type="date"
+        tabIndex={-1}
+        aria-hidden
+        aria-label="Новая дата изготовления для выбранных"
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v) each((d) => ((d.date = v), (d.showInfo = true)));
+          e.target.value = "";
+        }}
+      />
+
       {opened && <TagEditor key={opened.id} doc={opened} onClose={() => setOpen(null)} onOpen={setOpen} />}
     </div>
   );
 }
 
-function TagTable({ rows: shown, onOpen: setOpen, sel, sweep, onAll }: { rows: TagDoc[]; onOpen: (id: string) => void; sel: string[]; sweep: Sweep; onAll: (on: boolean) => void }) {
+function TagTable({ rows: shown, sort, onSort, onOpen: setOpen, sel, sweep, onAll }: {
+  rows: TagDoc[]; sort: Sort<TagSortKey>; onSort: (key: TagSortKey) => void; onOpen: (id: string) => void; sel: string[]; sweep: Sweep; onAll: (on: boolean) => void;
+}) {
   const { ws, update, fb } = useWs();
   const templates = tagTemplates(ws);
   const allOn = shown.every((t) => sel.includes(t.id));
   return (
-    <div className="tt" role="table" aria-label="Ценники" onKeyDown={gridKeyDown}>
+    <div className="tt" role="table" aria-label="Ценники" onKeyDown={gridKeyDown} data-pick-root onPointerDown={sweep.down}>
       <div className="tt-row tt-head" role="row">
         <span role="columnheader" className="tt-check">
           <input type="checkbox" checked={allOn} onChange={() => onAll(!allOn)} aria-label={allOn ? "Снять выбор со всех" : "Выбрать все"} />
@@ -223,10 +254,26 @@ function TagTable({ rows: shown, onOpen: setOpen, sel, sweep, onAll }: { rows: T
         <span role="columnheader" className="tt-thumb-h">
           <span className="sr-only">Превью</span>
         </span>
-        <span role="columnheader" className="tt-name">Товар</span>
-        <span role="columnheader" className="tt-num">Цена из меню</span>
-        <span role="columnheader" className="tt-sizecell">Размер, мм</span>
-        <span role="columnheader" className="tt-status">Статус</span>
+        <span role="columnheader" className="tt-name" aria-sort={ariaSort(sort, "name")}>
+          <SortHeader column="name" sort={sort} onSort={onSort}>
+            Товар
+          </SortHeader>
+        </span>
+        <span role="columnheader" className="tt-num" aria-sort={ariaSort(sort, "price")}>
+          <SortHeader column="price" sort={sort} onSort={onSort} align="end">
+            Цена из меню
+          </SortHeader>
+        </span>
+        <span role="columnheader" className="tt-sizecell" aria-sort={ariaSort(sort, "size")}>
+          <SortHeader column="size" sort={sort} onSort={onSort} hint="Сортировать по размеру — по площади ценника">
+            Размер, мм
+          </SortHeader>
+        </span>
+        <span role="columnheader" className="tt-status" aria-sort={ariaSort(sort, "status")}>
+          <SortHeader column="status" sort={sort} onSort={onSort} hint="Сортировать по статусу: ожидают печати, заказ отправлен, напечатаны">
+            Статус
+          </SortHeader>
+        </span>
       </div>
       {shown.map((t) => {
         const r = resolveTag(ws, t);
@@ -234,8 +281,8 @@ function TagTable({ rows: shown, onOpen: setOpen, sel, sweep, onAll }: { rows: T
         const tpl = templates.find((x) => sameTemplate(x, t));
         const on = sel.includes(t.id);
         return (
-          <div key={t.id} className={`tt-row ${t.copyOf ? "copy" : ""} ${on ? "picked" : ""}`} role="row" data-nav-row onPointerEnter={() => sweep.over(t.id)}>
-            <span role="cell" className="tt-check" onPointerDown={(e) => sweep.start(t.id, e)} onClick={() => sweep.click(t.id)}>
+          <div key={t.id} className={`tt-row ${t.copyOf ? "copy" : ""} ${on ? "picked" : ""}`} role="row" data-nav-row data-pick={t.id}>
+            <span role="cell" className="tt-check" data-pick-box onClick={() => sweep.click(t.id)}>
               <input type="checkbox" data-nav={NAV.pick} tabIndex={-1} checked={on} readOnly aria-label={`Выбрать ценник «${r.name}»`} />
             </span>
             <button className="tt-thumb" tabIndex={-1} onClick={() => setOpen(t.id)} aria-label={`Открыть ценник «${r.name}»`}>

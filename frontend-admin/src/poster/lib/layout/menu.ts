@@ -1,5 +1,5 @@
 import type { FontBook } from "../fonts";
-import { addonGroups, addonLine, variationBlocks, type Group, type Line, type MenuDoc, type Price, type Workspace } from "../model";
+import { addonGroups, addonLine, printedGroup, variationBlocks, type Group, type Line, type MenuDoc, type Price, type Workspace } from "../model";
 import { A4, INK, LOGO, MENU as M, PRINTER_MARGIN, PT_MM, upper, WORDMARKS } from "./design";
 import type { El, Scene, Weight } from "./scene";
 
@@ -20,7 +20,8 @@ export function layoutMenu(ws: Workspace, doc: MenuDoc, fb: FontBook): Scene {
   const ox = (doc.size.w - A4.w * s) / 2;
   const baseH = doc.size.h / s;
   const cap = (size: number) => size * fb.capHeight;
-  const groups = doc.groupIds.map((id) => ws.groups.find((g) => g.id === id)).filter((g): g is Group => !!g);
+  // пустые строки-заготовки из редактора на лист не идут
+  const groups = doc.groupIds.map((id) => ws.groups.find((g) => g.id === id)).filter((g): g is Group => !!g).map(printedGroup);
 
   // Поля принтера — физические миллиметры, с листом не масштабируются.
   const safe = PRINTER_MARGIN / s;
@@ -149,7 +150,32 @@ export function layoutMenu(ws: Workspace, doc: MenuDoc, fb: FontBook): Scene {
     };
     const hline = (y: number, x1: number, x2: number, width: number, dash?: boolean) =>
       els.push({ kind: "line", x1, y1: y, x2, y2: y, width, color: accent, dash: dash ? T.dash : undefined });
-    const vline = (x: number, y1: number, y2: number) => els.push({ kind: "line", x1: x, y1, x2: x, y2, width: T.ruleDash, color: accent, dash: T.dash });
+    type Block = { top: number; bottom: number; prices: Price[] | null };
+    /**
+     * Пунктир между колонками цен — только там, где цены есть по обе стороны.
+     * blocks — строки сверху вниз (prices: null — строка подписей, там пунктир есть всегда); f — доля от размеров таблицы.
+     */
+    const separators = (edges: number[], blocks: Block[], f: number) => {
+      const width = T.ruleDash * f;
+      const dash: [number, number] = [T.dash[0] * f, T.dash[1] * f];
+      const vline = (x: number, y1: number, y2: number) => els.push({ kind: "line", x1: x, y1, x2: x, y2, width, color: accent, dash });
+      for (let c = 0; c < edges.length - 1; c++) {
+        const x = edges[c] + T.sepOffset * f;
+        let start: number | null = null;
+        let end = 0;
+        for (const b of blocks) {
+          const on = b.prices === null || (b.prices[c] != null && b.prices[c + 1] != null);
+          if (on) {
+            if (start === null) start = b.top;
+            end = b.bottom;
+          } else if (start !== null) {
+            vline(x, start, end - 0.6 * k * f);
+            start = null;
+          }
+        }
+        if (start !== null) vline(x, start, end - 0.6 * k * f);
+      }
+    };
 
     let usesAllergen = false;
     // Рамка «А» рисуется от кегля строки: уменьшается вместе с текстом, в добавках и узком списке — под их кегль.
@@ -200,13 +226,14 @@ export function layoutMenu(ws: Workspace, doc: MenuDoc, fb: FontBook): Scene {
     const heroTop = M.hero.firstBaseline - cap(M.hero.size);
     const firstBase = (size: number) => heroTop + cap(size);
 
-    groups.forEach((g, gi) => {
+    groups.forEach((g0, gi) => {
       const first = gi === 0;
-      if (g.style === "addons") {
-        bottom = layoutAddons(g, first ? firstBase(M.addons.size) - M.addons.firstBaseline : bottom);
+      if (g0.style === "addons") {
+        bottom = layoutAddons(g0, first ? firstBase(M.addons.size) - M.addons.firstBaseline : bottom);
         return;
       }
-      if (g.style === "compact" && g.columns.length === 1) {
+      const g = withoutEmptyColumns(g0);
+      if (g.style === "compact") {
         bottom = layoutCompact(g, first ? firstBase(M.compact.title * k) : bottom + T.sectionGap);
         return;
       }
@@ -233,7 +260,6 @@ export function layoutMenu(ws: Workspace, doc: MenuDoc, fb: FontBook): Scene {
       const n = g.columns.length;
       const edges = g.columns.map((_, i) => M.colRightLast - (n - 1 - i) * T.colPitch);
       g.columns.forEach((c, i) => right(edges[i] + 0.1, labelBase, upper(c), "Regular", T.labels, accent));
-      type Block = { top: number; bottom: number; prices: Price[] | null };
       const blocks: Block[] = [{ top: labelBase - cap(T.labels) - T.capTopPad, bottom: labelBase + T.headerToRow, prices: null }];
       let top = labelBase + T.headerToRow;
       const priceCells = (prices: Price[], baseline: number) =>
@@ -267,27 +293,12 @@ export function layoutMenu(ws: Workspace, doc: MenuDoc, fb: FontBook): Scene {
         if (idx < g.items.length - 1) hline(top, M.ruleX1, M.ruleX2, T.ruleSolid);
       });
 
-      // пунктир между колонками — только там, где цены есть по обе стороны
-      for (let c = 0; c < n - 1; c++) {
-        const x = edges[c] + T.sepOffset;
-        let start: number | null = null;
-        let end = 0;
-        for (const b of blocks) {
-          const on = b.prices === null || (b.prices[c] != null && b.prices[c + 1] != null);
-          if (on) {
-            if (start === null) start = b.top;
-            end = b.bottom;
-          } else if (start !== null) {
-            vline(x, start, end - 0.6 * k);
-            start = null;
-          }
-        }
-        if (start !== null) vline(x, start, end - 0.6 * k);
-      }
+      separators(edges, blocks, 1);
       return top;
     }
 
-    // --- узкий список по центру («К кофе»)
+    // --- узкий список по центру («К кофе»). Ширина та же при любом числе объёмов:
+    // колонки цен стоят у правого края списка, место под них берётся у названий.
     function layoutCompact(g: Group, titleBase: number): number {
       const C0 = M.compact;
       const C = {
@@ -298,19 +309,53 @@ export function layoutMenu(ws: Workspace, doc: MenuDoc, fb: FontBook): Scene {
         firstRow: C0.firstRow * k,
         ruleBelow: C0.ruleBelow * k,
         rule: C0.rule * k,
+        colPitch: C0.colPitch * k,
       };
-      text(C.nameX, titleBase, upper(g.title), "Medium", C.title, accent);
-      right(C.priceRight + 0.1, titleBase, upper(g.columns[0] ?? ""), "Regular", T.labels, accent);
-      let base = titleBase + C.firstRow;
+      const n = Math.max(1, g.columns.length);
+      const edges = Array.from({ length: n }, (_, i) => C.priceRight - (n - 1 - i) * C.colPitch);
+      const titleEnd = C.nameX + text(C.nameX, titleBase, upper(g.title), "Medium", C.title, accent);
+      g.columns.forEach((c, i) => right(edges[i] + 0.1, titleBase, upper(c), "Regular", T.labels, accent));
+      const firstLabel = edges[0] + 0.1 - fb.measure(upper(g.columns[0] ?? ""), "Regular", T.labels);
+      if (n > 1 && titleEnd > firstLabel - 2) warnings.push(`Заголовок «${g.title}» наезжает на колонки объёма: уберите колонку или сократите заголовок.`);
+      // пунктир и отступ вариаций — как в таблице, но под кегль списка
+      const f = C0.size / M.text;
+      const indent = (M.indent - M.left) * f;
+      // строка списка: от линейки над ней до линейки под ней, базовая линия — на ruleBelow выше нижней
+      const rowBase = C.pitch - C.ruleBelow;
+      let top = titleBase + C.firstRow - rowBase;
+      const blocks: Block[] = [{ top: titleBase - cap(T.labels) - T.capTopPad, bottom: top, prices: null }];
+      /** Цены строки по колонкам; возвращает левый край первой цены — до него можно писать название. */
+      const priceCells = (prices: Price[], baseline: number) => {
+        let firstInk = C.priceRight;
+        for (let i = n - 1; i >= 0; i--) {
+          const p = prices[i];
+          if (p != null) firstInk = edges[i] - right(edges[i], baseline, String(p), "Regular", C.size);
+        }
+        return firstInk;
+      };
+      const overlap = n > 1 ? "цены" : "цену";
       g.items.forEach((item, idx) => {
-        const end = nameWithMarks(C.nameX, base, item, "Medium", C.size);
-        const p = item.prices[0];
-        const pw = p != null ? right(C.priceRight, base, String(p), "Regular", C.size) : 0;
-        if (end > C.priceRight - pw - 2) warnings.push(`«${item.name}»: название наезжает на цену.`);
-        if (idx < g.items.length - 1) hline(base + C.ruleBelow, C.x1, C.x2, C.rule);
-        base += C.pitch;
+        const end = nameWithMarks(C.nameX, top + rowBase, item, "Medium", C.size);
+        if (end > priceCells(item.prices, top + rowBase) - 2) warnings.push(`«${item.name}»: название наезжает на ${overlap}.`);
+        blocks.push({ top, bottom: top + C.pitch, prices: item.prices });
+        top += C.pitch;
+        // вариации с общей ценой — один блок, цена по центру блока
+        for (const block of variationBlocks(item.variations)) {
+          els.push({ kind: "line", x1: C.x1, y1: top, x2: C.x2, y2: top, width: T.ruleDash * f, color: accent, dash: [T.dash[0] * f, T.dash[1] * f] });
+          const L = block.length;
+          const prices = block[0].prices;
+          const firstInk = priceCells(prices, top + L * (C.pitch / 2) + (rowBase - C.pitch / 2));
+          block.forEach((v, j) => {
+            const end = nameWithMarks(C.nameX + indent, top + j * C.pitch + rowBase, v, "Regular", C.size, INK, -0.01);
+            if (end > firstInk - 2) warnings.push(`«${v.name}»: название наезжает на ${overlap}.`);
+          });
+          blocks.push({ top, bottom: top + L * C.pitch, prices });
+          top += L * C.pitch;
+        }
+        if (idx < g.items.length - 1) hline(top, C.x1, C.x2, C.rule);
       });
-      return base - C.pitch + C.ruleBelow;
+      separators(edges, blocks, f);
+      return top;
     }
 
     // --- добавки: длинные списки слева в строку, короткие — справа столбиком
@@ -366,4 +411,21 @@ export function layoutMenu(ws: Workspace, doc: MenuDoc, fb: FontBook): Scene {
 
     return { els, warnings, bottom, usesAllergen };
   }
+}
+
+/**
+ * Колонка объёма без подписи и без единой цены на листе не нужна: иначе под неё остаётся место
+ * у правого края и цены уезжают влево. Такая колонка появляется, когда объём добавили и не заполнили.
+ */
+function withoutEmptyColumns(g: Group): Group {
+  const used = (i: number) =>
+    g.columns[i].trim() !== "" || g.items.some((it) => it.prices[i] != null || it.variations.some((v) => v.prices[i] != null));
+  const keep = g.columns.map((_, i) => i).filter(used);
+  if (keep.length === g.columns.length || keep.length === 0) return g;
+  const pick = (prices: Price[]) => keep.map((i) => prices[i] ?? null);
+  return {
+    ...g,
+    columns: keep.map((i) => g.columns[i]),
+    items: g.items.map((it) => ({ ...it, prices: pick(it.prices), variations: it.variations.map((v) => ({ ...v, prices: pick(v.prices) })) })),
+  };
 }

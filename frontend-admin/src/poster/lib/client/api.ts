@@ -19,6 +19,11 @@ export async function posterFetch(path: string, init: RequestInit = {}): Promise
   const headers = new Headers(init.headers);
   headers.set("X-Admin-Token", adminToken());
   const res = await fetch(`${API}/api/admin/poster${path}`, { cache: "no-store", ...init, headers });
-  if (res.status === 401 || res.status === 403) window.dispatchEvent(new Event(AUTH_EVENT));
+  // «вход не тот» — только неверный токен; 403 по роли (например, менеджеру нельзя менять почту) — обычная ошибка
+  if (res.status === 401) window.dispatchEvent(new Event(AUTH_EVENT));
+  else if (res.status === 403) {
+    const body = (await res.clone().json().catch(() => ({}))) as { error?: string };
+    if (body.error === "Forbidden") window.dispatchEvent(new Event(AUTH_EVENT));
+  }
   return res;
 }

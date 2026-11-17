@@ -36,7 +36,12 @@ const emptyWs = (accent: string): Workspace => ({
 
 /** Сцена отправленной версии документа или null, если копии нет (отправляли до того, как их начали хранить). */
 export function layoutSent(doc: Doc, fb: FontBook): Scene | null {
-  const snap = doc.lastSent?.snap as MenuSnap | TagSnap | undefined;
+  return layoutSnap(doc.lastSent?.snap, doc.name, fb);
+}
+
+/** Сцена любой сохранённой копии (renderInput на момент отправки) — для истории отправок. */
+export function layoutSnap(raw: unknown, name: string, fb: FontBook): Scene | null {
+  const snap = raw as MenuSnap | TagSnap | undefined;
   if (!snap || typeof snap !== "object") return null;
   try {
     if (snap.kind === "menu") {
@@ -59,13 +64,13 @@ export function layoutSent(doc: Doc, fb: FontBook): Scene | null {
           ),
         })),
       }));
-      return layoutMenu(ws, { id: "sent", kind: "menu", cafeId: "", name: doc.name, size: snap.size, groupIds: ws.groups.map((g) => g.id), createdAt: "" }, fb);
+      return layoutMenu(ws, { id: "sent", kind: "menu", cafeId: "", name, size: snap.size, groupIds: ws.groups.map((g) => g.id), createdAt: "" }, fb);
     }
     if (snap.kind === "tag") {
       const ws = emptyWs(snap.accent);
       return layoutTag(
         ws,
-        { id: "sent", kind: "tag", cafeId: "", name: doc.name, size: snap.size, showInfo: !!snap.info, date: snap.info?.date || undefined, maker: snap.info?.maker, createdAt: "" },
+        { id: "sent", kind: "tag", cafeId: "", name, size: snap.size, showInfo: !!snap.info, date: snap.info?.date || undefined, maker: snap.info?.maker, createdAt: "" },
         fb,
         { name: snap.name, price: snap.price, volume: snap.volume || undefined, broken: false },
       );

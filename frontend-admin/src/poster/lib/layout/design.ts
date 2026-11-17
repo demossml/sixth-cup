@@ -28,7 +28,7 @@ export const MENU = {
   section: { size: 8.15, gapBefore: 20.2 },
   labels: { size: 6.19, capTopPad: 1.2 },
   headerToRow: 2.35, // от базовой линии подписей колонок до верха первой строки
-  compact: { x1: 48.2, x2: 161.7, nameX: 52.4, priceRight: 157.3, size: 6.19, title: 8.1, pitch: 8.45, firstRow: 8.5, ruleBelow: 2.05, rule: 0.5 },
+  compact: { x1: 48.2, x2: 161.7, nameX: 52.4, priceRight: 157.3, size: 6.19, title: 8.1, pitch: 8.45, firstRow: 8.5, ruleBelow: 2.05, rule: 0.5, colPitch: 18.3 }, // colPitch — шаг колонок объёма, как в таблице, под кегль списка
   addons: { size: 6.19, tracking: -0.02, pitch: 7.07, firstBaseline: 10.25, leftX: 27.9, leftWidth: 64, priceX: 106.2, nameX: 122.8, noteSize: 3.7, noteRise: 2.8 },
   // Знак аллергена «А» в рамке, размеры для строки кеглем text. Рамка чуть выше прописной буквы: слегка
   // выходит за верх букв и за базовую линию (drop). Линия рамки тонкая, а «А» крупная и всегда Medium —

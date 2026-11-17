@@ -3,8 +3,11 @@ import { useState } from "react";
 import { buildPdfs, downloadBytes } from "@/lib/client/export";
 import {
   TAG_DESIGNS, cafeGroups, resolveTag, sameTemplate, sizeLabel, tagTemplates, uid, variationTitle,
-  type Doc, type Size, type TagDesign, type TagDoc, type TagTemplate, type Workspace,
+  type Doc, type Item, type Size, type TagDesign, type TagDoc, type TagTemplate, type Workspace,
 } from "@/lib/model";
+import { priceOrigin } from "@/lib/catalog";
+import { useCatalog } from "@/lib/client/catalog";
+import { PriceSourceLine } from "./PriceCell";
 import { Select } from "./Select";
 import { DocPreview, DocStatus, Icon, Sheet, TextInput } from "./ui";
 import { useWs } from "./WorkspaceProvider";
@@ -309,6 +312,8 @@ function TagFields({ doc }: { doc: TagDoc }) {
         </div>
       )}
 
+      {doc.ref && group && item && <TagPriceSource doc={doc} item={item} />}
+
       <label className="field">
         <span>{doc.ref ? "Своё название (если нужно иначе, чем в меню)" : "Название"}</span>
         <TextInput label="Название на ценнике" placeholder={doc.ref ? r.name : "Название"} value={doc.customName ?? ""} onChange={(v) => set((d) => (d.customName = v || undefined))} />
@@ -342,5 +347,18 @@ function TagFields({ doc }: { doc: TagDoc }) {
         </div>
       )}
     </>
+  );
+}
+
+/** Цена ценника из строки меню — и откуда она там: из базы (ссылкой на товар, с датой) или своя. */
+function TagPriceSource({ doc, item }: { doc: TagDoc; item: Item }) {
+  const { catalog } = useCatalog();
+  const target = (doc.ref?.variationId && item.variations.find((v) => v.id === doc.ref!.variationId)) || item;
+  const column = doc.ref?.column ?? 0;
+  return (
+    <div className="field">
+      <span>Цена на ценнике</span>
+      <PriceSourceLine origin={priceOrigin(catalog, item, target, column)} value={target.prices[column] ?? null} />
+    </div>
   );
 }

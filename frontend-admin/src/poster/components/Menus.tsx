@@ -1,5 +1,6 @@
 
 import { useKeepOnScreen } from "./keepOnScreen";
+import { usePresence } from "./presence";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { docDue, printCount, printCountLabel, printStatus, type PrintStatus } from "@/lib/fingerprint";
 import { createFromTemplate, menuTemplates, templatePreview, type MenuTemplate } from "@/lib/templates";
@@ -10,7 +11,8 @@ import { MenuTables } from "./MenuTable";
 import { Select } from "./Select";
 import { layoutDoc } from "@/lib/client/export";
 import { usePdfDownload } from "./TagEditor";
-import { DocPreview, DocStatus, Icon, Sheet, Status } from "./ui";
+import { tilt } from "./tilt";
+import { DocPreview, DocStatus, Icon, Sheet, Status, useClosing } from "./ui";
 import { useWs } from "./WorkspaceProvider";
 
 // Меню кафе: список → просмотр (изменить, копия, удалить) → редактирование таблицами.
@@ -68,7 +70,7 @@ function MenuList({ go }: { go: Go }) {
                   const first = fam.find((x) => printStatus(ws, x) === "pending") ?? d;
                   return (
                     <li key={d.id}>
-                      <a className="menu-card" href={`#menu/${d.id}`}>
+                      <a className="menu-card" href={`#menu/${d.id}`} {...tilt}>
                         <DocPreview ws={ws} doc={d} fb={fb} className="thumb" />
                         <span className="menu-card-name">{d.name}</span>
                         <span className="menu-card-meta">
@@ -107,18 +109,19 @@ function TemplatePickerScreen({ go, onClose }: { go: Go; onClose: () => void }) 
   const { cafes } = useCafe();
   const [target, setTarget] = useState(cafes[0]?.id ?? "");
   const closeBtn = useRef<HTMLButtonElement>(null);
+  const [closing, close] = useClosing(onClose);
   useEffect(() => {
     const back = document.activeElement as HTMLElement | null;
     closeBtn.current?.focus();
     document.body.classList.add("sheet-open");
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && close();
     window.addEventListener("keydown", esc);
     return () => {
       document.body.classList.remove("sheet-open");
       window.removeEventListener("keydown", esc);
       back?.focus();
     };
-  }, [onClose]);
+  }, [close]);
   const create = (t: MenuTemplate) => {
     let id = "";
     update((w) => {
@@ -129,7 +132,7 @@ function TemplatePickerScreen({ go, onClose }: { go: Go; onClose: () => void }) 
   };
   return (
     // вокруг окна поля: клик мимо него закрывает
-    <div className="tpl-backdrop" onClick={onClose}>
+    <div className={`tpl-backdrop${closing ? " closing" : ""}`} onClick={close}>
       <div className="viewer tpl-screen" role="dialog" aria-modal="true" aria-label="Создать меню: выбор шаблона" onClick={(e) => e.stopPropagation()}>
         <header className="viewer-head">
           <div className="viewer-title">
@@ -142,7 +145,7 @@ function TemplatePickerScreen({ go, onClose }: { go: Go; onClose: () => void }) 
               <Select variant="quiet" value={target || cafes[0].id} onChange={setTarget} options={cafes.map((c) => ({ value: c.id, label: cafeLabel(c) }))} />
             </label>
           )}
-          <button ref={closeBtn} className="icon-btn" onClick={onClose} aria-label="Закрыть">
+          <button ref={closeBtn} className="icon-btn" onClick={close} aria-label="Закрыть">
             <Icon name="close" />
           </button>
         </header>
@@ -155,6 +158,7 @@ function TemplatePickerScreen({ go, onClose }: { go: Go; onClose: () => void }) 
                 <li key={t.id}>
                   <button
                     className="menu-card"
+                    {...tilt}
                     onClick={() => create(t)}
                     aria-label={`Шаблон ${sizeLabel(t.size)}, ${t.groups.some((g) => g.items.length) ? "с таблицами" : "пустой лист"}`}
                   >
@@ -191,7 +195,7 @@ function MenuModal({ doc, go }: { doc: MenuDoc; go: Go }) {
   const family = menuFamily(ws, doc);
   const root = family.find((d) => !d.copyOf) ?? doc;
   const freePresets = SIZE_PRESETS.filter((p) => p.kind === "menu" && !family.some((d) => d.size.w === p.size.w && d.size.h === p.size.h));
-  const close = () => go("menu");
+  const [closing, close] = useClosing(() => go("menu"));
   const edit = () => go(`menu/${doc.id}/edit`);
   const closeBtn = useRef<HTMLButtonElement>(null);
 
@@ -202,10 +206,10 @@ function MenuModal({ doc, go }: { doc: MenuDoc; go: Go }) {
   }, [wide]);
   useEffect(() => {
     // пока открыто окно копии, Esc закрывает его, а не меню
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && !copySheet && go("menu");
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && !copySheet && close();
     window.addEventListener("keydown", esc);
     return () => window.removeEventListener("keydown", esc);
-  }, [copySheet, go]);
+  }, [copySheet, close]);
 
   const addSize = (size: Size) => {
     const id = uid("d");
@@ -263,7 +267,7 @@ function MenuModal({ doc, go }: { doc: MenuDoc; go: Go }) {
   if (wide)
     return (
       <>
-        <div className="mm-backdrop" onClick={outside}>
+        <div className={`mm-backdrop${closing ? " closing" : ""}`} onClick={outside}>
           <div className="mm-insp" role="dialog" aria-modal="true" aria-label={`Меню «${root.name}»`} onClick={outside}>
             {paper}
             <aside className="mm-side">
@@ -297,11 +301,12 @@ function MenuModal({ doc, go }: { doc: MenuDoc; go: Go }) {
                     return (
                       <li key={d.id} className={`mm-row ${on ? "on" : ""}`}>
                         <button className="mm-row-main" aria-pressed={on} onClick={() => go(`menu/${d.id}`)} title={`Показать это меню на листе ${sizeLabel(d.size)}`}>
+                          {/* место под галочку есть у каждой строки — названия стоят на одной линии с «Добавить формат» */}
+                          <span className="mm-row-mark">{on && <Icon name="check" size={16} />}</span>
                           <span className="mm-row-name">{sizeLabel(d.size)}</span>
                           <span className="mm-row-hint">
                             {d.size.w}×{d.size.h} мм
                           </span>
-                          {on && <Icon name="check" size={16} />}
                         </button>
                         {family.length > 1 && (
                           <button className="mm-row-x" onClick={() => dropFormat(d)} aria-label={`Убрать формат ${sizeLabel(d.size)}`} title={`Убрать формат ${sizeLabel(d.size)}`}>
@@ -333,14 +338,14 @@ function MenuModal({ doc, go }: { doc: MenuDoc; go: Go }) {
                 <button className="mm-dl" disabled={busy} onClick={() => download(doc, false)}>
                   <Icon name="download" size={20} />
                   <span>
-                    <b>PDF для просмотра</b>
-                    <span>Ровно в размер листа — посмотреть или напечатать на своём принтере</span>
+                    <b>Для принтера</b>
+                    <span>Ровно в размер листа, без вылетов</span>
                   </span>
                 </button>
                 <button className="mm-dl" disabled={busy} onClick={() => download(doc, true)}>
                   <Icon name="download" size={20} />
                   <span>
-                    <b>PDF для типографии</b>
+                    <b>Для типографии</b>
                     <span>С вылетами 3 мм и метками реза</span>
                   </span>
                 </button>
@@ -360,7 +365,7 @@ function MenuModal({ doc, go }: { doc: MenuDoc; go: Go }) {
 
   return (
     <>
-      <div className="mm-backdrop" onClick={outside}>
+      <div className={`mm-backdrop${closing ? " closing" : ""}`} onClick={outside}>
         <div className="mm" role="dialog" aria-modal="true" aria-label={`Меню «${root.name}»`} onClick={outside}>
           <button ref={closeBtn} className="mm-x" onClick={close} aria-label="Закрыть">
             <Icon name="close" size={40} />
@@ -415,11 +420,11 @@ function MenuModal({ doc, go }: { doc: MenuDoc; go: Go }) {
                 {(shut) => (
                   <>
                     <button role="menuitem" disabled={busy} onClick={() => (download(doc, false), shut())}>
-                      <b>PDF для просмотра</b>
-                      <span>Ровно в размер листа — посмотреть или напечатать на своём принтере</span>
+                      <b>Для принтера</b>
+                      <span>Ровно в размер листа, без вылетов</span>
                     </button>
                     <button role="menuitem" disabled={busy} onClick={() => (download(doc, true), shut())}>
-                      <b>PDF для типографии</b>
+                      <b>Для типографии</b>
                       <span>С вылетами 3 мм и метками реза</span>
                     </button>
                   </>
@@ -466,6 +471,7 @@ function PopMenu({ label, trigger, children }: {
   const [open, setOpen] = useState(false);
   const btn = useRef<HTMLButtonElement>(null);
   const box = useRef<HTMLDivElement>(null);
+  const { mounted, closing } = usePresence(open);
   useKeepOnScreen(open, box);
   useEffect(() => {
     if (!open) return;
@@ -483,10 +489,11 @@ function PopMenu({ label, trigger, children }: {
   return (
     <span className="mm-pop-wrap">
       {trigger(open, () => setOpen(!open), btn)}
-      {open && (
+      {mounted && (
         <div
           ref={box}
           className="mm-pop"
+          data-closing={closing || undefined}
           role="menu"
           aria-label={label}
           onKeyDown={(e) => {
@@ -615,7 +622,17 @@ function MenuEdit({ doc, go }: { doc: MenuDoc; go: Go }) {
       return false;
     }
   });
+  // свернуть / выдвинуть: на время анимации панель держит свою ширину (колонка сжимается, панель не перестраивается)
+  const [anim, setAnim] = useState(false);
+  const [sideW, setSideW] = useState<number | null>(null);
+  const animT = useRef<number>();
+  useEffect(() => () => window.clearTimeout(animT.current), []);
   const setCollapsed = (v: boolean) => {
+    const lw = layout.current?.clientWidth ?? 1200;
+    setSideW(v ? (side.current?.getBoundingClientRect().width ?? null) : Math.min(split ?? Math.min(lw * 0.5, 720), lw - 320));
+    setAnim(true);
+    window.clearTimeout(animT.current);
+    animT.current = window.setTimeout(() => setAnim(false), 340);
     setCollapsedState(v);
     try {
       if (v) localStorage.setItem(PANEL_KEY, "collapsed");
@@ -743,9 +760,14 @@ function MenuEdit({ doc, go }: { doc: MenuDoc; go: Go }) {
 
   return (
     <div ref={shell} className={`menu-edit ${open ? "open" : ""}`}>
-      <div ref={layout} className={`me-layout ${folded ? "solo" : ""}`} style={split ? { ["--tw" as string]: `${split}px` } : undefined}>
-        {!folded && (
-          <aside ref={side} className="me-side" aria-label="Панель меню">
+      <div
+        ref={layout}
+        className={`me-layout ${folded ? "solo" : ""} ${anim ? "anim" : ""}`}
+        style={{ ...(split ? { ["--tw" as string]: `${split}px` } : {}), ...(anim && sideW ? { ["--side-w" as string]: `${sideW}px` } : {}) }}
+      >
+        {/* панель в разметке всегда: свёрнутая — скрыта и inert, так она уезжает анимацией и сохраняет прокрутку */}
+        {(
+          <aside ref={side} className="me-side" aria-label="Панель меню" inert={folded ? "" : undefined}>
             <div className="me-top" onPointerDown={dragDown} onPointerMove={dragMove} onPointerUp={dragUp} onPointerCancel={dragUp} onClick={dragClick}>
               <button className="me-grab" aria-expanded={open} aria-label={open ? "Опустить панель" : "Вытянуть панель"} tabIndex={wide ? -1 : 0} />
               <div className="me-bar">
@@ -826,6 +848,7 @@ function MenuEdit({ doc, go }: { doc: MenuDoc; go: Go }) {
 
       {ask && (
         <Sheet
+          size="ask"
           title="Сохранить правки?"
           onClose={() => setAsk(null)}
           footer={
@@ -857,6 +880,7 @@ function BurgerMenu({ name, close }: { name: string; close: (to?: string) => voi
   const [open, setOpen] = useState(false);
   const btn = useRef<HTMLButtonElement>(null);
   const box = useRef<HTMLDivElement>(null);
+  const { mounted, closing } = usePresence(open);
   useKeepOnScreen(open, box);
   useEffect(() => {
     if (!open) return;
@@ -876,10 +900,11 @@ function BurgerMenu({ name, close }: { name: string; close: (to?: string) => voi
       <button ref={btn} className="icon-btn small" aria-label="Меню" title="Меню" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
         <Icon name="burger" size={18} />
       </button>
-      {open && (
+      {mounted && (
         <div
           ref={box}
           className="rm-menu me-menu"
+          data-closing={closing || undefined}
           role="menu"
           aria-label="Меню"
           onKeyDown={(e) => {

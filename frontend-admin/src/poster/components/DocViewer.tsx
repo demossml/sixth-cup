@@ -5,7 +5,7 @@ import { isChanged } from "@/lib/fingerprint";
 import { cafeLabel, resolveTag, sizeLabel, type Doc } from "@/lib/model";
 import { previewHeight, sceneToSvg } from "@/lib/render/svg";
 import { changedTexts, layoutSent } from "@/lib/snapshot";
-import { Icon } from "./ui";
+import { Icon, useClosing } from "./ui";
 import { useWs } from "./WorkspaceProvider";
 
 // Просмотр документа на весь экран: оценить лист перед отправкой и сравнить с тем,
@@ -33,6 +33,7 @@ export function DocViewer({
     if (next) onId(next.id);
   };
   const closeBtn = useRef<HTMLButtonElement>(null);
+  const [closing, close] = useClosing(onClose);
   useEffect(() => {
     const back = document.activeElement as HTMLElement | null;
     closeBtn.current?.focus();
@@ -44,7 +45,7 @@ export function DocViewer({
   }, []);
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") close();
       else if (e.key === "ArrowLeft") step(-1);
       else if (e.key === "ArrowRight") step(1);
     };
@@ -53,8 +54,8 @@ export function DocViewer({
   });
   if (!doc) return null;
   return (
-    <div className="viewer dv" role="dialog" aria-modal="true" aria-label="Просмотр документа">
-      <Page key={doc.id} doc={doc} picked={picked?.has(doc.id)} onToggle={onToggle && (() => onToggle(doc.id))} onBackdrop={onClose}>
+    <div className={`viewer dv${closing ? " closing" : ""}`} role="dialog" aria-modal="true" aria-label="Просмотр документа">
+      <Page key={doc.id} doc={doc} picked={picked?.has(doc.id)} onToggle={onToggle && (() => onToggle(doc.id))} onBackdrop={close}>
         <div className="viewer-nav">
           <button className="icon-btn" disabled={i <= 0} onClick={() => step(-1)} aria-label="Предыдущий документ">
             <Icon name="left" />
@@ -66,7 +67,7 @@ export function DocViewer({
             <Icon name="right" />
           </button>
         </div>
-        <button ref={closeBtn} className="icon-btn" onClick={onClose} aria-label="Закрыть просмотр">
+        <button ref={closeBtn} className="icon-btn" onClick={close} aria-label="Закрыть просмотр">
           <Icon name="close" />
         </button>
       </Page>

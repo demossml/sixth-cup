@@ -1,5 +1,6 @@
 
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { usePresence } from "./presence";
 import { createPortal } from "react-dom";
 import { Icon } from "./ui";
 
@@ -38,6 +39,7 @@ export function Select({
   const btn = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
+  const { mounted, closing } = usePresence(open);
   const [active, setActive] = useState(-1);
   const [pos, setPos] = useState<React.CSSProperties>({});
   const selectable = options.map((o, i) => (isItem(o) && !o.disabled ? i : -1)).filter((i) => i >= 0);
@@ -174,9 +176,9 @@ export function Select({
         <span className="dd-value">{display ?? current?.label ?? "—"}</span>
         <Icon name="chevron" size={variant === "field" ? 20 : 16} />
       </button>
-      {open &&
+      {mounted &&
         createPortal(
-          <div ref={list} id={`${id}-list`} className="dd" role="listbox" aria-label={label} style={pos}>
+          <div ref={list} id={`${id}-list`} className="dd" role="listbox" aria-label={label} style={pos} data-closing={closing || undefined}>
             {options.map((o, i) =>
               "sep" in o ? (
                 <div key={i} className="dd-sep" role="presentation" />

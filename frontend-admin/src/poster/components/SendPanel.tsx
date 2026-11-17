@@ -1,4 +1,5 @@
 import { posterFetch } from "@/lib/client/api";
+import { useMail } from "@/lib/client/mail";
 import { useEffect, useMemo, useState } from "react";
 import { archiveName, buildPdfs, downloadBytes, zipPdfs, type BuiltPdf } from "@/lib/client/export";
 import { docChanges, priceChangesFull, priceChangesText } from "@/lib/changes";
@@ -6,7 +7,8 @@ import { STATUS_LABEL, changesSinceLastSend, docDue, dueRank, isChanged, printSt
 import { cafeLabel, contactServes, resolveTag, sizeLabel, uid, type Contact, type Doc, type Workspace } from "@/lib/model";
 import { ALL, useCafe } from "./cafe";
 import { DocViewer } from "./DocViewer";
-import { MailSetup } from "./MailSetup";
+import { SortHeader, Tab, Tabs, ariaSort, sortRows, useSort } from "./kit";
+import { MailLink } from "./Mail";
 import { DocPreview, Icon, dueDate } from "./ui";
 import { useWs } from "./WorkspaceProvider";
 
@@ -15,6 +17,7 @@ import { useWs } from "./WorkspaceProvider";
 // каждому уходит своё письмо со своим архивом.
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const ZIPPING = "Собираю архив…";
 const kb = (n: number) => (n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} КБ` : `${(n / 1024 / 1024).toFixed(1)} МБ`);
 const plural = (n: number, one: string, few: string, many: string) => {
   const a = n % 10;
@@ -64,9 +67,11 @@ export function SendPanel() {
   const [message, setMessage] = useState("");
   const [print, setPrint] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  const sending = !!busy?.startsWith("Отправляю");
+  const [newErr, setNewErr] = useState<string | null>(null);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [lastBuilt, setLastBuilt] = useState<BuiltPdf[] | null>(null);
-  const [mail, setMail] = useState<{ configured: boolean; from: string | null } | null>(null);
+  const mail = useMail();
   const log = useMemo(() => changesSinceLastSend(ws), [ws]);
   const history = useMemo(() => ws.sends.filter((s) => !s.cafeIds || s.cafeIds.some((id) => inScope.has(id))).reverse(), [ws.sends, inScope]);
   // строка под заголовком блока отправки: когда и кому ушёл последний заказ
@@ -80,11 +85,6 @@ export function SendPanel() {
     return `Последний заказ ${day} → ${last.to}${work}.${pending ? "" : " Всё актуальное у типографии."}`;
   }, [ws, history, scoped]);
 
-  useEffect(() => {
-    posterFetch("/send")
-      .then((r) => r.json())
-      .then(setMail, () => setMail({ configured: false, from: null }));
-  }, []);
   // новые изменённые документы — сразу отмечены; удалённые — сняты
   const allChanged = useMemo(() => ws.documents.filter((d) => isChanged(ws, d)), [ws]);
   useEffect(() => {
@@ -99,16 +99,14 @@ export function SendPanel() {
   // что видно в списке и что уйдёт: только выбранные кафе
   // что изменилось в каждом документе с прошлой отправки — для колонки и для сортировки по ней
   const changesOf = useMemo(() => new Map(scoped.map((d) => [d.id, docChanges(ws, d)])), [ws, scoped]);
-  // сортировка по колонке «Что изменилось»: сначала с изменившейся ценой, сначала без неё, или как есть (по срочности)
-  const [byPrice, setByPrice] = useState<"" | "first" | "last">("");
+  // сортировка по колонкам: «Документ» — по названию; «Что изменилось» — по возрастанию сначала с изменившейся ценой.
+  // «Как было» — по срочности
+  const [sort, setSort] = useSort<"name" | "chg">("send", ["name", "chg"]);
   const listed = [...changed, ...(showAll ? unchanged : [])].filter((d) => filter === ALL || d.cafeId === filter);
-  const hasPrice = (d: Doc) => (changesOf.get(d.id)?.prices.length ? 0 : 1);
-  const visible = byPrice
-    ? listed
-        .map((d, i) => ({ d, i }))
-        .sort((a, b) => (hasPrice(a.d) - hasPrice(b.d)) * (byPrice === "first" ? 1 : -1) || a.i - b.i)
-        .map((x) => x.d)
-    : listed;
+  const visible = sortRows(listed, sort, {
+    name: (d: Doc) => title(d),
+    chg: (d: Doc) => (changesOf.get(d.id)?.prices.length ? 0 : 1),
+  });
   const docs = scoped.filter((d) => picked.has(d.id));
   const groups =
     many && filter === ALL
@@ -162,7 +160,7 @@ export function SendPanel() {
     });
   const addContact = () => {
     const email = newEmail.trim();
-    if (!EMAIL.test(email)) return setResult({ ok: false, text: "Проверьте адрес почты." });
+    if (!EMAIL.test(email)) return setNewErr("Проверьте адрес почты — например, print@example.ru");
     const known = ws.contacts.find((c) => c.email.toLowerCase() === email.toLowerCase());
     const id = known?.id ?? uid("c");
     if (!known)
@@ -176,7 +174,7 @@ export function SendPanel() {
 
   const onDownload = async () => {
     if (!fb) return;
-    setBusy("Собираю архив…");
+    setBusy(ZIPPING);
     setResult(null);
     try {
       const pdfs = await buildPdfs(ws, docs, fb, print);
@@ -288,7 +286,7 @@ export function SendPanel() {
   return (
     <div className="send" data-tab={tab}>
       <div className="send-main">
-        <div className="seg" role="tablist" aria-label="Отправка">
+        <Tabs id="send" label="Отправка" value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
           {(
             [
               ["send", "Что отправить", docs.length],
@@ -296,21 +294,13 @@ export function SendPanel() {
               ["history", "История", history.length],
             ] as const
           ).map(([k, l, n]) => (
-            <button
-              key={k}
-              role="tab"
-              id={`tab-${k}`}
-              aria-selected={tab === k}
-              aria-controls="send-pane"
-              className={tab === k ? "active" : ""}
-              onClick={() => setTab(k)}
-            >
-              {l} <span className="count">{n}</span>
-            </button>
+            <Tab key={k} value={k} count={n}>
+              {l}
+            </Tab>
           ))}
-        </div>
+        </Tabs>
 
-        <div id="send-pane" role="tabpanel" aria-labelledby={`tab-${tab}`} className="send-pane">
+        <div id="send-panel" role="tabpanel" aria-labelledby={`send-tab-${tab}`} className="send-pane">
           {tab === "send" && (
             <>
               {many && (
@@ -334,16 +324,16 @@ export function SendPanel() {
                 <div className="send-item send-head">
                   {master(visible, "Отметить все документы в списке")}
                   <span />
-                  <span>Документ</span>
-                  <button
-                    className="send-sort"
-                    onClick={() => setByPrice(byPrice === "" ? "first" : byPrice === "first" ? "last" : "")}
-                    title="Сортировать: сначала с изменившейся ценой, потом без неё, потом как было"
-                    aria-label={`Что изменилось. Сортировка: ${byPrice === "first" ? "сначала с изменившейся ценой" : byPrice === "last" ? "сначала без изменения цены" : "по срочности"}`}
-                  >
-                    Что изменилось
-                    {byPrice && <span className="send-sort-mark">{byPrice === "first" ? "цена ↑" : "цена ↓"}</span>}
-                  </button>
+                  <span role="columnheader" aria-sort={ariaSort(sort, "name")}>
+                    <SortHeader column="name" sort={sort} onSort={setSort}>
+                      Документ
+                    </SortHeader>
+                  </span>
+                  <span role="columnheader" aria-sort={ariaSort(sort, "chg")}>
+                    <SortHeader column="chg" sort={sort} onSort={setSort} hint="Сортировать: сначала с изменившейся ценой, потом без неё, потом по срочности">
+                      Что изменилось
+                    </SortHeader>
+                  </span>
                 </div>
               )}
               {groups.map((g) => (
@@ -389,21 +379,28 @@ export function SendPanel() {
             (history.length === 0 ? (
               <p className="hint">В типографию ещё ничего не отправляли.</p>
             ) : (
-              <ol className="log">
-                {history.map((s) => (
-                  <li key={s.id}>
-                    <time>{time(s.at, true)}</time> {s.to} — {files(s.files.length)}
-                    {s.bytes ? `, ${kb(s.bytes)}` : ""}
-                    {ws.cafes.length > 1 && s.cafeIds?.length ? <span className="muted"> · {s.cafeIds.map(address).filter(Boolean).join(", ")}</span> : null}
-                  </li>
-                ))}
-              </ol>
+              <>
+                <ol className="log">
+                  {history.map((s) => (
+                    <li key={s.id}>
+                      <a className="log-link" href={`#mail/send/${s.id}`} title="Подробно: что ушло и что изменилось">
+                        <time>{time(s.at, true)}</time> {s.to} — {files(s.files.length)}
+                        {s.bytes ? `, ${kb(s.bytes)}` : ""}
+                        {ws.cafes.length > 1 && s.cafeIds?.length ? <span className="muted"> · {s.cafeIds.map(address).filter(Boolean).join(", ")}</span> : null}
+                      </a>
+                    </li>
+                  ))}
+                </ol>
+                <a className="link" href="#mail">
+                  Подробная история — в разделе «Почта»
+                </a>
+              </>
             ))}
         </div>
       </div>
 
       <aside className="send-side">
-        <MailSetup mail={mail} />
+        <MailLink />
         <section className="send-card" aria-labelledby="send-title">
           <header className="send-side-head" aria-live="polite">
             <h2 id="send-title" className="label">
@@ -475,6 +472,7 @@ export function SendPanel() {
             {adding ? (
               <form
                 className="contact-new"
+                noValidate
                 onSubmit={(e) => {
                   e.preventDefault();
                   addContact();
@@ -490,24 +488,43 @@ export function SendPanel() {
                     autoComplete="organization"
                   />
                 </label>
-                <label className="field">
-                  <span>Почта</span>
+                <div className="field">
+                  <label htmlFor="new-contact-email">Почта</label>
                   <input
+                    id="new-contact-email"
                     className="text-input"
                     type="email"
                     inputMode="email"
                     autoComplete="email"
+                    spellCheck={false}
                     value={newEmail}
-                    onChange={(e) => setNewEmail(e.target.value)}
+                    onChange={(e) => {
+                      setNewEmail(e.target.value);
+                      setNewErr(null);
+                    }}
                     placeholder="print@example.ru"
+                    aria-invalid={!!newErr || undefined}
+                    aria-describedby={newErr ? "new-contact-email-err" : undefined}
                   />
-                </label>
+                  {newErr && (
+                    <p id="new-contact-email-err" className="field-error" role="alert">
+                      {newErr}
+                    </p>
+                  )}
+                </div>
                 <div className="contact-new-actions">
                   <button className="btn small" type="submit" disabled={!newEmail.trim()}>
                     Добавить
                   </button>
                   {ws.contacts.length > 0 && (
-                    <button className="link" type="button" onClick={() => setAdding(false)}>
+                    <button
+                      className="link"
+                      type="button"
+                      onClick={() => {
+                        setAdding(false);
+                        setNewErr(null);
+                      }}
+                    >
                       Отмена
                     </button>
                   )}
@@ -541,16 +558,21 @@ export function SendPanel() {
           </section>
 
           <div className="send-actions">
-            <button className="btn primary" disabled={!routes.length || !!busy || !fb || !mail?.configured} onClick={onSend}>
-              {busy ?? `Отправить в типографию${routed.size ? ` · ${routed.size}` : ""}`}
+            {mail && !mail.configured && (
+              <a className="hint send-nomail" href="#mail/settings">
+                Чтобы отправлять письмом, подключите почту в разделе «Почта» → «Настройки».
+              </a>
+            )}
+            <button className="btn primary" disabled={!routes.length || !!busy || !fb || !mail?.configured} aria-busy={sending} onClick={onSend}>
+              {sending ? busy : `Отправить в типографию${routed.size ? ` · ${routed.size}` : ""}`}
             </button>
             {routes.length > 1 && !busy && (
               <p className="hint send-routes">
                 {letters(routes.length)}: {routes.map((r) => `${r.contact.name} — ${r.docs.length}`).join(", ")}
               </p>
             )}
-            <button className="btn" disabled={!docs.length || !!busy || !fb} onClick={onDownload}>
-              Скачать архив
+            <button className="btn" disabled={!docs.length || !!busy || !fb} aria-busy={busy === ZIPPING} onClick={onDownload}>
+              {busy === ZIPPING ? busy : "Скачать архив"}
             </button>
           </div>
           {result && (

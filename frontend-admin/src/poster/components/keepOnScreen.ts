@@ -77,3 +77,55 @@ export function useKeepOnScreen(open: boolean, box: RefObject<HTMLElement | null
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, box, ...deps]);
 }
+
+/**
+ * Всплывающий блок поверх всего: блок рисуется в document.body (через портал) с position: fixed и встаёт
+ * у кнопки-якоря — под ней, правым краем по её правому краю. Не помещается снизу, а сверху места больше —
+ * открывается вверх; не влезает и так — сжимается по высоте. По горизонтали не выходит за экран.
+ * Так блок не перекрывают соседние таблицы, прилипшие шапки и не обрезает прокручиваемая панель.
+ * Место пересчитывается при прокрутке любого предка, смене размера окна и появлении клавиатуры.
+ * На блоке ставится data-side="above|below" — от него зависит, откуда растёт анимация появления.
+ */
+export function useFloating(open: boolean, anchor: RefObject<HTMLElement | null>, box: RefObject<HTMLElement | null>, { gap = 4, deps = [] as readonly unknown[] } = {}) {
+  useLayoutEffect(() => {
+    const el = box.current;
+    const a0 = anchor.current;
+    if (!open || !el || !a0) return;
+    const place = () => {
+      const a = anchor.current?.getBoundingClientRect();
+      if (!a) return;
+      const vv = window.visualViewport;
+      const top0 = vv?.offsetTop ?? 0;
+      const vh = vv?.height ?? window.innerHeight;
+      const vw = window.innerWidth;
+      const s = el.style;
+      s.maxHeight = "";
+      const natural = el.scrollHeight + (el.offsetHeight - el.clientHeight);
+      const below = top0 + vh - a.bottom - gap - EDGE;
+      const above = a.top - top0 - gap - EDGE;
+      const up = natural > below && above > below;
+      const room = Math.max(up ? above : below, MIN_H);
+      if (natural > room) s.maxHeight = `${room}px`;
+      const h = Math.min(natural, room);
+      s.top = `${up ? a.top - gap - h : a.bottom + gap}px`;
+      const w = el.offsetWidth;
+      s.left = `${Math.max(EDGE, Math.min(a.right - w, vw - EDGE - w))}px`;
+      el.dataset.side = up ? "above" : "below";
+    };
+    place();
+    const vv = window.visualViewport;
+    window.addEventListener("scroll", place, { capture: true, passive: true });
+    window.addEventListener("resize", place);
+    vv?.addEventListener("resize", place);
+    // содержимое меняет высоту (поиск в списке товаров) — переставить
+    const ro = new ResizeObserver(place);
+    ro.observe(el);
+    return () => {
+      window.removeEventListener("scroll", place, { capture: true });
+      window.removeEventListener("resize", place);
+      vv?.removeEventListener("resize", place);
+      ro.disconnect();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, anchor, box, gap, ...deps]);
+}

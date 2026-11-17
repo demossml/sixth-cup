@@ -774,6 +774,16 @@ export default function MenuProducts() {
     } finally { setBusyId(null) }
   }
   const openEdit = (p: Product) => setEdit({ ...p, storeUuids: p.evotorLinks.filter((l) => l.enabled !== 0).map((l) => l.storeUuid) })
+  // ?product=<id> — открыть карточку товара сразу (переход из конструктора «Меню и Ценники» по цене из базы)
+  const deepLink = sp.get('product')
+  useEffect(() => {
+    if (!deepLink || !products.data) return
+    const p = all.find((x) => x.id === Number(deepLink))
+    if (p) openEdit(p)
+    else toast.push('Товар не найден — возможно, его удалили', 'bad')
+    patch({ product: null })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLink, products.data])
   const doArchive = async () => {
     if (!archive) return
     try { await api(`/products/${archive.id}`, { method: 'DELETE' }); toast.push('Товар убран из продажи'); products.reload() }

@@ -1,5 +1,5 @@
 
-import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { layoutDoc } from "@/lib/client/export";
 import { ICONS, type IconName } from "@/lib/icons";
 import type { FontBook } from "@/lib/fonts";
@@ -70,22 +70,47 @@ export function TextInput({
   );
 }
 
-export function Sheet({ title, onClose, children, footer }: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode }) {
+/**
+ * Закрыть окно с анимацией: сначала класс closing (окно уходит, ~160 мс), потом onClose — окно размонтируется.
+ * При «уменьшить движение» — сразу. Возвращает [идёт закрытие, закрыть].
+ */
+export function useClosing(onClose: () => void, ms = 160): [boolean, () => void] {
+  const [closing, setClosing] = useState(false);
+  const latest = useRef(onClose);
+  latest.current = onClose;
+  const timer = useRef<number>();
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const close = useCallback(() => {
+    if (timer.current) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return latest.current();
+    setClosing(true);
+    timer.current = window.setTimeout(() => {
+      timer.current = undefined;
+      setClosing(false);
+      latest.current();
+    }, ms);
+  }, [ms]);
+  return [closing, close];
+}
+
+/** size: "ask" — короткий вопрос с двумя кнопками (490 px), "form" — небольшая форма (520 px); без size — до 980 px. Только на компьютере. */
+export function Sheet({ title, onClose, children, footer, size }: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; size?: "ask" | "form" }) {
+  const [closing, close] = useClosing(onClose);
   useEffect(() => {
-    const h = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const h = (e: KeyboardEvent) => e.key === "Escape" && close();
     window.addEventListener("keydown", h);
     document.body.classList.add("sheet-open");
     return () => {
       window.removeEventListener("keydown", h);
       document.body.classList.remove("sheet-open");
     };
-  }, [onClose]);
+  }, [close]);
   return (
-    <div className="sheet-backdrop" onClick={onClose}>
-      <div className="sheet" role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
+    <div className={`sheet-backdrop${closing ? " closing" : ""}`} onClick={close}>
+      <div className={`sheet${size ? ` sheet-${size}` : ""}`} role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
         <header className="sheet-head">
           <h2>{title}</h2>
-          <button className="icon-btn" onClick={onClose} aria-label="Закрыть">
+          <button className="icon-btn" onClick={close} aria-label="Закрыть">
             <Icon name="close" />
           </button>
         </header>

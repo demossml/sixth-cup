@@ -1,7 +1,10 @@
 // Каталог sixth-cup в конструкторе: какие товары можно поставить в меню и откуда берутся их цены.
-// Строка, привязанная к товару (link), получает цены из базы — руками их не правят. Сервер при каждом
-// чтении и сохранении сверяет цены с базой (syncCatalogPrices): изменившаяся цена встаёт в меню,
-// а документ попадает в «Список в печать» через priceNotice — как любое обновление цены из базы.
+// Строка, привязанная к товару (link), получает цены из базы. Сервер при каждом чтении и сохранении
+// сверяет цены с базой (syncCatalogPrices): изменившаяся цена встаёт в меню, а документ попадает
+// в «Список в печать» через priceNotice — как любое обновление цены из базы.
+// Цену связанной строки можно поменять в редакторе двумя способами: «только для меню» — колонка
+// попадает в link.manual, и сверка её больше не трогает; «обновить в базе тоже» — цена записывается
+// в товар (POST /poster/catalog/prices), а меню получает её обычной сверкой.
 
 import {
   applyPriceUpdates,
@@ -21,6 +24,8 @@ export interface CatalogSize {
   key: string;
   label: string;
   price: number;
+  /** Когда цена этого размера последний раз менялась в базе (мс); null — неизвестно. */
+  updatedAt?: number | null;
 }
 
 /** Вид молока из схемы товара; доплата — в рублях (0 — бесплатно). */
@@ -181,6 +186,7 @@ export function syncCatalogPrices(ws: Workspace, catalog: Catalog, at = new Date
   const log: string[] = [];
   const push = (g: Group, item: Item, v: Variation | undefined, column: number, price: Price) => {
     const target = v ?? item;
+    if (isManualColumn(target.link, column)) return; // своя цена «только для меню»
     if (target.prices[column] === price) return;
     updates.push({ itemId: item.id, variationId: v?.id, column, price });
     const name = v ? `${item.name} ${v.name.toLocaleLowerCase("ru-RU")}` : item.name;
@@ -224,5 +230,95 @@ function setMissing(link: CatalogLink | MilkLink, missing: boolean) {
 
 const fmt = (p: Price | undefined) => (p == null ? "—" : String(p));
 
-/** Цена строки берётся из базы — поле цены только для чтения. */
+/** Цена строки берётся из базы (хотя бы в одной колонке). */
 export const priceFromCatalog = (target: Item | Variation): boolean => !!target.link;
+
+/** Колонка связанной строки с ценой «только для меню». */
+export const isManualColumn = (link: CatalogLink | MilkLink | undefined, column: number): boolean => !!link?.manual?.includes(column);
+
+/** Поставить или снять у колонки пометку «только для меню». */
+export function setManualColumn(target: Item | Variation, column: number, manual: boolean) {
+  const link = target.link;
+  if (!link) return;
+  const set = new Set(link.manual ?? []);
+  if (manual) set.add(column);
+  else set.delete(column);
+  if (set.size) link.manual = [...set].sort((a, b) => a - b);
+  else delete link.manual;
+}
+
+/** Цена из базы, которую можно записать: товар (ref) и размер (key) — как в POST /poster/catalog/prices. */
+export interface CatalogPriceKey {
+  ref: string;
+  key: string;
+}
+
+/**
+ * Откуда цена в колонке строки — для подсказки у цены в редакторе.
+ *   manual — строка не связана с базой, цена своя;
+ *   db     — цена из базы;
+ *   own    — строка связана с базой, но в этой колонке своя цена «только для меню».
+ */
+export interface PriceOrigin {
+  kind: "manual" | "db" | "own";
+  via: "product" | "milk" | null;
+  /** Размер товара в базе для этой колонки; null — у товара такого размера нет или каталог ещё не загружен. */
+  size: CatalogSize | null;
+  /** Цена в базе для этой колонки (для молока — основа + доплата); undefined — неизвестна. */
+  dbPrice: Price | undefined;
+  /** Доплата за молоко (via = milk). */
+  surcharge?: number;
+  /** Куда вести в админке: путь внутри неё (#…). */
+  adminPath: string | null;
+  /** Товара или размера в базе больше нет. */
+  missing: boolean;
+  /** Что записывать в базу при «обновить в базе тоже»; null — отсюда в базу не записать (молоко, нет размера). */
+  dbKey: CatalogPriceKey | null;
+}
+
+const productIdOf = (ref: string) => (/^p:(\d+)$/.exec(ref) ? Number(ref.slice(2)) : null);
+
+/** Откуда цена колонки column у строки target (позиции item или её вариации). */
+export function priceOrigin(catalog: Catalog | null, item: Item, target: Item | Variation, column: number): PriceOrigin {
+  const link = target.link;
+  const none: PriceOrigin = { kind: "manual", via: null, size: null, dbPrice: undefined, adminPath: null, missing: false, dbKey: null };
+  if (!link) return none;
+  const kind = isManualColumn(link, column) ? "own" : "db";
+  if (isMilkLink(link)) {
+    const base = item.link ? sizeAt(catalog, item.link, column) : null;
+    const milk = catalog?.products.flatMap((p) => p.milk).find((m) => m.id === link.milkId);
+    return {
+      kind,
+      via: "milk",
+      size: base?.size ?? null,
+      dbPrice: base?.size && milk ? base.size.price + milk.surcharge : undefined,
+      surcharge: milk?.surcharge,
+      adminPath: "/milk-schemes",
+      missing: !!link.missing,
+      dbKey: null,
+    };
+  }
+  const at = sizeAt(catalog, link, column);
+  const productId = at?.size ? (productIdOf(at.size.key) ?? productIdOf(link.ref)) : productIdOf(link.ref) ?? firstProductOfGroup(at?.product);
+  return {
+    kind,
+    via: "product",
+    size: at?.size ?? null,
+    dbPrice: at ? (at.size?.price ?? null) : undefined,
+    adminPath: productId != null ? `/menu?product=${productId}` : "/menu",
+    missing: !!link.missing,
+    dbKey: at?.size && !link.missing ? { ref: link.ref, key: at.size.key } : null,
+  };
+}
+
+function sizeAt(catalog: Catalog | null, link: CatalogLink, column: number): { product: CatalogProduct; size: CatalogSize | null } | null {
+  const product = catalog?.products.find((p) => p.id === link.ref);
+  if (!product) return null;
+  const key = link.sizes[column];
+  return { product, size: key == null ? null : (product.sizes.find((s) => s.key === key) ?? null) };
+}
+
+function firstProductOfGroup(product: CatalogProduct | undefined): number | null {
+  const key = product?.sizes.find((s) => s.key.startsWith("p:"))?.key;
+  return key ? productIdOf(key) : null;
+}

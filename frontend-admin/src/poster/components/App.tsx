@@ -3,16 +3,18 @@ import { useEffect, useMemo, useState } from "react";
 import { printStatus } from "@/lib/fingerprint";
 import { CafeProvider, CafeSwitcher, useCafe } from "./cafe";
 import { Home } from "./Home";
+import { Mail } from "./Mail";
 import { Menus } from "./Menus";
 import { Tags } from "./Tags";
 import { Icon, Logo, Toast } from "./ui";
 import { useWs } from "./WorkspaceProvider";
 
-type Section = "home" | "menu" | "tags";
+type Section = "home" | "menu" | "tags" | "mail";
 const SECTIONS: { id: Section; label: string; icon: string }[] = [
   { id: "home", label: "Главная", icon: "home" },
   { id: "menu", label: "Меню", icon: "menu" },
   { id: "tags", label: "Ценники", icon: "tag" },
+  { id: "mail", label: "Почта", icon: "send" },
 ];
 const LEGACY: Record<string, Section> = { send: "home", docs: "tags" };
 
@@ -127,9 +129,13 @@ function Shell() {
       )}
 
       <main className={`content ${full ? "full" : ""}`}>
-        {section === "home" && <Home />}
-        {section === "menu" && <Menus route={route} go={go} />}
-        {section === "tags" && <Tags />}
+        {/* смена раздела — мягкое появление (только прозрачность: сдвиг сломал бы fixed-окна внутри) */}
+        <div key={section} className="section-in">
+          {section === "home" && <Home />}
+          {section === "menu" && <Menus route={route} go={go} />}
+          {section === "tags" && <Tags />}
+          {section === "mail" && <Mail route={route} />}
+        </div>
       </main>
 
       {!full && (
