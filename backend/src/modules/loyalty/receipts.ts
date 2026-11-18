@@ -103,9 +103,21 @@ function applyOne(r: Receipt) {
   }
 }
 
-export const applyReceipts = db.transaction((tokens: string[]): ApplyResult => {
+export type ApplyOptions = {
+  /**
+   * B-04: чек можно применить только его владельцу.
+   *
+   * Гость шлёт `POST /api/sync`, и раньше сервер не сверял `receipt.u` с JWT:
+   * знающий чужой подписанный токен мог «прокрутить» его от своего имени.
+   * Касса (`/api/devices/sync`) грузит чеки разных гостей — она передаёт `null`.
+   */
+  ownerUserId?: number | null
+}
+
+export const applyReceipts = db.transaction((tokens: string[], opts: ApplyOptions = {}): ApplyResult => {
   const result: ApplyResult = { applied: [], duplicates: [], rejected: [] }
   const now = Math.floor(Date.now() / 1000)
+  const owner = opts.ownerUserId ?? null
 
   for (const token of tokens.slice(0, 200)) {
     const head = peek(token)
@@ -120,6 +132,10 @@ export const applyReceipts = db.transaction((tokens: string[]): ApplyResult => {
     const r = parsed.data
 
     if (!r.r.startsWith(`${r.d}-`) || r.ts > now + 86_400) { result.rejected.push({ reason: 'bad receipt' }); continue }
+    if (owner != null && Number(r.u) !== owner) {
+      result.rejected.push({ reason: 'receipt_belongs_to_another_user' })
+      continue
+    }
     if (!db.prepare('SELECT 1 FROM users WHERE id=?').get(r.u)) { result.rejected.push({ reason: 'unknown user' }); continue }
     const current = db.prepare('SELECT seq FROM cards WHERE user_id=?').get(r.u) as { seq: number } | undefined
     if (current && r.q <= current.seq) {

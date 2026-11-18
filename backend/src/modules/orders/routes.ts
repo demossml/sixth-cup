@@ -1,10 +1,12 @@
 import { Hono, type Context } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
+import { zValidator } from '@hono/zod-validator'
+import { z } from 'zod'
 import { db } from '../../db'
 import { config } from '../../config'
 import { requireAuth, type AuthEnv } from '../../middleware/auth'
 import type { DeviceEnv } from '../../middleware/device'
 import { deviceStoreAuth } from '../../middleware/deviceStore'
-import { evotorProxy } from '../../middleware/evotorProxy'
 import {
   activeBan,
   cancelDraft,
@@ -39,11 +41,58 @@ const dbOf = (_c: unknown): Db => db as unknown as Db
 const secretOf = () => config.orderQrSecret || config.jwtSecret
 
 /**
+ * H-03: публичные эндпоинты заказов принимают только ограниченное по форме тело.
+ * Клиент присылает выбор опций — всё остальное (цены, названия) считает сервер.
+ * `.passthrough()` сохраняет совместимость: лишние поля не валят запрос, но размер
+ * и количество элементов ограничены.
+ */
+const idLike = z.union([z.string().min(1).max(64), z.number()])
+const itemSchema = z.object({
+  productId: idLike,
+  volumeId: idLike.nullish(),
+  quantity: z.number().int().min(0).max(99).optional(),
+  modifiers: z.array(z.object({
+    modifierId: z.union([z.string().min(1).max(64), z.number().int()]),
+    groupKey: z.string().max(32).nullish(),
+  })).max(20).optional(),
+  choices: z.array(z.object({
+    schemeId: z.number().int().nullish(),
+    optionId: z.union([z.string().min(1).max(64), z.number().int()]),
+  })).max(10).optional(),
+}).passthrough()
+
+const storeIdSchema = z.union([z.number().int().positive(), z.string().min(1).max(12)])
+
+const quoteSchema = z.object({
+  storeId: storeIdSchema,
+  // Пустую корзину пропускаем к сервису: он отвечает бизнес-кодом `empty_items`.
+  items: z.array(itemSchema).max(50),
+  benefit: z.union([
+    z.object({ kind: z.enum(['gift', 'voucher', 'cashback']), voucherId: z.number().int().nullish() }),
+    z.null(),
+  ]).optional(),
+}).passthrough()
+
+const createSchema = z.object({
+  storeId: storeIdSchema,
+  items: z.array(itemSchema).max(50),
+  cardId: z.string().max(64).nullish(),
+  quoteToken: z.string().max(2000).nullish(),
+}).passthrough()
+
+/** Тело заказа небольшое: 64 КБ с запасом покрывает 50 позиций с опциями. */
+const guestBodyLimit = bodyLimit({
+  maxSize: 64 * 1024,
+  onError: (c) => c.json({ ok: false, error: 'payload_too_large' }, 413),
+})
+
+/**
  * Заказы гостя привязаны к пользователю: без JWT нельзя ни создать заказ, ни прочитать чужой.
  * Это же требование делает возможным бан за невыкуп (нужен стабильный идентификатор гостя).
  */
 export const orderGuestRoutes = new Hono<Env>()
 
+orderGuestRoutes.use('*', guestBodyLimit)
 orderGuestRoutes.use('*', requireAuth)
 
 const ACTIVE_STATUSES_SQL = `('draft','accepted','cooking','ready')`
@@ -85,12 +134,12 @@ function ownedOrder(id: string, userId: number) {
  * Расчёт корзины: сумма позиций, скидка по выбранному бонусу и подписанный quote.
  * PWA только показывает цифры; заказ принимается с этим же quote (иначе `quote_stale`).
  */
-orderGuestRoutes.post('/quote', async (c) => {
+orderGuestRoutes.post('/quote', zValidator('json', quoteSchema), async (c) => {
   ensurePreorderTables(dbOf(c))
   const userId = c.get('userId')
   // Расчёт корзины — самый частый вызов PWA; ограничиваем, чтобы им нельзя было нагрузить БД (P2-9).
   if (!allowRequest(`quote:${userId}`, 120, 60_000)) throw bad('Слишком много запросов. Попробуйте позже.', 429)
-  const body = (await c.req.json().catch(() => ({}))) as {
+  const body = c.req.valid('json') as {
     storeId?: number | string
     items?: ItemIn[]
     benefit?: { kind: 'gift' | 'voucher' | 'cashback'; voucherId?: number | null } | null
@@ -109,10 +158,10 @@ orderGuestRoutes.post('/quote', async (c) => {
   }
 })
 
-orderGuestRoutes.post('/', async (c) => {
+orderGuestRoutes.post('/', zValidator('json', createSchema), async (c) => {
   ensurePreorderTables(dbOf(c))
   const userId = c.get('userId')
-  const body = (await c.req.json()) as CreateOrderBody
+  const body = c.req.valid('json') as unknown as CreateOrderBody
   try {
     // Idempotency-Key проверяем ДО активного заказа: retry того же запроса должен получить свой заказ,
     // а не 409 «у вас уже есть активный заказ».
@@ -155,8 +204,16 @@ orderGuestRoutes.post('/', async (c) => {
         items: body.items ?? [],
         benefit: quote.benefit ? { kind: quote.benefit.kind, voucherId: quote.benefit.voucherId ?? null } : null,
       })
-      if (fresh.subtotal !== quote.subtotal) {
-        return c.json({ ok: false, error: 'quote_stale', message: 'Состав или цены изменились — обновите корзину' }, 409)
+      // H-02: сверяем расчёт целиком, а не только сумму позиций.
+      // Иначе подмеченный ранее quote с бо́льшим бонусом проходил при изменившейся скидке.
+      if (
+        fresh.subtotal !== quote.subtotal ||
+        fresh.total !== quote.total ||
+        fresh.discount !== quote.discount ||
+        (fresh.benefit?.kind ?? null) !== (quote.benefit?.kind ?? null) ||
+        (fresh.benefit?.voucherId ?? null) !== (quote.benefit?.voucherId ?? null)
+      ) {
+        return c.json({ ok: false, error: 'quote_stale', message: 'Состав, цены или бонус изменились — обновите корзину' }, 409)
       }
       if (quote.benefit) {
         benefitJson = JSON.stringify(quote.benefit)
@@ -233,7 +290,8 @@ orderGuestRoutes.post('/:id/received', (c) => {
  */
 export const orderDeviceRoutes = new Hono<DeviceEnv>()
 
-orderDeviceRoutes.use('/orders/*', evotorProxy, deviceStoreAuth)
+// P0-01: credential проверяет deviceStoreAuth (device token либо валидный прокси-токен).
+orderDeviceRoutes.use('/orders/*', deviceStoreAuth)
 
 orderDeviceRoutes.get('/orders/resolve', async (c) => {
   ensurePreorderTables(dbOf(c))

@@ -16,6 +16,7 @@ import { activeVouchers, todayDay } from '../vouchers/service'
 import { freeEarned } from '../loyalty/rules'
 import { config } from '../../config'
 import { ModifierError, modifierInputs, resolveItemModifiers } from './pricing'
+import { AvailabilityError, assertProductSellableAtStores, assertStoreSellable, storeUuidsOf } from './availability'
 
 type Db = {
   prepare: (sql: string) => {
@@ -86,12 +87,20 @@ export type QuoteItemIn = {
  * Сумма и позиции для quote: цена SKU + платные опции по тому же резолверу, что и создание заказа.
  * Один расчёт на оба пути — корзина и заказ не могут разойтись (B-07).
  */
-function priceItems(db: Db, items: QuoteItemIn[]): QuoteItem[] {
+function priceItems(db: Db, items: QuoteItemIn[], storeId?: number): QuoteItem[] {
+  // H-01: товар должен продаваться именно в этой точке, а не только быть available.
+  const storeUuids = storeId != null ? storeUuidsOf(db, storeId) : []
   return items.map((it) => {
     const skuId = it.volumeId ?? it.productId
     const p = productOf(db, String(skuId))
     if (!p || Number(p.available) === 0) {
       throw new BenefitError('product_unavailable', `Позиция недоступна: ${skuId}`)
+    }
+    try {
+      assertProductSellableAtStores(db, p.id, storeUuids)
+    } catch (e) {
+      if (e instanceof AvailabilityError) throw new BenefitError(e.code, e.message)
+      throw e
     }
     const quantity = Math.max(1, Math.min(99, Number(it.quantity) || 1))
     let unitPriceEstimate = Number(p.price) || 0
@@ -235,7 +244,14 @@ export function quoteOrder(
   },
 ): QuoteResult {
   if (!opts.items?.length) throw new BenefitError('empty_items', 'Корзина пуста')
-  const items = priceItems(db, opts.items)
+  // H-01: закрытая организация/несуществующая точка — сразу отказ, а не «заказ в никуда».
+  try {
+    assertStoreSellable(db, opts.storeId)
+  } catch (e) {
+    if (e instanceof AvailabilityError) throw new BenefitError(e.code, e.message)
+    throw e
+  }
+  const items = priceItems(db, opts.items, opts.storeId)
   const subtotal = items.reduce((s, it) => s + it.sum, 0)
   const available = benefitAvailable(db, opts.userId)
   const { discount, benefit } = applyBenefit(db, opts.userId, items, opts.benefit, subtotal, available)

@@ -26,11 +26,32 @@ npm run build
 
 ## Env
 
+Полный список с комментариями — `.env.example` в корне репозитория. Скопируй его в `.env`
+и заполни значения.
+
+### Критические переменные (P0-01 / P0-04)
+
+При `NODE_ENV=production` backend **падает на старте**, если не задана хотя бы одна
+из этих переменных (проверка `productionConfigIssues` в `backend/src/config.ts`):
+
+| Переменная | Зачем | Что будет без неё |
+|---|---|---|
+| `JWT_SECRET` | подпись гостевых JWT и админ-сессий | старт запрещён; дефолт `dev-secret-change-me` в проде не принимается |
+| `ADMIN_TOKEN` | доступ к админке (`X-Admin-Token`) | старт запрещён; дефолт `dev-admin` в проде не принимается |
+| `EVOTOR_PROXY_TOKEN` | общий секрет кассовых API | старт запрещён. Раньше отсутствие токена **отключало** проверку и касса была открыта (P0-01), теперь без токена кассовые ручки отвечают `503 proxy_not_configured` |
+| `PUBLIC_BASE_URL` | публичный адрес PWA для QR/ссылок | старт запрещён; нужен полный `https://…` |
+| `TRUST_PROXY_HEADERS` | доверять ли `X-Forwarded-For` | старт запрещён; принимаются только `0` или `1`. `1` — только если перед Node реально стоит прокси (Caddy/nginx), иначе IP подделывается и IP-лимиты бесполезны |
+
+Итого минимальный прод-конфиг:
+
 ```bash
 NODE_ENV=production
 PORT=3000
 JWT_SECRET=...
 ADMIN_TOKEN=...
+EVOTOR_PROXY_TOKEN=...
+PUBLIC_BASE_URL=https://app.example.com
+TRUST_PROXY_HEADERS=1
 DB_PATH=./data/sixth-cup.db
 UPLOADS_DIR=./data/uploads
 # опционально точный host админки:
@@ -40,6 +61,18 @@ ADMIN_HOST=admin.example.com
 # пороги статуса кассы, минуты с последнего успешного опроса (по умолчанию 5 / 30)
 # EVOTOR_HEALTH_WARN_MIN=5
 # EVOTOR_HEALTH_CRIT_MIN=30
+```
+
+`ORDER_QR_SECRET` не обязателен: без него QR предзаказа подписывается `JWT_SECRET`.
+Отдельный секрет позволяет отзывать коды заказов, не ломая сессии гостей.
+
+### Проверка перед выкладкой
+
+```bash
+# приложение должно упасть с понятным списком, если чего-то не хватает
+NODE_ENV=production node -e "import('./backend/dist/index.js')" || true
+# и стартовать, когда всё задано
+curl -fsS http://127.0.0.1:3000/health
 ```
 
 Backend по заголовку `Host`:

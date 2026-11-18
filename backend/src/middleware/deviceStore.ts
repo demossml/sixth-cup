@@ -3,6 +3,8 @@ import { db } from '../db'
 import { bad } from '../lib/errors'
 import { hashToken } from './device'
 import type { DeviceEnv } from './device'
+import { config } from '../config'
+import { proxyCredentialValid } from './evotorProxy'
 
 /** Точка кассы по uuid Эвотора: основная связь — `evotor_stores.local_store_id`. */
 /** Единственная точка в системе (одноточечная установка) — принимается, только если она одна. */
@@ -36,8 +38,11 @@ export function storeIdFromEvotorUuid(storeUuid: string): number | null {
  * Касса ходит двумя путями:
  *  1) `X-Device-Token` — токен после enroll (смоук, новые сборки);
  *  2) `X-Evotor-Store-Uuid` + `Authorization`, который подставляет облако Эвотора.
- *     Именно так APK зовёт все остальные `/api/devices/*`; enroll в APK нет вообще,
- *     поэтому требование только `X-Device-Token` давало 401 «перепривяжите кассу».
+ *     Именно так APK зовёт все остальные `/api/devices/*`; enroll в APK нет вообще.
+ *
+ * P0-01: `X-Evotor-Store-Uuid` — это маршрутизация, а не пароль. Раньше один этот
+ * заголовок открывал экран заказов и смену статусов. Теперь нужен реальный
+ * credential: либо device token, либо валидный `EVOTOR_PROXY_TOKEN` в `Authorization`.
  */
 export const deviceStoreAuth = createMiddleware<DeviceEnv>(async (c, next) => {
   const token = c.req.header('X-Device-Token')
@@ -50,6 +55,9 @@ export const deviceStoreAuth = createMiddleware<DeviceEnv>(async (c, next) => {
     await next()
     return
   }
+  // Без device token единственный допустимый credential — общий прокси-токен касс.
+  if (!config.evotorProxyToken) throw bad('proxy_not_configured', 503)
+  if (!proxyCredentialValid(c.req.header('Authorization'))) throw bad('Unauthorized', 401)
   const storeUuid = (c.req.header('X-Evotor-Store-Uuid') || c.req.query('storeUuid') || '').trim().slice(0, 80)
   // Касса без кэша точки (первый запуск) допускается только в одноточечной установке.
   const storeId = storeUuid ? storeIdFromEvotorUuid(storeUuid) : onlyStoreId()

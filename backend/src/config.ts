@@ -69,8 +69,49 @@ export const config = {
 
 }
 
-if (!isDev && (config.jwtSecret === 'dev-secret-change-me' || config.adminToken === 'dev-admin')) {
-  throw new Error('Set JWT_SECRET and ADMIN_TOKEN in production!')
+/**
+ * P0-01/P0-04: критические переменные production-контура.
+ *
+ * В dev всё работает на дефолтах, но в production молчаливый дефолт = открытый
+ * или нерабочий контур (например, пустой `EVOTOR_PROXY_TOKEN` до фикса P0-01
+ * отключал авторизацию кассовых API). Поэтому старт без этих переменных
+ * запрещён: приложение падает на старте с понятным списком.
+ */
+export const CRITICAL_PROD_ENV = [
+  'JWT_SECRET',
+  'ADMIN_TOKEN',
+  'EVOTOR_PROXY_TOKEN',
+  'PUBLIC_BASE_URL',
+  'TRUST_PROXY_HEADERS',
+] as const
+
+/**
+ * Чистая функция проверки конфигурации: возвращает список проблем.
+ * Пустой массив = конфигурация полная.
+ */
+export function productionConfigIssues(env: NodeJS.ProcessEnv): string[] {
+  const issues: string[] = []
+  const val = (name: string) => String(env[name] ?? '').trim()
+  for (const name of CRITICAL_PROD_ENV) {
+    if (!val(name)) issues.push(`${name} (не задана)`)
+  }
+  if (val('JWT_SECRET') === 'dev-secret-change-me') issues.push('JWT_SECRET (=dev-значение)')
+  if (val('ADMIN_TOKEN') === 'dev-admin') issues.push('ADMIN_TOKEN (=dev-значение)')
+  const tph = val('TRUST_PROXY_HEADERS')
+  if (tph && tph !== '0' && tph !== '1') issues.push('TRUST_PROXY_HEADERS (только 0 или 1)')
+  const pbu = val('PUBLIC_BASE_URL')
+  if (pbu && !/^https?:\/\//i.test(pbu)) issues.push('PUBLIC_BASE_URL (нужен http(s)://)')
+  return [...new Set(issues)]
+}
+
+if (!isDev) {
+  const issues = productionConfigIssues(process.env)
+  if (issues.length) {
+    throw new Error(
+      `Production config incomplete: ${issues.join(', ')}. ` +
+      'См. DEPLOYMENT.md и .env.example — без этих переменных контур кассы открыт или нерабочий.',
+    )
+  }
 }
 
 /**

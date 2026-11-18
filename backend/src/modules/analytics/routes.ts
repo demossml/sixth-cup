@@ -1,4 +1,7 @@
 import { Hono } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
+import { zValidator } from '@hono/zod-validator'
+import { z } from 'zod'
 import { db } from '../../db'
 
 const ALLOWED = new Set([
@@ -6,13 +9,21 @@ const ALLOWED = new Set([
   'install_prompt_shown', 'install_accepted',
 ])
 
-export const analyticsRoutes = new Hono().post('/events', async (c) => {
-  let body: { event?: string; ts?: number; sessionId?: string; meta?: unknown }
-  try {
-    body = await c.req.json()
-  } catch {
-    return c.json({ ok: false }, 400)
-  }
+/** H-03: публичная аналитика — жёсткие границы формы и размера тела. */
+const eventSchema = z.object({
+  event: z.string().min(1).max(64),
+  ts: z.number().finite().optional(),
+  sessionId: z.string().max(64).optional(),
+  meta: z.record(z.unknown()).optional(),
+}).passthrough()
+
+const limit = bodyLimit({
+  maxSize: 8 * 1024,
+  onError: (c) => c.json({ ok: false, error: 'payload_too_large' }, 413),
+})
+
+export const analyticsRoutes = new Hono().post('/events', limit, zValidator('json', eventSchema), (c) => {
+  const body = c.req.valid('json') as { event?: string; ts?: number; sessionId?: string; meta?: unknown }
   const event = String(body.event || '')
   if (!ALLOWED.has(event)) return c.json({ ok: false, error: 'unknown event' }, 400)
   const sessionId = String(body.sessionId || '').slice(0, 64)

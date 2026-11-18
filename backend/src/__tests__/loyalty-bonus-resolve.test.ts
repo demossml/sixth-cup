@@ -54,7 +54,7 @@ describe('bonus mode включён по умолчанию', () => {
 })
 
 describe('resolve kind=code в bonus mode', () => {
-  it('баланс и процент видны, подарок не резервируется, списание разрешено', async () => {
+  it('баланс и процент видны, но числовой код не даёт списывать (P0-02)', async () => {
     const c = await customer({ balanceKopecks: 1500, paidTotal: 5 })
     const r = await resolve({ code: c.cardCode })
 
@@ -67,7 +67,8 @@ describe('resolve kind=code в bonus mode', () => {
     expect(r.data.freeAvailable).toBe(0) // gift выключен в bonus mode
     expect(r.data.cashbackReserved).toBe(0)
     expect(r.data.reservationId).toBeNull()
-    expect(r.data.canRedeem).toBe(true)
+    // Номер карты — слабый секрет: показываем баланс, но резерв/списание запрещены.
+    expect(r.data.canRedeem).toBe(false)
     expect(reservations(c.userId)).toEqual([])
   })
 
@@ -87,15 +88,41 @@ describe('resolve kind=code в bonus mode', () => {
 })
 
 describe('resolve по телефону (без QR)', () => {
-  it('находит клиента и разрешает списание при балансе', async () => {
+  it('без подтверждения кассой телефон только показывает баланс (P0-02)', async () => {
     const c = await customer({ balanceKopecks: 2500 })
     const r = await resolve({ phone: c.phone })
 
     expect(r.status).toBe(200)
     expect(r.data.cardCode).toBe(c.cardCode)
     expect(r.data.balanceKopecks).toBe(2500)
-    expect(r.data.canRedeem).toBe(true)
+    expect(r.data.phoneConfirmed).toBe(false)
+    expect(r.data.canRedeem).toBe(false)
     expect(r.data.freeStatus).toBe('NONE')
+  })
+
+  it('после lookup этой же кассой списание разрешено и создаётся резерв', async () => {
+    const c = await customer({ balanceKopecks: 2500 })
+    const lookup = await app.request('/api/devices/customers/lookup', {
+      method: 'POST', headers: H(), body: JSON.stringify({ phone: c.phone }),
+    })
+    expect(lookup.status).toBe(200)
+
+    const r = await resolve({ phone: c.phone })
+    expect(r.status).toBe(200)
+    expect(r.data.phoneConfirmed).toBe(true)
+    expect(r.data.canRedeem).toBe(true)
+    expect(r.data.cashbackReserved).toBe(2500)
+    expect(r.data.reservationId).toMatch(/^R-/)
+  })
+
+  it('подтверждение с другого терминала не помогает', async () => {
+    const c = await customer({ balanceKopecks: 2500 })
+    await app.request('/api/devices/customers/lookup', {
+      method: 'POST', headers: H('dev-other'), body: JSON.stringify({ phone: c.phone }),
+    })
+    const r = await resolve({ phone: c.phone }, 'dev-b')
+    expect(r.data.phoneConfirmed).toBe(false)
+    expect(r.data.canRedeem).toBe(false)
   })
 
   it('неизвестный телефон → card_not_found', async () => {

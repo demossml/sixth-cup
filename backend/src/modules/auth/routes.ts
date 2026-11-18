@@ -1,4 +1,7 @@
 import { Hono } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
+import { zValidator } from '@hono/zod-validator'
+import { z } from 'zod'
 import { sign } from 'hono/jwt'
 import { config } from '../../config'
 import { clientIp } from '../../lib/clientIp'
@@ -34,9 +37,19 @@ function hitRate(key: string, max: number, windowMs: number) {
 
 const hashRecovery = (c: string) => createHash('sha256').update(c).digest('hex')
 
+/** H-03: гостевой вход — самое дешёвое публичное действие; тело крошечное. */
+const guestSchema = z.object({
+  inviteCode: z.string().max(64).nullish(),
+}).passthrough()
+
+const guestBodyLimit = bodyLimit({
+  maxSize: 4 * 1024,
+  onError: (c) => c.json({ ok: false, error: 'payload_too_large' }, 413),
+})
+
 export const authRoutes = new Hono<AuthEnv>()
-  .post('/guest', async (c) => {
-    const raw = (await c.req.json().catch(() => ({}))) as { inviteCode?: string }
+  .post('/guest', guestBodyLimit, zValidator('json', guestSchema), async (c) => {
+    const raw = c.req.valid('json') as { inviteCode?: string | null }
     // IP — только из доверенных заголовков (P1-2); без прокси лимит по IP не ставим.
     const ip = clientIp(c)
     if (ip) hitRate(`guest-ip:${ip}`, 30, 60 * 60_000)

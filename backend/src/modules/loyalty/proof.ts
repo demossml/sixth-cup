@@ -1,8 +1,18 @@
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomInt } from 'node:crypto'
 import { db } from '../../db'
 import { config } from '../../config'
 import { serverKid, signToken, verifyServerToken } from '../../lib/crypto'
 import { activeVouchers } from '../vouchers/service'
+
+/** 10 цифр: перебор нереален, а кассир/гость легко диктует номер. */
+const CARD_CODE_MIN = 1_000_000_000
+const CARD_CODE_MAX = 9_999_999_999
+/** Сколько раз пробуем взять свободный код, прежде чем сдаться. */
+const CARD_CODE_ATTEMPTS = 8
+
+function randomCardCode(): string {
+  return String(randomInt(CARD_CODE_MIN, CARD_CODE_MAX + 1))
+}
 
 /**
  * Номер карты, который кассир видит в приложении/на карте, показывается с пробелами
@@ -26,14 +36,31 @@ export function ensureCardCode(userId: number): string | null {
     const again = db.prepare('SELECT card_code FROM users WHERE id=?').get(userId) as { card_code: string | null } | undefined
     if (!again) return null
     if (again.card_code && normalizeCardCode(again.card_code)) return normalizeCardCode(again.card_code)
-    const row = db.prepare(`
-      SELECT COALESCE(MAX(CAST(card_code AS INTEGER)), 0) + 1 AS next_code
-      FROM users
-      WHERE card_code GLOB '[0-9]*' AND card_code <> ''
-    `).get() as { next_code: number }
-    const code = String(Math.max(1, Math.floor(row.next_code)))
-    db.prepare('UPDATE users SET card_code=? WHERE id=? AND card_code IS NULL').run(code, userId)
-    return code
+    /**
+     * P0-02: номер карты — CSPRNG, а не `MAX+1`.
+     *
+     * Раньше коды шли подряд (1, 2, 3, …), а `POST /resolve` принимает код без QR.
+     * Перебор «соседнего» номера был тривиальным. 10 цифр из `randomInt` дают
+     * ~9·10⁹ вариантов; столкновение ловит UNIQUE на `users.card_code`, и мы
+     * просто пробуем ещё раз. Старые короткие коды продолжают работать:
+     * `normalizeCardCode` принимает 1–18 цифр.
+     */
+    for (let attempt = 0; attempt < CARD_CODE_ATTEMPTS; attempt += 1) {
+      const candidate = randomCardCode()
+      if (db.prepare('SELECT 1 FROM users WHERE card_code=?').get(candidate)) continue
+      try {
+        const res = db.prepare('UPDATE users SET card_code=? WHERE id=? AND card_code IS NULL').run(candidate, userId)
+        if (res.changes === 1) return candidate
+        // Параллельный запрос уже выдал код — читаем его.
+        const now = db.prepare('SELECT card_code FROM users WHERE id=?').get(userId) as { card_code: string | null } | undefined
+        const settled = now?.card_code ? normalizeCardCode(now.card_code) : null
+        if (settled) return settled
+      } catch {
+        // UNIQUE(card_code) — код успели занять, пробуем следующий.
+        continue
+      }
+    }
+    throw new Error('card_code_generation_failed')
   })
   return assign()
 }

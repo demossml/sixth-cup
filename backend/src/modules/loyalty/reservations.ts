@@ -15,6 +15,11 @@ export type ResolveInput = {
   code?: string
   /** Альтернатива коду: кассир нашёл клиента по телефону и резолвит его без QR. */
   phone?: string
+  /**
+   * P0-02: телефон подтверждён этой же кассой (`customers/lookup|register` недавно).
+   * Без подтверждения телефон — только идентификация, списание запрещено.
+   */
+  phoneConfirmed?: boolean
   storeUuid?: string
   deviceUuid?: string
 }
@@ -44,10 +49,13 @@ export type ResolveResult =
       vouchers: ResolveVoucher[]
       /**
        * `false` — касса может только идентифицировать карту и показать цифры:
-       * резерв/списание free, кешбэка и ваучеров недоступны (числовой код).
-       * `true` — подписанный QR, резерв оформлен (или уже был оформлен).
+       * резерв/списание free, кешбэка и ваучеров недоступны (числовой код или
+       * телефон без подтверждения устройством).
+       * `true` — подписанный QR или подтверждённый телефон, резерв оформлен (или уже был оформлен).
        */
       canRedeem: boolean
+      /** Только для телефона: подтвердила ли эта касса номер (device proof). */
+      phoneConfirmed?: boolean
     }
 
 type UserRow = { id: number; card_id: string; card_code: string; cashback_balance: number }
@@ -66,14 +74,14 @@ function findUser(code: string): { user: UserRow; kind: 'token' | 'code' } | 'in
   return user ? { user, kind: 'code' } : 'missing'
 }
 
-/** Идентификация по телефону (касса нашла клиента через lookup). Политика — как у кода. */
-function findByPhone(phone: string): { user: UserRow; kind: 'code' } | 'invalid' | 'missing' {
+/** Идентификация по телефону (касса нашла клиента через lookup). */
+function findByPhone(phone: string): { user: UserRow; kind: 'phone' } | 'invalid' | 'missing' {
   const row = findUserByPhone(phone)
   if (!row) return 'missing'
   const user = db.prepare('SELECT id, card_id, card_code, cashback_balance FROM users WHERE id=?').get(row.id) as
     | UserRow
     | undefined
-  return user ? { user, kind: 'code' } : 'missing'
+  return user ? { user, kind: 'phone' } : 'missing'
 }
 
 export function newReservationId(): string {
@@ -83,14 +91,14 @@ export function newReservationId(): string {
 /**
  * Identify the customer. Числовой код/телефон — identify + display, QR — identify + reserve.
  *
- * Политика списания (зафиксирована владельцем):
- *  • `BONUS_SPEND` — кэшбэк можно списать после успешной идентификации (телефон/код/QR)
- *    и только в пределах баланса и суммы чека (clamp делает SellHandler);
- *  • `FREE_GIFT` — подарок за чашки выдаётся только в старом контуре
- *    (`LOYALTY_BONUS_MODE=0`); в bonus mode он выключен и не резервируется.
+ * Политика списания (P0-02):
+ *  • `QR` (подписанный токен) — идентификация + резерв, списание разрешено;
+ *  • `phone` — списание только если **эта касса** только что нашла клиента
+ *    (`customers/lookup|register`), т.е. есть device proof;
+ *  • числовой `code` — только показ (баланс/прогресс), `canRedeem: false`:
+ *    номер карты — слабый секрет, его нельзя делать основанием для списания.
  *
- * Numeric code (`kind === 'code'`) никогда не создаёт резерв и не отдаёт ваучеры:
- * номера карт подбираются перебором. `canRedeem` говорит кассе, можно ли списывать.
+ * `FREE_GIFT` выдаётся только в старом контуре (`LOYALTY_BONUS_MODE=0`).
  */
 export function resolveAndReserve(input: ResolveInput, now = Date.now()): ResolveResult {
   const code = String(input.code ?? '').trim()
@@ -109,7 +117,8 @@ export function resolveAndReserve(input: ResolveInput, now = Date.now()): Resolv
   const base = {
     ok: true as const,
     cardCode: user.card_code,
-    kind,
+    // Проводной контракт APK знает только `token | code`; телефон отдаём как `code`.
+    kind: (kind === 'token' ? 'token' : 'code') as 'token' | 'code',
     paidCups: card.paid_total % config.cupsForFree,
     cupsForFree: config.cupsForFree,
     // В bonus mode подарок выключен: показывать «свободные чашки» кассе нельзя.
@@ -117,10 +126,12 @@ export function resolveAndReserve(input: ResolveInput, now = Date.now()): Resolv
     cashback: balance,
     balanceKopecks: balance,
     effectiveEarnPercent: bpsToPercent(effectiveEarnBps(db, user.id)),
+    // Для телефона касса должна видеть, подтверждён ли номер этой же кассой.
+    ...(kind === 'phone' ? { phoneConfirmed: input.phoneConfirmed === true } : {}),
   }
   if (kind === 'code') {
-    // Только идентификация и показ: прогресс и балансы берём с карты как есть,
-    // но ничего не резервируем и ваучеры не отдаём (дисплей ≠ выдача).
+    // P0-02: числовой код — только идентификация и показ баланса. Никакого резерва,
+    // ваучеров и `canRedeem`: номер карты перебираем (CSPRNG уменьшает шанс, но не убирает смысл).
     return {
       ...base,
       cashbackReserved: 0,
@@ -128,9 +139,20 @@ export function resolveAndReserve(input: ResolveInput, now = Date.now()): Resolv
       reservationExpiresAt: null,
       freeStatus: 'NONE',
       vouchers: [],
-      // В bonus mode списание по коду разрешено политикой (баланс > 0);
-      // в старом контуре — нельзя, там списание только по подписанному QR.
-      canRedeem: bonusMode && balance > 0,
+      canRedeem: false,
+    }
+  }
+  if (kind === 'phone' && !input.phoneConfirmed) {
+    // Телефон без подтверждения устройством — только показ.
+    return {
+      ...base,
+      phoneConfirmed: false,
+      cashbackReserved: 0,
+      reservationId: null,
+      reservationExpiresAt: null,
+      freeStatus: 'NONE',
+      vouchers: [],
+      canRedeem: false,
     }
   }
 

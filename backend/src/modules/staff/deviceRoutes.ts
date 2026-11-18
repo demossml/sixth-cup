@@ -3,7 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
-import { evotorProxy, evotorProxyStrict } from '../../middleware/evotorProxy'
+import { evotorProxyStrict } from '../../middleware/evotorProxy'
 import {
   dayKey, deviceUuidFrom, hourlySales, listStaff, monthPrefix,
   salesSummary, staffForDevice, storeIdForUuid, storeUuidFrom, topProducts,
@@ -14,9 +14,16 @@ function parseJsonArr(s: string | null | undefined): unknown[] {
 }
 
 export const staffDeviceRoutes = new Hono()
-  // Same auth model as other /api/devices/* cashier endpoints:
-  // soft proxy when EVOTOR_PROXY_ENFORCE is off; strict on writes.
-  .use('*', evotorProxy)
+  // P0-01: смена/таймшит — кассовые данные. Раньше здесь стоял мягкий
+  // `evotorProxy`, который без `EVOTOR_PROXY_TOKEN` пропускал всё подряд.
+  // Теперь без токена — 503, с неверным токеном — 403.
+  // Пути перечислены явно: `.use('*')` на под-приложении, смонтированном в `/api/devices`,
+  // перехватывал бы и другие маршруты (заказы, каталог), зарегистрированные позже.
+  .use('/shift/*', evotorProxyStrict)
+  .use('/shift/breaks', evotorProxyStrict)
+  .use('/timesheet', evotorProxyStrict)
+  .use('/timesheet/*', evotorProxyStrict)
+  .use('/breaks/*', evotorProxyStrict)
   .get('/shift/summary', (c) => {
     const storeUuid = storeUuidFrom(c)
     const storeId = storeIdForUuid(storeUuid)

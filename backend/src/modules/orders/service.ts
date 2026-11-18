@@ -4,6 +4,7 @@ import { parseBenefit } from './benefit'
 import { notifyOrderStatus } from '../push/service'
 import type { CreateOrderBody, ItemOut, ModifierOut, OrderOut, PreorderStatus } from './types'
 import { modifierInputs, resolveItemModifiers } from './pricing'
+import { AvailabilityError, assertProductSellableAtStores, assertStoreSellable } from './availability'
 import { ACTIVE_STATUSES, ALLOWED_TRANSITIONS } from './types'
 
 type Db = {
@@ -21,6 +22,19 @@ function nowSec() {
 
 function iso(sec: number) {
   return new Date(sec * 1000).toISOString()
+}
+
+/**
+ * P0-03: атомарность.
+ *
+ * `db` может быть настоящим better-sqlite3 (тогда всё идёт в BEGIN/COMMIT)
+ * или заглушкой в тестах. Поэтому транзакция включается только при её наличии —
+ * поведение старых вызовов не меняется, а на боевой БД запись становится атомарной.
+ */
+function tx<T>(db: Db, fn: () => T): T {
+  const runner = (db as unknown as { transaction?: (f: () => T) => () => T }).transaction
+  if (typeof runner !== 'function') return fn()
+  return runner.call(db, fn)()
 }
 
 function signPayload(payloadB64: string, secret: string): string {
@@ -278,6 +292,13 @@ function resolveLine(
   if (!p || Number(p.available) === 0) {
     throw Object.assign(new Error('product_unavailable'), { code: 'product_unavailable', productId })
   }
+  // H-01: товар мог быть выключен именно в этой точке (`product_store_links`).
+  try {
+    assertProductSellableAtStores(db, Number(p.id), storeUuids)
+  } catch (e) {
+    if (e instanceof AvailabilityError) throw Object.assign(new Error(e.message), { code: e.code, productId })
+    throw e
+  }
 
   const skuProductId = Number(p.id)
   // Цена и состав — серверные: клиент присылает только выбор опций (цена 0 в запросе ничего не занижает).
@@ -352,10 +373,28 @@ export function createDraftOrder(
   body: CreateOrderBody,
   opts: { guestUserId?: number | null; secret: string; idempotencyKey?: string | null },
 ): { order: OrderOut; qrPayload: string } {
+  // P0-03: preorders + preorder_items + preorder_item_modifiers + idempotency_keys
+  // пишутся одной транзакцией. Иначе сбой посередине оставлял «заказ без состава»,
+  // а два параллельных запроса с одним Idempotency-Key могли создать два заказа.
+  return tx(db, () => createDraftOrderTx(db, body, opts))
+}
+
+function createDraftOrderTx(
+  db: Db,
+  body: CreateOrderBody,
+  opts: { guestUserId?: number | null; secret: string; idempotencyKey?: string | null },
+): { order: OrderOut; qrPayload: string } {
   const storeId = Number(body.storeId)
   if (!Number.isFinite(storeId)) throw Object.assign(new Error('invalid_store'), { code: 'invalid_store' })
   const store = db.prepare(`SELECT id FROM stores WHERE id = ?`).get(storeId)
   if (!store) throw Object.assign(new Error('store_not_found'), { code: 'store_not_found' })
+  // H-01: организация точки должна быть включена (если организации вообще заведены).
+  try {
+    assertStoreSellable(db, storeId)
+  } catch (e) {
+    if (e instanceof AvailabilityError) throw Object.assign(new Error(e.message), { code: e.code })
+    throw e
+  }
   if (!body.items?.length) throw Object.assign(new Error('empty_items'), { code: 'empty_items' })
 
   // Повтор с тем же Idempotency-Key — отдаём уже созданный заказ.
@@ -464,6 +503,13 @@ export function transitionStatus(db: Db, id: string, next: PreorderStatus): Orde
   expireIfNeeded(db, row)
   promoteIfDue(db, row)
   const cur = String(db.prepare(`SELECT status FROM preorders WHERE id = ?`).get(id)?.status)
+  // Идемпотентный повтор: касса переслала тот же статус (retry после таймаута).
+  if (cur === next) {
+    if (!ACTIVE_STATUSES.includes(cur as PreorderStatus) && cur !== 'paid') {
+      throw Object.assign(new Error('invalid_transition'), { code: 'invalid_transition', from: cur, to: next })
+    }
+    return loadOrder(db, id)!
+  }
   const allowed = ALLOWED_TRANSITIONS[cur] || []
   if (!allowed.includes(next)) {
     throw Object.assign(new Error('invalid_transition'), { code: 'invalid_transition', from: cur, to: next })
@@ -476,17 +522,40 @@ export function transitionStatus(db: Db, id: string, next: PreorderStatus): Orde
     // Гость получает запас на «дойти и забрать»: TTL не обрывает уже принятый заказ слишком рано.
     const grace = getPreorderSettings(storeId).pickupGraceMinutes
     const expires = Math.max(Number(row.expires_at) || 0, eta + grace * 60)
-    db.prepare(
-      `UPDATE preorders SET status='accepted', accepted_at=?, eta_ready_at=?, expires_at=?, updated_at=? WHERE id=?`,
-    ).run(t, eta, expires, t, id)
+    applyTransition(db, id, cur, next, `UPDATE preorders SET status='accepted', accepted_at=?, eta_ready_at=?, expires_at=?, updated_at=? WHERE id=? AND status=?`, t, eta, expires, t, id, cur)
   } else if (next === 'cooking') {
-    db.prepare(`UPDATE preorders SET status='cooking', cooking_at=?, updated_at=? WHERE id=?`).run(t, t, id)
+    applyTransition(db, id, cur, next, `UPDATE preorders SET status='cooking', cooking_at=?, updated_at=? WHERE id=? AND status=?`, t, t, id, cur)
   } else if (next === 'ready') {
-    db.prepare(`UPDATE preorders SET status='ready', ready_at=?, ready_by='cashier', updated_at=? WHERE id=?`).run(t, t, id)
+    applyTransition(db, id, cur, next, `UPDATE preorders SET status='ready', ready_at=?, ready_by='cashier', updated_at=? WHERE id=? AND status=?`, t, t, id, cur)
   } else {
-    db.prepare(`UPDATE preorders SET status=?, updated_at=? WHERE id=?`).run(next, t, id)
+    applyTransition(db, id, cur, next, `UPDATE preorders SET status=?, updated_at=? WHERE id=? AND status=?`, next, t, id, cur)
   }
   return loadOrder(db, id)!
+}
+
+/**
+ * P0-03: смена статуса — условный UPDATE по ожидаемому текущему статусу.
+ *
+ * Без `AND status = ?` два кассира одновременно видели «accepted» и оба писали свой
+ * переход: например, «ready» затирало «rejected», или отменённый заказ «воскресал».
+ * Теперь второй запрос получает 0 изменений и честно получает 409-ошибку.
+ */
+function applyTransition(
+  db: Db,
+  id: string,
+  from: string,
+  to: string,
+  sql: string,
+  ...args: unknown[]
+): void {
+  const res = db.prepare(sql).run(...args)
+  if (res.changes === 0) {
+    const fresh = db.prepare('SELECT status FROM preorders WHERE id = ?').get(id) as { status: string } | undefined
+    if (!fresh) throw Object.assign(new Error('not_found'), { code: 'not_found' })
+    // Идемпотентный повтор: статус уже целевой — это не ошибка.
+    if (String(fresh.status) === to) return
+    throw Object.assign(new Error('invalid_transition'), { code: 'invalid_transition', from: String(fresh.status), was: from })
+  }
 }
 
 /** Кассир уточняет ETA: пересчитываем eta_ready_at от «сейчас» и продлеваем TTL. */
@@ -567,6 +636,13 @@ export type PaymentContext = {
  * чужой/повторный фискальный номер и расхождение суммы — отказ, а не тихое закрытие.
  */
 export function markPaid(db: Db, id: string, payment: PaymentContext = {}): OrderOut {
+  // P0-03: проверка статуса, сверка суммы/фискального номера и запись «paid» —
+  // в одной транзакции, а сам UPDATE условный (`AND status IN (...)`).
+  // Раньше два параллельных mark-paid оба проходили проверку и оба писали.
+  return tx(db, () => markPaidTx(db, id, payment))
+}
+
+function markPaidTx(db: Db, id: string, payment: PaymentContext): OrderOut {
   const row = db.prepare(`SELECT * FROM preorders WHERE id = ?`).get(id)
   if (!row) throw Object.assign(new Error('not_found'), { code: 'not_found' })
   const cur = String(row.status)
@@ -591,8 +667,17 @@ export function markPaid(db: Db, id: string, payment: PaymentContext = {}): Orde
   }
 
   const t = nowSec()
-  db.prepare(`UPDATE preorders SET status='paid', paid_at=?, updated_at=?, fiscal_document_number=?, paid_amount=? WHERE id=?`)
-    .run(t, t, fiscal, payment.amountRub != null ? Math.round(Number(payment.amountRub)) : null, id)
+  const res = db.prepare(
+    `UPDATE preorders SET status='paid', paid_at=?, updated_at=?, fiscal_document_number=?, paid_amount=?
+     WHERE id=? AND status IN ('accepted','cooking','ready')`,
+  ).run(t, t, fiscal, payment.amountRub != null ? Math.round(Number(payment.amountRub)) : null, id)
+  if (res.changes === 0) {
+    // Тот же заказ успели оплатить/отменить параллельным запросом.
+    const fresh = db.prepare('SELECT status FROM preorders WHERE id=?').get(id) as { status: string } | undefined
+    if (!fresh) throw Object.assign(new Error('not_found'), { code: 'not_found' })
+    if (String(fresh.status) === 'paid') return loadOrder(db, id)!
+    throw Object.assign(new Error('invalid_transition'), { code: 'invalid_transition', from: String(fresh.status) })
+  }
   return loadOrder(db, id)!
 }
 

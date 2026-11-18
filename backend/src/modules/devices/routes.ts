@@ -7,6 +7,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
+import { allowRequest } from '../../lib/rateLimit'
 import { buildCatalogToppings, effectiveSchemeId, listAddonProductIds, ensureAddonSchemeSchema, resolveAddonsCategoryIds, type CatalogTopping } from '../catalog/addonScheme'
 import { ensureMilkSchemeSchema, milkForProduct } from '../catalog/milkScheme'
 import { choiceForProduct, ensureChoiceSchemeSchema } from '../catalog/choiceScheme'
@@ -19,6 +20,8 @@ import { applyOnlineSale } from './sales'
 import { checkEvotorProxyAuth, evotorProxyStrict } from '../../middleware/evotorProxy'
 import { config } from '../../config'
 import { resolveAndReserve } from '../loyalty/reservations'
+import { deviceKeyOf, hasPhoneProof, recordPhoneProof } from '../loyalty/phoneProof'
+import { normalizeCardCode } from '../loyalty/proof'
 import { customerByPhone, registerByPhone } from '../loyalty/customers'
 import { maskPhone, normalizePhoneRu } from '../loyalty/phone'
 import { log, maskCode, shortId } from '../../lib/logBuffer'
@@ -52,6 +55,10 @@ function allowAttempt(key: string, max: number, windowMs: number): boolean {
   return true
 }
 
+/** Сколько неудачных попыток по одному коду карты допускаем в окне. */
+const CODE_ATTEMPT_MAX = 5
+const CODE_ATTEMPT_WINDOW_MS = 10 * 60_000
+
 /** 32–64 символа base64url/base64/hex: так выглядит ключ терминала, мусор не принимаем. */
 const PUBLIC_KEY_RE = /^[A-Za-z0-9+/=_-]{32,64}$/
 
@@ -75,11 +82,44 @@ function hitDeviceRate(key: string, max: number, windowMs: number, label: string
   db.prepare('UPDATE rate_limits SET count=count+1 WHERE key=?').run(key)
 }
 
+/**
+ * P0-02: лимит по самому номеру карты, а не только по терминалу.
+ * Перебор кодов упирается в лимит даже при смене устройства/точки.
+ */
+function codeLocked(code: string): boolean {
+  const row = db.prepare('SELECT count, window_start FROM rate_limits WHERE key=?').get(`resolve-code:${code}`) as
+    | { count: number; window_start: number }
+    | undefined
+  if (!row) return false
+  if (Date.now() - row.window_start > CODE_ATTEMPT_WINDOW_MS) return false
+  return row.count >= CODE_ATTEMPT_MAX
+}
+
+function registerCodeMiss(code: string): void {
+  const key = `resolve-code:${code}`
+  const now = Date.now()
+  const row = db.prepare('SELECT count, window_start FROM rate_limits WHERE key=?').get(key) as
+    | { count: number; window_start: number }
+    | undefined
+  if (!row || now - row.window_start > CODE_ATTEMPT_WINDOW_MS) {
+    db.prepare('INSERT OR REPLACE INTO rate_limits(key,count,window_start) VALUES(?,?,?)').run(key, 1, now)
+    return
+  }
+  db.prepare('UPDATE rate_limits SET count=count+1 WHERE key=?').run(key)
+}
+
+function resetCodeMisses(code: string): void {
+  db.prepare('DELETE FROM rate_limits WHERE key=?').run(`resolve-code:${code}`)
+}
+
 export const deviceRoutes = new Hono<DeviceEnv>()
   .get('/ping', (c) => {
     const auth = c.req.header('Authorization')
-    const authOk = checkEvotorProxyAuth(auth)
-    if (config.evotorProxyToken && !authOk && config.evotorProxyEnforce) {
+    // `authOk` = «предъявлен валидный секрет», а не «контур мягкий»: при пустом
+    // EVOTOR_PROXY_TOKEN касса должна видеть authOk=false и жаловаться оператору.
+    const configured = Boolean(config.evotorProxyToken)
+    const authOk = configured && checkEvotorProxyAuth(auth)
+    if (configured && !authOk && config.evotorProxyEnforce) {
       throw bad('proxy_forbidden', 403)
     }
     // log once per process shape, not the secret
@@ -90,7 +130,7 @@ export const deviceRoutes = new Hono<DeviceEnv>()
     return c.json({
       ok: true,
       t: Math.floor(Date.now() / 1000),
-      proxy: { authOk, storeUuid: storeUuid || undefined, deviceUuid: deviceUuid || undefined },
+      proxy: { authOk, configured, storeUuid: storeUuid || undefined, deviceUuid: deviceUuid || undefined },
     })
   })
   /**
@@ -150,9 +190,24 @@ export const deviceRoutes = new Hono<DeviceEnv>()
       } else {
         db.prepare('UPDATE rate_limits SET count=count+1 WHERE key=?').run(key)
       }
-      const code = c.req.valid('json').code
-      const r = resolveAndReserve({ code, phone: c.req.valid('json').phone, storeUuid, deviceUuid })
+      const body = c.req.valid('json')
       const who = { store: shortId(storeUuid), dev: shortId(deviceUuid) }
+      // P0-02: перебор номеров карт упирается в лимит по самому коду.
+      const numericCode = body.code && !body.code.includes('.') ? normalizeCardCode(body.code) : null
+      if (numericCode && codeLocked(numericCode)) {
+        log.warn('loyalty resolve: code locked', { code: maskCode(numericCode), ...who })
+        throw bad('card_locked', 429)
+      }
+      const phone = body.phone
+      // Телефон можно списывать только после того, как эта же касса нашла клиента (device proof).
+      const phoneConfirmed = phone
+        ? hasPhoneProof(deviceKeyOf(deviceUuid, storeUuid), normalizePhoneRu(phone) ?? phone)
+        : false
+      const r = resolveAndReserve({ code: body.code, phone, phoneConfirmed, storeUuid, deviceUuid })
+      if (numericCode) {
+        if (r.ok) resetCodeMisses(numericCode)
+        else if (r.error === 'card_not_found' || r.error === 'invalid_card') registerCodeMiss(numericCode)
+      }
       if (r.ok) {
         log.info('loyalty resolve ok', {
           card: maskCode(r.cardCode), kind: r.kind, free: r.freeAvailable, cbKop: r.cashbackReserved,
@@ -160,7 +215,7 @@ export const deviceRoutes = new Hono<DeviceEnv>()
           canRedeem: r.canRedeem ? 1 : 0, ...who,
         })
       } else {
-        log.warn(`loyalty resolve fail: ${r.error}`, { card: maskCode(code ?? 'phone'), ...who })
+        log.warn(`loyalty resolve fail: ${r.error}`, { card: maskCode(body.code ?? 'phone'), ...who })
       }
       return c.json(r, r.ok ? 200 : 404)
     })
@@ -179,6 +234,9 @@ export const deviceRoutes = new Hono<DeviceEnv>()
       const phone = normalizePhoneRu(c.req.valid('json').phone)
       if (!phone) throw bad('Некорректный номер телефона', 400)
       const customer = customerByPhone(phone)
+      // Найденный номер запоминаем как device proof: списание по телефону разрешено
+      // только этой кассе и только в ближайшие минуты (P0-02).
+      if (customer) recordPhoneProof(deviceKeyOf(deviceUuid, storeUuid), phone)
       log.info('customer lookup', { found: customer ? 1 : 0, masked: maskPhone(phone), dev: shortId(deviceUuid) })
       return c.json(customer ? { ok: true, found: true, ...customer } : { ok: true, found: false })
     })
@@ -206,6 +264,8 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         source: `device:${shortId(deviceUuid ?? storeUuid ?? 'any', 6)}`,
       })
       log.info('customer register', { created: created ? 1 : 0, user: customer.userId, dev: shortId(deviceUuid) })
+      const proofPhone = normalizePhoneRu(body.phone)
+      if (proofPhone) recordPhoneProof(deviceKeyOf(deviceUuid, storeUuid), proofPhone)
       return c.json({ ok: true, found: true, created, ...customer })
     })
   /**
@@ -886,6 +946,9 @@ export const deviceRoutes = new Hono<DeviceEnv>()
 
   .use('/sync', requireDevice)
   .post('/sync', zValidator('json', z.object({ receipts: z.array(z.string().max(3000)).max(200) })), (c) => {
+    // B-01: разбор чеков дорогой (Ed25519 + запись), ограничиваем пачку по времени.
+    if (!allowRequest(`device-sync:${c.get('deviceId')}`, 60, 60_000)) throw bad('Too many requests', 429)
+    // Касса грузит чеки разных гостей — проверка владельца здесь не применима (B-04 — только гость).
     const result = applyReceipts(c.req.valid('json').receipts)
     return c.json({ result })
   })

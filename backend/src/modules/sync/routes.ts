@@ -7,6 +7,8 @@ import { buildCardProof } from '../loyalty/proof'
 import { activeVouchers } from '../vouchers/service'
 import { applyReceipts } from '../loyalty/receipts'
 import { stateView } from '../loyalty/cardLookup'
+import { allowRequest } from '../../lib/rateLimit'
+import { bad } from '../../lib/errors'
 
 export const syncRoutes = new Hono<AuthEnv>()
   .use('*', requireAuth)
@@ -78,7 +80,10 @@ export const syncRoutes = new Hono<AuthEnv>()
   })
   .post('/', zValidator('json', z.object({ receipts: z.array(z.string().max(3000)).max(200) })), (c) => {
     const userId = c.get('userId')
-    const result = applyReceipts(c.req.valid('json').receipts)
+    // B-01: каждый чек — проверка Ed25519 + запись. Без лимита гость мог жать CPU/БД пачками.
+    if (!allowRequest(`sync-user:${userId}`, 20, 60_000)) throw bad('Слишком много запросов. Попробуйте позже.', 429)
+    // B-04: применяем только чеки этого гостя.
+    const result = applyReceipts(c.req.valid('json').receipts, { ownerUserId: userId })
     const u = db.prepare('SELECT id, card_id, card_code, nickname, invite_code, cashback_balance FROM users WHERE id=?')
       .get(userId) as { id: number; card_id: string; card_code: string; nickname: string; invite_code: string; cashback_balance: number }
     return c.json({
