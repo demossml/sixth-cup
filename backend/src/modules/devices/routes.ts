@@ -20,7 +20,6 @@ import { applyOnlineSale } from './sales'
 import { checkEvotorProxyAuth, evotorProxyStrict } from '../../middleware/evotorProxy'
 import { config } from '../../config'
 import { resolveAndReserve } from '../loyalty/reservations'
-import { deviceKeyOf, hasPhoneProof, recordPhoneProof } from '../loyalty/phoneProof'
 import { normalizeCardCode } from '../loyalty/proof'
 import { customerByPhone, registerByPhone } from '../loyalty/customers'
 import { maskPhone, normalizePhoneRu } from '../loyalty/phone'
@@ -199,11 +198,8 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         throw bad('card_locked', 429)
       }
       const phone = body.phone
-      // Телефон можно списывать только после того, как эта же касса нашла клиента (device proof).
-      const phoneConfirmed = phone
-        ? hasPhoneProof(deviceKeyOf(deviceUuid, storeUuid), normalizePhoneRu(phone) ?? phone)
-        : false
-      const r = resolveAndReserve({ code: body.code, phone, phoneConfirmed, storeUuid, deviceUuid })
+      // Телефон вводит кассир на авторизованной кассе — этого достаточно для списания.
+      const r = resolveAndReserve({ code: body.code, phone, storeUuid, deviceUuid })
       if (numericCode) {
         if (r.ok) resetCodeMisses(numericCode)
         else if (r.error === 'card_not_found' || r.error === 'invalid_card') registerCodeMiss(numericCode)
@@ -234,9 +230,6 @@ export const deviceRoutes = new Hono<DeviceEnv>()
       const phone = normalizePhoneRu(c.req.valid('json').phone)
       if (!phone) throw bad('Некорректный номер телефона', 400)
       const customer = customerByPhone(phone)
-      // Найденный номер запоминаем как device proof: списание по телефону разрешено
-      // только этой кассе и только в ближайшие минуты (P0-02).
-      if (customer) recordPhoneProof(deviceKeyOf(deviceUuid, storeUuid), phone)
       log.info('customer lookup', { found: customer ? 1 : 0, masked: maskPhone(phone), dev: shortId(deviceUuid) })
       return c.json(customer ? { ok: true, found: true, ...customer } : { ok: true, found: false })
     })
@@ -264,8 +257,6 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         source: `device:${shortId(deviceUuid ?? storeUuid ?? 'any', 6)}`,
       })
       log.info('customer register', { created: created ? 1 : 0, user: customer.userId, dev: shortId(deviceUuid) })
-      const proofPhone = normalizePhoneRu(body.phone)
-      if (proofPhone) recordPhoneProof(deviceKeyOf(deviceUuid, storeUuid), proofPhone)
       return c.json({ ok: true, found: true, created, ...customer })
     })
   /**

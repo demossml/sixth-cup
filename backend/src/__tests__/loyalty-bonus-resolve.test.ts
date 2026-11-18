@@ -88,41 +88,41 @@ describe('resolve kind=code в bonus mode', () => {
 })
 
 describe('resolve по телефону (без QR)', () => {
-  it('без подтверждения кассой телефон только показывает баланс (P0-02)', async () => {
+  it('телефон с авторизованной кассы сразу разрешает списание и создаёт резерв', async () => {
     const c = await customer({ balanceKopecks: 2500 })
+    // Никаких предварительных lookup/подтверждений — кассир просто ввёл номер.
     const r = await resolve({ phone: c.phone })
 
     expect(r.status).toBe(200)
     expect(r.data.cardCode).toBe(c.cardCode)
     expect(r.data.balanceKopecks).toBe(2500)
-    expect(r.data.phoneConfirmed).toBe(false)
-    expect(r.data.canRedeem).toBe(false)
-    expect(r.data.freeStatus).toBe('NONE')
-  })
-
-  it('после lookup этой же кассой списание разрешено и создаётся резерв', async () => {
-    const c = await customer({ balanceKopecks: 2500 })
-    const lookup = await app.request('/api/devices/customers/lookup', {
-      method: 'POST', headers: H(), body: JSON.stringify({ phone: c.phone }),
-    })
-    expect(lookup.status).toBe(200)
-
-    const r = await resolve({ phone: c.phone })
-    expect(r.status).toBe(200)
-    expect(r.data.phoneConfirmed).toBe(true)
     expect(r.data.canRedeem).toBe(true)
     expect(r.data.cashbackReserved).toBe(2500)
     expect(r.data.reservationId).toMatch(/^R-/)
+    expect(r.data.freeStatus).toBe('NONE')
+
+    const rows = reservations(c.userId)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ status: 'RESERVED', benefit_free: 0, benefit_cb: 2500 })
   })
 
-  it('подтверждение с другого терминала не помогает', async () => {
-    const c = await customer({ balanceKopecks: 2500 })
-    await app.request('/api/devices/customers/lookup', {
-      method: 'POST', headers: H('dev-other'), body: JSON.stringify({ phone: c.phone }),
-    })
-    const r = await resolve({ phone: c.phone }, 'dev-b')
-    expect(r.data.phoneConfirmed).toBe(false)
-    expect(r.data.canRedeem).toBe(false)
+  it('нулевой баланс: телефон идентифицирует, но списывать нечего', async () => {
+    const c = await customer({ balanceKopecks: 0 })
+    const r = await resolve({ phone: c.phone })
+    expect(r.status).toBe(200)
+    expect(r.data.canRedeem).toBe(true) // резерв оформляется, сумма к списанию — 0
+    expect(r.data.cashbackReserved).toBe(0)
+  })
+
+  it('резерв с другого терминала виден как ALREADY_RESERVED, но списание не блокируется', async () => {
+    const c = await customer({ balanceKopecks: 2000 })
+    const first = await resolve({ phone: c.phone }, 'dev-a')
+    expect(first.data.cashbackReserved).toBe(2000)
+
+    const other = await resolve({ phone: c.phone }, 'dev-other')
+    expect(other.status).toBe(200)
+    expect(other.data.freeStatus).toBe('ALREADY_RESERVED')
+    expect(other.data.canRedeem).toBe(true)
   })
 
   it('неизвестный телефон → card_not_found', async () => {

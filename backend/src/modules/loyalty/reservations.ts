@@ -13,13 +13,8 @@ import { findUserByPhone } from './customers'
 export type ResolveInput = {
   /** QR-токен или числовой код карты. Может быть пустым, если передан `phone`. */
   code?: string
-  /** Альтернатива коду: кассир нашёл клиента по телефону и резолвит его без QR. */
+  /** Альтернатива коду: кассир ввёл телефон клиента на авторизованной кассе. */
   phone?: string
-  /**
-   * P0-02: телефон подтверждён этой же кассой (`customers/lookup|register` недавно).
-   * Без подтверждения телефон — только идентификация, списание запрещено.
-   */
-  phoneConfirmed?: boolean
   storeUuid?: string
   deviceUuid?: string
 }
@@ -49,13 +44,10 @@ export type ResolveResult =
       vouchers: ResolveVoucher[]
       /**
        * `false` — касса может только идентифицировать карту и показать цифры:
-       * резерв/списание free, кешбэка и ваучеров недоступны (числовой код или
-       * телефон без подтверждения устройством).
-       * `true` — подписанный QR или подтверждённый телефон, резерв оформлен (или уже был оформлен).
+       * резерв/списание кешбэка и ваучеров недоступны (числовой код карты).
+       * `true` — подписанный QR или телефон, введённый на авторизованной кассе.
        */
       canRedeem: boolean
-      /** Только для телефона: подтвердила ли эта касса номер (device proof). */
-      phoneConfirmed?: boolean
     }
 
 type UserRow = { id: number; card_id: string; card_code: string; cashback_balance: number }
@@ -91,12 +83,12 @@ export function newReservationId(): string {
 /**
  * Identify the customer. Числовой код/телефон — identify + display, QR — identify + reserve.
  *
- * Политика списания (P0-02):
+ * Политика списания:
  *  • `QR` (подписанный токен) — идентификация + резерв, списание разрешено;
- *  • `phone` — списание только если **эта касса** только что нашла клиента
- *    (`customers/lookup|register`), т.е. есть device proof;
+ *  • `phone` — списание разрешено сразу: телефон вводит кассир на авторизованной
+ *    кассе (`evotorProxyStrict`/device token), дополнительных подтверждений от гостя нет;
  *  • числовой `code` — только показ (баланс/прогресс), `canRedeem: false`:
- *    номер карты — слабый секрет, его нельзя делать основанием для списания.
+ *    номер карты — слабый секрет, перебор закрыт CSPRNG и лимитом по коду.
  *
  * `FREE_GIFT` выдаётся только в старом контуре (`LOYALTY_BONUS_MODE=0`).
  */
@@ -126,27 +118,12 @@ export function resolveAndReserve(input: ResolveInput, now = Date.now()): Resolv
     cashback: balance,
     balanceKopecks: balance,
     effectiveEarnPercent: bpsToPercent(effectiveEarnBps(db, user.id)),
-    // Для телефона касса должна видеть, подтверждён ли номер этой же кассой.
-    ...(kind === 'phone' ? { phoneConfirmed: input.phoneConfirmed === true } : {}),
   }
   if (kind === 'code') {
     // P0-02: числовой код — только идентификация и показ баланса. Никакого резерва,
-    // ваучеров и `canRedeem`: номер карты перебираем (CSPRNG уменьшает шанс, но не убирает смысл).
+    // ваучеров и `canRedeem`: номер карты слабый, защита — CSPRNG и лимит по коду.
     return {
       ...base,
-      cashbackReserved: 0,
-      reservationId: null,
-      reservationExpiresAt: null,
-      freeStatus: 'NONE',
-      vouchers: [],
-      canRedeem: false,
-    }
-  }
-  if (kind === 'phone' && !input.phoneConfirmed) {
-    // Телефон без подтверждения устройством — только показ.
-    return {
-      ...base,
-      phoneConfirmed: false,
       cashbackReserved: 0,
       reservationId: null,
       reservationExpiresAt: null,
