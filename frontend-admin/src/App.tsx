@@ -25,6 +25,7 @@ const BusinessEvents = lazy(() => import('./pages/BusinessEvents'))
 const Assistant = lazy(() => import('./pages/Assistant'))
 const System = lazy(() => import('./pages/System'))
 const Staff = lazy(() => import('./pages/Staff'))
+const AppUsers = lazy(() => import('./pages/AppUsers'))
 const Stock = lazy(() => import('./pages/Stock'))
 const Cost = lazy(() => import('./pages/Cost'))
 // F13: печатная ТТК — вне оболочки, чтобы в PDF не попали меню и кнопки.
@@ -135,6 +136,7 @@ export default function App() {
             <Route path="system" element={<System />} />
             <Route path="help" element={<Help />} />
             <Route path="staff" element={<Staff />} />
+            <Route path="app-users" element={<AppUsers />} />
             <Route path="stock" element={<Stock />} />
             <Route path="cost" element={<Cost />} />
             <Route path="menu-layouts" element={<MenuLayouts />} />

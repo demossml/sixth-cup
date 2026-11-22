@@ -37,7 +37,9 @@ export default defineConfig({
         // Новые иконки/лого: старые записи precache удаляем при обновлении SW.
         cleanupOutdatedCaches: true,
         navigateFallback: '/index.html',
-        navigateFallbackDenylist: [/^\/api\//],
+        // /barista/* — отдельное приложение (интерфейс бариста). Без этого service worker гостевой
+        // PWA подменял бы экран очереди гостевым index.html у тех, кто установил PWA.
+        navigateFallbackDenylist: [/^\/api\//, /^\/barista(\/|$)/],
         // Обработчик push живёт отдельным файлом: подписка и показ уведомления «заказ готов».
         importScripts: ['push-sw.js'],
       },

@@ -1,6 +1,7 @@
 import { adminAssignments } from './assignments'
 import { adminConsole } from './console'
 import { staffAdminRoutes } from '../staff/adminRoutes'
+import { appUsersAdmin } from '../staff/appUsersAdmin'
 import { auditMiddleware } from './audit'
 import { enqueueProductSync } from './enqueue'
 import { timingSafeEqual } from 'node:crypto'
@@ -2046,3 +2047,4 @@ adminRoutes.route('/', adminCostTechCards) // F3: техкарты v2 (/cost/tec
 adminRoutes.route('/', adminMenuLayouts)
 adminRoutes.route('/', adminMenuAssets)
 adminRoutes.route('/', staffAdminRoutes)
+adminRoutes.route('/', appUsersAdmin)

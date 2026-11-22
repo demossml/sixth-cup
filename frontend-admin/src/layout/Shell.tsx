@@ -6,7 +6,7 @@ import {
   LayoutDashboard, LogOut, ClipboardList, Package, Search, Settings, Menu,
   Share2, Store, Users, X, MoreHorizontal, Milk, Ruler, Layers,
   ListChecks, ClipboardCheck, Calculator, LayoutTemplate,
-  Coins, Tags, ArrowUpRight,
+  Coins, Tags, ArrowUpRight, KeyRound,
 } from 'lucide-react'
 import { useApi } from '../api/useApi'
 import type { Health } from '../api/types'
@@ -44,6 +44,7 @@ const MANAGE: NavItem[] = [
   { to: '/purchases', label: 'Закупки', icon: <Package size={17} /> },
   { to: '/inventory', label: 'Инвентаризация', icon: <ClipboardList size={17} /> },
   { to: '/staff', label: 'Сотрудники', icon: <Users size={17} /> },
+  { to: '/app-users', label: 'Логины', icon: <KeyRound size={17} /> },
   { to: '/marketing', label: 'Контент', icon: <Gift size={17} /> },
   { to: '/referrals', label: 'Рефералка', icon: <Share2 size={17} /> },
   { to: '/loyalty', label: 'Бонусы', icon: <Coins size={17} /> },
@@ -98,6 +99,7 @@ const TITLES: Record<string, string> = {
   '/purchases': 'Закупки',
   '/inventory': 'Инвентаризация',
   '/staff': 'Сотрудники',
+  '/app-users': 'Логины',
   '/marketing': 'Контент',
   '/referrals': 'Рефералка',
   '/loyalty': 'Бонусы',

@@ -14,6 +14,9 @@ import { authRoutes } from './modules/auth/routes'
 import { devRoutes } from './modules/dev/routes'
 import { deviceRoutes } from './modules/devices/routes'
 import { staffDeviceRoutes } from './modules/staff/deviceRoutes'
+import { staffAuthRoutes } from './modules/staff/authRoutes'
+import { kitchenDeviceRoutes } from './modules/kitchen/deviceRoutes'
+import { kitchenStaffRoutes } from './modules/kitchen/staffRoutes'
 import { cardLookupRoutes } from './modules/loyalty/cardLookup'
 import { directoryRoutes } from './modules/directory/routes'
 import { syncRoutes } from './modules/sync/routes'
@@ -154,6 +157,8 @@ app.get('/uploads/:file', async (c) => {
 
 const routes = app
   .route('/api/auth', authRoutes)
+  .route('/api/staff', staffAuthRoutes)
+  .route('/api/staff', kitchenStaffRoutes)
   .route('/api/loyalty', cardLookupRoutes)
   .route('/api/directory', directoryRoutes)
   .route('/api/sync', syncRoutes)
@@ -170,6 +175,7 @@ const routes = app
   .route('/api/push', pushRoutes)
   .route('/api/orders', orderGuestRoutes)
   .route('/api/devices', orderDeviceRoutes)
+  .route('/api/devices', kitchenDeviceRoutes)
   .route('/api/analytics', analyticsRoutes)
 
 export type AppType = typeof routes
@@ -206,6 +212,11 @@ function distRoot(admin: boolean): string {
     : resolve(base, 'frontend/dist')
 }
 
+/** Интерфейс бариста — отдельная сборка (frontend-barista), отдаётся по префиксу /barista/. */
+function baristaDistRoot(): string {
+  return resolve(process.cwd(), '..', 'frontend-barista', 'dist')
+}
+
 if (!config.isDev) {
   // Customer static
   app.use('*', async (c, next) => {
@@ -213,8 +224,14 @@ if (!config.isDev) {
       return next()
     }
     const admin = isAdminHost(c.req.header('host'))
-    const root = distRoot(admin)
-    const rel = c.req.path === '/' ? 'index.html' : c.req.path.replace(/^\//, '')
+    // /barista/* — своё приложение: гостевая PWA и админка сюда не отдаются.
+    const isBarista = c.req.path === '/barista' || c.req.path.startsWith('/barista/')
+    const root = isBarista ? baristaDistRoot() : distRoot(admin)
+    const rel = isBarista
+      ? c.req.path === '/barista' || c.req.path === '/barista/'
+        ? 'index.html'
+        : c.req.path.slice('/barista/'.length)
+      : c.req.path === '/' ? 'index.html' : c.req.path.replace(/^\//, '')
     const candidate = join(root, rel)
     if (existsSync(candidate) && rel.includes('.')) {
       const data = readFileSync(candidate)

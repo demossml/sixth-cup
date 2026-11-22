@@ -6,6 +6,7 @@
 |------|------------|
 | `app.example.com` | Клиент PWA (карта, меню, профиль, /cashier) |
 | `admin.example.com` | Только кабинет владельца |
+| `app.example.com/barista/` | Экран бариста (очередь заказов), отдельная сборка |
 | API | тот же origin `/api` на обоих (один backend) |
 
 Админ-код **не** входит в клиентский бандл.
@@ -15,13 +16,14 @@
 ```bash
 npm install
 npm run build
-# собирает backend + frontend (клиент) + frontend-admin
+# собирает backend + frontend (клиент) + frontend-admin + frontend-barista
 ```
 
 Артефакты:
 
 - `frontend/dist` — клиент  
 - `frontend-admin/dist` — админ  
+- `frontend-barista/dist` — экран бариста, отдаётся по `/barista/`  
 - `backend/dist` — API  
 
 ## Env
@@ -104,10 +106,21 @@ admin.example.com {
 
 ```bash
 npm run dev
-# backend :3000
-# клиент  :5173
-# админ   :5174  (http://localhost:5174)
+# backend   :3000
+# клиент    :5173
+# админ     :5174  (http://localhost:5174)
+# бариста   :5175  (http://localhost:5175/barista/ — vite проксирует /api на :3000)
 ```
+
+## Бариста (очередь заказов)
+
+- Вход — логин/пароль сотрудника (страница админки «Логины»). Создать пользователя можно только
+  с ролью `barista` и обязательной точкой; `owner`/`admin` видят все точки.
+- Пароли хранятся как scrypt-хэш (`node:crypto`), сброс пароля отзывает выданные токены.
+- Касса создаёт заказ сама после ухода продажи: `POST /api/devices/kitchen/orders` (прокси-токен Эвотора,
+  идемпотентность по `clientOrderId`).
+- `ADMIN_TOKEN` остаётся аварийным входом в админку и не используется экраном бариста.
+- Полный контракт и статусы — [docs/BARISTA-QUEUE.md](./docs/BARISTA-QUEUE.md).
 
 ## Важно
 

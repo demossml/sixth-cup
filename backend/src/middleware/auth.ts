@@ -12,6 +12,9 @@ export const requireAuth = createMiddleware<AuthEnv>(async (c, next) => {
   if (!token) throw bad('Unauthorized', 401)
   try {
     const payload = await verify(token, config.jwtSecret, 'HS256')
+    // Токен сотрудника подписан тем же секретом, но живёт в другой таблице (app_users).
+    // Без этой проверки сотрудник с id, совпавшим с id гостя, прошёл бы как гость.
+    if (payload.typ === 'staff') throw bad('Invalid token', 401)
     const userId = Number(payload.sub)
     if (!Number.isFinite(userId) || userId <= 0) throw bad('Invalid token', 401)
     const row = db.prepare('SELECT token_version AS v FROM users WHERE id=?').get(userId) as { v: number } | undefined
