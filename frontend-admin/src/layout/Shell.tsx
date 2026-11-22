@@ -45,6 +45,7 @@ const MANAGE: NavItem[] = [
   { to: '/inventory', label: 'Инвентаризация', icon: <ClipboardList size={17} /> },
   { to: '/staff', label: 'Сотрудники', icon: <Users size={17} /> },
   { to: '/app-users', label: 'Логины', icon: <KeyRound size={17} /> },
+  { to: '/barista', label: 'Очередь бариста', icon: <Coffee size={17} />, external: true },
   { to: '/marketing', label: 'Контент', icon: <Gift size={17} /> },
   { to: '/referrals', label: 'Рефералка', icon: <Share2 size={17} /> },
   { to: '/loyalty', label: 'Бонусы', icon: <Coins size={17} /> },

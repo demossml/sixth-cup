@@ -1,0 +1,295 @@
+.barista-login,
+.barista-app {
+  min-height: 100dvh;
+  background: var(--c-app);
+  color: var(--c-fg);
+  font-family: var(--font-ui);
+}
+
+.barista-login {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(16px + var(--safe-top)) 16px calc(16px + var(--safe-bottom));
+}
+
+.barista-login-card {
+  width: min(420px, 100%);
+  background: var(--c-paper);
+  border-radius: calc(var(--r-outer) * var(--sq-k));
+  padding: 28px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: var(--shadow-sheet);
+}
+
+.barista-login-brand {
+  font: 600 13px/16px var(--font-ui);
+  letter-spacing: .14em;
+  color: var(--c-blue);
+}
+
+.barista-login-card h1 {
+  margin: 0 0 4px;
+  font: 600 32px/38px var(--font-ui);
+  letter-spacing: -.02em;
+  color: var(--c-fg-ink);
+}
+
+.barista-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--c-fg-secondary);
+  font: 400 15px/20px var(--font-ui);
+}
+
+.barista-field input {
+  height: 56px;
+  border: 2px solid var(--c-line);
+  border-radius: var(--r-pill);
+  background: #fff;
+  padding: 0 16px;
+  color: var(--c-fg-ink);
+  font: 400 19px/24px var(--font-ui);
+}
+
+.barista-field input:focus-visible {
+  outline: none;
+  border-color: var(--c-blue-ring);
+  box-shadow: inset 0 0 0 1px var(--c-blue-ring);
+}
+
+.barista-primary {
+  height: 64px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--c-blue);
+  color: #fff;
+  font: 500 21px/24px var(--font-ui);
+  box-shadow: var(--shadow-btn);
+  cursor: pointer;
+}
+
+.barista-primary:disabled { opacity: .45; cursor: default; }
+
+.barista-error {
+  margin: 0;
+  color: var(--c-fg-red);
+  font: 400 15px/20px var(--font-ui);
+}
+
+.barista-back {
+  text-align: center;
+  color: var(--c-fg-meta);
+  font: 400 13px/16px var(--font-ui);
+}
+
+.barista-app {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: calc(12px + var(--safe-top)) var(--gutter) calc(16px + var(--safe-bottom));
+}
+
+.barista-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--c-fg-invert);
+  padding: 4px 2px 0;
+}
+
+.barista-head h1 {
+  margin: 0;
+  font: 600 32px/38px var(--font-ui);
+  letter-spacing: -.02em;
+  text-wrap: balance;
+}
+
+.barista-head p {
+  margin: 2px 0 0;
+  color: rgba(255,255,255,.66);
+  font: 400 15px/20px var(--font-ui);
+}
+
+.barista-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.barista-toggle {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  border-radius: var(--r-pill);
+  background: rgba(255,255,255,.12);
+  color: #fff;
+  font: 400 15px/20px var(--font-ui);
+}
+
+.barista-toggle input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--c-yellow);
+}
+
+.barista-logout {
+  min-height: 44px;
+  border: 0;
+  border-radius: var(--r-pill);
+  padding: 0 18px;
+  background: rgba(255,255,255,.12);
+  color: #fff;
+  font: 500 15px/20px var(--font-ui);
+  cursor: pointer;
+}
+
+.barista-banner {
+  border-radius: calc(var(--r-inner) * var(--sq-k));
+  padding: 12px 16px;
+  background: var(--c-yellow);
+  color: #000;
+  font: 400 15px/20px var(--font-ui);
+}
+
+.barista-empty {
+  margin-top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 24px;
+  text-align: center;
+  border-radius: calc(var(--r-outer) * var(--sq-k));
+  background: rgba(255,255,255,.06);
+  color: #fff;
+}
+
+.barista-empty strong { font: 500 24px/32px var(--font-ui); }
+.barista-empty span { color: rgba(255,255,255,.66); font: 400 15px/20px var(--font-ui); }
+
+.barista-grid {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+.barista-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 2px solid transparent;
+  border-radius: calc(var(--r-outer) * var(--sq-k));
+  background: var(--c-bg);
+  box-shadow: var(--shadow-deck);
+}
+
+.barista-card.is-blinking {
+  border-color: var(--c-yellow);
+  animation: barista-blink 1.1s steps(1,end) infinite;
+}
+
+@keyframes barista-blink {
+  0%,100% { box-shadow: var(--shadow-deck); }
+  50% { box-shadow: var(--shadow-deck), 0 0 0 6px rgba(255,224,58,.85); }
+}
+
+.barista-card-body {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  padding: 18px 20px 12px;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+
+.barista-card-body:disabled { cursor: default; }
+
+.barista-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.barista-number {
+  color: var(--c-fg-ink);
+  font: 500 var(--fs-display)/1.05 var(--font-ui);
+  letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.barista-status {
+  border-radius: var(--r-pill);
+  padding: 6px 12px;
+  background: var(--c-line);
+  color: var(--c-fg-secondary);
+  font: 500 13px/16px var(--font-ui);
+  white-space: nowrap;
+}
+
+.barista-status.status-new { background: var(--c-yellow); color: #000; }
+.barista-status.status-seen,
+.barista-status.status-in_progress { background: var(--c-blue-soft); color: var(--c-blue); }
+
+.barista-age {
+  color: var(--c-fg-meta);
+  font: 400 15px/20px var(--font-ui);
+  font-variant-numeric: tabular-nums;
+}
+
+.barista-items {
+  margin-top: 2px;
+  color: var(--c-fg-ink);
+  font: 400 19px/24px var(--font-ui);
+}
+
+.barista-note {
+  color: var(--c-fg-red);
+  font: 400 15px/20px var(--font-ui);
+}
+
+.barista-done {
+  width: 100%;
+  min-height: 72px;
+  border: 0;
+  background: var(--c-green);
+  color: #04350f;
+  font: 600 24px/28px var(--font-ui);
+  cursor: pointer;
+}
+
+@media (orientation: landscape) and (max-height: 560px) {
+  .barista-app {
+    padding-left: calc(16px + env(safe-area-inset-left));
+    padding-right: calc(16px + env(safe-area-inset-right));
+  }
+  .barista-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .barista-done { min-height: 60px; font-size: 20px; }
+}
+
+@media (max-width: 379px) {
+  .barista-head { gap: 6px; }
+  .barista-head h1 { font-size: 28px; line-height: 34px; }
+  .barista-head p { font-size: 13px; line-height: 16px; }
+  .barista-head-actions { gap: 4px; }
+  .barista-toggle { min-height: 40px; padding: 0 8px; gap: 5px; font-size: 13px; }
+  .barista-toggle input { width: 18px; height: 18px; }
+  .barista-logout { min-height: 40px; padding: 0 10px; font-size: 13px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .barista-card.is-blinking { animation: none; }
+}

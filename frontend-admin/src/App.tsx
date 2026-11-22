@@ -41,10 +41,13 @@ const MenuShare = lazy(() => import('./pages/MenuShare'))
 
 
 function Login({ onOk }: { onOk: (m: Meta) => void }) {
+  const [mode, setMode] = useState<'admin' | 'staff'>('admin')
   const [token, setToken] = useState('')
+  const [login, setLogin] = useState('')
+  const [password, setPassword] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
-  const submit = async (e: FormEvent) => {
+  const submitAdmin = async (e: FormEvent) => {
     e.preventDefault()
     setBusy(true)
     setErr('')
@@ -58,9 +61,32 @@ function Login({ onOk }: { onOk: (m: Meta) => void }) {
       setBusy(false)
     }
   }
+  const submitStaff = async (e: FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setErr('')
+    try {
+      const res = await fetch('/api/staff/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ login: login.trim(), password }),
+      })
+      const body = await res.json().catch(() => ({})) as { token?: string; error?: string }
+      if (!res.ok || !body.token) throw new Error(body.error || 'Неверный логин или пароль')
+      try { localStorage.setItem('barista_staff_token', body.token) } catch { /* private mode */ }
+      window.location.assign('/barista/')
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Не удалось войти')
+    } finally {
+      setBusy(false)
+    }
+  }
   return (
     <div className="flex min-h-screen items-center justify-center bg-page p-4">
-      <form onSubmit={submit} className="w-full max-w-sm rounded-2xl border border-line bg-surface p-6 shadow-card">
+      <form
+        onSubmit={mode === 'admin' ? submitAdmin : submitStaff}
+        className="relative z-10 w-full max-w-sm rounded-2xl border border-line bg-surface p-6 shadow-card"
+      >
         <div className="mb-4 flex items-center gap-3">
           <img src="/67coffee-mark.png" alt="" className="h-10 w-10 rounded-[10px]" />
           <div>
@@ -68,10 +94,58 @@ function Login({ onOk }: { onOk: (m: Meta) => void }) {
             <p className="font-mono text-[10px] uppercase tracking-wider text-ink-tertiary">Админка</p>
           </div>
         </div>
-        <p className="mb-3 text-[13px] text-ink-secondary">Введите токен администратора</p>
-        <Input type="password" autoFocus value={token} onChange={(e) => setToken(e.target.value)} placeholder="Токен" aria-label="Токен администратора" />
+        <div className="relative z-10 mb-3 grid grid-cols-2 gap-2" role="tablist" aria-label="Способ входа">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'admin'}
+            onClick={() => { setMode('admin'); setErr('') }}
+            className={`min-h-11 rounded-xl border px-3 text-[13px] font-semibold ${
+              mode === 'admin' ? 'border-brand bg-brand text-white' : 'border-line bg-white text-ink-secondary'
+            }`}
+          >
+            Токен админа
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'staff'}
+            onClick={() => { setMode('staff'); setErr('') }}
+            className={`min-h-11 rounded-xl border px-3 text-[13px] font-semibold ${
+              mode === 'staff' ? 'border-brand bg-brand text-white' : 'border-line bg-white text-ink-secondary'
+            }`}
+          >
+            Логин и пароль
+          </button>
+        </div>
+        {mode === 'admin' ? (
+          <>
+            <p className="mb-3 text-[13px] text-ink-secondary">Введите токен администратора</p>
+            <Input type="password" autoFocus value={token} onChange={(e) => setToken(e.target.value)} placeholder="Токен" aria-label="Токен администратора" />
+          </>
+        ) : (
+          <>
+            <p className="mb-3 text-[13px] text-ink-secondary">Вход сотрудника или бариста на этом же домене</p>
+            <div className="space-y-2">
+              <Input autoFocus value={login} onChange={(e) => setLogin(e.target.value)} placeholder="Логин" aria-label="Логин сотрудника" />
+              <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Пароль" aria-label="Пароль сотрудника" />
+            </div>
+          </>
+        )}
         {err && <p role="alert" className="mt-2 text-sm text-bad">{err}</p>}
-        <Button type="submit" className="mt-3 w-full" loading={busy} disabled={!token.trim()}>Войти</Button>
+        <Button
+          type="submit"
+          className="mt-3 w-full"
+          loading={busy}
+          disabled={mode === 'admin' ? !token.trim() : !login.trim() || !password}
+        >
+          Войти
+        </Button>
+        {mode === 'staff' && (
+          <a href="/barista/" className="mt-3 block text-center text-[13px] font-semibold text-brand">
+            Открыть экран очереди
+          </a>
+        )}
       </form>
     </div>
   )

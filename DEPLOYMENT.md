@@ -6,7 +6,7 @@
 |------|------------|
 | `app.example.com` | Клиент PWA (карта, меню, профиль, /cashier) |
 | `admin.example.com` | Только кабинет владельца |
-| `app.example.com/barista/` | Экран бариста (очередь заказов), отдельная сборка |
+| `admin.example.com/barista/` | Экран бариста (очередь заказов), часть админской сборки |
 | API | тот же origin `/api` на обоих (один backend) |
 
 Админ-код **не** входит в клиентский бандл.
@@ -23,7 +23,7 @@ npm run build
 
 - `frontend/dist` — клиент  
 - `frontend-admin/dist` — админ  
-- `frontend-barista/dist` — экран бариста, отдаётся по `/barista/`  
+- `frontend-barista/dist` — legacy/отдельная dev-сборка; production экран бариста отдаётся из `frontend-admin/dist` по `/barista/`
 - `backend/dist` — API  
 
 ## Env
@@ -108,13 +108,15 @@ admin.example.com {
 npm run dev
 # backend   :3000
 # клиент    :5173
-# админ     :5174  (http://localhost:5174)
-# бариста   :5175  (http://localhost:5175/barista/ — vite проксирует /api на :3000)
+# админ     :5174  (http://localhost:5174, там же http://localhost:5174/barista/)
 ```
 
 ## Бариста (очередь заказов)
 
-- Вход — логин/пароль сотрудника (страница админки «Логины»). Создать пользователя можно только
+- Production URL: `https://admin.example.com/barista/` на том же админском поддомене/сертификате,
+  не на гостевом PWA и не в общей Wi-Fi сети.
+- Вход — либо логин/пароль сотрудника на экране админки или `/barista/`.
+  Создать пользователя можно только
   с ролью `barista` и обязательной точкой; `owner`/`admin` видят все точки.
 - Пароли хранятся как scrypt-хэш (`node:crypto`), сброс пароля отзывает выданные токены.
 - Касса создаёт заказ сама после ухода продажи: `POST /api/devices/kitchen/orders` (прокси-токен Эвотора,

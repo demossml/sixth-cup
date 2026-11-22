@@ -212,11 +212,6 @@ function distRoot(admin: boolean): string {
     : resolve(base, 'frontend/dist')
 }
 
-/** Интерфейс бариста — отдельная сборка (frontend-barista), отдаётся по префиксу /barista/. */
-function baristaDistRoot(): string {
-  return resolve(process.cwd(), '..', 'frontend-barista', 'dist')
-}
-
 if (!config.isDev) {
   // Customer static
   app.use('*', async (c, next) => {
@@ -224,14 +219,15 @@ if (!config.isDev) {
       return next()
     }
     const admin = isAdminHost(c.req.header('host'))
-    // /barista/* — своё приложение: гостевая PWA и админка сюда не отдаются.
+    // /barista/* доступен только на админском поддомене.
+    // Это route внутри frontend-admin/dist, чтобы админка и бариста работали
+    // через один origin и не требовали общей Wi-Fi сети с устройством бариста.
     const isBarista = c.req.path === '/barista' || c.req.path.startsWith('/barista/')
-    const root = isBarista ? baristaDistRoot() : distRoot(admin)
-    const rel = isBarista
-      ? c.req.path === '/barista' || c.req.path === '/barista/'
-        ? 'index.html'
-        : c.req.path.slice('/barista/'.length)
-      : c.req.path === '/' ? 'index.html' : c.req.path.replace(/^\//, '')
+    if (isBarista && !admin) {
+      return c.text('Barista доступен только на admin-поддомене', 404)
+    }
+    const root = distRoot(admin)
+    const rel = isBarista ? 'index.html' : c.req.path === '/' ? 'index.html' : c.req.path.replace(/^\//, '')
     const candidate = join(root, rel)
     if (existsSync(candidate) && rel.includes('.')) {
       const data = readFileSync(candidate)

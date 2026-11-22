@@ -8,11 +8,19 @@ import './styles/fonts-audit.css'
 import './styles/coffee.css'
 import './styles.css'
 import './styles/menuLayout.css'
+import BaristaAdmin from './barista/BaristaAdmin'
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
+const root = ReactDOM.createRoot(document.getElementById('root')!)
+const isBaristaRoute = /^\/barista(?:\/|$)/.test(window.location.pathname)
+
+root.render(
   <React.StrictMode>
-    <HashRouter>
-      <App />
-    </HashRouter>
+    {isBaristaRoute ? (
+      <BaristaAdmin />
+    ) : (
+      <HashRouter>
+        <App />
+      </HashRouter>
+    )}
   </React.StrictMode>,
 )
