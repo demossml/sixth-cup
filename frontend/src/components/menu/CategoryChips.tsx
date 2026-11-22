@@ -8,9 +8,13 @@ type Props = {
   onSelect: (id: number | 'all') => void
 }
 
+// Steel: капсула с рамкой 2px, тач-таргет ≥ 44 (§11), выбранное состояние — заливка акцентом.
+// Толщина рамки одна и у выбранного, и у обычного чипа, поэтому соседи не сдвигаются.
 const chip = (on: boolean) =>
-  `shrink-0 px-4 min-h-10 rounded-full text-[13px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 ${
-    on ? 'bg-brand text-white' : 'bg-white text-ink-secondary border border-line active:bg-brand-tint'
+  `shrink-0 px-4 min-h-11 rounded-full text-[14px] leading-5 font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 border-2 ${
+    on
+      ? 'bg-brand text-white border-brand'
+      : 'bg-white text-ink-secondary border-line active:bg-brand-tint'
   }`
 
 /** Горизонтальные чипы. Активный всегда подкручивается в видимую область. */

@@ -36,7 +36,7 @@ export default function ActiveOrderBanner({ order, storeName, offline, now: fixe
     return (
       <div
         className="fixed left-0 right-0 z-30 flex justify-center px-3 pointer-events-none"
-        style={{ bottom: 'calc(4rem + env(safe-area-inset-bottom, 0px) + 0.5rem)' }}
+        style={{ bottom: 'calc(5.5rem + env(safe-area-inset-bottom, 0px) + 0.5rem)' }}
       >
         <button
           type="button"

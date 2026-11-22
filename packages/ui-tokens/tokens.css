@@ -1,0 +1,125 @@
+/* ============================================================
+   Steel design tokens — источник: DESIGN-HANDOFF-BARISTA-PWA.md §2
+   Замерено на 390×844. Только переменные: подключение не меняет
+   внешний вид, пока экран не начнёт их использовать (фаза F0).
+   ============================================================ */
+:root {
+  /* ---------- Цвет: текст ---------- */
+  --c-fg:            #000000;
+  --c-fg-ink:        #07072D;
+  --c-fg-secondary:  #555555;
+  --c-fg-tertiary:   #AFB8CF;
+  --c-fg-muted:      #6A6A72;
+  --c-fg-meta:       #7A7F8F;
+  --c-fg-red:        #DC2E4C;
+  --c-fg-blue:       #2A55D8;
+  --c-fg-invert:     #FFFFFF;
+
+  /* ---------- Цвет: поверхности ---------- */
+  --c-bg:            #FFFFFF;
+  --c-paper:         #FAFAFA;
+  --c-sheet:         #F4F4F6;
+  --c-app:           #000000;
+  --c-blue:          #2A55D8;
+  --c-blue-ring:     #3763E6;
+  --c-blue-soft:     #EEF2FD;
+  --c-pink:          #FF4D6A;
+  --c-pink-soft:     #F8D5DC;
+  --c-green:         #66DF66;
+  --c-green-dark:    #2FB52F;
+  --c-yellow:        #FFE03A;
+  --c-red:           #E5191F;
+  --c-line:          #F0F0F5;
+  --c-line-strong:   #DFE2EA;
+  --c-chart:         #AFB8CF;
+  --c-chart-now:     #F35E5E;
+
+  /* ---------- Радиусы ---------- */
+  --r-outer:   40px;
+  --r-ctx:     30px;
+  --r-card:    16px;
+  --r-inner:   28px;
+  --r-pill:    999px;
+  --r-circle:  50%;
+  --sq-k:      1;
+
+  /* ---------- Типографика ---------- */
+  --font-ui: "Inter", "Inter Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-hand: "Caveat", "Segoe Script", cursive;
+
+  --fs-xs:   0.75rem;    /* 12 */
+  --fs-sm:   0.8125rem;  /* 13 */
+  --fs-tag:  0.875rem;   /* 14 */
+  --fs-body: 1.0625rem;  /* 17 */
+  --fs-lead: 1.1875rem;  /* 19 */
+  --fs-xl:   1.5rem;     /* 24 */
+  --fs-title:1.75rem;    /* 28 */
+  --fs-h1:   2rem;       /* 32 */
+  --fs-display: clamp(2.25rem, 11vw, 3rem);
+  --fs-hero:    clamp(2.5rem, 9vw, 4rem);
+
+  /* ---------- Сетка ---------- */
+  --gutter: clamp(10px, 3.4vw, 16px);
+  --gap-1: 2px;
+  --gap-2: 4px;
+  --gap-3: 6px;
+  --gap-4: 8px;
+  --gap-5: 10px;
+  --gap-6: 12px;
+  --pad-card: 16px;
+  --pad-screen-x: 4px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  /* ---------- Тени ---------- */
+  --shadow-btn:    0 2px 12px rgba(0, 0, 0, .10);
+  --shadow-card:   0 1px 3px rgba(7, 7, 45, .06);
+  --shadow-deck:   0 4px 20px rgba(0, 0, 0, .10), 0 4px 12px rgba(0, 0, 0, .15);
+  --shadow-sheet:  0 8px 32px rgba(0, 0, 0, .15);
+  --shadow-float:  0 6px 24px rgba(7, 7, 45, .12), 0 1px 3px rgba(7, 7, 45, .08);
+  --shadow-sticker:0 1px 1px rgba(10, 40, 100, .14), 0 12px 14px -10px rgba(10, 30, 80, .36);
+
+  /* ---------- Движение ---------- */
+  --ease-out: cubic-bezier(.23, 1, .32, 1);
+  --ease-ios: cubic-bezier(.32, .72, 0, 1);
+  --ease-fb:  cubic-bezier(.2, .9, .25, 1);
+  --t-tap:     120ms;
+  --t-chip:    200ms;
+  --t-toast:   260ms;
+  --t-sheet:   320ms;
+  --t-stack:   400ms;
+  --t-cart:    380ms;
+  --t-page:    540ms;
+
+  color-scheme: light;
+}
+
+/* Бренд-оверлей 6.7 Coffee — handoff §4.1.
+   Геометрия и движение остаются Steel, меняются только поверхности и акцент. */
+[data-brand="67coffee"] {
+  --c-app:       #17140F;
+  --c-sheet:     #F6F3EE;
+  --c-paper:     #FBF9F5;
+  --c-blue:      #002FA7;
+  --c-blue-ring: #1A6EFF;
+  /* Тёплые поверхности требуют тёплого серого — холодный «спорит» с кремовым. */
+  --c-fg-tertiary: #8A8377;
+  --c-fg-meta:     #7A7468;
+  --c-line:        #EFEAE1;
+  --c-line-strong: #E3DCD0;
+  --c-blue-soft:   #E8ECFA;
+  /* Интерфейсный шрифт бренда: Golos Text уже в бандле (офлайн, precache).
+     Inter из handoff — следующий в очереди, если брендовые не загрузились. */
+  --font-ui: "Golos Text", "Inter", "Inter Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Числа всегда табличные (handoff §2). */
+.num { font-variant-numeric: tabular-nums; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}

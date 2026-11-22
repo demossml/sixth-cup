@@ -125,7 +125,7 @@ export default function ProductPage() {
   )
 
   return (
-    <main className="pb-40">
+    <main className="pb-44">
       <div className="px-4" style={pad}>
         <button
           type="button"
@@ -279,7 +279,7 @@ export default function ProductPage() {
 
       <div
         className="fixed left-0 right-0 max-w-[480px] mx-auto px-4 z-40"
-        style={{ bottom: 'calc(4rem + env(safe-area-inset-bottom, 0px))' }}
+        style={{ bottom: 'calc(5.5rem + env(safe-area-inset-bottom, 0px))' }}
       >
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1 rounded-2xl bg-white border border-line px-1.5 py-1">

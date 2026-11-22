@@ -42,7 +42,7 @@ export default function InstallBanner({ variant = 'fixed' }: { variant?: 'inline
 
   if (variant === 'inline') return <div className="mb-2.5">{body}</div>
   return (
-    <div className="fixed left-0 right-0 z-30 px-3" style={{ bottom: 'calc(4rem + env(safe-area-inset-bottom, 0px) + 0.5rem)' }}>
+    <div className="fixed left-0 right-0 z-30 px-3 install-above-nav">
       <div className="max-w-[480px] mx-auto">{body}</div>
     </div>
   )

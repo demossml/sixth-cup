@@ -148,7 +148,7 @@ export default function CartPage() {
   const available = quote?.available ?? null
 
   return (
-    <main className="pb-40">
+    <main className="pb-44">
       <div className="px-4" style={pad}>
         <div className="flex items-center gap-3">
           <button
@@ -328,7 +328,7 @@ export default function CartPage() {
       {lines.length > 0 && (
         <div
           className="fixed left-0 right-0 max-w-[480px] mx-auto px-4 z-40 space-y-2"
-          style={{ bottom: 'calc(4rem + env(safe-area-inset-bottom, 0px))' }}
+          style={{ bottom: 'calc(5.5rem + env(safe-area-inset-bottom, 0px))' }}
         >
           <button
             type="button"

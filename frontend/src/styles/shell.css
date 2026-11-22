@@ -1,0 +1,184 @@
+/* ============================================================
+   F1 · Steel app shell для гостевой PWA.
+   Меняется только оболочка: тёмная «рамка устройства», светлая
+   «бумага» приложения, нижняя навигация-пилюля. Маршруты и логика —
+   прежние, поэтому правки живут отдельным слоем поверх Tailwind.
+
+   Ширина колонки намеренно оставлена 480 px: все экраны сверстаны
+   под неё, а смена ширины сдвинула бы существующие сетки (регресс).
+   ============================================================ */
+
+/* styles.css объявляет фон `#FFFFFF !important` — каркас перекрывает его осознанно. */
+html,
+body,
+#root {
+  background: var(--c-app) !important;
+}
+
+/* Телефонная колонка: на десктопе — макет 480 px с рамкой, как в эталоне §8.1. */
+.app-frame {
+  min-height: 100dvh;
+  background: var(--c-app);
+  display: flex;
+  justify-content: center;
+}
+
+.app-sheet {
+  width: 100%;
+  max-width: 480px;
+  min-height: 100dvh;
+  background: var(--c-sheet);
+  /* Верхние углы «бумаги» + нижний отступ под плавающую навигацию (handoff §6). */
+  border-radius: calc(var(--r-outer) * var(--sq-k)) calc(var(--r-outer) * var(--sq-k)) 0 0;
+  overflow-x: clip;
+  padding-bottom: calc(150px + var(--safe-bottom));
+  position: relative;
+}
+
+@supports (corner-shape: squircle) {
+  .app-sheet { corner-shape: squircle; }
+}
+
+/* Главная раньше получала холодную тонировку #F3F7FD — на кремовой бумаге
+   она «спорит» с тёплым фоном. Тонировка остаётся, но в тёплой гамме. */
+.app-sheet.page-tint { background: #F1EDE5; }
+
+@media (min-width: 600px) {
+  .app-frame { padding: 16px 0; align-items: flex-start; }
+  .app-sheet {
+    min-height: min(calc(100dvh - 32px), 940px);
+    border-radius: calc(var(--r-outer) * var(--sq-k));
+    box-shadow: 0 0 0 10px #0B0B0D, 0 30px 80px rgba(0, 0, 0, .6);
+  }
+}
+
+/* ───── Нижняя навигация: пилюля 256×72 (§8.6) ───── */
+.nav-pill {
+  position: fixed;
+  bottom: calc(6px + var(--safe-bottom));
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  width: 256px;
+  height: 72px;
+  padding: 8px;
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, .8);
+  box-shadow: inset 0 0 0 1px var(--c-line), 0 4px 12px rgba(0, 0, 0, .08);
+  display: flex;
+  align-items: center;
+  gap: 0;
+  z-index: 40;
+}
+
+@supports (backdrop-filter: blur(1px)) {
+  .nav-pill {
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    background: rgba(255, 255, 255, .72);
+  }
+}
+
+.nav-pill__tab {
+  flex: 1;
+  height: 56px;
+  border-radius: var(--r-pill);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 500;
+  color: var(--c-fg-secondary);
+  text-decoration: none;
+  transition: background var(--t-chip) var(--ease-out), color var(--t-chip) var(--ease-out),
+              transform var(--t-tap) var(--ease-out);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.nav-pill__tab:active { transform: scale(.96); }
+
+.nav-pill__tab.is-active {
+  background: var(--c-blue);
+  color: #fff;
+}
+
+.nav-pill__tab:focus-visible {
+  outline: 2px solid var(--c-blue);
+  outline-offset: 2px;
+}
+
+/* ───── Типографика Steel внутри приложения (§3.2) ─────
+   Заголовки переходят с дисплейного начертания на UI-шрифт: в эталоне
+   заголовки — это 500/600 интерфейсного шрифта с трекингом −0.02em.
+   Логотип «6.7 COFFEE» остаётся дисплейным: у него свой класс. */
+.app-sheet h1,
+.app-sheet h2,
+.app-sheet h3 {
+  font-family: var(--font-ui);
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+  color: var(--c-fg-ink);
+}
+
+/* ───── Секции и строки меню (§8.3, §8.4) ───── */
+.guest-section-title {
+  font: 500 24px/1.33 var(--font-ui);
+  letter-spacing: -.48px;
+  color: var(--c-fg-ink);
+  text-wrap: balance;
+}
+
+/* Гостевые карточки меню: 2 колонки при 480 ≈ «фокус»-карточки §8.5. */
+.guest-card {
+  border-radius: calc(var(--r-inner) * 1);
+  background: #fff;
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+  border: 0;
+}
+
+/* Строка списка (поиск/категории, §8.4) */
+.guest-row {
+  display: grid;
+  grid-template-columns: 72px 1fr auto;
+  column-gap: 12px;
+  align-items: center;
+  width: 100%;
+  padding: 10px 2px;
+  border: 0;
+  background: none;
+  text-align: left;
+  border-radius: 16px;
+  position: relative;
+  color: inherit;
+  cursor: pointer;
+}
+.guest-row + .guest-row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 64px;
+  right: 4px;
+  height: 1px;
+  background: var(--c-line-strong);
+}
+
+/* ───── Лист (карточка товара, §8.8 / §13.4) ───── */
+.guest-sheet {
+  background: var(--c-paper);
+  border-radius: calc(var(--r-outer) * var(--sq-k)) calc(var(--r-outer) * var(--sq-k)) 0 0;
+  box-shadow: var(--shadow-sheet);
+}
+
+/* ───── Плашка установки над навигацией ───── */
+.install-above-nav {
+  bottom: calc(96px + var(--safe-bottom)) !important;
+}
+
+/* Движение: только transform/opacity, никакого layout-трюка (§12). */
+@media (prefers-reduced-motion: reduce) {
+  .nav-pill__tab { transition: none; }
+}

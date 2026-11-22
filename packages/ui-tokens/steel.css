@@ -1,0 +1,163 @@
+/* ============================================================
+   Steel component layer (opt-in).
+   Классы с префиксом `st-`: в гостевой PWA и админке уже есть `.btn`,
+   `.card`, `.chip` со своими стилями — префикс исключает конфликт.
+   Размеры — DESIGN-HANDOFF-BARISTA-PWA.md §8 и §13.
+   ============================================================ */
+
+/* ───── Кнопки (§13.1) ───── */
+.st-btn {
+  height: 64px;
+  padding: 0 24px;
+  border: 0;
+  border-radius: var(--r-pill);
+  font: 400 24px/1 var(--font-ui);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: transform var(--t-tap) var(--ease-out), filter var(--t-tap) var(--ease-out);
+}
+.st-btn:active { transform: scale(.96); }
+.st-btn--primary { background: var(--c-blue); color: #fff; box-shadow: var(--shadow-btn); }
+.st-btn--money { background: var(--c-pink); color: #fff; font-size: 36px; letter-spacing: -1.44px; }
+.st-btn--secondary { background: #fff; color: var(--c-fg-ink); box-shadow: 0 1px 2px rgba(0, 0, 0, .06); }
+.st-btn--ghost { background: transparent; color: var(--c-fg); }
+.st-btn[disabled] { opacity: .45; pointer-events: none; }
+
+.st-icon-btn {
+  width: 64px;
+  height: 64px;
+  border: 2px solid var(--c-line);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: var(--shadow-btn);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: transform var(--t-tap) var(--ease-out);
+}
+.st-icon-btn:active { transform: scale(.94); }
+
+/* ───── Чип (§13.2): выбранное состояние не двигает соседей ───── */
+.st-chip {
+  height: 60px;
+  padding: 8px 16px;
+  margin: 2px;
+  border: 2px solid var(--c-line);
+  border-radius: var(--r-pill);
+  background: #fff;
+  color: var(--c-fg);
+  font: 400 19px/24px var(--font-ui);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: border-color var(--t-chip) var(--ease-out), box-shadow var(--t-chip) var(--ease-out),
+              transform var(--t-tap) var(--ease-out), background 140ms;
+}
+.st-chip.is-selected {
+  border-color: var(--c-blue-ring);
+  box-shadow: inset 0 0 0 1px var(--c-blue-ring);
+}
+.st-chip:active { transform: scale(.96); }
+.st-chip small { font-size: 14px; line-height: 16px; }
+
+/* ───── Строка списка (§13.3) ───── */
+.st-list { display: flex; flex-direction: column; }
+.st-row {
+  display: grid;
+  grid-template-columns: 72px 1fr auto;
+  column-gap: 12px;
+  align-items: center;
+  width: 100%;
+  padding: 10px 2px;
+  border: 0;
+  background: none;
+  text-align: left;
+  border-radius: 16px;
+  cursor: pointer;
+  position: relative;
+  color: inherit;
+}
+.st-row + .st-row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 64px;
+  right: 4px;
+  height: 1px;
+  background: var(--c-line-strong);
+}
+.st-row:active { background: rgba(0, 0, 0, .03); }
+.st-row.is-unavailable { opacity: .45; }
+.st-row__img { width: 72px; height: 72px; display: grid; place-items: center; }
+.st-row__img img { width: 68px; height: 68px; object-fit: contain; }
+.st-row__name { font: 400 19px/24px var(--font-ui); }
+.st-row__price { font: 500 19px/24px var(--font-ui); justify-self: end; white-space: nowrap; }
+.st-row__meta { font: 400 17px/20px var(--font-ui); letter-spacing: -.255px; color: var(--c-fg-tertiary); }
+
+/* ───── Заголовок секции (§8.3) ───── */
+.st-section {
+  font: 500 24px/1.33 var(--font-ui);
+  letter-spacing: -.48px;
+  margin: 24px 0 8px;
+  text-wrap: balance;
+}
+
+/* ───── Лист (§13.4) ───── */
+.st-sheet {
+  background: var(--c-paper);
+  border-radius: calc(var(--r-outer) * var(--sq-k)) calc(var(--r-outer) * var(--sq-k)) 0 0;
+  display: flex;
+  flex-direction: column;
+  max-height: 92dvh;
+  box-shadow: var(--shadow-sheet);
+}
+.st-sheet__head { display: flex; align-items: center; height: 76px; padding: 0; }
+.st-sheet__head img { width: 64px; height: 64px; margin: 4px; object-fit: contain; }
+.st-sheet__title { font: 500 28px/32px var(--font-ui); padding: 8px 12px; }
+.st-sheet__body { padding: 4px 10px 12px; overflow: auto; }
+.st-sheet__foot { display: flex; align-items: center; gap: 6px; padding: 8px; height: 80px; }
+
+/* ───── Тост (§13.5) ───── */
+.st-toast {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(96px + var(--safe-bottom));
+  background: #fff;
+  border-radius: var(--r-pill);
+  padding: 12px 20px;
+  font: 400 17px/20px var(--font-ui);
+  box-shadow: var(--shadow-btn);
+  animation: st-toast-in var(--t-toast) var(--ease-ios);
+  z-index: 60;
+}
+.st-toast--ok { background: var(--c-green); }
+@keyframes st-toast-in {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* ───── Фокус-карточка (§8.5) ───── */
+.st-fcard {
+  border-radius: calc(var(--r-inner) * 1);
+  background: #fff;
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+/* ───── Доступность (§11) ───── */
+.st-focusable:focus-visible,
+.st-row:focus-visible,
+.st-chip:focus-visible,
+.st-btn:focus-visible {
+  outline: 2px solid var(--c-blue);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .st-btn, .st-chip, .st-icon-btn, .st-row, .st-toast { transition: none; animation: none; }
+}

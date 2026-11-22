@@ -336,7 +336,7 @@ export default function MenuPage({ catalog = false }: Props) {
       </p>
 
       {cartCount > 0 && (
-        <div className="fixed left-0 right-0 max-w-[480px] mx-auto px-4 z-40" style={{ bottom: 'calc(4rem + env(safe-area-inset-bottom, 0px))' }}>
+        <div className="fixed left-0 right-0 max-w-[480px] mx-auto px-4 z-40" style={{ bottom: 'calc(5.5rem + env(safe-area-inset-bottom, 0px))' }}>
           <button
             type="button"
             onClick={() => nav('/cart')}

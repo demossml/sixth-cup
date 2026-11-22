@@ -118,35 +118,29 @@ function Layout() {
   // Тонировка только у главной: белые карточки читаются отдельными плоскостями (приём Luckin).
   // Класс живёт на оболочке, а не на странице: иначе min-h-screen складывается с её padding-bottom.
   const tint = pathname === '/'
+  // F1 (Steel): тёмная «рамка устройства» + светлая «бумага» приложения + нижняя навигация-пилюля.
+  // Маршруты прежние — меняется только слой отображения.
   return (
-    <div className={`max-w-[480px] mx-auto min-h-screen ${tint ? 'page-tint' : 'bg-page'}`} style={{ paddingBottom: 'calc(4rem + env(safe-area-inset-bottom, 0px))' }}>
-      <Outlet />
-      <InstallBanner variant="fixed" />
-      <nav
-        aria-label="Основное меню"
-        className="fixed bottom-0 left-0 right-0 max-w-[480px] mx-auto bg-page border-t border-line flex z-40"
-        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
-      >
-        {NAV.map(({ to, end, label, Icon }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={end}
-            className={({ isActive }) =>
-              `relative flex-1 min-h-14 flex flex-col items-center justify-center gap-0.5 text-[12px] leading-4 no-underline ${
-                // Аудит F-14: активная вкладка отличалась только цветом — добавляем полоску и вес.
-                isActive ? 'text-brand font-bold' : 'text-ink-secondary font-semibold'
-              }`
-            }
-          >
-            {({ isActive }) => (<>
-              {isActive ? <span className="absolute top-0 h-[2px] w-8 rounded-full bg-brand" aria-hidden="true" /> : null}
-              <Icon size={24} strokeWidth={isActive ? 2.1 : 1.75} />
-              {label}
-            </>)}
-          </NavLink>
-        ))}
-      </nav>
+    <div className="app-frame">
+      <div className={`app-sheet ${tint ? 'page-tint' : ''}`}>
+        <Outlet />
+        <InstallBanner variant="fixed" />
+        <nav aria-label="Основное меню" className="nav-pill">
+          {NAV.map(({ to, end, label, Icon }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={end}
+              className={({ isActive }) => `nav-pill__tab${isActive ? ' is-active' : ''}`}
+            >
+              {({ isActive }) => (<>
+                <Icon size={22} strokeWidth={isActive ? 2.1 : 1.75} aria-hidden="true" />
+                {label}
+              </>)}
+            </NavLink>
+          ))}
+        </nav>
+      </div>
     </div>
   )
 }

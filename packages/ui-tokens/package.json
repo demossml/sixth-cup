@@ -1,0 +1,14 @@
+{
+  "name": "@sixth-cup/ui-tokens",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Steel design tokens (CSS variables) + бренд-оверлей 6.7 Coffee",
+  "exports": {
+    "./tokens.css": "./tokens.css",
+    "./steel.css": "./steel.css"
+  },
+  "files": [
+    "tokens.css",
+    "steel.css"
+  ]
+}
