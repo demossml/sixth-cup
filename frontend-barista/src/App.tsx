@@ -17,5 +17,10 @@ export default function App() {
   }, [])
 
   // `key` — чтобы при смене пользователя очередь и её опрос начинались заново.
-  return token ? <QueuePage key={token} onLogout={onLogout} /> : <LoginPage onLogin={onLogin} />
+  // .app-col — колонка приложения: на десктопе она превращается в рамку устройства (Steel §8.1).
+  return (
+    <div className="app-col">
+      {token ? <QueuePage key={token} onLogout={onLogout} /> : <LoginPage onLogin={onLogin} />}
+    </div>
+  )
 }

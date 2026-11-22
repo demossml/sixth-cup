@@ -13,6 +13,9 @@ export default function InstallBanner({ variant = 'fixed' }: { variant?: 'inline
   if (!visible) return null
   if (location.pathname === '/card-qr') return null
   if (variant === 'fixed' && location.pathname === '/') return null
+  // Экраны с собственной панелью действия у низа: плашка вставала бы поверх кнопки
+  // «В заказ» / «Отправить в кофейню». Там она просто не показывается.
+  if (variant === 'fixed' && /^\/(menu\/[^/]+|cart|pick-store|promo\/[^/]+)$/.test(location.pathname)) return null
 
   const body = (
     <div className="bg-white border border-line text-ink rounded-2xl p-3 flex gap-3 items-start shadow-card">

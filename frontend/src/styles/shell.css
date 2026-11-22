@@ -173,6 +173,35 @@ body,
   box-shadow: var(--shadow-sheet);
 }
 
+/* ───── CTA-действия гостя (F4) ─────
+   Отправка заказа окрашена «денежным» розовым акцентом эталона (§4),
+   оплата по-прежнему происходит на кассе — контракты не меняются. */
+.guest-cta {
+  width: 100%;
+  min-height: 64px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--c-pink);
+  color: #fff;
+  font: 500 19px/24px var(--font-ui);
+  box-shadow: var(--shadow-btn);
+  cursor: pointer;
+  transition: transform var(--t-tap) var(--ease-out), filter var(--t-tap) var(--ease-out);
+}
+.guest-cta:active { transform: scale(.98); filter: brightness(.96); }
+.guest-cta[disabled] { opacity: .45; pointer-events: none; }
+
+/* Нижняя панель действия: «бумага» с концентричным радиусом (§5). */
+.guest-foot {
+  background: var(--c-paper);
+  border-radius: calc(var(--r-inner) * var(--sq-k));
+  padding: 8px;
+  box-shadow: var(--shadow-float);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 /* ───── Плашка установки над навигацией ───── */
 .install-above-nav {
   bottom: calc(96px + var(--safe-bottom)) !important;
@@ -181,4 +210,48 @@ body,
 /* Движение: только transform/opacity, никакого layout-трюка (§12). */
 @media (prefers-reduced-motion: reduce) {
   .nav-pill__tab { transition: none; }
+}
+
+/* F8: motion-lite Steel.
+   Только transform/opacity, длительности 120–320 ms, ease-ios.
+   Goo/SVG blur не включаются даже как декоративная фича. */
+.nav-pill__tab,
+.guest-card,
+.guest-cta,
+.guest-foot,
+.st-btn,
+.st-chip,
+.st-icon-btn {
+  transition-duration: var(--t-tap);
+  transition-timing-function: var(--ease-ios);
+}
+.guest-card:active,
+.guest-cta:active,
+.guest-foot button:active {
+  transform: scale(.98);
+}
+.guest-sheet,
+.st-sheet {
+  animation-duration: var(--t-sheet);
+  animation-timing-function: var(--ease-ios);
+}
+.st-toast {
+  transition-duration: var(--t-toast);
+  transition-timing-function: var(--ease-ios);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-pill__tab,
+  .guest-card,
+  .guest-cta,
+  .guest-foot,
+  .st-btn,
+  .st-chip,
+  .st-icon-btn,
+  .guest-sheet,
+  .st-sheet,
+  .st-toast {
+    transition: none;
+    animation: none;
+  }
 }

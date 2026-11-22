@@ -26,13 +26,16 @@ export default function AddonsSheet({ cfg, sel, visible, onChange, onClose }: Pr
         aria-modal="true"
         aria-label="Добавки"
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-[480px] mx-auto bg-white rounded-t-3xl max-h-[85vh] overflow-y-auto"
+        className="guest-sheet w-full max-w-[480px] mx-auto max-h-[85vh] overflow-y-auto"
         style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
       >
-        <div className="sticky top-0 bg-white px-5 pt-4 pb-2 flex items-start justify-between gap-3">
+        <div
+          className="sticky top-0 flex items-start justify-between gap-3 px-5 pt-4 pb-2"
+          style={{ background: 'var(--c-paper)' }}
+        >
           <div>
-            <h2 className="font-display text-[20px] leading-6 font-semibold text-ink">Добавки</h2>
-            <p className="mt-1 text-[13px] leading-[18px] text-ink-secondary">
+            <h2 className="text-[28px] leading-8 font-medium text-[color:var(--c-fg-ink)]">Добавки</h2>
+            <p className="mt-1 text-[15px] leading-5 text-[color:var(--c-fg-secondary)]">
               Обязательные параметры — на карточке. Здесь только по желанию.
             </p>
           </div>
@@ -40,9 +43,10 @@ export default function AddonsSheet({ cfg, sel, visible, onChange, onClose }: Pr
             type="button"
             onClick={onClose}
             aria-label="Закрыть"
-            className="w-10 h-10 rounded-full bg-white border border-line flex items-center justify-center text-ink shrink-0"
+            className="w-12 h-12 rounded-full bg-white flex items-center justify-center text-[color:var(--c-fg-ink)] shrink-0"
+            style={{ boxShadow: 'var(--shadow-btn)' }}
           >
-            <X size={18} strokeWidth={1.75} />
+            <X size={20} strokeWidth={1.75} />
           </button>
         </div>
 
@@ -59,8 +63,10 @@ export default function AddonsSheet({ cfg, sel, visible, onChange, onClose }: Pr
                       type="button"
                       aria-pressed={active}
                       onClick={() => onChange({ ...sel, choiceId: o.id })}
-                      className={`rounded-full px-3.5 py-2 text-[14px] leading-5 border transition-colors ${
-                        active ? 'bg-brand text-white border-brand' : 'bg-white text-ink border-line active:bg-brand-tint'
+                      className={`min-h-11 rounded-full px-4 py-2 text-[17px] leading-6 border-2 transition-colors ${
+                        active
+                          ? 'bg-white text-[color:var(--c-blue)] border-[color:var(--c-blue-ring)] shadow-[inset_0_0_0_1px_var(--c-blue-ring)]'
+                          : 'bg-white text-[color:var(--c-fg-ink)] border-[color:var(--c-line)]'
                       }`}
                     >
                       {o.label}
@@ -84,8 +90,10 @@ export default function AddonsSheet({ cfg, sel, visible, onChange, onClose }: Pr
                     type="button"
                     aria-pressed={groupEmpty}
                     onClick={() => onChange(clearAddonGroup(cfg, sel, g.key))}
-                    className={`rounded-full px-3.5 py-2 text-[14px] leading-5 border transition-colors ${
-                      groupEmpty ? 'bg-brand text-white border-brand' : 'bg-white text-ink border-line'
+                    className={`min-h-11 rounded-full px-4 py-2 text-[17px] leading-6 border-2 transition-colors ${
+                      groupEmpty
+                        ? 'bg-white text-[color:var(--c-blue)] border-[color:var(--c-blue-ring)] shadow-[inset_0_0_0_1px_var(--c-blue-ring)]'
+                        : 'bg-white text-[color:var(--c-fg-ink)] border-[color:var(--c-line)]'
                     }`}
                   >
                     Без
@@ -98,9 +106,10 @@ export default function AddonsSheet({ cfg, sel, visible, onChange, onClose }: Pr
                   return (
                     <li
                       key={o.id}
-                      className={`flex items-center justify-between gap-3 rounded-2xl border px-3.5 py-3 ${
-                        o.available ? 'border-line bg-white' : 'border-line bg-pale/60 opacity-60'
+                      className={`flex items-center justify-between gap-3 rounded-2xl px-4 py-3 ${
+                        o.available ? 'bg-white' : 'bg-[color:var(--c-app)]/5 opacity-60'
                       }`}
+                      style={{ boxShadow: 'inset 0 0 0 1px var(--c-line-strong)' }}
                     >
                       <div className="min-w-0">
                         <div className="text-[15px] leading-5 text-ink truncate">{o.name}</div>
@@ -116,7 +125,7 @@ export default function AddonsSheet({ cfg, sel, visible, onChange, onClose }: Pr
                             aria-label={`Убрать ${o.name}`}
                             disabled={qty === 0}
                             onClick={() => onChange(bumpAddon(cfg, sel, o.id, -1))}
-                            className="w-9 h-9 rounded-full border border-line bg-white flex items-center justify-center disabled:opacity-40"
+                            className="w-11 h-11 rounded-full bg-white flex items-center justify-center disabled:opacity-40"
                           >
                             <Minus size={16} strokeWidth={2} />
                           </button>
@@ -126,7 +135,7 @@ export default function AddonsSheet({ cfg, sel, visible, onChange, onClose }: Pr
                             aria-label={`Добавить ${o.name}`}
                             disabled={qty >= o.maxCount}
                             onClick={() => onChange(bumpAddon(cfg, sel, o.id, 1))}
-                            className="w-9 h-9 rounded-full border border-line bg-white flex items-center justify-center disabled:opacity-40"
+                            className="w-11 h-11 rounded-full bg-white flex items-center justify-center disabled:opacity-40"
                           >
                             <Plus size={16} strokeWidth={2} />
                           </button>
@@ -143,8 +152,13 @@ export default function AddonsSheet({ cfg, sel, visible, onChange, onClose }: Pr
           })}
         </div>
 
-        <div className="sticky bottom-0 bg-white px-5 pt-2 pb-3 border-t border-line">
-          <button type="button" onClick={onClose} className="btn min-h-12 w-full">
+        <div className="sticky bottom-0 px-5 pt-2 pb-3" style={{ background: 'var(--c-paper)', borderTop: '1px solid var(--c-line)' }}>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full rounded-full text-white"
+            style={{ height: 64, background: 'var(--c-blue)', font: '500 19px/24px var(--font-ui)', boxShadow: 'var(--shadow-btn)' }}
+          >
             Готово
           </button>
         </div>

@@ -334,11 +334,16 @@ export default function CartPage() {
             type="button"
             onClick={() => void submit()}
             disabled={busy || blocked}
-            className="btn min-h-14 w-full disabled:opacity-50"
+            className="guest-cta"
           >
             {busy ? 'Отправляем…' : 'Отправить в кофейню'}
           </button>
-          <button type="button" onClick={() => nav('/menu')} className="btn-ghost min-h-12 w-full bg-white">
+          <button
+            type="button"
+            onClick={() => nav('/menu')}
+            className="w-full rounded-full bg-white text-[color:var(--c-fg-ink)]"
+            style={{ minHeight: 56, font: '500 19px/24px var(--font-ui)', boxShadow: '0 1px 2px rgba(0,0,0,.06)' }}
+          >
             Добавить ещё
           </button>
         </div>

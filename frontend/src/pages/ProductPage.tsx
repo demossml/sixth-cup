@@ -131,9 +131,10 @@ export default function ProductPage() {
           type="button"
           onClick={() => nav(-1)}
           aria-label="Назад"
-          className="w-11 h-11 rounded-full bg-white border border-line flex items-center justify-center text-ink"
+          className="w-12 h-12 rounded-full bg-white flex items-center justify-center text-[color:var(--c-fg-ink)]"
+          style={{ boxShadow: 'var(--shadow-btn)' }}
         >
-          <ArrowLeft size={18} strokeWidth={1.75} />
+          <ArrowLeft size={20} strokeWidth={1.75} />
         </button>
 
         <div className="mt-3 relative rounded-3xl overflow-hidden bg-pale">
@@ -151,8 +152,8 @@ export default function ProductPage() {
         </div>
 
         <div className="mt-4 flex items-start justify-between gap-3">
-          <h1 className="font-display text-[26px] leading-8 font-semibold text-ink min-w-0 break-words">{cfg.name}</h1>
-          <span className="font-display text-[26px] leading-8 font-semibold num text-ink whitespace-nowrap">{formatPrice(price)}</span>
+          <h1 className="text-[28px] leading-8 font-medium text-[color:var(--c-fg-ink)] min-w-0 break-words">{cfg.name}</h1>
+          <span className="text-[24px] leading-8 font-medium num text-[color:var(--c-fg-ink)] whitespace-nowrap">{formatPrice(price)}</span>
         </div>
         {cfg.description ? <p className="mt-1.5 text-[15px] leading-[22px] text-ink-secondary">{cfg.description}</p> : null}
 
@@ -278,40 +279,43 @@ export default function ProductPage() {
       <AddonsSheet cfg={cfg} sel={sel} visible={addonsOpen} onChange={setSel} onClose={() => setAddonsOpen(false)} />
 
       <div
-        className="fixed left-0 right-0 max-w-[480px] mx-auto px-4 z-40"
+        className="fixed left-0 right-0 max-w-[480px] mx-auto px-3 z-40"
         style={{ bottom: 'calc(5.5rem + env(safe-area-inset-bottom, 0px))' }}
       >
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 rounded-2xl bg-white border border-line px-1.5 py-1">
+        <div className="guest-foot">
+          <div className="flex items-center gap-1 rounded-full bg-white px-1.5 py-1" style={{ boxShadow: 'inset 0 0 0 2px var(--c-line)' }}>
             <button
               type="button"
               aria-label="Меньше"
               onClick={() => setQuantity((q) => Math.max(1, q - 1))}
               disabled={quantity <= 1}
-              className="w-9 h-9 rounded-xl flex items-center justify-center disabled:opacity-40"
+              className="w-11 h-11 rounded-full flex items-center justify-center text-[color:var(--c-fg-ink)] disabled:opacity-40"
             >
-              <Minus size={16} strokeWidth={2} />
+              <Minus size={18} strokeWidth={2} />
             </button>
-            <span className="w-6 text-center text-[15px] num">{quantity}</span>
+            <span className="w-7 text-center text-[19px] num">{quantity}</span>
             <button
               type="button"
               aria-label="Больше"
               onClick={() => setQuantity((q) => Math.min(20, q + 1))}
-              className="w-9 h-9 rounded-xl flex items-center justify-center"
+              className="w-11 h-11 rounded-full flex items-center justify-center text-[color:var(--c-fg-ink)]"
             >
-              <Plus size={16} strokeWidth={2} />
+              <Plus size={18} strokeWidth={2} />
             </button>
           </div>
           <button
             type="button"
             onClick={add}
             disabled={!check.ok || soldOut}
-            className="btn min-h-14 flex-1 flex items-center justify-between gap-3 px-4 disabled:opacity-50"
+            className="st-btn st-btn--primary flex-1 flex items-center justify-center gap-2 px-3 min-w-0"
+            style={{ height: 64, fontSize: 16, fontWeight: 500 }}
           >
-            <span className="text-[15px] leading-5 font-semibold">
+            <span className="leading-6 whitespace-nowrap">
               {lineKey ? 'Сохранить' : 'В заказ'} · {formatPrice(price * quantity)}
             </span>
-            <span className="text-[13px] leading-4 opacity-80">{quantity} шт.</span>
+            {quantity > 1 && (
+              <span className="text-[14px] leading-4 opacity-80 whitespace-nowrap shrink-0">{quantity} шт.</span>
+            )}
           </button>
         </div>
       </div>
