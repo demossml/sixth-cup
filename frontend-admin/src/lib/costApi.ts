@@ -130,6 +130,9 @@ export type CostItem = {
   weightPerPcKg: number | null
   densityKgL: number | null
   manualCostRub: number | null
+  packageQty: number | null
+  packagePriceRub: number | null
+  priceMode: 'auto' | 'manual'
   costRub: number | null
   costSource: 'invoice' | 'history' | 'manual' | 'none'
   cards: number
@@ -276,8 +279,31 @@ export const costApi = {
   /** Новая позиция склада — чтобы не уходить со страницы себестоимости. */
   createItem: (body: { name: string; unit: Unit; kind?: 'raw' | 'unit' }) =>
     api<{ id: number }>('/stock/items', { method: 'POST', body }),
-  updateItem: (id: number, body: { manualCostRub?: number | null; weightPerPcKg?: number | null; densityKgL?: number | null; notes?: string | null }) =>
+  updateItem: (id: number, body: {
+    name?: string
+    unit?: Unit
+    manualCostRub?: number | null
+    packageQty?: number | null
+    packagePriceRub?: number | null
+    priceMode?: 'auto' | 'manual'
+    weightPerPcKg?: number | null
+    densityKgL?: number | null
+    notes?: string | null
+  }) =>
     api(`/cost/items/${id}`, { method: 'PUT', body }),
+  migrationConflicts: () =>
+    api<{
+      conflicts: {
+        id: number
+        ingredientName: string
+        stockItemId: number
+        unit: Unit
+        oldPackQty: number
+        oldPackPriceRub: number
+        existingManualCostRub: number | null
+        reason: string
+      }[]
+    }>('/cost/migration-conflicts'),
   duplicates: () =>
     api<{
       groups: {

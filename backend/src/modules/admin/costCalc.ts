@@ -165,13 +165,19 @@ export type CostSource = 'invoice' | 'history' | 'manual' | 'none'
 export type UnitCost = { costKop: number | null; source: CostSource }
 
 /**
- * Средневзвешенная цена за базовую единицу по накладным в окне `since`.
- * Фолбэки: последняя известная цена → ручная цена → «нет цены».
+ * Цена за базовую единицу. Ручной режим — явный override, автоматический режим
+ * использует накладные, последнюю не-ручную цену и затем старую ручную цену.
  */
 export function weightedCostKop(
   purchases: PurchasePoint[],
-  opts: { since: number; history?: PricePoint[]; manualKop?: number | null },
+  opts: { since: number; history?: PricePoint[]; manualKop?: number | null; priceMode?: 'auto' | 'manual' },
 ): UnitCost {
+  if (opts.priceMode === 'manual') {
+    return opts.manualKop != null && Number.isFinite(opts.manualKop)
+      ? { costKop: opts.manualKop, source: 'manual' }
+      : { costKop: null, source: 'none' }
+  }
+
   let qty = 0
   let sum = 0
   for (const p of purchases) {
@@ -276,14 +282,14 @@ export function cardTotals(lines: LineInput[]): CardTotals {
     const r = resolveLine(line)
     resolved.push(r)
     if (r.costKop == null) {
-      missing = true
+      if (!r.optional) missing = true
       continue
     }
     if (r.optional) optional += r.costKop
     else cost += r.costKop
   }
   return {
-    costKop: missing && cost === 0 ? null : cost,
+    costKop: missing ? null : cost,
     optionalKop: optional,
     missing,
     lines: resolved,

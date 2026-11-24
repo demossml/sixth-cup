@@ -24,6 +24,12 @@ function scratch() {
       default_supplier_id INTEGER, notes TEXT, active INTEGER NOT NULL DEFAULT 1,
       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
     );
+    CREATE TABLE purchase_invoices (
+      id INTEGER PRIMARY KEY, status TEXT NOT NULL, posted_at INTEGER
+    );
+    CREATE TABLE purchase_invoice_lines (
+      id INTEGER PRIMARY KEY, invoice_id INTEGER NOT NULL, stock_item_id INTEGER NOT NULL
+    );
   `)
   db.exec(sql('056_cost_techcards.sql'))
   return db
@@ -33,7 +39,7 @@ describe('F1: миграция 062 переносит справочник и р
   it('ингредиент становится позицией склада, рецепт — техкартой с версией и строками', () => {
     const db = scratch()
     const t = 1_700_000_000_000
-    // 900 ₽ за упаковку 1000 мл → 0,09 ₽ за мл = 9 копеек
+    // 900 ₽ за упаковку 1000 мл → 0,90 ₽ за мл = 90 копеек
     db.prepare(
       `INSERT INTO cost_ingredients(category_id, name, unit, pack_qty, pack_price_kop, comment, active, created_at, updated_at)
        VALUES(2,'Молоко 3,2%','ml',1000,90000,NULL,1,?,?)`,
@@ -47,15 +53,29 @@ describe('F1: миграция 062 переносит справочник и р
     ).run()
 
     db.exec(sql('062_cost_techcards_v2.sql'))
+    db.exec(sql('077_cost_package_pricing.sql'))
 
-    const item = db.prepare(`SELECT id, name, unit, manual_cost_kop AS cost FROM stock_items`).all() as {
+    const item = db.prepare(
+      `SELECT id, name, unit, manual_cost_kop AS cost, package_qty AS packageQty,
+              package_price_kop AS packagePriceKop, price_mode AS priceMode FROM stock_items`,
+    ).all() as {
       id: number
       name: string
       unit: string
-      cost: number
+      cost: number | null
+      packageQty: number
+      packagePriceKop: number
+      priceMode: string
     }[]
     expect(item).toHaveLength(1)
-    expect(item[0]).toMatchObject({ name: 'Молоко 3,2%', unit: 'ml', cost: 90 })
+    expect(item[0]).toMatchObject({
+      name: 'Молоко 3,2%',
+      unit: 'ml',
+      cost: null,
+      packageQty: 1000,
+      packagePriceKop: 90000,
+      priceMode: 'manual',
+    })
 
     const card = db.prepare(`SELECT id, name, output_qty AS qty, status, retail_price_kop AS retail FROM tech_cards`).get() as {
       id: number
@@ -82,11 +102,11 @@ describe('F1: миграция 062 переносит справочник и р
       .get() as { ci: number; si: number }
     expect(mapped).toEqual({ ci: 1, si: item[0].id })
 
-    const history = db.prepare(`SELECT source, cost_kop AS cost FROM stock_item_cost_history`).get() as {
+    const history = db.prepare(`SELECT source, cost_kop AS cost FROM stock_item_cost_history ORDER BY id DESC LIMIT 1`).get() as {
       source: string
-      cost: number
+      cost: number | null
     }
-    expect(history).toEqual({ source: 'backfill', cost: 90 })
+    expect(history).toEqual({ source: 'manual', cost: 90 })
 
     // Повторный прогон (migrations идемпотентны по данным) не дублирует карты.
     const before = (db.prepare(`SELECT COUNT(*) AS n FROM tech_cards`).get() as { n: number }).n
@@ -105,10 +125,35 @@ describe('F1: миграция 062 переносит справочник и р
     ).run(t, t)
 
     db.exec(sql('062_cost_techcards_v2.sql'))
+    db.exec(sql('077_cost_package_pricing.sql'))
 
     const n = (db.prepare(`SELECT COUNT(*) AS n FROM stock_items`).get() as { n: number }).n
     expect(n).toBe(1)
     const mapped = db.prepare(`SELECT stock_item_id AS si FROM cost_ingredient_map`).get() as { si: number }
     expect(mapped.si).toBe(1)
+    const item = db
+      .prepare(`SELECT manual_cost_kop AS cost, package_qty AS qty, price_mode AS mode FROM stock_items`)
+      .get() as { cost: number | null; qty: number | null; mode: string }
+    expect(item).toEqual({ cost: null, qty: 1000, mode: 'manual' })
+  })
+
+  it('keeps a conflicting existing price and records the legacy package for review', () => {
+    const db = scratch()
+    const t = 1_700_000_000_000
+    db.prepare(
+      `INSERT INTO cost_ingredients(category_id, name, unit, pack_qty, pack_price_kop, comment, active, created_at, updated_at)
+       VALUES(2,'Молоко 3,2%','ml',1000,90000,NULL,1,?,?)`,
+    ).run(t, t)
+
+    db.exec(sql('062_cost_techcards_v2.sql'))
+    db.prepare(`UPDATE stock_items SET manual_cost_kop=120 WHERE name='Молоко 3,2%'`).run()
+    db.exec(sql('077_cost_package_pricing.sql'))
+
+    const item = db.prepare(
+      `SELECT manual_cost_kop AS cost, package_qty AS qty, package_price_kop AS packPrice FROM stock_items`,
+    ).get() as { cost: number | null; qty: number | null; packPrice: number | null }
+    expect(item).toEqual({ cost: 120, qty: null, packPrice: null })
+    const conflict = db.prepare(`SELECT reason FROM cost_price_migration_conflicts`).get() as { reason: string }
+    expect(conflict.reason).toMatch(/отличается/)
   })
 })

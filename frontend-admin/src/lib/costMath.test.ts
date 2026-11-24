@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { COST_SOURCE_LABELS, KIND_LABELS, lineCostRub, lineNumbers, money, pct } from './costMath'
+import { COST_SOURCE_LABELS, KIND_LABELS, lineCostRub, lineNumbers, money, pct, unitPrice } from './costMath'
 
 describe('F5: живой расчёт строки техкарты', () => {
   it('брутто + проценты потерь → нетто и выход', () => {
@@ -46,6 +46,7 @@ describe('F5: деньги и подписи', () => {
   it('формат денег и процентов по-русски', () => {
     expect(money(42.5)).toBe('42,50 ₽')
     expect(money(null)).toBe('—')
+    expect(unitPrice(0.095)).toBe('0,095 ₽')
     expect(pct(22.44)).toBe('22,4 %')
     expect(pct(null)).toBe('—')
   })

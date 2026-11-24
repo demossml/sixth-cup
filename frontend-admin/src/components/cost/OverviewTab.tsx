@@ -60,13 +60,15 @@ export default function OverviewTab({
           <div className="text-lg font-bold">{data.cardsTotal}</div>
         </Card>
         <Card className="px-3 py-2">
-          <div className="text-[11px] uppercase tracking-wide text-ink-tertiary">Средний фудкост</div>
+          <div className="text-[11px] uppercase tracking-wide text-ink-tertiary">Средний фудкост по картам</div>
           <div className="text-lg font-bold">{pct(data.avgFoodCostPct)}</div>
+          <div className="text-[10px] text-ink-tertiary">простое среднее, без веса продаж</div>
         </Card>
         {data.overheadEnabled && (
           <Card className="px-3 py-2">
-            <div className="text-[11px] uppercase tracking-wide text-ink-tertiary">Средний полный фудкост</div>
+            <div className="text-[11px] uppercase tracking-wide text-ink-tertiary">Полный фудкост по картам</div>
             <div className="text-lg font-bold">{pct(data.avgFullFoodCostPct)}</div>
+            <div className="text-[10px] text-ink-tertiary">простое среднее, без веса продаж</div>
           </Card>
         )}
         <Card className="px-3 py-2">

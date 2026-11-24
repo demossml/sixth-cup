@@ -115,6 +115,21 @@ describe('F2: цены', () => {
     expect(weightedCostKop([], { since: now - 90 * DAY }).source).toBe('none')
   })
 
+  it('явный ручной режим имеет приоритет над накладными, а автоматический игнорирует ручную историю', () => {
+    const purchases = [{ at: now - DAY, qty: 750, unitCostKop: 20 }]
+    expect(
+      weightedCostKop(purchases, { since: now - 90 * DAY, manualKop: 10000 / 750, priceMode: 'manual' }),
+    ).toEqual({ costKop: 10000 / 750, source: 'manual' })
+    expect(
+      weightedCostKop(purchases, {
+        since: now - 90 * DAY,
+        manualKop: null,
+        priceMode: 'auto',
+        history: [{ at: now, costKop: 10, source: 'manual' }],
+      }),
+    ).toEqual({ costKop: 20, source: 'invoice' })
+  })
+
   it('окно начинается от последней инвентаризации, если она позже', () => {
     const inv = now - 10 * DAY
     expect(priceWindowStart(now, inv, 90)).toBe(inv)
@@ -127,6 +142,25 @@ describe('F2: строки и итоги карты', () => {
     const r = resolveLine({ qtyBrutto: 1000, lossColdPct: 50, unitCostKop: 2 })
     expect(r.yield.yieldQty).toBe(500)
     expect(r.costKop).toBe(2000) // 1000 г × 2 коп.
+  })
+
+  it('обязательная строка без цены делает полный итог карты неизвестным', () => {
+    const totals = cardTotals([
+      { qtyBrutto: 18, unitCostKop: 2 },
+      { qtyBrutto: 150, unitCostKop: null },
+    ])
+    expect(totals.costKop).toBeNull()
+    expect(totals.missing).toBe(true)
+    expect(totals.lines[0]?.costKop).toBe(36)
+  })
+
+  it('опциональная строка без цены не блокирует стоимость базового рецепта', () => {
+    const totals = cardTotals([
+      { qtyBrutto: 18, unitCostKop: 2 },
+      { qtyBrutto: 150, unitCostKop: null, lineRole: 'optional' },
+    ])
+    expect(totals.costKop).toBe(36)
+    expect(totals.missing).toBe(false)
   })
 
   it('несовпадение единиц переводится', () => {
@@ -145,13 +179,14 @@ describe('F2: строки и итоги карты', () => {
     expect(r.costKop).toBe(600)
   })
 
-  it('строка без цены делает карту «неполной», но не обнуляет посчитанное', () => {
+  it('строка без цены делает общий итог неизвестным, сохраняя известную стоимость строки', () => {
     const t = cardTotals([
       { qtyBrutto: 10, unitCostKop: 100 },
       { qtyBrutto: 5, unitCostKop: null },
     ])
     expect(t.missing).toBe(true)
-    expect(t.costKop).toBe(1000)
+    expect(t.costKop).toBeNull()
+    expect(t.lines[0]?.costKop).toBe(1000)
   })
 
   it('optional-строки не входят в базу, но показываются отдельно', () => {

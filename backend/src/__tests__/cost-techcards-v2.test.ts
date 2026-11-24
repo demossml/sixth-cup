@@ -6,6 +6,7 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest'
 import { db } from '../db'
+import { lastInventoryAt } from '../modules/admin/costTechCards'
 import { admin } from './wh-helpers'
 
 async function createItem(name: string, unit: string, extra: { manualCostKop?: number } = {}) {
@@ -197,6 +198,94 @@ describe('F4: цена из накладных', () => {
     expect(list.json.items[0].costRub).toBeCloseTo(0.4, 2)
     expect(list.json.items[0].costSource).toBe('manual')
   })
+
+  it('упаковка сохраняет точную долю цены и ручной override перекрывает закупки', async () => {
+    const item = await createItem('Сироп 750 мл QA', 'ml')
+    await receive(item, 750, 20)
+    const update = await admin('PUT', `/cost/items/${item}`, {
+      packageQty: 750,
+      packagePriceRub: 100,
+      priceMode: 'manual',
+    })
+    expect(update.status).toBe(200)
+
+    const listed = await admin('GET', `/cost/items?q=Сироп 750 мл QA`)
+    expect(listed.json.items[0].packageQty).toBe(750)
+    expect(listed.json.items[0].packagePriceRub).toBe(100)
+    expect(listed.json.items[0].costRub).toBeCloseTo(100 / 750, 6)
+    expect(listed.json.items[0].costSource).toBe('manual')
+
+    const card = await admin('POST', '/cost/tech-cards', {
+      name: 'Напиток с сиропом QA',
+      productId: makeProduct('Напиток с сиропом QA'),
+      lines: [{ stockItemId: item, qtyBrutto: 75 }],
+    })
+    expect(card.json.card.costPerUnitRub).toBe(10)
+
+    const auto = await admin('PUT', `/cost/items/${item}`, { priceMode: 'auto' })
+    expect(auto.status).toBe(200)
+    const autoCard = await admin('GET', `/cost/tech-cards/${card.json.card.id}`)
+    expect(autoCard.json.card.costPerUnitRub).toBe(15)
+  })
+
+  it('не допускает менять единицу ингредиента, используемого в техкарте', async () => {
+    const item = await createItem('Молоко единицы QA', 'ml', { manualCostKop: 10 })
+    await admin('POST', '/cost/tech-cards', {
+      name: 'Карта единиц QA',
+      productId: makeProduct('Карта единиц QA'),
+      lines: [{ stockItemId: item, qtyBrutto: 100 }],
+    })
+    const changed = await admin('PATCH', `/stock/items/${item}`, { unit: 'g' })
+    expect(changed.status).toBe(400)
+    const unchanged = await admin('GET', `/stock/items/${item}`)
+    expect(unchanged.json.item.unit).toBe('ml')
+  })
+
+  it('не допускает менять единицу через себестоимость, если есть складская партия', async () => {
+    const item = await createItem('Сироп партия QA', 'ml')
+    db.prepare(
+      `INSERT INTO stock_batches(stock_item_id, qty_in, qty_left, unit_cost_kop, source_type, created_at)
+       VALUES(?, 750, 750, 0, 'purchase', ?)`,
+    ).run(item, Date.now())
+
+    const changed = await admin('PUT', `/cost/items/${item}`, { unit: 'g' })
+    expect(changed.status).toBe(400)
+    const unchanged = await admin('GET', `/stock/items/${item}`)
+    expect(unchanged.json.item.unit).toBe('ml')
+  })
+
+  it('снимает предупреждение о переносе после ручного ввода фасовки', async () => {
+    const item = await createItem('Сироп перенос QA', 'ml')
+    db.prepare(
+      `INSERT INTO cost_price_migration_conflicts(
+         cost_ingredient_id, stock_item_id, old_pack_qty, old_pack_price_kop,
+         existing_manual_cost_kop, reason, created_at
+       ) VALUES(999, ?, 750, 10000, NULL, 'test', ?)`,
+    ).run(item, Date.now())
+
+    const saved = await admin('PUT', `/cost/items/${item}`, {
+      packageQty: 750,
+      packagePriceRub: 100,
+      priceMode: 'manual',
+    })
+    expect(saved.status).toBe(200)
+    const remaining = db
+      .prepare(`SELECT COUNT(*) AS n FROM cost_price_migration_conflicts WHERE stock_item_id=?`)
+      .get(item) as { n: number }
+    expect(remaining.n).toBe(0)
+  })
+
+  it('использует время последней только проведённой полной инвентаризации', () => {
+    const base = Date.now()
+    const insert = db.prepare(
+      `INSERT INTO inventory_docs(kind, status, created_at, updated_at, posted_at) VALUES(?,?,?,?,?)`,
+    )
+    insert.run('full', 'posted', base - 5000, base - 5000, base - 4000)
+    insert.run('full', 'review', base - 3000, base - 3000, null)
+    insert.run('full', 'cancelled', base - 2000, base - 2000, null)
+    insert.run('partial', 'posted', base - 1000, base - 1000, base - 500)
+    expect(lastInventoryAt()).toBe(base - 4000)
+  })
 })
 
 describe('F6: массовые операции', () => {
@@ -239,6 +328,24 @@ describe('F6: массовые операции', () => {
 })
 
 describe('F3: сигналы и сводка', () => {
+  it('не публикует частичную стоимость карты, если нет цены у обязательного ингредиента', async () => {
+    const known = await createItem('Кофе известная цена QA', 'g', { manualCostKop: 200 })
+    const missing = await createItem('Ингредиент без цены QA', 'ml')
+    const created = await admin('POST', '/cost/tech-cards', {
+      name: 'Неполная карта QA',
+      productId: makeProduct('Неполная карта QA'),
+      lines: [
+        { stockItemId: known, qtyBrutto: 18 },
+        { stockItemId: missing, qtyBrutto: 150 },
+      ],
+    })
+    expect(created.status).toBe(200)
+    expect(created.json.card.costRub).toBeNull()
+    expect(created.json.card.costPerUnitRub).toBeNull()
+    expect(created.json.card.missingPrices).toBe(true)
+    expect(created.json.card.insights.some((i: { code: string }) => i.code === 'no_price')).toBe(true)
+  })
+
   it('/cost/insights находит карту без цены и отрицательную маржу', async () => {
     const item = await createItem('Без цены QA', 'g')
     const card = await admin('POST', '/cost/tech-cards', {
@@ -295,16 +402,34 @@ describe('F9: импорт пишет в модель v2, а не в cost_*', ()
     expect(legacy.n).toBe(0)
   })
 
-  it('ИИ-прайс добавляет позиции склада с ценой за единицу', async () => {
+  it('ИИ-прайс сохраняет фасовку и точную цену упаковки', async () => {
     const r = await admin('POST', '/cost/import/items-bulk', {
       items: [{ name: 'Молоко ИИ QA', unit: 'ml', packQty: 1000, packPriceRub: 95 }],
     })
     expect(r.status).toBe(200)
     expect(r.json.created).toBe(1)
     const item = db
-      .prepare(`SELECT unit, manual_cost_kop AS cost FROM stock_items WHERE name='Молоко ИИ QA'`)
-      .get() as { unit: string; cost: number }
-    expect(item).toEqual({ unit: 'ml', cost: 10 }) // 95 ₽ / 1000 мл = 9,5 коп → округление до 10
+      .prepare(
+        `SELECT unit, manual_cost_kop AS unitCost, package_qty AS packageQty,
+                package_price_kop AS packagePrice, price_mode AS priceMode
+           FROM stock_items WHERE name='Молоко ИИ QA'`,
+      )
+      .get() as {
+      unit: string
+      unitCost: number | null
+      packageQty: number
+      packagePrice: number
+      priceMode: string
+    }
+    expect(item).toEqual({
+      unit: 'ml',
+      unitCost: null,
+      packageQty: 1000,
+      packagePrice: 9500,
+      priceMode: 'manual',
+    })
+    const cost = await admin('GET', `/cost/items?q=${encodeURIComponent('Молоко ИИ QA')}`)
+    expect(cost.json.items[0].costRub).toBeCloseTo(0.095, 6)
   })
 })
 

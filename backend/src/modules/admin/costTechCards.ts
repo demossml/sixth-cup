@@ -10,6 +10,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
+import { stockItemLinks } from './stock'
 import { parseTechcardBuffer, parseTechcardText, type ParsedRecipe } from './techcardImport'
 import {
   allocateOverheads,
@@ -42,7 +43,7 @@ function requireWrite(c: { get: (k: string) => unknown }) {
 const now = () => Date.now()
 const DAY_MS = 24 * 60 * 60 * 1000
 const kop = (rub: number | null | undefined) => (rub == null ? null : Math.round(Number(rub) * 100))
-const rub = (k: number | null | undefined) => (k == null || !Number.isFinite(k) ? null : Math.round(k) / 100)
+const rub = (k: number | null | undefined) => (k == null || !Number.isFinite(k) ? null : k / 100)
 
 /* ─────────────────────────── цены ─────────────────────────── */
 
@@ -55,6 +56,9 @@ type ItemRow = {
   weightPerPcKg: number | null
   densityKgL: number | null
   manualCostKop: number | null
+  packageQty: number | null
+  packagePriceKop: number | null
+  priceMode: 'auto' | 'manual'
   notes: string | null
 }
 
@@ -62,16 +66,18 @@ function itemById(id: number): ItemRow | undefined {
   return db
     .prepare(
       `SELECT id, name, unit, kind, active, weight_per_pc_kg AS weightPerPcKg,
-              density_kg_l AS densityKgL, manual_cost_kop AS manualCostKop, notes
+              density_kg_l AS densityKgL, manual_cost_kop AS manualCostKop,
+              package_qty AS packageQty, package_price_kop AS packagePriceKop,
+              price_mode AS priceMode, notes
          FROM stock_items WHERE id=?`,
     )
     .get(id) as ItemRow | undefined
 }
 
-function lastInventoryAt(): number | null {
+export function lastInventoryAt(): number | null {
   const row = db
     .prepare(
-      `SELECT MAX(COALESCE(posted_at, created_at)) AS at FROM inventory_docs WHERE status <> 'draft'`,
+      `SELECT MAX(posted_at) AS at FROM inventory_docs WHERE status='posted' AND kind='full'`,
     )
     .get() as { at: number | null } | undefined
   return row?.at ?? null
@@ -114,8 +120,18 @@ export function unitCostMap(at = now(), windowDays = 90): Map<number, { costKop:
     .all() as { itemId: number; at: number; costKop: number; source: 'invoice' | 'inventory' | 'manual' | 'backfill' }[]
 
   const items = db
-    .prepare(`SELECT id, manual_cost_kop AS manualCostKop FROM stock_items WHERE active=1`)
-    .all() as { id: number; manualCostKop: number | null }[]
+    .prepare(
+      `SELECT id, manual_cost_kop AS manualCostKop, package_qty AS packageQty,
+              package_price_kop AS packagePriceKop, price_mode AS priceMode
+         FROM stock_items WHERE active=1`,
+    )
+    .all() as {
+      id: number
+      manualCostKop: number | null
+      packageQty: number | null
+      packagePriceKop: number | null
+      priceMode: 'auto' | 'manual'
+    }[]
 
   const byItem = new Map<number, PurchasePoint[]>()
   for (const p of purchases) {
@@ -134,8 +150,14 @@ export function unitCostMap(at = now(), windowDays = 90): Map<number, { costKop:
       it.id,
       weightedCostKop(byItem.get(it.id) ?? [], {
         since,
-        history: histByItem.get(it.id) ?? [],
-        manualKop: it.manualCostKop,
+        history: (histByItem.get(it.id) ?? []).filter((p) => p.source !== 'manual'),
+        manualKop:
+          it.priceMode === 'manual'
+            ? it.packagePriceKop != null && it.packageQty != null && it.packageQty > 0
+              ? it.packagePriceKop / it.packageQty
+              : it.manualCostKop
+            : null,
+        priceMode: it.priceMode,
       }),
     )
   }
@@ -844,7 +866,8 @@ export const adminCostTechCards = new Hono()
     const rows = db
       .prepare(
         `SELECT id, name, unit, kind, active, weight_per_pc_kg AS weightPerPcKg, density_kg_l AS densityKgL,
-                manual_cost_kop AS manualCostKop, notes
+                manual_cost_kop AS manualCostKop, package_qty AS packageQty,
+                package_price_kop AS packagePriceKop, price_mode AS priceMode, notes
            FROM stock_items WHERE active=1 ORDER BY name COLLATE NOCASE`,
       )
       .all() as ItemRow[]
@@ -871,6 +894,9 @@ export const adminCostTechCards = new Hono()
           weightPerPcKg: r.weightPerPcKg,
           densityKgL: r.densityKgL,
           manualCostRub: rub(r.manualCostKop),
+          packageQty: r.packageQty,
+          packagePriceRub: rub(r.packagePriceKop),
+          priceMode: r.priceMode,
           costRub: rub(cost.costKop),
           costSource: cost.source,
           cards: used.get(r.id) ?? 0,
@@ -886,7 +912,12 @@ export const adminCostTechCards = new Hono()
     zValidator(
       'json',
       z.object({
+        name: z.string().trim().min(1).max(200).optional(),
+        unit: z.enum(['kg', 'l', 'pcs', 'g', 'ml']).optional(),
         manualCostRub: z.number().nonnegative().nullable().optional(),
+        packageQty: z.number().positive().nullable().optional(),
+        packagePriceRub: z.number().nonnegative().nullable().optional(),
+        priceMode: z.enum(['auto', 'manual']).optional(),
         weightPerPcKg: z.number().positive().nullable().optional(),
         densityKgL: z.number().positive().nullable().optional(),
         notes: z.string().max(300).nullable().optional(),
@@ -898,20 +929,61 @@ export const adminCostTechCards = new Hono()
       const cur = itemById(id)
       if (!cur) throw bad('Позиция не найдена', 404)
       const p = c.req.valid('json')
+      if (p.unit !== undefined && p.unit !== cur.unit) {
+        const { blocking } = stockItemLinks(id)
+        if (blocking.length) {
+          throw bad(`Единицу нельзя менять: позиция используется (${blocking.join(', ')})`, 400)
+        }
+      }
+
       const manual = p.manualCostRub !== undefined ? kop(p.manualCostRub) : cur.manualCostKop
+      const packageQty = p.packageQty !== undefined ? p.packageQty : cur.packageQty
+      const packagePriceKop =
+        p.packagePriceRub !== undefined ? kop(p.packagePriceRub) : cur.packagePriceKop
+      if (packagePriceKop != null && (packageQty == null || packageQty <= 0)) {
+        throw bad('Укажите количество в упаковке вместе с её ценой', 400)
+      }
+      const priceMode =
+        p.priceMode ??
+        (p.manualCostRub !== undefined || p.packageQty !== undefined || p.packagePriceRub !== undefined
+          ? 'manual'
+          : cur.priceMode)
+      const manualUnitCost =
+        packagePriceKop != null && packageQty != null ? packagePriceKop / packageQty : manual
       db.transaction(() => {
-        db.prepare(`UPDATE stock_items SET manual_cost_kop=?, weight_per_pc_kg=?, density_kg_l=?, notes=?, updated_at=? WHERE id=?`).run(
+        db.prepare(
+          `UPDATE stock_items SET name=?, unit=?, manual_cost_kop=?, package_qty=?, package_price_kop=?,
+                                  price_mode=?, weight_per_pc_kg=?, density_kg_l=?, notes=?, updated_at=?
+            WHERE id=?`,
+        ).run(
+          p.name ?? cur.name,
+          p.unit ?? cur.unit,
           manual,
+          packageQty,
+          packagePriceKop,
+          priceMode,
           p.weightPerPcKg !== undefined ? p.weightPerPcKg : cur.weightPerPcKg,
           p.densityKgL !== undefined ? p.densityKgL : cur.densityKgL,
           p.notes !== undefined ? p.notes : cur.notes,
           now(),
           id,
         )
-        if (p.manualCostRub !== undefined && manual != null) {
+        const priceChanged =
+          p.manualCostRub !== undefined ||
+          p.packageQty !== undefined ||
+          p.packagePriceRub !== undefined ||
+          (p.priceMode !== undefined && p.priceMode !== cur.priceMode)
+        if (priceChanged && priceMode === 'manual' && manualUnitCost != null) {
           db.prepare(
             `INSERT INTO stock_item_cost_history(stock_item_id, at, cost_kop, source) VALUES(?,?,?,'manual')`,
-          ).run(id, now(), manual)
+          ).run(id, now(), manualUnitCost)
+        }
+        if (
+          (p.packageQty !== undefined || p.packagePriceRub !== undefined) &&
+          packageQty != null &&
+          packagePriceKop != null
+        ) {
+          db.prepare(`DELETE FROM cost_price_migration_conflicts WHERE stock_item_id=?`).run(id)
         }
       })()
       return c.json({ ok: true })
@@ -936,6 +1008,37 @@ export const adminCostTechCards = new Hono()
     return c.json({
       history: history.map((h) => ({ at: h.at, costRub: rub(h.costKop), source: h.source })),
       purchases: invoices.map((i) => ({ at: i.at, qty: i.qty, unitCostRub: rub(i.unitCostKop), number: i.number })),
+    })
+  })
+
+  .get('/cost/migration-conflicts', (c) => {
+    const rows = db
+      .prepare(
+        `SELECT c.id, c.cost_ingredient_id AS costIngredientId, c.stock_item_id AS stockItemId,
+                  ci.name AS ingredientName, ci.unit, c.old_pack_qty AS oldPackQty,
+                  c.old_pack_price_kop AS oldPackPriceKop,
+                  c.existing_manual_cost_kop AS existingManualCostKop, c.reason
+             FROM cost_price_migration_conflicts c
+             JOIN cost_ingredients ci ON ci.id=c.cost_ingredient_id
+            ORDER BY ci.name COLLATE NOCASE, c.id`,
+      )
+      .all() as {
+      id: number
+      costIngredientId: number
+      stockItemId: number
+      ingredientName: string
+      unit: Unit
+      oldPackQty: number
+      oldPackPriceKop: number
+      existingManualCostKop: number | null
+      reason: string
+    }[]
+    return c.json({
+      conflicts: rows.map((row) => ({
+        ...row,
+        oldPackPriceRub: rub(row.oldPackPriceKop),
+        existingManualCostRub: rub(row.existingManualCostKop),
+      })),
     })
   })
 
@@ -1213,21 +1316,38 @@ adminCostTechCards
       let created = 0
       db.transaction(() => {
         for (const it of items) {
-          const costKop =
-            it.packPriceRub == null ? null : Math.round((it.packPriceRub * 100) / it.packQty)
+          const packagePriceKop = it.packPriceRub == null ? null : Math.round(it.packPriceRub * 100)
+          const costKop = packagePriceKop == null ? null : packagePriceKop / it.packQty
           const found = db
             .prepare(`SELECT id FROM stock_items WHERE lower(name)=lower(?) AND unit=? AND active=1 LIMIT 1`)
             .get(it.name, it.unit) as { id: number } | undefined
           if (found) {
             if (costKop != null) {
-              db.prepare(`UPDATE stock_items SET manual_cost_kop=?, updated_at=? WHERE id=?`).run(costKop, t, found.id)
+              db.prepare(
+                `UPDATE stock_items SET manual_cost_kop=NULL, package_qty=?, package_price_kop=?,
+                                        price_mode='manual', updated_at=? WHERE id=?`,
+              ).run(it.packQty, packagePriceKop, t, found.id)
+              db.prepare(
+                `INSERT INTO stock_item_cost_history(stock_item_id, at, cost_kop, source) VALUES(?,?,?,'manual')`,
+              ).run(found.id, t, costKop)
+            } else {
+              db.prepare(
+                `UPDATE stock_items SET package_qty=COALESCE(package_qty, ?), updated_at=? WHERE id=?`,
+              ).run(it.packQty, t, found.id)
             }
             continue
           }
-          db.prepare(
-            `INSERT INTO stock_items(name, kind, unit, min_qty, multiplicity, notes, manual_cost_kop, active, created_at, updated_at)
-             VALUES(?, 'raw', ?, 0, 1, 'ИИ-прайс', ?, 1, ?, ?)`,
-          ).run(it.name, it.unit, costKop, t, t)
+          const createdItem = db.prepare(
+            `INSERT INTO stock_items(name, kind, unit, min_qty, multiplicity, notes,
+                                     package_qty, package_price_kop, price_mode, active, created_at, updated_at)
+             VALUES(?, 'raw', ?, 0, 1, 'ИИ-прайс', ?, ?, ?, 1, ?, ?)`,
+          ).run(it.name, it.unit, it.packQty, packagePriceKop, costKop == null ? 'auto' : 'manual', t, t)
+          const itemId = Number(createdItem.lastInsertRowid)
+          if (costKop != null) {
+            db.prepare(
+              `INSERT INTO stock_item_cost_history(stock_item_id, at, cost_kop, source) VALUES(?,?,?,'manual')`,
+            ).run(itemId, t, costKop)
+          }
           created++
         }
       })()

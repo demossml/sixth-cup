@@ -28,8 +28,10 @@ export function assertNormSane(unit: string, qty: number): void {
 /** Есть ли у позиции история: движения, партии, нормы или строки документов. */
 export function stockItemLinks(stockItemId: number): { blocking: string[]; linked: Record<string, number> } {
   const refs = [
+    ['tech_card_lines', 'техкарты'],
     ['stock_movements', 'движения'],
     ['stock_batches', 'партии'],
+    ['stock_item_cost_history', 'история цен'],
     ['product_stock_norms', 'нормы списания'],
     ['inventory_lines', 'инвентаризации'],
     ['purchase_invoice_lines', 'накладные'],
@@ -115,7 +117,8 @@ export const adminStock = new Hono()
     const active = c.req.query('active')
     const rows = db
       .prepare(
-        `SELECT id, name, sku, kind, unit,
+        `SELECT id, name, sku, kind, unit, package_qty AS packageQty,
+                package_price_kop AS packagePriceKop, price_mode AS priceMode,
                 min_qty AS minQty, multiplicity, shelf_life_days AS shelfLifeDays,
                 default_supplier_id AS defaultSupplierId, notes, active,
                 created_at AS createdAt, updated_at AS updatedAt
@@ -143,7 +146,8 @@ export const adminStock = new Hono()
     if (!Number.isFinite(id)) throw bad('Invalid id', 400)
     const r = db
       .prepare(
-        `SELECT id, name, sku, kind, unit,
+        `SELECT id, name, sku, kind, unit, package_qty AS packageQty,
+                package_price_kop AS packagePriceKop, price_mode AS priceMode,
                 min_qty AS minQty, multiplicity, shelf_life_days AS shelfLifeDays,
                 default_supplier_id AS defaultSupplierId, notes, active,
                 created_at AS createdAt, updated_at AS updatedAt
@@ -212,7 +216,7 @@ export const adminStock = new Hono()
     if (p.unit !== undefined && p.unit !== row.unit) {
       const { blocking } = stockItemLinks(id)
       if (blocking.length) {
-        throw bad(`Единицу нельзя менять: у позиции есть документы, нормы или движения (${blocking.join(', ')})`, 400)
+        throw bad(`Единицу нельзя менять: позиция используется (${blocking.join(', ')})`, 400)
       }
     }
     db.prepare(
@@ -662,7 +666,7 @@ export const adminStock = new Hono()
             z.object({
               stockItemId: z.number().int().positive(),
               qty: z.number().positive(),
-              unitCostKop: z.number().int().min(0),
+              unitCostKop: z.number().finite().min(0),
               expiresAt: z.number().int().optional().nullable(),
               lotCode: z.string().max(64).optional().nullable(),
             }),

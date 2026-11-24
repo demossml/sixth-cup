@@ -6,19 +6,29 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 
-import { Badge, Button, Card, ConfirmDialog, Drawer, EmptyState, ErrorBox, Input, Select, Skeleton, useToast } from '../../ui/kit'
+import { Badge, Banner, Button, Card, ConfirmDialog, Drawer, EmptyState, ErrorBox, Input, Select, Skeleton, useToast } from '../../ui/kit'
 import { Plus, RefreshCw, Search, Upload } from 'lucide-react'
 
 import { costApi, type CostItem } from '../../lib/costApi'
-import { COST_SOURCE_LABELS, UNIT_LABELS, money } from '../../lib/costMath'
+import { COST_SOURCE_LABELS, UNIT_LABELS, money, unitPrice } from '../../lib/costMath'
 
 export default function ItemsTab({ onImport, reloadKey = 0 }: { onImport?: () => void; reloadKey?: number }) {
   const toast = useToast()
+  type ItemDraft = {
+    name?: string
+    price?: string
+    packageQty?: string
+    packagePrice?: string
+    priceMode?: 'auto' | 'manual'
+    weight?: string
+  }
   const [items, setItems] = useState<CostItem[] | null>(null)
   const [error, setError] = useState<Error | null>(null)
   const [q, setQ] = useState('')
   const [problemsOnly, setProblemsOnly] = useState(false)
-  const [draft, setDraft] = useState<Record<number, { price: string; weight: string }>>({})
+  const [draft, setDraft] = useState<Record<number, ItemDraft>>({})
+  const [migrationConflicts, setMigrationConflicts] = useState<Awaited<ReturnType<typeof costApi.migrationConflicts>>['conflicts']>([])
+  const [migrationError, setMigrationError] = useState<Error | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
   /** Дубли: их наличие — сигнал, что импорт/ручной ввод разошлись. */
   const [dups, setDups] = useState<Awaited<ReturnType<typeof costApi.duplicates>> | null>(null)
@@ -33,6 +43,13 @@ export default function ItemsTab({ onImport, reloadKey = 0 }: { onImport?: () =>
       .items({ q: q || undefined })
       .then((r) => setItems(r.items))
       .catch((e) => setError(e instanceof Error ? e : new Error('Не удалось загрузить ингредиенты')))
+    costApi
+      .migrationConflicts()
+      .then(({ conflicts }) => {
+        setMigrationConflicts(conflicts)
+        setMigrationError(null)
+      })
+      .catch((e) => setMigrationError(e instanceof Error ? e : new Error('Не удалось проверить перенос старых цен')))
     costApi
       .duplicates()
       .then(setDups)
@@ -53,14 +70,22 @@ export default function ItemsTab({ onImport, reloadKey = 0 }: { onImport?: () =>
   const saveItem = async (item: CostItem) => {
     const d = draft[item.id]
     if (!d) return
-    const body: { manualCostRub?: number | null; weightPerPcKg?: number | null } = {}
-    if (d.price !== '') body.manualCostRub = Number(d.price)
-    if (d.weight !== '') body.weightPerPcKg = Number(d.weight)
+    const body: Parameters<typeof costApi.updateItem>[1] = {}
+    if (d.name !== undefined && d.name.trim() !== item.name) body.name = d.name.trim()
+    if (d.price !== undefined) body.manualCostRub = d.price === '' ? null : Number(d.price)
+    if (d.packageQty !== undefined) body.packageQty = d.packageQty === '' ? null : Number(d.packageQty)
+    if (d.packagePrice !== undefined) body.packagePriceRub = d.packagePrice === '' ? null : Number(d.packagePrice)
+    if (d.priceMode !== undefined) body.priceMode = d.priceMode
+    if (d.weight !== undefined) body.weightPerPcKg = d.weight === '' ? null : Number(d.weight)
     if (Object.keys(body).length === 0) return
     try {
       await costApi.updateItem(item.id, body)
       toast.push(`«${item.name}» обновлён`, 'ok')
-      setDraft((x) => ({ ...x, [item.id]: { price: '', weight: '' } }))
+      setDraft((x) => {
+        const next = { ...x }
+        delete next[item.id]
+        return next
+      })
       load()
     } catch (e) {
       toast.push(e instanceof Error ? e.message : 'Не удалось сохранить', 'bad')
@@ -105,6 +130,19 @@ export default function ItemsTab({ onImport, reloadKey = 0 }: { onImport?: () =>
       </div>
 
       {error && <ErrorBox message={error.message} />}
+      {migrationError && <ErrorBox message={migrationError.message} />}
+      {migrationConflicts.length > 0 && (
+        <Banner tone="warn">
+          Не перенесено автоматически старых фасовок: {migrationConflicts.length}. Текущие цены сохранены, чтобы
+          не затереть закупки или новые ручные значения. Проверьте и укажите фасовку вручную:{' '}
+          {migrationConflicts
+            .map(
+              (item) =>
+                `${item.ingredientName}: ${item.oldPackQty} ${UNIT_LABELS[item.unit] ?? item.unit} за ${money(item.oldPackPriceRub)} (${item.reason})`,
+            )
+            .join('; ')}
+        </Banner>
+      )}
       {!items && !error && <Skeleton />}
       {items && visible.length === 0 && (
         <EmptyState
@@ -117,11 +155,21 @@ export default function ItemsTab({ onImport, reloadKey = 0 }: { onImport?: () =>
         {visible.map((item) => (
           <Card key={item.id} className="p-3">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-semibold">{item.name}</span>
+              <Input
+                className="w-56 font-semibold"
+                value={draft[item.id]?.name ?? item.name}
+                aria-label={`Название ингредиента: ${item.name}`}
+                onChange={(e) => setDraft((d) => ({ ...d, [item.id]: { ...d[item.id], name: e.target.value } }))}
+              />
               <Badge tone="neutral">{UNIT_LABELS[item.unit] ?? item.unit}</Badge>
               <span className="text-[12px] text-ink-secondary">
-                {money(item.costRub)}/{UNIT_LABELS[item.unit] ?? item.unit} · {COST_SOURCE_LABELS[item.costSource]}
+                {unitPrice(item.costRub)}/{UNIT_LABELS[item.unit] ?? item.unit} · {COST_SOURCE_LABELS[item.costSource]}
               </span>
+              {item.packageQty != null && item.packagePriceRub != null && (
+                <span className="text-[11px] text-ink-tertiary">
+                  фасовка {item.packageQty} {UNIT_LABELS[item.unit]} · {money(item.packagePriceRub)}
+                </span>
+              )}
               {item.problems.map((p) => (
                 <Badge key={p} tone="warn">
                   {p}
@@ -134,16 +182,89 @@ export default function ItemsTab({ onImport, reloadKey = 0 }: { onImport?: () =>
             </div>
             <div className="mt-2 flex flex-wrap items-end gap-2">
               <label className="text-[11px] text-ink-tertiary">
-                Ручная цена, ₽/{UNIT_LABELS[item.unit] ?? item.unit}
+                Цена берётся
+                <Select
+                  className="mt-1 w-44"
+                  value={draft[item.id]?.priceMode ?? item.priceMode}
+                  aria-label={`Источник цены: ${item.name}`}
+                  onChange={(e) =>
+                    setDraft((d) => ({
+                      ...d,
+                      [item.id]: { ...d[item.id], priceMode: e.target.value as 'auto' | 'manual' },
+                    }))
+                  }
+                >
+                  <option value="auto">автоматически из закупок</option>
+                  <option value="manual">вручную</option>
+                </Select>
+              </label>
+              <label className="text-[11px] text-ink-tertiary">
+                Количество в упаковке, {UNIT_LABELS[item.unit] ?? item.unit}
                 <Input
-                  className="mt-1 w-28"
+                  className="mt-1 w-32"
+                  type="number"
+                  step="any"
+                  min="0"
+                  placeholder="например 750"
+                  aria-label={`Размер упаковки: ${item.name}`}
+                  value={draft[item.id]?.packageQty ?? String(item.packageQty ?? '')}
+                  onChange={(e) =>
+                    setDraft((d) => ({
+                      ...d,
+                      [item.id]: {
+                        ...d[item.id],
+                        packageQty: e.target.value,
+                        price: '',
+                        priceMode: d[item.id]?.priceMode ?? 'manual',
+                      },
+                    }))
+                  }
+                />
+              </label>
+              <label className="text-[11px] text-ink-tertiary">
+                Цена упаковки, ₽
+                <Input
+                  className="mt-1 w-32"
                   type="number"
                   step="0.01"
                   min="0"
-                  placeholder={item.costRub != null ? String(item.costRub) : '—'}
-                  aria-label={`Ручная цена: ${item.name}`}
+                  placeholder="например 520"
+                  aria-label={`Цена упаковки: ${item.name}`}
+                  value={draft[item.id]?.packagePrice ?? String(item.packagePriceRub ?? '')}
+                  onChange={(e) =>
+                    setDraft((d) => ({
+                      ...d,
+                      [item.id]: {
+                        ...d[item.id],
+                        packagePrice: e.target.value,
+                        price: '',
+                        priceMode: d[item.id]?.priceMode ?? 'manual',
+                      },
+                    }))
+                  }
+                />
+              </label>
+              <label className="text-[11px] text-ink-tertiary">
+                Или цена за {UNIT_LABELS[item.unit] ?? item.unit}, ₽
+                <Input
+                  className="mt-1 w-32"
+                  type="number"
+                  step="0.0001"
+                  min="0"
+                  placeholder={item.manualCostRub != null && item.packagePriceRub == null ? String(item.manualCostRub) : '—'}
+                  aria-label={`Ручная цена за единицу: ${item.name}`}
                   value={draft[item.id]?.price ?? ''}
-                  onChange={(e) => setDraft((d) => ({ ...d, [item.id]: { price: e.target.value, weight: d[item.id]?.weight ?? '' } }))}
+                  onChange={(e) =>
+                    setDraft((d) => ({
+                      ...d,
+                      [item.id]: {
+                        ...d[item.id],
+                        price: e.target.value,
+                        ...(e.target.value !== '' ? { packagePrice: '' } : {}),
+                        priceMode: d[item.id]?.priceMode ?? 'manual',
+                      },
+                    }))
+                  }
                 />
               </label>
               {item.unit === 'pcs' && (
@@ -157,11 +278,13 @@ export default function ItemsTab({ onImport, reloadKey = 0 }: { onImport?: () =>
                     placeholder={item.weightPerPcKg != null ? String(item.weightPerPcKg) : '—'}
                     aria-label={`Вес штуки: ${item.name}`}
                     value={draft[item.id]?.weight ?? ''}
-                    onChange={(e) => setDraft((d) => ({ ...d, [item.id]: { price: d[item.id]?.price ?? '', weight: e.target.value } }))}
+                    onChange={(e) =>
+                      setDraft((d) => ({ ...d, [item.id]: { ...d[item.id], weight: e.target.value } }))
+                    }
                   />
                 </label>
               )}
-              <Button onClick={() => void saveItem(item)} disabled={!draft[item.id] || (!draft[item.id].price && !draft[item.id].weight)}>
+              <Button onClick={() => void saveItem(item)} disabled={!draft[item.id] || Object.keys(draft[item.id]).length === 0}>
                 Сохранить
               </Button>
             </div>
@@ -245,7 +368,7 @@ export default function ItemsTab({ onImport, reloadKey = 0 }: { onImport?: () =>
               onClick={async () => {
                 try {
                   const r = await costApi.createItem({ name: created.name.trim(), unit: created.unit })
-                  if (created.price !== '') await costApi.updateItem(r.id, { manualCostRub: Number(created.price) })
+                  if (created.price !== '') await costApi.updateItem(r.id, { manualCostRub: Number(created.price), priceMode: 'manual' })
                   toast.push(`«${created.name.trim()}» добавлена`, 'ok')
                   setCreated({ name: '', unit: 'g', price: '' })
                   setCreateOpen(false)
@@ -277,7 +400,7 @@ export default function ItemsTab({ onImport, reloadKey = 0 }: { onImport?: () =>
           <Input className="mt-1" type="number" step="0.01" min="0" value={created.price} onChange={(e) => setCreated((c) => ({ ...c, price: e.target.value }))} placeholder="0,09" />
         </label>
         <p className="mt-3 text-[11px] text-ink-tertiary">
-          Основной путь — цены из накладных в «Закупках». Ручная цена нужна, пока поставок не было.
+          После создания укажите фасовку и цену упаковки в строке ингредиента. Единицу позиции с историей изменить нельзя.
         </p>
       </Drawer>
 

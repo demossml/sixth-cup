@@ -22,7 +22,7 @@ type Invoice = {
   id: number; supplierId: number; supplierName: string; number: string | null
   status: string; totalKop: number; paidKop: number; dueAt: number | null; postedAt: number | null
 }
-type StockItem = { id: number; name: string; unit: string }
+type StockItem = { id: number; name: string; unit: string; packageQty: number | null }
 type Debt = { supplierId: number; supplierName: string; debtKop: number; openInvoices: number }
 
 const money = (kop: number) =>
@@ -81,9 +81,12 @@ export default function Purchases() {
     const def = defaultStoreUuid(stores.data?.stores ?? [])
     if (def) setStoreUuid(def)
   }, [stores.data, storeUuid])
-  // D-14: количество строки накладной — в единице позиции, показываем её в подписи.
-  const lineUnit = (stockItemId: string) =>
-    (items.data?.items ?? []).find((it) => String(it.id) === stockItemId)?.unit ?? ''
+  const selectedItem = (stockItemId: string) =>
+    (items.data?.items ?? []).find((it) => String(it.id) === stockItemId)
+  const packQty = (stockItemId: string) => {
+    const item = selectedItem(stockItemId)
+    return item?.packageQty && item.packageQty > 0 ? item.packageQty : 1
+  }
 
   const reloadAll = () => { invoices.reload(); suppliers.reload(); debt.reload() }
 
@@ -91,8 +94,8 @@ export default function Purchases() {
     const parsed = lines
       .map((l) => ({
         stockItemId: Number(l.stockItemId),
-        qty: Number(l.qty) || 0,
-        unitCostKop: Math.round((Number(l.costRub) || 0) * 100),
+        qty: (Number(l.qty) || 0) * packQty(l.stockItemId),
+        unitCostKop: Math.round((Number(l.costRub) || 0) * 100) / packQty(l.stockItemId),
         expiresAt: l.expiresDate ? new Date(l.expiresDate + 'T12:00:00').getTime() : null,
       }))
       .filter((l) => l.stockItemId > 0 && l.qty > 0)
@@ -330,14 +333,16 @@ export default function Purchases() {
                   >
                     <option value="">—</option>
                     {(items.data?.items ?? []).map((it) => (
-                      <option key={it.id} value={it.id}>{it.name} ({it.unit})</option>
+                      <option key={it.id} value={it.id}>
+                        {it.name} ({it.packageQty && it.packageQty > 1 ? `${it.packageQty} ${it.unit} / упаковка` : it.unit})
+                      </option>
                     ))}
                   </Select>
                 </Field>
                 <Field
                   label={
                     idx === 0
-                      ? `Кол-во${lineUnit(line.stockItemId) ? `, ${lineUnit(line.stockItemId)}` : ''}`
+                      ? `Кол-во упаковок${selectedItem(line.stockItemId) ? ` (${packQty(line.stockItemId)} ${selectedItem(line.stockItemId)?.unit})` : ''}`
                       : '\u00a0'
                   }
                 >
@@ -346,7 +351,7 @@ export default function Purchases() {
                     onChange={(e) => setLines((all) => all.map((x) => x.key === line.key ? { ...x, qty: e.target.value } : x))}
                   />
                 </Field>
-                <Field label={idx === 0 ? 'Цена, ₽' : '\u00a0'}>
+                <Field label={idx === 0 ? 'Цена упаковки, ₽' : '\u00a0'}>
                   <Input
                     type="number" min={0} step="any" value={line.costRub}
                     onChange={(e) => setLines((all) => all.map((x) => x.key === line.key ? { ...x, costRub: e.target.value } : x))}

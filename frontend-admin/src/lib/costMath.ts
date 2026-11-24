@@ -59,6 +59,11 @@ export function money(v: number | null | undefined): string {
   return `${v.toFixed(2).replace('.', ',')} ₽`
 }
 
+export function unitPrice(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return '—'
+  return `${new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(v)} ₽`
+}
+
 export function pct(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return '—'
   return `${v.toFixed(1).replace('.', ',')} %`

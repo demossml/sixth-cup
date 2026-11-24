@@ -349,7 +349,9 @@ function TechCardEditor({
       } else if (l.stockItemId) {
         cost = lineCostRub(n.netto > 0 ? l.qtyBrutto : l.qtyBrutto, itemById.get(l.stockItemId)?.costRub ?? null)
       }
-      if (cost == null) missing = true
+      if (cost == null) {
+        if (l.lineRole !== 'optional') missing = true
+      }
       else if (l.lineRole !== 'optional') total += cost
       return { ...l, numbers: n, cost }
     })
