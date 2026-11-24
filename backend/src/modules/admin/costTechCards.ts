@@ -536,11 +536,36 @@ const techCardWorkbookLineZ = z.object({
   stockItemId: z.number().int().positive().nullable(),
   childCardId: z.number().int().positive().nullable(),
   name: z.string().trim().min(1).max(120),
-  unit: z.enum(['g', 'ml', 'pcs']),
+  unit: z.enum(['kg', 'l', 'g', 'ml', 'pcs']),
   qty: z.number().positive().max(10_000_000),
   lineRole: z.enum(['base', 'optional']),
 }).refine((line) => !(line.stockItemId && line.childCardId), {
   message: 'Строка не может ссылаться одновременно на ингредиент и заготовку',
+})
+
+const techCardWorkbookExistingLineZ = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('keep'),
+    lineId: z.number().int().positive(),
+  }),
+  z.object({
+    action: z.literal('delete'),
+    lineId: z.number().int().positive(),
+  }),
+  z.object({
+    action: z.literal('edit'),
+    lineId: z.number().int().positive(),
+    stockItemId: z.number().int().positive().nullable(),
+    childCardId: z.number().int().positive().nullable(),
+    name: z.string().trim().min(1).max(120),
+    unit: z.enum(['kg', 'l', 'g', 'ml', 'pcs']),
+    qtyBrutto: z.number().positive().max(10_000_000),
+    lineRole: z.enum(['base', 'optional']),
+  }),
+]).superRefine((line, ctx) => {
+  if (line.action === 'edit' && Boolean(line.stockItemId) === Boolean(line.childCardId)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Для изменяемой строки выберите ингредиент или заготовку' })
+  }
 })
 
 const techCardWorkbookRecipeZ = z.object({
@@ -548,12 +573,14 @@ const techCardWorkbookRecipeZ = z.object({
   sourceSheet: z.string().trim().min(1).max(100),
   sourceRow: z.number().int().positive(),
   targetCardId: z.number().int().positive().nullable(),
+  expectedVersionId: z.number().int().positive().nullable().optional(),
   newCardKind: z.enum(['dish', 'semi', 'modifier']).nullable(),
   productId: z.number().int().positive().nullable(),
   outputQty: z.number().positive().nullable(),
   outputUnit: z.enum(['kg', 'l', 'pcs', 'g', 'ml']).nullable(),
   methodText: z.string().max(8000).nullable(),
   lines: z.array(techCardWorkbookLineZ).min(1).max(200),
+  existingLines: z.array(techCardWorkbookExistingLineZ).max(200).default([]),
 }).superRefine((recipe, ctx) => {
   if (recipe.targetCardId == null && recipe.newCardKind == null) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['newCardKind'], message: 'Выберите существующую карту или тип новой' })
@@ -566,6 +593,16 @@ const techCardWorkbookRecipeZ = z.object({
   }
   if (recipe.targetCardId != null && recipe.newCardKind != null) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['newCardKind'], message: 'Для существующей карты тип задавать не нужно' })
+  }
+  if (recipe.targetCardId == null && recipe.expectedVersionId != null) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['expectedVersionId'], message: 'Для новой карты не может быть версии существующей карты' })
+  }
+  if (recipe.targetCardId == null && recipe.existingLines.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['existingLines'], message: 'Существующие строки можно менять только у выбранной карты' })
+  }
+  const existingLineIds = recipe.existingLines.map((line) => line.lineId)
+  if (new Set(existingLineIds).size !== existingLineIds.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['existingLines'], message: 'Строка карты указана несколько раз' })
   }
 })
 
@@ -1043,15 +1080,20 @@ export const adminCostTechCards = new Hono()
           const item = line.stockItemId ? itemById(line.stockItemId) : undefined
           const child = line.childCardId ? cardRow(line.childCardId) : undefined
           return {
+            lineId: line.id,
             stockItemId: line.stockItemId,
             childCardId: line.childCardId,
             name: item?.name ?? child?.name ?? 'Неизвестный ингредиент',
             unit: item?.unit ?? child?.outputUnit ?? null,
             qtyBrutto: line.qtyBrutto,
+            lossColdPct: line.lossColdPct,
+            lossHotPct: line.lossHotPct,
+            qtyNetto: line.qtyNetto,
+            qtyYield: line.qtyYield,
             lineRole: line.lineRole,
           }
         }) : []
-        return { ...match, currentLines }
+        return { ...match, currentVersionId: version?.id ?? null, currentLines }
       }),
       productMatches: findNameMatches(recipe.name, products),
       lines: recipe.lines.map((line) => ({
@@ -1093,6 +1135,7 @@ export const adminCostTechCards = new Hono()
           let cardId: number
           let changeKind: 'created' | 'updated'
           let kind: 'dish' | 'semi' | 'modifier'
+          let preservedLines: z.infer<typeof lineZ>[] = []
 
           if (recipe.targetCardId != null) {
             const existing = cardRow(recipe.targetCardId)
@@ -1100,6 +1143,78 @@ export const adminCostTechCards = new Hono()
             if (existing.status === 'archived') throw bad(`Техкарта «${existing.name}» архивирована`, 409)
             cardId = existing.id
             kind = existing.kind
+            const currentVersion = activeVersion(cardId)
+            if (recipe.expectedVersionId !== undefined && (currentVersion?.id ?? null) !== recipe.expectedVersionId) {
+              throw bad(`Техкарта «${existing.name}» изменилась после предпросмотра. Повторите импорт`, 409)
+            }
+            const currentLines = currentVersion ? linesOf(currentVersion.id) : []
+            const currentLinesById = new Map(currentLines.map((line) => [line.id, line]))
+            const consumedLineIds = new Set<number>()
+            for (const importedLine of recipe.lines) {
+              if (importedLine.stockItemId == null && importedLine.childCardId == null) continue
+              const matched = currentLines.find((line) =>
+                !consumedLineIds.has(line.id) &&
+                line.stockItemId === importedLine.stockItemId &&
+                line.childCardId === importedLine.childCardId,
+              )
+              if (matched) consumedLineIds.add(matched.id)
+            }
+            const unmatchedCurrentLines = currentLines.filter((line) => !consumedLineIds.has(line.id))
+            const unmatchedLineIds = new Set(unmatchedCurrentLines.map((line) => line.id))
+            const decisionsByLineId = new Map(recipe.existingLines.map((decision) => [decision.lineId, decision]))
+            for (const decision of recipe.existingLines) {
+              if (!currentLinesById.has(decision.lineId)) {
+                throw bad(`Строка техкарты #${decision.lineId} изменилась после предпросмотра. Повторите импорт`, 409)
+              }
+              if (!unmatchedLineIds.has(decision.lineId)) {
+                throw bad(`Строка техкарты #${decision.lineId} уже сопоставлена с Excel`, 409)
+              }
+            }
+            preservedLines = unmatchedCurrentLines.flatMap((previous) => {
+              const decision = decisionsByLineId.get(previous.id)
+              if (!decision || decision.action === 'keep') {
+                return [{
+                  stockItemId: previous.stockItemId,
+                  childCardId: previous.childCardId,
+                  qtyBrutto: previous.qtyBrutto,
+                  lossColdPct: previous.lossColdPct,
+                  lossHotPct: previous.lossHotPct,
+                  qtyNetto: previous.qtyNetto,
+                  qtyYield: previous.qtyYield,
+                  lineRole: previous.lineRole,
+                }]
+              }
+              if (decision.action === 'delete') return []
+
+              if (decision.stockItemId != null) {
+                const stockItem = db
+                  .prepare(`SELECT unit FROM stock_items WHERE id=? AND active=1`)
+                  .get(decision.stockItemId) as { unit: Unit } | undefined
+                if (!stockItem) throw bad(`Ингредиент #${decision.stockItemId} не найден или выключен`, 409)
+                if (stockItem.unit !== decision.unit) {
+                  throw bad(`Единица ингредиента «${decision.name}» не совпадает с «${decision.unit}»`, 409)
+                }
+              } else {
+                const child = decision.childCardId == null ? undefined : cardRow(decision.childCardId)
+                if (!child || child.kind !== 'semi') throw bad(`Заготовка #${decision.childCardId} не найдена`, 409)
+                if (child.outputUnit !== decision.unit) {
+                  throw bad(`Единица заготовки «${child.name}» не совпадает с «${decision.unit}»`, 409)
+                }
+              }
+
+              const sameIngredient =
+                previous.stockItemId === decision.stockItemId && previous.childCardId === decision.childCardId
+              return [{
+                stockItemId: decision.stockItemId,
+                childCardId: decision.childCardId,
+                qtyBrutto: decision.qtyBrutto,
+                lossColdPct: sameIngredient ? previous.lossColdPct : 0,
+                lossHotPct: sameIngredient ? previous.lossHotPct : 0,
+                qtyNetto: null,
+                qtyYield: null,
+                lineRole: decision.lineRole,
+              }]
+            })
             const productId = recipe.productId ?? existing.productId
             requireProductFor(kind, productId)
             if (productId !== existing.productId) {
@@ -1176,7 +1291,9 @@ export const adminCostTechCards = new Hono()
               lineRole: line.lineRole,
             }
           })
-          replaceLines(versionId, lines)
+          replaceLines(versionId, [...lines, ...preservedLines])
+          const cycle = findCycle(cardGraph(), cardId)
+          if (cycle) throw bad(`Заготовка входит сама в себя: ${cycle.join(' → ')}`, 400)
           createMarker.run(cardId, sourceName, recipe.sourceSheet, recipe.sourceRow, changeKind, versionTime)
           const card = cardRow(cardId)
           if (card) affected.push({ id: cardId, name: card.name, changeKind })

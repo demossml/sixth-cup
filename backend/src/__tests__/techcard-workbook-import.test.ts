@@ -53,10 +53,11 @@ describe('techcard workbook preview and apply', () => {
       name: 'Капучино QA 300 мл',
       kind: 'dish',
       productId,
-      lines: [{ stockItemId: milkId, qtyBrutto: 200 }],
+      lines: [{ stockItemId: milkId, qtyBrutto: 200, lossColdPct: 5, lossHotPct: 2 }],
     })
     const cardId = card.json.card.id as number
     const originalVersionId = card.json.card.version.id as number
+    const existingLineId = card.json.card.lines[0].id as number
 
     const form = new FormData()
     form.set('file', workbookFile())
@@ -69,7 +70,12 @@ describe('techcard workbook preview and apply', () => {
       recipes: {
         name: string
         sourceSheet: string
-        cardMatches: { id: number; exact: boolean }[]
+        cardMatches: {
+          id: number
+          exact: boolean
+          currentVersionId: number | null
+          currentLines: { lineId: number; lossColdPct: number; lossHotPct: number }[]
+        }[]
         lines: { ingredientName: string; qty: number; unit: string; matches: { id: number; exact: boolean }[] }[]
       }[]
       stockItems: { id: number }[]
@@ -82,6 +88,10 @@ describe('techcard workbook preview and apply', () => {
       cardMatches: [{ id: cardId, exact: true }],
       lines: [{ ingredientName: 'Сироп Ваниль QA', qty: 10, unit: 'ml', matches: [{ id: stockItemId, exact: true }] }],
     })
+    expect(preview.recipes[0]!.cardMatches[0]).toMatchObject({
+      currentVersionId: originalVersionId,
+      currentLines: [{ lineId: existingLineId, lossColdPct: 5, lossHotPct: 2 }],
+    })
     expect(preview.stockItems).toHaveLength(2)
     expect(db.prepare(`SELECT COUNT(*) AS count FROM tech_card_versions WHERE card_id=?`).get(cardId)).toMatchObject({ count: 1 })
 
@@ -92,6 +102,7 @@ describe('techcard workbook preview and apply', () => {
         sourceSheet: 'Классика',
         sourceRow: 3,
         targetCardId: cardId,
+        expectedVersionId: originalVersionId,
         newCardKind: null,
         productId,
         outputQty: null,
@@ -114,7 +125,10 @@ describe('techcard workbook preview and apply', () => {
     expect(history).toHaveLength(2)
     expect(history[0]!.id).toBe(originalVersionId)
     const imported = await admin('GET', `/cost/tech-cards/${cardId}`)
-    expect(imported.json.card.lines).toMatchObject([{ stockItemId, qtyBrutto: 10 }])
+    expect(imported.json.card.lines).toMatchObject([
+      { stockItemId, qtyBrutto: 10 },
+      { stockItemId: milkId, qtyBrutto: 200, lossColdPct: 5, lossHotPct: 2 },
+    ])
     expect(imported.json.card.importReviewCount).toBe(1)
 
     const ack = await admin('POST', `/cost/tech-cards/${cardId}/import-reviewed`, {})
@@ -133,6 +147,7 @@ describe('techcard workbook preview and apply', () => {
       lines: [{ stockItemId: itemId, qtyBrutto: 5 }],
     })
     const cardId = card.json.card.id as number
+    const expectedVersionId = card.json.card.version.id as number
 
     const result = await admin('POST', '/cost/tech-cards/import/confirm', {
       sourceName: 'techcards.xlsx',
@@ -141,11 +156,13 @@ describe('techcard workbook preview and apply', () => {
         sourceSheet: 'Лист',
         sourceRow: 2,
         targetCardId: cardId,
+        expectedVersionId,
         newCardKind: null,
         productId: null,
         outputQty: null,
         outputUnit: null,
         methodText: null,
+        existingLines: [{ action: 'keep', lineId: 999999 }],
         lines: [{
           stockItemId: itemId,
           childCardId: null,
@@ -157,10 +174,107 @@ describe('techcard workbook preview and apply', () => {
       }],
     })
     expect(result.status).toBe(409)
+    const staleVersion = await admin('POST', '/cost/tech-cards/import/confirm', {
+      sourceName: 'techcards.xlsx',
+      recipes: [{
+        name: 'Карта Конфликт QA',
+        sourceSheet: 'Лист',
+        sourceRow: 2,
+        targetCardId: cardId,
+        expectedVersionId: expectedVersionId + 1,
+        newCardKind: null,
+        productId: null,
+        outputQty: null,
+        outputUnit: null,
+        methodText: null,
+        lines: [{
+          stockItemId: itemId,
+          childCardId: null,
+          name: 'Сироп Конфликт QA',
+          unit: 'ml',
+          qty: 20,
+          lineRole: 'base',
+        }],
+      }],
+    })
+    expect(staleVersion.status).toBe(409)
     const unchanged = await admin('GET', `/cost/tech-cards/${cardId}`)
     expect(unchanged.json.card.lines).toMatchObject([{ stockItemId: itemId, qtyBrutto: 5 }])
     expect(unchanged.json.card.versions).toHaveLength(1)
     expect(unchanged.json.card.importReviewCount).toBe(0)
+  })
+
+  it('lets the reviewer keep, edit, and explicitly delete unmatched current lines', async () => {
+    const cup = await admin('POST', '/stock/items', { name: 'Стаканчик QA', kind: 'raw', unit: 'pcs' })
+    const cupId = Number(cup.json.item?.id ?? cup.json.id)
+    const straw = await admin('POST', '/stock/items', { name: 'Трубочка QA', kind: 'raw', unit: 'pcs' })
+    const strawId = Number(straw.json.item?.id ?? straw.json.id)
+    const lid = await admin('POST', '/stock/items', { name: 'Крышка QA', kind: 'raw', unit: 'pcs' })
+    const lidId = Number(lid.json.item?.id ?? lid.json.id)
+    const replacement = await admin('POST', '/stock/items', { name: 'Трубочка широкая QA', kind: 'raw', unit: 'pcs' })
+    const replacementId = Number(replacement.json.item?.id ?? replacement.json.id)
+    const syrup = await admin('POST', '/stock/items', { name: 'Сироп для импорта QA', kind: 'raw', unit: 'ml' })
+    const syrupId = Number(syrup.json.item?.id ?? syrup.json.id)
+    const productId = makeProduct('Капучино для изменения QA')
+    const card = await admin('POST', '/cost/tech-cards', {
+      name: 'Капучино QA 300 мл',
+      kind: 'dish',
+      productId,
+      lines: [
+        { stockItemId: cupId, qtyBrutto: 1 },
+        { stockItemId: strawId, qtyBrutto: 1 },
+        { stockItemId: lidId, qtyBrutto: 1 },
+      ],
+    })
+    const cardId = card.json.card.id as number
+    const currentLines = card.json.card.lines as { id: number; stockItemId: number }[]
+
+    const result = await admin('POST', '/cost/tech-cards/import/confirm', {
+      sourceName: 'techcards.xlsx',
+      recipes: [{
+        name: 'Капучино QA 300 мл',
+        sourceSheet: 'Классика',
+        sourceRow: 3,
+        targetCardId: cardId,
+        expectedVersionId: card.json.card.version.id as number,
+        newCardKind: null,
+        productId,
+        outputQty: null,
+        outputUnit: null,
+        methodText: null,
+        existingLines: [
+          { action: 'keep', lineId: currentLines.find((line) => line.stockItemId === cupId)!.id },
+          {
+            action: 'edit',
+            lineId: currentLines.find((line) => line.stockItemId === strawId)!.id,
+            stockItemId: replacementId,
+            childCardId: null,
+            name: 'Трубочка широкая QA',
+            unit: 'pcs',
+            qtyBrutto: 2,
+            lineRole: 'optional',
+          },
+          { action: 'delete', lineId: currentLines.find((line) => line.stockItemId === lidId)!.id },
+        ],
+        lines: [{
+          stockItemId: syrupId,
+          childCardId: null,
+          name: 'Сироп для импорта QA',
+          unit: 'ml',
+          qty: 10,
+          lineRole: 'base',
+        }],
+      }],
+    })
+
+    expect(result.status).toBe(200)
+    const saved = await admin('GET', `/cost/tech-cards/${cardId}`)
+    expect(saved.json.card.lines).toMatchObject([
+      { stockItemId: syrupId, qtyBrutto: 10, lineRole: 'base' },
+      { stockItemId: cupId, qtyBrutto: 1, lineRole: 'base' },
+      { stockItemId: replacementId, qtyBrutto: 2, lineRole: 'optional' },
+    ])
+    expect(saved.json.card.lines).toHaveLength(3)
   })
 
   it('creates a new draft card and reuses a newly created ingredient within the batch', async () => {
@@ -171,6 +285,7 @@ describe('techcard workbook preview and apply', () => {
         sourceSheet: 'Авторское',
         sourceRow: 4,
         targetCardId: null,
+        expectedVersionId: null,
         newCardKind: 'semi',
         productId: null,
         outputQty: 100,

@@ -9,6 +9,22 @@ type Unit = 'kg' | 'l' | 'g' | 'ml' | 'pcs'
 type ImportUnit = 'g' | 'ml' | 'pcs'
 type Match = { id: number; name: string; exact: boolean; score: number }
 type CurrentLine = {
+  lineId: number
+  stockItemId: number | null
+  childCardId: number | null
+  name: string
+  unit: Unit | null
+  qtyBrutto: number
+  lossColdPct: number
+  lossHotPct: number
+  qtyNetto: number | null
+  qtyYield: number | null
+  lineRole: 'base' | 'optional'
+}
+type ExistingLineDecision = {
+  action: 'keep' | 'delete' | 'edit'
+  lineId: number
+  source: CurrentLine
   stockItemId: number | null
   childCardId: number | null
   name: string
@@ -19,6 +35,7 @@ type CurrentLine = {
 type CardMatch = Match & {
   kind: 'dish' | 'semi' | 'modifier'
   productId: number | null
+  currentVersionId: number | null
   currentLines: CurrentLine[]
 }
 type IngredientMatch = Match & { unit: Unit; packageQty: number | null; packagePriceRub: number | null }
@@ -49,7 +66,7 @@ type PreviewRecipe = {
   productMatches: Match[]
 }
 type CatalogItem = { id: number; name: string; unit: Unit }
-type CatalogCard = { id: number; name: string; kind: 'dish' | 'semi' | 'modifier'; productId: number | null; outputUnit?: string }
+type CatalogCard = { id: number; name: string; kind: 'dish' | 'semi' | 'modifier'; productId: number | null; outputUnit?: Unit }
 type Product = { id: number; name: string }
 type WorkbookPreview = {
   sourceName: string
@@ -67,6 +84,7 @@ type RecipeDraft = Omit<PreviewRecipe, 'lines'> & {
   outputQty: number | null
   outputUnit: Unit | ''
   lines: LineDraft[]
+  existingLineDecisions: Record<number, ExistingLineDecision[]>
 }
 type SavedCards = { applied: number; cards: { id: number; name: string; changeKind: 'created' | 'updated' }[] }
 
@@ -88,7 +106,7 @@ function defaultRecipeAction(recipe: PreviewRecipe): string {
 
 function compositionDiff(recipe: RecipeDraft, current: CurrentLine[], preview: WorkbookPreview) {
   const unused = new Set(current.map((_, index) => index))
-  const changes: { kind: 'added' | 'updated' | 'removed'; before?: CurrentLine; after?: LineDraft }[] = []
+  const changes: { kind: 'added' | 'updated' | 'removed'; before?: CurrentLine; after?: LineDraft; currentIndex?: number }[] = []
   for (const line of recipe.lines.filter((candidate) => candidate.choice !== 'skip')) {
     const stockItemId = line.choice.startsWith('stock:') ? Number(line.choice.slice(6)) : null
     const childCardId = line.choice.startsWith('semi:') ? Number(line.choice.slice(5)) : null
@@ -111,7 +129,7 @@ function compositionDiff(recipe: RecipeDraft, current: CurrentLine[], preview: W
       changes.push({ kind: 'updated', before, after: line })
     }
   }
-  for (const index of unused) changes.push({ kind: 'removed', before: current[index] })
+  for (const index of unused) changes.push({ kind: 'removed', before: current[index], currentIndex: index })
   return changes
 }
 
@@ -140,6 +158,20 @@ function buildDrafts(preview: WorkbookPreview): RecipeDraft[] {
       outputQty: recipe.kind === 'semi' ? null : 1,
       outputUnit: recipe.kind === 'semi' ? '' : 'pcs',
       lines: recipe.lines.map((line) => ({ ...line, choice: defaultLineChoice(line) })),
+      existingLineDecisions: Object.fromEntries(recipe.cardMatches.map((card) => [
+        card.id,
+        card.currentLines.map((line) => ({
+          action: 'keep' as const,
+          lineId: line.lineId,
+          source: line,
+          stockItemId: line.stockItemId,
+          childCardId: line.childCardId,
+          name: line.name,
+          unit: line.unit,
+          qtyBrutto: line.qtyBrutto,
+          lineRole: line.lineRole,
+        })),
+      ])),
     }
   })
 }
@@ -154,6 +186,7 @@ function recipeErrors(recipe: RecipeDraft, preview: WorkbookPreview): string[] {
   }
   const targetId = recipe.action.startsWith('card:') ? Number(recipe.action.slice(5)) : null
   const target = targetId == null ? null : preview.cards.find((card) => card.id === targetId)
+  const targetMatch = targetId == null ? null : recipe.cardMatches.find((card) => card.id === targetId)
   const kind = target?.kind ?? (recipe.action === 'create' ? recipe.newCardKind : null)
   if (kind !== 'semi' && !recipe.productId && !target?.productId) errors.push('Для карты блюда выберите товар каталога')
   const selectedLines = recipe.lines.filter((line) => line.choice !== 'skip')
@@ -171,6 +204,33 @@ function recipeErrors(recipe: RecipeDraft, preview: WorkbookPreview): string[] {
     if (line.choice.startsWith('semi:')) {
       const card = preview.cards.find((candidate) => candidate.id === Number(line.choice.slice(5)))
       if (!card || card.kind !== 'semi' || card.outputUnit !== line.unit) errors.push(`${label}: единица выбранной заготовки не совпадает`)
+    }
+  }
+  if (targetMatch) {
+    const changes = compositionDiff(recipe, targetMatch.currentLines, preview)
+    for (const change of changes) {
+      if (change.kind !== 'removed' || change.currentIndex == null) continue
+      const decision = recipe.existingLineDecisions[targetId!]?.[change.currentIndex]
+      if (!decision) {
+        errors.push(`Текущая строка «${change.before?.name ?? ''}»: выберите оставить, изменить или удалить`)
+        continue
+      }
+      if (decision?.action !== 'edit') continue
+      const label = `Текущая строка «${decision.source.name}»`
+      if (!decision.name.trim() || !decision.unit || !Number.isFinite(decision.qtyBrutto) || decision.qtyBrutto <= 0) {
+        errors.push(`${label}: укажите позицию и положительное количество`)
+      }
+      if ((decision.stockItemId == null) === (decision.childCardId == null)) {
+        errors.push(`${label}: выберите одну складскую позицию или заготовку`)
+      }
+      if (decision.stockItemId != null) {
+        const item = preview.stockItems.find((candidate) => candidate.id === decision.stockItemId)
+        if (!item || item.unit !== decision.unit) errors.push(`${label}: выберите действующую позицию с совпадающей единицей`)
+      }
+      if (decision.childCardId != null) {
+        const card = preview.cards.find((candidate) => candidate.id === decision.childCardId)
+        if (!card || card.kind !== 'semi' || card.outputUnit !== decision.unit) errors.push(`${label}: выберите заготовку с совпадающей единицей`)
+      }
     }
   }
   return errors
@@ -195,6 +255,27 @@ export default function TechCardWorkbookImport({
     () => preview ? recipes.flatMap((recipe) => recipeErrors(recipe, preview).map((error) => `${recipe.name}: ${error}`)) : [],
     [recipes, preview],
   )
+  const compositionSummary = useMemo(() => {
+    const summary = { added: 0, changed: 0, kept: 0, deleted: 0 }
+    if (!preview) return summary
+    for (const recipe of included) {
+      if (!recipe.action.startsWith('card:')) continue
+      const cardId = Number(recipe.action.slice(5))
+      const target = recipe.cardMatches.find((card) => card.id === cardId)
+      if (!target) continue
+      for (const change of compositionDiff(recipe, target.currentLines, preview)) {
+        if (change.kind === 'added') summary.added++
+        if (change.kind === 'updated') summary.changed++
+        if (change.kind === 'removed' && change.currentIndex != null) {
+          const decision = recipe.existingLineDecisions[cardId]?.[change.currentIndex]
+          if (decision?.action === 'keep') summary.kept++
+          if (decision?.action === 'delete') summary.deleted++
+          if (decision?.action === 'edit') summary.changed++
+        }
+      }
+    }
+    return summary
+  }, [included, preview])
 
   const parseFile = async () => {
     if (!file) return
@@ -223,6 +304,23 @@ export default function TechCardWorkbookImport({
       : { ...recipe, lines: recipe.lines.map((line, j) => j === lineIndex ? { ...line, ...patch } : line) }))
   }
 
+  const updateExistingLine = (
+    recipeIndex: number,
+    cardId: number,
+    lineIndex: number,
+    patch: Partial<ExistingLineDecision>,
+  ) => {
+    setRecipes((current) => current.map((recipe, i) => i !== recipeIndex
+      ? recipe
+      : {
+          ...recipe,
+          existingLineDecisions: {
+            ...recipe.existingLineDecisions,
+            [cardId]: recipe.existingLineDecisions[cardId]?.map((line, j) => j === lineIndex ? { ...line, ...patch } : line) ?? [],
+          },
+        }))
+  }
+
   const save = async () => {
     if (!preview || !included.length || errors.length) return
     const targetIds = included.filter((recipe) => recipe.action.startsWith('card:')).map((recipe) => Number(recipe.action.slice(5)))
@@ -237,16 +335,37 @@ export default function TechCardWorkbookImport({
         recipes: included.map((recipe) => {
           const targetCardId = recipe.action.startsWith('card:') ? Number(recipe.action.slice(5)) : null
           const target = targetCardId == null ? null : preview.cards.find((card) => card.id === targetCardId)
+          const targetMatch = targetCardId == null ? null : recipe.cardMatches.find((card) => card.id === targetCardId)
+          const existingLines = targetCardId == null || !targetMatch
+            ? []
+            : compositionDiff(recipe, targetMatch.currentLines, preview)
+              .filter((change) => change.kind === 'removed' && change.currentIndex != null)
+              .map((change) => recipe.existingLineDecisions[targetCardId]?.[change.currentIndex!])
+              .filter((decision): decision is ExistingLineDecision => Boolean(decision))
+              .map((decision) => decision.action === 'edit'
+                ? {
+                    action: decision.action,
+                    lineId: decision.lineId,
+                    stockItemId: decision.stockItemId,
+                    childCardId: decision.childCardId,
+                    name: decision.name.trim(),
+                    unit: decision.unit,
+                    qtyBrutto: Number(decision.qtyBrutto),
+                    lineRole: decision.lineRole,
+                  }
+                : { action: decision.action, lineId: decision.lineId })
           return {
             name: recipe.name.trim(),
             sourceSheet: recipe.sourceSheet,
             sourceRow: recipe.sourceRow,
             targetCardId,
+            expectedVersionId: targetMatch?.currentVersionId ?? null,
             newCardKind: targetCardId == null ? recipe.newCardKind || null : null,
             productId: recipe.productId === '' ? target?.productId ?? null : Number(recipe.productId),
             outputQty: targetCardId == null ? recipe.outputQty : null,
             outputUnit: targetCardId == null ? recipe.outputUnit || null : null,
             methodText: recipe.methodText,
+            existingLines,
             lines: recipe.lines
               .filter((line) => line.choice !== 'skip')
               .map((line) => {
@@ -279,12 +398,17 @@ export default function TechCardWorkbookImport({
       onClose={onClose}
       title="Импорт техкарт из Excel"
       wide
+      centered
       layer={75}
       footer={preview ? (
         <>
-          <span className="mr-auto self-center text-xs text-ink-secondary">
-            К сохранению: {included.length} из {recipes.length}
-          </span>
+          <div className="mr-auto self-center text-xs text-ink-secondary">
+            <div>К сохранению: {included.length} из {recipes.length}</div>
+            <div>
+              Состав: добавится {compositionSummary.added}, изменится {compositionSummary.changed},
+              {' '}останется {compositionSummary.kept}, удалится {compositionSummary.deleted}
+            </div>
+          </div>
           <Button variant="ghost" disabled={busy} onClick={() => { setPreview(null); setRecipes([]) }}>Выбрать другой файл</Button>
           <Button disabled={busy || !included.length || errors.length > 0} loading={busy} onClick={() => void save()}>
             Сохранить проверенные карты
@@ -437,22 +561,140 @@ export default function TechCardWorkbookImport({
                       <div className="text-sm font-semibold">Сравнение с текущей картой «{target.name}»</div>
                       {changes.length === 0 ? (
                         <div className="text-sm text-ok">Состав совпадает с файлом — изменений строк нет.</div>
-                      ) : changes.map((change, index) => (
-                        <div
-                          key={`${change.kind}-${index}`}
-                          className={`rounded-lg px-2 py-1.5 text-sm ${
-                            change.kind === 'added' ? 'bg-green-50 text-green-900' :
-                              change.kind === 'updated' ? 'bg-amber-50 text-amber-900' :
-                                'bg-red-50 text-red-900'
-                          }`}
-                        >
-                          {change.kind === 'added' && <>Добавится: {lineLabel(change.after!, preview)} — {change.after!.qty ?? 'не указано'} {UNIT_LABELS[change.after!.unit ?? '']}</>}
-                          {change.kind === 'updated' && <>Изменится: {lineLabel(change.before!, preview)} {change.before!.qtyBrutto} → {change.after!.qty} {UNIT_LABELS[change.after!.unit ?? '']}</>}
-                          {change.kind === 'removed' && <>Будет удалено из карты: {lineLabel(change.before!, preview)} — {change.before!.qtyBrutto} {UNIT_LABELS[change.before!.unit ?? '']}</>}
-                        </div>
-                      ))}
+                      ) : changes.map((change, index) => {
+                        if (change.kind !== 'removed' || change.currentIndex == null) {
+                          return (
+                            <div
+                              key={`${change.kind}-${index}`}
+                              className={`rounded-lg px-2 py-1.5 text-sm ${change.kind === 'added' ? 'bg-green-50 text-green-900' : 'bg-amber-50 text-amber-900'}`}
+                            >
+                              {change.kind === 'added' && <>Добавится: {lineLabel(change.after!, preview)} — {change.after!.qty ?? 'не указано'} {UNIT_LABELS[change.after!.unit ?? '']}</>}
+                              {change.kind === 'updated' && <>Изменится: {lineLabel(change.before!, preview)} {change.before!.qtyBrutto} → {change.after!.qty} {UNIT_LABELS[change.after!.unit ?? '']}</>}
+                            </div>
+                          )
+                        }
+
+                        const decision = recipe.existingLineDecisions[targetId]?.[change.currentIndex]
+                        if (!decision) return null
+                        const tone = decision.action === 'keep'
+                          ? 'border-green-200 bg-green-50/60'
+                          : decision.action === 'delete'
+                            ? 'border-red-300 bg-red-50/60'
+                            : 'border-amber-300 bg-amber-50/60'
+                        const selectedChoice = decision.stockItemId != null
+                          ? stockChoice(decision.stockItemId)
+                          : decision.childCardId != null
+                            ? semiChoice(decision.childCardId)
+                            : ''
+                        const selectedItemExists = decision.stockItemId != null && preview.stockItems.some((item) => item.id === decision.stockItemId)
+                        const selectedCardExists = decision.childCardId != null && preview.cards.some((card) => card.id === decision.childCardId && card.kind === 'semi')
+
+                        return (
+                          <div key={`missing-${decision.lineId}`} className={`space-y-2 rounded-lg border p-3 ${tone}`}>
+                            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_220px] sm:items-center">
+                              <div className="min-w-0 text-sm">
+                                <div className="font-medium">В Excel нет: {decision.source.name}</div>
+                                <div className="text-xs text-ink-secondary">
+                                  Текущее значение: {decision.source.qtyBrutto} {UNIT_LABELS[decision.source.unit ?? '']}; роль: {decision.source.lineRole === 'optional' ? 'опциональная' : 'обязательная'}
+                                </div>
+                              </div>
+                              <Field label="Действие">
+                                <Select
+                                  value={decision.action}
+                                  onChange={(event) => updateExistingLine(recipeIndex, targetId, change.currentIndex!, {
+                                    action: event.target.value as ExistingLineDecision['action'],
+                                  })}
+                                >
+                                  <option value="keep">Оставить как есть</option>
+                                  <option value="delete">Удалить при сохранении</option>
+                                  <option value="edit">Изменить строку</option>
+                                </Select>
+                              </Field>
+                            </div>
+                            {decision.action === 'keep' && (
+                              <div className="text-sm font-medium text-green-900">
+                                Останется в новой версии без изменений.
+                              </div>
+                            )}
+                            {decision.action === 'delete' && (
+                              <div className="text-sm font-medium text-red-900">
+                                Будет удалено только после нажатия «Сохранить проверенные карты».
+                              </div>
+                            )}
+                            {decision.action === 'edit' && (
+                              <div className="grid gap-2 sm:grid-cols-3">
+                                <Field label="Ингредиент или заготовка">
+                                  <Select
+                                    value={selectedChoice}
+                                    onChange={(event) => {
+                                      const choice = event.target.value
+                                      if (choice.startsWith('stock:')) {
+                                        const item = preview.stockItems.find((candidate) => candidate.id === Number(choice.slice(6)))
+                                        if (item) updateExistingLine(recipeIndex, targetId, change.currentIndex!, {
+                                          stockItemId: item.id,
+                                          childCardId: null,
+                                          name: item.name,
+                                          unit: item.unit,
+                                        })
+                                      } else if (choice.startsWith('semi:')) {
+                                        const card = preview.cards.find((candidate) => candidate.id === Number(choice.slice(5)))
+                                        if (card?.kind === 'semi') updateExistingLine(recipeIndex, targetId, change.currentIndex!, {
+                                          stockItemId: null,
+                                          childCardId: card.id,
+                                          name: card.name,
+                                          unit: card.outputUnit ?? null,
+                                        })
+                                      }
+                                    }}
+                                  >
+                                    {!selectedChoice && <option value="">— выберите позицию —</option>}
+                                    {decision.stockItemId != null && !selectedItemExists && (
+                                      <option value={selectedChoice} disabled>{decision.name} · недоступен</option>
+                                    )}
+                                    {decision.childCardId != null && !selectedCardExists && (
+                                      <option value={selectedChoice} disabled>{decision.name} · заготовка недоступна</option>
+                                    )}
+                                    {preview.stockItems.map((item) => (
+                                      <option key={`stock-${item.id}`} value={stockChoice(item.id)}>
+                                        {item.name} ({UNIT_LABELS[item.unit]})
+                                      </option>
+                                    ))}
+                                    {preview.cards.filter((card) => card.kind === 'semi').map((card) => (
+                                      <option key={`semi-${card.id}`} value={semiChoice(card.id)}>
+                                        Заготовка: {card.name} ({UNIT_LABELS[card.outputUnit ?? '']})
+                                      </option>
+                                    ))}
+                                  </Select>
+                                </Field>
+                                <Field label={`Количество${decision.unit ? `, ${UNIT_LABELS[decision.unit]}` : ''}`}>
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    step="any"
+                                    value={decision.qtyBrutto}
+                                    onChange={(event) => updateExistingLine(recipeIndex, targetId, change.currentIndex!, {
+                                      qtyBrutto: event.target.value ? Number(event.target.value) : 0,
+                                    })}
+                                  />
+                                </Field>
+                                <Field label="Роль строки">
+                                  <Select
+                                    value={decision.lineRole}
+                                    onChange={(event) => updateExistingLine(recipeIndex, targetId, change.currentIndex!, {
+                                      lineRole: event.target.value as CurrentLine['lineRole'],
+                                    })}
+                                  >
+                                    <option value="base">Обязательная</option>
+                                    <option value="optional">Опциональная</option>
+                                  </Select>
+                                </Field>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
                       {changes.some((change) => change.kind === 'removed') && (
-                        <Banner tone="warn">Строки, которых нет в Excel, будут удалены из новой версии. Проверьте этот список перед сохранением.</Banner>
+                        <Banner tone="warn">Строки, которых нет в Excel, по умолчанию останутся в карте. Для каждой строки выберите: оставить, удалить или изменить.</Banner>
                       )}
                     </Card>
                   )

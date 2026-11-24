@@ -275,9 +275,10 @@ export function KpiTile({ label, value, sub, tone }: { label: string; value: Rea
 
 /* ───────── Drawer (right panel on desktop, bottom sheet on phone) ───────── */
 export function Drawer({
-  open, onClose, title, children, footer, wide, layer = 50,
+  open, onClose, title, children, footer, wide, centered, layer = 50,
 }: {
   open: boolean; onClose: () => void; title: string; children: ReactNode; footer?: ReactNode; wide?: boolean
+  centered?: boolean
   /** z-index подложки: нужен выше фиксированных панелей страницы (мобильный бар, sheet), но ниже модалок. */
   layer?: number
 }) {
@@ -311,7 +312,10 @@ export function Drawer({
   if (!open) return null
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-end bg-black/40 sm:items-stretch"
+      className={cx(
+        'fixed inset-0 z-50 flex bg-black/40',
+        centered ? 'items-end justify-center sm:items-center sm:p-5' : 'items-end justify-end sm:items-stretch',
+      )}
       style={{ zIndex: layer }}
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
@@ -321,7 +325,15 @@ export function Drawer({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={cx('flex max-h-[92dvh] w-full flex-col rounded-t-3xl bg-white shadow-soft outline-none sm:max-h-none sm:rounded-none sm:rounded-l-3xl', wide ? 'sm:max-w-2xl' : 'sm:max-w-md')}
+        className={cx(
+          'flex w-full flex-col bg-white shadow-soft outline-none',
+          centered
+            ? 'max-h-[92dvh] rounded-t-3xl sm:max-h-[calc(100dvh-2.5rem)] sm:rounded-2xl'
+            : 'max-h-[92dvh] rounded-t-3xl sm:max-h-none sm:rounded-none sm:rounded-l-3xl',
+          centered
+            ? wide ? 'sm:max-w-5xl' : 'sm:max-w-2xl'
+            : wide ? 'sm:max-w-2xl' : 'sm:max-w-md',
+        )}
       >
         <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
           <h2 className="min-w-0 truncate text-lg font-bold">{title}</h2>
