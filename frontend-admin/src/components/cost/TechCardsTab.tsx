@@ -33,11 +33,19 @@ import {
   type CardKind,
   type CostItem,
   type PortionMode,
+  type RetailMode,
   type TechCard,
   type Unit,
   type WriteOffMode,
 } from '../../lib/costApi'
 import { api } from '../../api/client'
+import {
+  RETAIL_MODE_LABELS,
+  foodCostPercent,
+  marginRub,
+  priceFromMarkup,
+  resolveRetailPrice,
+} from '../../lib/retailPrice'
 import TechCardWorkbookImport from './TechCardWorkbookImport'
 import {
   COST_SOURCE_LABELS,
@@ -326,6 +334,8 @@ function TechCardEditor({
   const [newProductPrice, setNewProductPrice] = useState('')
   const [creatingProduct, setCreatingProduct] = useState(false)
   const [retail, setRetail] = useState<number | ''>('')
+  const [retailMode, setRetailMode] = useState<RetailMode>('catalog')
+  const [markupPct, setMarkupPct] = useState<number>(300)
   const [lines, setLines] = useState<DraftLine[]>([])
   const [items, setItems] = useState<CostItem[]>([])
   const [semiCards, setSemiCards] = useState<CardListItem[]>([])
@@ -359,7 +369,9 @@ function TechCardEditor({
         setPortionMode(card.portionMode ?? 'proportional')
         setWriteOffMode(card.writeOffMode)
         setProductId(card.productId ?? '')
-        setRetail(card.retailPriceRub ?? card.retailCalcRub ?? '')
+        setRetail(card.retailPriceRub ?? '')
+        setRetailMode(card.retailMode ?? 'catalog')
+        setMarkupPct(card.markupPct ?? 300)
         setLines(card.lines.map(draftFromLine))
       })
       .catch((e) => setError(e instanceof Error ? e : new Error('Карта не загрузилась')))
@@ -397,12 +409,25 @@ function TechCardEditor({
       return { ...l, numbers: n, cost }
     })
     const perUnit = outputQty > 0 ? total / outputQty : null
-    // Розница для превью: цена товара каталога важнее снимка в карте — иначе экран
-    // показывал один фудкост, а список после сохранения — другой.
-    const retailNum = catalogPrice && catalogPrice > 0 ? catalogPrice : typeof retail === 'number' ? retail : null
-    const foodCost = perUnit != null && retailNum ? Math.round((perUnit / retailNum) * 1000) / 10 : null
-    return { rows, total, perUnit, missing, foodCost, retailNum, margin: perUnit != null && retailNum != null ? retailNum - perUnit : null }
-  }, [lines, itemById, semiById, outputQty, retail, catalogPrice])
+    // Та же формула, что на сервере: режим задаёт, что важнее — меню, своя цена или наценка.
+    const retailNum = resolveRetailPrice({
+      mode: retailMode,
+      catalogPriceRub: catalogPrice,
+      manualPriceRub: typeof retail === 'number' ? retail : null,
+      markupPct,
+      costPerUnitRub: perUnit,
+    })
+    return {
+      rows,
+      total,
+      perUnit,
+      missing,
+      foodCost: foodCostPercent(perUnit, retailNum),
+      retailNum,
+      margin: marginRub(perUnit, retailNum),
+      markupPrice: priceFromMarkup(perUnit, markupPct),
+    }
+  }, [lines, itemById, semiById, outputQty, retail, retailMode, markupPct, catalogPrice])
 
   /** Блюдо и модификатор без товара каталога не сохраняем — иначе маржа врёт. */
   const canSave = kind === 'semi' || typeof productId === 'number'
@@ -463,7 +488,11 @@ function TechCardEditor({
         portionMode: kind === 'semi' ? portionMode : 'proportional',
         writeOffMode,
         productId: typeof productId === 'number' ? productId : null,
-        retailPriceRub: typeof retail === 'number' ? retail : null,
+        // Снимок цены пишем всегда: по нему считаются план продаж и постоянные расходы,
+        // но действующую цену всё равно выбирает retailMode.
+        retailPriceRub: computed.retailNum,
+        retailMode,
+        markupPct,
         lines: draftPayload(lines),
       }
       const res = isNew ? await costApi.create(body) : await costApi.update(cardId as number, body)
@@ -480,7 +509,9 @@ function TechCardEditor({
       if (isNew) onClose()
       else {
         setLines(res.card.lines.map(draftFromLine))
-        setRetail(res.card.retailPriceRub ?? res.card.retailCalcRub ?? '')
+        setRetail(res.card.retailPriceRub ?? '')
+        setRetailMode(res.card.retailMode ?? 'catalog')
+        setMarkupPct(res.card.markupPct ?? 300)
       }
     } catch (e) {
       toast.push(e instanceof Error ? e.message : 'Не удалось сохранить карту', 'bad')
@@ -848,26 +879,69 @@ function TechCardEditor({
       </Card>
 
       <Card>
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <span className="text-[11px] uppercase tracking-wide text-ink-tertiary">Цена продажи</span>
+          <div className="seg-wrap" role="group" aria-label="Как задаётся цена продажи">
+            {(Object.keys(RETAIL_MODE_LABELS) as RetailMode[]).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setRetailMode(mode)}
+                aria-pressed={retailMode === mode}
+                className={cx('seg-item', retailMode === mode && 'is-on')}
+              >
+                {RETAIL_MODE_LABELS[mode]}
+              </button>
+            ))}
+          </div>
+          <span className="text-xs text-ink-secondary">
+            в расчёте: {money(computed.retailNum)}
+          </span>
+        </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Field
-            label="Цена продажи, ₽"
-            hint={
-              catalogPrice && catalogPrice > 0
-                ? `В расчёте — цена товара из меню: ${money(catalogPrice)}`
-                : kind !== 'semi' && typeof productId === 'number'
-                  ? 'У товара не задана цена — используется значение из карты'
-                  : undefined
-            }
-          >
-            <Input
-              type="number"
-              step="0.01"
-              value={retail}
-              onChange={(e) => setRetail(e.target.value === '' ? '' : Number(e.target.value))}
-              placeholder={computed.perUnit != null ? (computed.perUnit * 4).toFixed(2) : ''}
-              aria-label="Цена продажи"
-            />
-          </Field>
+          {retailMode === 'catalog' ? (
+            <Field
+              label="Цена из меню, ₽"
+              hint={
+                catalogPrice && catalogPrice > 0
+                  ? 'Меняется в «Меню → Товары». Переключите режим, чтобы задать свою цену или наценку.'
+                  : 'У товара каталога нет цены — укажите её в «Меню → Товары» или выберите другой режим.'
+              }
+            >
+              <div className="flex h-10 items-center font-semibold">
+                {catalogPrice && catalogPrice > 0 ? money(catalogPrice) : '— не задана —'}
+              </div>
+            </Field>
+          ) : retailMode === 'manual' ? (
+            <Field
+              label="Своя цена, ₽"
+              hint="Цена карты: важнее цены меню, сразу пересчитывает фудкост и маржу."
+            >
+              <Input
+                type="number"
+                step="0.01"
+                min="0"
+                value={retail}
+                onChange={(e) => setRetail(e.target.value === '' ? '' : Number(e.target.value))}
+                placeholder={computed.perUnit != null ? (computed.perUnit * 4).toFixed(2) : ''}
+                aria-label="Цена продажи"
+              />
+            </Field>
+          ) : (
+            <Field
+              label="Наценка, %"
+              hint={`Себестоимость × (1 + %). Цена получится ${money(computed.markupPrice)}.`}
+            >
+              <Input
+                type="number"
+                step="1"
+                min="0"
+                value={Number.isFinite(markupPct) ? markupPct : ''}
+                onChange={(e) => setMarkupPct(e.target.value === '' ? 0 : Number(e.target.value))}
+                aria-label="Наценка, %"
+              />
+            </Field>
+          )}
           <div>
             <div className="text-[11px] uppercase tracking-wide text-ink-tertiary">
               {kind === 'semi' && portionMode === 'whole_batch' ? 'Себестоимость партии' : 'Себестоимость порции'}

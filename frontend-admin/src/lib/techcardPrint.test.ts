@@ -36,6 +36,7 @@ const card = (over: Partial<TechCard> = {}): TechCard => ({
   writeOffMode: 'ingredients',
   retailPriceRub: 250,
   markupPct: 300,
+  retailMode: 'catalog',
   methodText: '1. Смолоть зерно.\n2. Взбить молоко.',
   version: { id: 3, validFrom: new Date('2026-11-01T00:00:00Z').getTime(), note: 'зима' },
   versions: [],

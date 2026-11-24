@@ -4,6 +4,7 @@ import { api } from '../api/client'
 export type Unit = 'kg' | 'l' | 'pcs' | 'g' | 'ml'
 export type CardKind = 'dish' | 'semi' | 'modifier'
 export type PortionMode = 'proportional' | 'whole_batch'
+export type RetailMode = 'catalog' | 'manual' | 'markup'
 export type WriteOffMode = 'ingredients' | 'semi' | 'semi_then_ingredients' | 'none'
 
 export type Insight = { code: string; text: string; tone: 'bad' | 'warn' | 'info' }
@@ -76,6 +77,8 @@ export type TechCard = {
   writeOffMode: WriteOffMode
   retailPriceRub: number | null
   markupPct: number
+  /** Как задана цена продажи: из меню, своя цена карты или наценка от себестоимости. */
+  retailMode: RetailMode
   methodText: string | null
   version: { id: number; validFrom: number; note: string | null } | null
   versions: { id: number; validFrom: number; note: string | null; active: boolean }[]
@@ -168,6 +171,7 @@ export type CardPayload = {
   writeOffMode?: WriteOffMode
   retailPriceRub?: number | null
   markupPct?: number
+  retailMode?: RetailMode
   lines?: LinePayload[]
 }
 

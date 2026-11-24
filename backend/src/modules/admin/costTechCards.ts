@@ -41,6 +41,8 @@ import {
 } from './costCalc'
 
 type Role = 'owner' | 'manager' | 'viewer'
+/** Как задаётся цена продажи: из меню, своя цена карты или наценка от себестоимости. */
+type RetailMode = 'catalog' | 'manual' | 'markup'
 function roleOf(c: { get: (k: string) => unknown }): Role {
   return (c.get('adminRole' as never) as Role) || 'owner'
 }
@@ -300,6 +302,7 @@ type CardRow = {
   writeOffMode: 'ingredients' | 'semi' | 'semi_then_ingredients' | 'none'
   retailPriceKop: number | null
   markupPct: number
+  retailMode: RetailMode
   createdAt: number
   updatedAt: number
 }
@@ -311,7 +314,7 @@ function cardRow(id: number): CardRow | undefined {
               portion_mode AS portionMode, product_id AS productId,
               category_id AS categoryId, method_text AS methodText, status,
               write_off_mode AS writeOffMode, retail_price_kop AS retailPriceKop, markup_pct AS markupPct,
-              created_at AS createdAt, updated_at AS updatedAt
+              retail_mode AS retailMode, created_at AS createdAt, updated_at AS updatedAt
          FROM tech_cards WHERE id=?`,
     )
     .get(id) as CardRow | undefined
@@ -448,12 +451,23 @@ export function serializeCard(id: number, opts: { versionId?: number } = {}) {
   const product = productOf(card.productId)
   const catalogRetail = product && product.priceRub > 0 ? product.priceRub : null
   // Дальше `retail` везде в копейках — как retailPriceKop и marginKop.
+  // Режим задаёт владелец: «своя цена» и «наценка» важнее цены меню, иначе правка
+  // цены в редакторе не влияла бы на маржу (аудит 24.11.2026).
+  const manualRetail = card.retailPriceKop
+  const markupRetail = retailFromMarkup(costPerUnit, card.markupPct)
+  const catalogKop = catalogRetail != null ? catalogRetail * 100 : null
   const retail =
-    catalogRetail != null
-      ? catalogRetail * 100
-      : card.retailPriceKop ?? retailFromMarkup(costPerUnit, card.markupPct)
+    card.retailMode === 'manual'
+      ? manualRetail ?? catalogKop ?? markupRetail
+      : card.retailMode === 'markup'
+        ? markupRetail ?? manualRetail ?? catalogKop
+        : catalogKop ?? manualRetail ?? markupRetail
   const retailSource: 'catalog' | 'card' | 'markup' =
-    catalogRetail != null ? 'catalog' : card.retailPriceKop != null ? 'card' : 'markup'
+    card.retailMode === 'manual'
+      ? 'card'
+      : card.retailMode === 'markup'
+        ? 'markup'
+        : catalogKop != null ? 'catalog' : manualRetail != null ? 'card' : 'markup'
   const fc = foodCostPct(costPerUnit, retail)
   // Полная себестоимость = сырьё + доля постоянных расходов (если владелец включил флаг).
   const overheadPerUnit = overheadForCard(overhead, card.id, retail)
@@ -478,6 +492,7 @@ export function serializeCard(id: number, opts: { versionId?: number } = {}) {
     writeOffMode: card.writeOffMode,
     retailPriceRub: rub(card.retailPriceKop),
     markupPct: card.markupPct,
+    retailMode: card.retailMode,
     methodText: card.methodText,
     createdAt: card.createdAt,
     updatedAt: card.updatedAt,
@@ -574,6 +589,7 @@ const cardZ = z.object({
   writeOffMode: z.enum(['ingredients', 'semi', 'semi_then_ingredients', 'none']).optional(),
   retailPriceRub: z.number().nonnegative().nullable().optional(),
   markupPct: z.number().min(0).max(10000).optional(),
+  retailMode: z.enum(['catalog', 'manual', 'markup']).optional(),
   lines: z.array(lineZ).optional(),
 })
 
@@ -929,8 +945,8 @@ export const adminCostTechCards = new Hono()
       const info = db
         .prepare(
           `INSERT INTO tech_cards(name, kind, output_qty, output_unit, portion_mode, product_id, category_id, method_text,
-                                  status, write_off_mode, retail_price_kop, markup_pct, created_at, updated_at)
-           VALUES(?,?,?,?,?,?,?,?,'draft',?,?,?,?,?)`,
+                                  status, write_off_mode, retail_price_kop, markup_pct, retail_mode, created_at, updated_at)
+           VALUES(?,?,?,?,?,?,?,?,'draft',?,?,?,?,?,?)`,
         )
         .run(
           p.name,
@@ -944,6 +960,7 @@ export const adminCostTechCards = new Hono()
           p.writeOffMode ?? 'ingredients',
           kop(p.retailPriceRub),
           p.markupPct ?? 300,
+          p.retailMode ?? 'catalog',
           t,
           t,
         )
@@ -975,7 +992,7 @@ export const adminCostTechCards = new Hono()
     db.transaction(() => {
       db.prepare(
         `UPDATE tech_cards SET name=?, kind=?, output_qty=?, output_unit=?, portion_mode=?, product_id=?, category_id=?,
-                               method_text=?, write_off_mode=?, retail_price_kop=?, markup_pct=?, updated_at=?
+                               method_text=?, write_off_mode=?, retail_price_kop=?, markup_pct=?, retail_mode=?, updated_at=?
           WHERE id=?`,
       ).run(
         p.name ?? cur.name,
@@ -989,6 +1006,7 @@ export const adminCostTechCards = new Hono()
         p.writeOffMode ?? cur.writeOffMode,
         p.retailPriceRub !== undefined ? kop(p.retailPriceRub) : cur.retailPriceKop,
         p.markupPct ?? cur.markupPct,
+        p.retailMode ?? cur.retailMode,
         t,
         id,
       )

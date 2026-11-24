@@ -143,6 +143,57 @@ describe('F3: техкарты — создание, версии, публик�
     expect(card.lines[2].childCardName).toBe('Молоко взбитое QA')
   })
 
+  it('цена и наценка карты перекрывают цену меню и сразу меняют маржу', async () => {
+    const bean = await createItem('Кофе для цены QA', 'g', { manualCostKop: 200 })
+    const productId = makeProduct('Цена QA')
+    db.prepare(`UPDATE products SET price=? WHERE id=?`).run(250, productId)
+
+    // По умолчанию цена берётся из меню — прежнее поведение сохраняется.
+    const fromMenu = await admin('POST', '/cost/tech-cards', {
+      name: 'Цена из меню QA',
+      kind: 'dish',
+      productId,
+      lines: [{ stockItemId: bean, qtyBrutto: 10 }],
+    })
+    expect(fromMenu.json.card.retailSource).toBe('catalog')
+    expect(fromMenu.json.card.retailRub).toBeCloseTo(250, 2)
+    expect(fromMenu.json.card.marginRub).toBeCloseTo(230, 2)
+
+    const manual = await admin('POST', '/cost/tech-cards', {
+      name: 'Своя цена QA',
+      kind: 'dish',
+      productId,
+      retailMode: 'manual',
+      retailPriceRub: 320,
+      lines: [{ stockItemId: bean, qtyBrutto: 10 }],
+    })
+    expect(manual.json.card.retailSource).toBe('card')
+    expect(manual.json.card.retailRub).toBeCloseTo(320, 2)
+    expect(manual.json.card.marginRub).toBeCloseTo(300, 2)
+    expect(manual.json.card.foodCostPct).toBeCloseTo(6.3, 1)
+
+    // Наценка 300 % от себестоимости 20 ₽ даёт 80 ₽.
+    const markup = await admin('POST', '/cost/tech-cards', {
+      name: 'Наценка QA',
+      kind: 'dish',
+      productId,
+      retailMode: 'markup',
+      markupPct: 300,
+      lines: [{ stockItemId: bean, qtyBrutto: 10 }],
+    })
+    expect(markup.json.card.retailSource).toBe('markup')
+    expect(markup.json.card.retailRub).toBeCloseTo(80, 2)
+    expect(markup.json.card.marginRub).toBeCloseTo(60, 2)
+
+    const switched = await admin('PUT', `/cost/tech-cards/${fromMenu.json.card.id}`, {
+      retailMode: 'manual',
+      retailPriceRub: 300,
+    })
+    expect(switched.status).toBe(200)
+    expect(switched.json.card.retailRub).toBeCloseTo(300, 2)
+    expect(switched.json.card.marginRub).toBeCloseTo(280, 2)
+  })
+
   it('версия с датой в будущем не применяется, но видна в списке', async () => {
     const item = await createItem('Сахар QA', 'g', { manualCostKop: 1 })
     const created = await admin('POST', '/cost/tech-cards', {
