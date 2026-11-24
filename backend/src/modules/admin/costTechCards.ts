@@ -11,7 +11,8 @@ import { z } from 'zod'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import { stockItemLinks } from './stock'
-import { parseTechcardBuffer, parseTechcardText, type ParsedRecipe } from './techcardImport'
+import { parseTechcardBuffer, parseTechcardText, spreadsheetToText, type ParsedRecipe } from './techcardImport'
+import { parseIngredientImport, type IngredientImportCandidate } from './ingredientImport'
 import {
   allocateOverheads,
   cardInsights,
@@ -44,6 +45,67 @@ const now = () => Date.now()
 const DAY_MS = 24 * 60 * 60 * 1000
 const kop = (rub: number | null | undefined) => (rub == null ? null : Math.round(Number(rub) * 100))
 const rub = (k: number | null | undefined) => (k == null || !Number.isFinite(k) ? null : k / 100)
+
+function normalizeIngredientName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[^a-zа-я0-9]+/gi, ' ')
+    .trim()
+    .replace(/\s+/g, ' ')
+}
+
+function ingredientNameSimilarity(a: string, b: string): number {
+  const left = new Set(normalizeIngredientName(a).split(' ').filter(Boolean))
+  const right = new Set(normalizeIngredientName(b).split(' ').filter(Boolean))
+  if (!left.size || !right.size) return 0
+  const shared = [...left].filter((token) => right.has(token)).length
+  return shared / new Set([...left, ...right]).size
+}
+
+type ImportMatch = {
+  id: number
+  name: string
+  unit: Unit
+  packageQty: number | null
+  packagePriceRub: number | null
+  exact: boolean
+  score: number
+}
+
+function findIngredientMatches(name: string, stockItems: {
+  id: number
+  name: string
+  unit: Unit
+  packageQty: number | null
+  packagePriceKop: number | null
+}[]): ImportMatch[] {
+  const key = normalizeIngredientName(name)
+  return stockItems
+    .map((item) => {
+      const exact = normalizeIngredientName(item.name) === key
+      return {
+        id: item.id,
+        name: item.name,
+        unit: item.unit,
+        packageQty: item.packageQty,
+        packagePriceRub: rub(item.packagePriceKop),
+        exact,
+        score: exact ? 1 : ingredientNameSimilarity(name, item.name),
+      }
+    })
+    .filter((match) => match.score >= 0.35)
+    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name, 'ru'))
+    .slice(0, 5)
+}
+
+function decodeImportText(data: ArrayBuffer): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(data)
+  } catch {
+    return new TextDecoder('windows-1251').decode(data)
+  }
+}
 
 /* ─────────────────────────── цены ─────────────────────────── */
 
@@ -857,6 +919,164 @@ export const adminCostTechCards = new Hono()
       .all(id)
     return c.json({ usage, parents: itemRows.length })
   })
+
+  .post('/cost/items/import/preview', async (c) => {
+    requireWrite(c)
+    const contentType = c.req.header('content-type') ?? ''
+    let text: string
+    let sourceName: string | null = null
+
+    if (contentType.includes('multipart/form-data')) {
+      const body = await c.req.parseBody()
+      const file = body.file
+      if (!file || typeof file === 'string') throw bad('Выберите файл для разбора', 400)
+      if (file.size > 15 * 1024 * 1024) throw bad('Файл больше 15 МБ', 400)
+      sourceName = file.name
+      const lower = file.name.toLowerCase()
+      const buffer = await file.arrayBuffer()
+      if (lower.endsWith('.csv') || lower.endsWith('.tsv') || lower.endsWith('.txt')) {
+        text = decodeImportText(buffer)
+      } else if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
+        try {
+          text = spreadsheetToText(buffer)
+        } catch (error) {
+          throw bad(`Не удалось прочитать таблицу: ${error instanceof Error ? error.message : 'неизвестная ошибка'}`, 400)
+        }
+      } else {
+        throw bad('Поддерживаются Excel, CSV, TSV и TXT. PDF передаётся после локального извлечения текста.', 400)
+      }
+    } else {
+      let raw: unknown
+      try {
+        raw = await c.req.json()
+      } catch {
+        throw bad('Ожидался JSON с текстом документа', 400)
+      }
+      const parsed = z.object({
+        text: z.string().trim().min(1).max(100_000),
+        sourceName: z.string().max(200).nullable().optional(),
+      }).safeParse(raw)
+      if (!parsed.success) throw bad(parsed.error.issues[0]?.message ?? 'Некорректный текст', 400)
+      text = parsed.data.text
+      sourceName = parsed.data.sourceName ?? null
+    }
+
+    if (!text.trim()) throw bad('В файле не найден текст для разбора', 400)
+    if (text.length > 100_000) throw bad('Извлечённый текст больше 100 000 символов', 400)
+
+    let parsed: Awaited<ReturnType<typeof parseIngredientImport>>
+    try {
+      parsed = await parseIngredientImport(text)
+    } catch (error) {
+      throw bad(`Не удалось разобрать позиции: ${error instanceof Error ? error.message : 'ошибка AI'}`, 502)
+    }
+
+    const stockItems = db
+      .prepare(
+        `SELECT id, name, unit, package_qty AS packageQty, package_price_kop AS packagePriceKop
+           FROM stock_items WHERE active=1 ORDER BY name COLLATE NOCASE`,
+      )
+      .all() as {
+      id: number
+      name: string
+      unit: Unit
+      packageQty: number | null
+      packagePriceKop: number | null
+    }[]
+    const items = parsed.items.map((item: IngredientImportCandidate) => ({
+      ...item,
+      matches: findIngredientMatches(item.name, stockItems),
+    }))
+    const sourceLines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+    const parsedSource = new Set(items.map((item) => item.sourceLine.trim().toLowerCase()))
+    const unparsedLines = sourceLines.filter(
+      (line) =>
+        /(?:₽|руб\.?)/i.test(line) &&
+        !parsedSource.has(line.toLowerCase()) &&
+        !items.some((item) => item.sourceLine.trim().toLowerCase() === line.toLowerCase()),
+    )
+    return c.json({ items, provider: parsed.provider, sourceName, unparsedLines })
+  })
+
+  .post(
+    '/cost/items/import/confirm',
+    zValidator(
+      'json',
+      z.object({
+        items: z.array(
+          z.discriminatedUnion('action', [
+            z.object({ action: z.literal('skip') }),
+            z.object({
+              action: z.literal('create'),
+              name: z.string().trim().min(2).max(120),
+              unit: z.enum(['g', 'ml', 'pcs']),
+              packageQty: z.number().positive().max(10_000_000),
+              packagePriceRub: z.number().nonnegative().max(10_000_000),
+            }),
+            z.object({
+              action: z.literal('update'),
+              stockItemId: z.number().int().positive(),
+              name: z.string().trim().min(2).max(120),
+              unit: z.enum(['g', 'ml', 'pcs']),
+              packageQty: z.number().positive().max(10_000_000),
+              packagePriceRub: z.number().nonnegative().max(10_000_000),
+            }),
+          ]),
+        ).min(1).max(500),
+      }),
+    ),
+    (c) => {
+      requireWrite(c)
+      const { items } = c.req.valid('json')
+      let created = 0
+      let updated = 0
+      let skipped = 0
+      const at = now()
+      const insert = db.prepare(
+        `INSERT INTO stock_items(name, kind, unit, min_qty, multiplicity, notes,
+                                 package_qty, package_price_kop, manual_cost_kop, price_mode,
+                                 active, created_at, updated_at)
+         VALUES(?, 'raw', ?, 0, 1, 'Импорт ингредиентов', ?, ?, NULL, 'manual', 1, ?, ?)`,
+      )
+      const update = db.prepare(
+        `UPDATE stock_items SET name=?, package_qty=?, package_price_kop=?, manual_cost_kop=NULL,
+                                price_mode='manual', updated_at=? WHERE id=? AND active=1`,
+      )
+      const addHistory = db.prepare(
+        `INSERT INTO stock_item_cost_history(stock_item_id, at, cost_kop, source) VALUES(?,?,?,'manual')`,
+      )
+
+      db.transaction(() => {
+        for (const item of items) {
+          if (item.action === 'skip') {
+            skipped++
+            continue
+          }
+          const packagePriceKop = Math.round(item.packagePriceRub * 100)
+          let stockItemId: number
+          if (item.action === 'create') {
+            const result = insert.run(item.name, item.unit, item.packageQty, packagePriceKop, at, at)
+            stockItemId = Number(result.lastInsertRowid)
+            created++
+          } else {
+            const existing = db
+              .prepare(`SELECT id, unit FROM stock_items WHERE id=? AND active=1`)
+              .get(item.stockItemId) as { id: number; unit: Unit } | undefined
+            if (!existing) throw bad(`Позиция для обновления ${item.stockItemId} не найдена`, 404)
+            if (existing.unit !== item.unit) {
+              throw bad(`Единицу позиции нельзя изменить при импорте: ${item.name}`, 400)
+            }
+            update.run(item.name, item.packageQty, packagePriceKop, at, item.stockItemId)
+            db.prepare(`DELETE FROM cost_price_migration_conflicts WHERE stock_item_id=?`).run(item.stockItemId)
+            stockItemId = item.stockItemId
+            updated++
+          }
+          addHistory.run(stockItemId, at, packagePriceKop / item.packageQty)
+        }
+      })()
+      return c.json({ created, updated, skipped })
+    },
+  )
 
   /** Ингредиенты = позиции склада + цена и её источник. */
   .get('/cost/items', (c) => {

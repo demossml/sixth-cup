@@ -5,6 +5,8 @@
  * проекция на склад → цена из накладной → сигналы → массовая замена.
  */
 import { beforeEach, describe, expect, it } from 'vitest'
+import { app } from '../app'
+import { config } from '../config'
 import { db } from '../db'
 import { lastInventoryAt } from '../modules/admin/costTechCards'
 import { admin } from './wh-helpers'
@@ -430,6 +432,107 @@ describe('F9: импорт пишет в модель v2, а не в cost_*', ()
     })
     const cost = await admin('GET', `/cost/items?q=${encodeURIComponent('Молоко ИИ QA')}`)
     expect(cost.json.items[0].costRub).toBeCloseTo(0.095, 6)
+  })
+
+  it('предпросмотр прайса не пишет в базу и сопоставляет точный дубль', async () => {
+    db.prepare(
+      `INSERT INTO app_settings(key, value, updated_at) VALUES('ai_enabled','0',?)
+       ON CONFLICT(key) DO UPDATE SET value='0', updated_at=excluded.updated_at`,
+    ).run(Date.now())
+    const existing = await createItem('Сироп Кокос (COCO.IN)', 'ml')
+    const source = 'Состав заказа:\nСироп Кокос (COCO.IN) 0,7 - 2 шт x 810 ₽'
+
+    const preview = await admin('POST', '/cost/items/import/preview', { text: source })
+    expect(preview.status).toBe(200)
+    expect(preview.json.provider).toBe('heuristic')
+    expect(preview.json.items[0]).toMatchObject({
+      name: 'Сироп Кокос (COCO.IN)',
+      unit: 'ml',
+      packQty: 700,
+      packPriceRub: 810,
+      orderQty: 2,
+      matches: [{ id: existing, exact: true }],
+    })
+    const count = (db.prepare(`SELECT COUNT(*) AS n FROM stock_items WHERE name LIKE 'Сироп Кокос%'`).get() as { n: number }).n
+    expect(count).toBe(1)
+  })
+
+  it('принимает CSV как файл, извлекает строки и оставляет запись только на подтверждение', async () => {
+    db.prepare(
+      `INSERT INTO app_settings(key, value, updated_at) VALUES('ai_enabled','0',?)
+       ON CONFLICT(key) DO UPDATE SET value='0', updated_at=excluded.updated_at`,
+    ).run(Date.now())
+    const form = new FormData()
+    form.set('file', new Blob(['name;pack;qty;price\nСироп Тест CSV;0,7 л;2 шт;810 ₽'], { type: 'text/csv' }), 'syrup.csv')
+    const response = await app.request('/api/admin/cost/items/import/preview', {
+      method: 'POST',
+      headers: { 'X-Admin-Token': config.adminToken },
+      body: form,
+    })
+    const result = await response.json() as { items: { name: string; packQty: number; packPriceRub: number; orderQty: number }[] }
+
+    expect(response.status).toBe(200)
+    expect(result.items[0]).toMatchObject({
+      name: 'Сироп Тест CSV',
+      packQty: 700,
+      packPriceRub: 810,
+      orderQty: 2,
+    })
+    const count = (db.prepare(`SELECT COUNT(*) AS n FROM stock_items WHERE name='Сироп Тест CSV'`).get() as { n: number }).n
+    expect(count).toBe(0)
+  })
+
+  it('сохраняет только подтверждённые строки, обновляет выбранную позицию и не приходует заказ', async () => {
+    const existing = await createItem('Сироп Ваниль импорт QA', 'ml')
+    const saved = await admin('POST', '/cost/items/import/confirm', {
+      items: [
+        {
+          action: 'update',
+          stockItemId: existing,
+          name: 'Сироп Ваниль импорт QA',
+          unit: 'ml',
+          packageQty: 700,
+          packagePriceRub: 810,
+        },
+        { action: 'skip' },
+        {
+          action: 'create',
+          name: 'Сироп Кокос новый импорт QA',
+          unit: 'ml',
+          packageQty: 700,
+          packagePriceRub: 810,
+        },
+      ],
+    })
+    expect(saved.status).toBe(200)
+    expect(saved.json).toEqual({ created: 1, updated: 1, skipped: 1 })
+
+    const values = db
+      .prepare(`SELECT package_qty AS qty, package_price_kop AS price, manual_cost_kop AS direct
+                  FROM stock_items WHERE id=?`)
+      .get(existing) as { qty: number; price: number; direct: number | null }
+    expect(values).toEqual({ qty: 700, price: 81000, direct: null })
+    const invoices = (db.prepare(`SELECT COUNT(*) AS n FROM purchase_invoice_lines WHERE stock_item_id=?`).get(existing) as { n: number }).n
+    const movements = (db.prepare(`SELECT COUNT(*) AS n FROM stock_movements WHERE stock_item_id=?`).get(existing) as { n: number }).n
+    expect(invoices).toBe(0)
+    expect(movements).toBe(0)
+  })
+
+  it('rejects updating an existing ingredient through a unit mismatch', async () => {
+    const existing = await createItem('Сироп единицы импорта QA', 'ml')
+    const result = await admin('POST', '/cost/items/import/confirm', {
+      items: [{
+        action: 'update',
+        stockItemId: existing,
+        name: 'Сироп единицы импорта QA',
+        unit: 'g',
+        packageQty: 700,
+        packagePriceRub: 810,
+      }],
+    })
+    expect(result.status).toBe(400)
+    const unchanged = db.prepare(`SELECT unit FROM stock_items WHERE id=?`).get(existing) as { unit: string }
+    expect(unchanged.unit).toBe('ml')
   })
 })
 

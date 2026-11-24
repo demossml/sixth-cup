@@ -301,6 +301,23 @@ export function sheetToRows(data: ArrayBuffer): string[][] {
   return rows.map((r) => r.map((c) => String(c ?? '').trim()))
 }
 
+export function spreadsheetToText(data: ArrayBuffer): string {
+  const req = createRequire(import.meta.url)
+  const XLSX = req('xlsx') as typeof import('xlsx')
+  const wb = XLSX.read(Buffer.from(data), { type: 'buffer' })
+  return wb.SheetNames
+    .map((name) => {
+      const sheet = wb.Sheets[name]
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as unknown[][]
+      return rows
+        .map((row) => row.map((cell) => String(cell ?? '').trim()).filter(Boolean).join('\t'))
+        .filter(Boolean)
+        .join('\n')
+    })
+    .filter(Boolean)
+    .join('\n\n')
+}
+
 export function parseTechcardBuffer(data: ArrayBuffer, filename: string): ParsedRecipe[] {
   const lower = filename.toLowerCase()
   if (lower.endsWith('.csv') || lower.endsWith('.tsv') || lower.endsWith('.txt')) {

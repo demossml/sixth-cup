@@ -8,6 +8,7 @@ import { z } from 'zod'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import { resolveAiConfig } from '../../lib/aiSettings'
+import { parseIngredientsFromText as parseIngredientRows } from './ingredientImport'
 import { parseTechcardText, parseTechcardBuffer, type ParsedRecipe } from './techcardImport'
 
 type Role = 'owner' | 'manager' | 'viewer'
@@ -195,75 +196,9 @@ function serializeRecipe(id: number) {
   }
 }
 
-/** Простой разбор текста без ключа ИИ — чтобы UI работал в dev. */
-export function parseIngredientsFromText(text: string): {
-  name: string
-  category: string
-  unit: 'g' | 'ml' | 'pcs'
-  packQty: number
-  packPriceRub: number | null
-  confidence: 'high' | 'low'
-  note?: string
-}[] {
-  const items: ReturnType<typeof parseIngredientsFromText> = []
-  const lines = text
-    .split(/\n|;/)
-    .map((s) => s.trim())
-    .filter(Boolean)
-  for (const line of lines) {
-    const priceM = line.match(/(\d+[.,]?\d*)\s*₽|\s(\d+[.,]?\d*)\s*руб/i)
-    // \b в JS опирается на ASCII: после кириллической «л»/«г» он не срабатывает,
-    // поэтому границу слова задаём явным lookahead — иначе «1 л» и «200 г» не распознаются.
-    const notLetter = '(?![а-яёa-z])'
-    const packMl = line.match(new RegExp(`(\\d+[.,]?\\d*)\\s*(мл|ml)${notLetter}`, 'i'))
-    const packL = line.match(new RegExp(`(\\d+[.,]?\\d*)\\s*(л|l)${notLetter}`, 'i'))
-    const packG = line.match(new RegExp(`(\\d+[.,]?\\d*)\\s*(кг|г|kg|g)${notLetter}`, 'i'))
-    const packPcs = line.match(new RegExp(`(\\d+)\\s*(шт)${notLetter}`, 'i'))
-    let unit: 'g' | 'ml' | 'pcs' = 'pcs'
-    let packQty = 1
-    if (packL) {
-      unit = 'ml'
-      packQty = parseFloat(packL[1].replace(',', '.')) * 1000
-    } else if (packMl) {
-      unit = 'ml'
-      packQty = parseFloat(packMl[1].replace(',', '.'))
-    } else if (packG) {
-      unit = 'g'
-      const n = parseFloat(packG[1].replace(',', '.'))
-      packQty = /кг|kg/i.test(packG[2]) ? n * 1000 : n
-    } else if (packPcs) {
-      unit = 'pcs'
-      packQty = parseInt(packPcs[1], 10)
-    }
-    const price = priceM
-      ? parseFloat((priceM[1] || priceM[2]).replace(',', '.'))
-      : null
-    let category = 'Прочее'
-    const low = line.toLowerCase()
-    if (/молок|сливк|овсян|миндал|соев/.test(low)) category = 'Молоко и альтернативы'
-    else if (/сироп|топпинг/.test(low)) category = 'Сиропы и топпинги'
-    else if (/стакан|крышк|трубоч|салфет/.test(low)) category = 'Посуда'
-    else if (/кофе|эспрессо|зерн|какао/.test(low)) category = 'Кофе и зерно'
-    else if (/маршмел|кориц|спец|посып/.test(low)) category = 'Специи и украшения'
-    else if (/хлеб|чиабат|индейк|сыр|салат|томат/.test(low)) category = 'Еда / заготовки'
-    const name = line
-      .replace(/[—\-–]\s*\d+[.,]?\d*\s*(₽|руб).*/i, '')
-      .replace(new RegExp(`\\d+[.,]?\\d*\\s*(мл|ml|л|l|кг|г|kg|g|шт)${notLetter}.*`, 'i'), '')
-      .replace(/\s{2,}/g, ' ')
-      .trim()
-      .replace(/[,.:]+$/, '')
-    if (!name || name.length < 2) continue
-    items.push({
-      name: name.slice(0, 120),
-      category,
-      unit,
-      packQty,
-      packPriceRub: price,
-      confidence: price != null && packQty > 0 ? 'high' : 'low',
-      note: price == null ? 'Цена не распознана' : undefined,
-    })
-  }
-  return items
+/** Backwards-compatible mapping for the legacy preview route. */
+export function parseIngredientsFromText(text: string) {
+  return parseIngredientRows(text)
 }
 
 

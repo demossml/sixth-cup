@@ -489,7 +489,7 @@ export default function Stock() {
         </Card>
       )}
 
-      {tab === 'recipes' && <RecipesTab items={items.data?.items ?? []} />}
+      {tab === 'recipes' && <RecipesTab items={items.data?.items ?? []} onItemsImported={reloadAll} />}
 
       {tab === 'writeoffs' && <WriteoffsTab items={items.data?.items ?? []} />}
 

@@ -66,7 +66,7 @@ export default function Cost() {
               <RefreshCw size={14} /> Обновить
             </Button>
             <Button onClick={() => setImportOpen((v) => !v)}>
-              <Upload size={14} /> Загрузить
+              <Upload size={14} /> Импорт
             </Button>
           </>
         }

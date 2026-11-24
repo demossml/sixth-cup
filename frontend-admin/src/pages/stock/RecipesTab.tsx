@@ -3,7 +3,8 @@ import { useApi } from '../../api/useApi'
 import { api } from '../../api/client'
 import { Badge, Button, Card, Drawer, EmptyState, ErrorBox, Field, Select, Skeleton, useToast } from '../../ui/kit'
 import type { Tone } from '../../ui/kit'
-import { Pencil, Plus, Trash2 } from 'lucide-react'
+import { Pencil, Plus, Trash2, Upload } from 'lucide-react'
+import ImportPanel from '../../components/cost/ImportPanel'
 
 type Component = { stockItemId: number; qty: number; itemName: string; unit: string }
 type Recipe = {
@@ -26,9 +27,16 @@ const MODE: Record<string, { label: string; tone: Tone; hint: string }> = {
 type Draft = { key: string; stockItemId: string; qty: string }
 const emptyDraft = (): Draft => ({ key: String(Date.now()) + Math.random(), stockItemId: '', qty: '1' })
 
-export default function RecipesTab({ items }: { items: StockItem[] }) {
+export default function RecipesTab({
+  items,
+  onItemsImported,
+}: {
+  items: StockItem[]
+  onItemsImported?: () => void
+}) {
   const toast = useToast()
   const list = useApi<{ recipes: Recipe[] }>('/stock/recipes')
+  const [importOpen, setImportOpen] = useState(false)
   const [edit, setEdit] = useState<Recipe | null>(null)
   const [mode, setMode] = useState<'raw' | 'piece' | 'none'>('raw')
   const [drafts, setDrafts] = useState<Draft[]>([emptyDraft()])
@@ -82,6 +90,26 @@ export default function RecipesTab({ items }: { items: StockItem[] }) {
 
   return (
     <>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-ink-secondary">
+          Добавьте ингредиенты из письма или прайса — проверьте распознанные фасовки и цены до сохранения.
+        </p>
+        <Button onClick={() => setImportOpen((open) => !open)}>
+          <Upload size={14} /> Импорт ингредиентов
+        </Button>
+      </div>
+      {importOpen && (
+        <div className="mb-3">
+          <ImportPanel
+            onClose={() => setImportOpen(false)}
+            onImported={(summary) => {
+              list.reload()
+              onItemsImported?.()
+              toast.push(`Импорт: ${summary}`, 'ok')
+            }}
+          />
+        </div>
+      )}
       {list.loading && !list.data && <Card><Skeleton className="h-24" /></Card>}
       {list.error && <ErrorBox message={list.error} onRetry={list.reload} />}
 

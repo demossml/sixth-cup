@@ -100,6 +100,23 @@ export async function uploadFile(file: File): Promise<{ url: string; urlFull?: s
   return { url: j.url, urlFull: j.urlFull }
 }
 
+export async function uploadAdminFile<T>(path: string, file: File): Promise<T> {
+  const fd = new FormData()
+  fd.append('file', file)
+  const res = await fetch(`${API}/api/admin${path}`, {
+    method: 'POST',
+    headers: { 'X-Admin-Token': tokenStore.get() },
+    body: fd,
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    const message = errorText(body, res.statusText || `Ошибка ${res.status}`)
+    if (res.status === 403 && message === 'Forbidden') onUnauthorized?.()
+    throw new ApiError(message, res.status)
+  }
+  return res.json() as Promise<T>
+}
+
 
 /** Загрузка своего шрифта: сервер проверит кириллицу и знак ₽. */
 export async function uploadMenuFont(file: File, bold?: File | null): Promise<{ id: number; family: string; url: string; boldUrl: string | null }> {
