@@ -557,8 +557,27 @@ const techCardWorkbookLineZ = z.object({
   unit: z.enum(['kg', 'l', 'g', 'ml', 'pcs']),
   qty: z.number().positive().max(10_000_000),
   lineRole: z.enum(['base', 'optional']),
+  newItemPackageQty: z.number().positive().max(10_000_000).nullable().optional(),
+  newItemPackagePriceRub: z.number().nonnegative().max(10_000_000).nullable().optional(),
 }).refine((line) => !(line.stockItemId && line.childCardId), {
   message: 'Строка не может ссылаться одновременно на ингредиент и заготовку',
+}).superRefine((line, ctx) => {
+  if (line.stockItemId == null && line.childCardId == null) {
+    if (line.newItemPackageQty == null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['newItemPackageQty'],
+        message: 'Для новой складской позиции укажите размер упаковки',
+      })
+    }
+    if (line.newItemPackagePriceRub == null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['newItemPackagePriceRub'],
+        message: 'Для новой складской позиции укажите цену упаковки',
+      })
+    }
+  }
 })
 
 const techCardWorkbookExistingLineZ = z.discriminatedUnion('action', [
@@ -1171,14 +1190,18 @@ export const adminCostTechCards = new Hono()
       const affected: { id: number; name: string; changeKind: 'created' | 'updated' }[] = []
       const createItem = db.prepare(
         `INSERT INTO stock_items(name, kind, unit, min_qty, multiplicity, notes,
+                                 package_qty, package_price_kop, manual_cost_kop, price_mode,
                                  active, created_at, updated_at)
-         VALUES(?, 'raw', ?, 0, 1, ?, 1, ?, ?)`,
+         VALUES(?, 'raw', ?, 0, 1, ?, ?, ?, NULL, 'manual', 1, ?, ?)`,
+      )
+      const addCreatedItemHistory = db.prepare(
+        `INSERT INTO stock_item_cost_history(stock_item_id, at, cost_kop, source) VALUES(?,?,?,'manual')`,
       )
       const createMarker = db.prepare(
         `INSERT INTO tech_card_import_markers(card_id, source_name, source_sheet, source_row, change_kind, created_at)
          VALUES(?,?,?,?,?,?)`,
       )
-      const createdStockItems = new Map<string, number>()
+      const createdStockItems = new Map<string, { id: number; packageQty: number; packagePriceKop: number }>()
 
       db.transaction(() => {
         recipes.forEach((recipe, index) => {
@@ -1324,8 +1347,18 @@ export const adminCostTechCards = new Hono()
               const normalized = `${line.unit}:${normalizeIngredientName(line.name)}`
               const createdInBatch = createdStockItems.get(normalized)
               if (createdInBatch) {
-                stockItemId = createdInBatch
+                const packageQty = line.newItemPackageQty
+                const packagePriceKop = line.newItemPackagePriceRub == null
+                  ? null
+                  : Math.round(line.newItemPackagePriceRub * 100)
+                if (packageQty !== createdInBatch.packageQty || packagePriceKop !== createdInBatch.packagePriceKop) {
+                  throw bad(`Для повторяющейся позиции «${line.name}» укажите одинаковые размер и цену упаковки`, 400)
+                }
+                stockItemId = createdInBatch.id
               } else {
+                if (line.newItemPackageQty == null || line.newItemPackagePriceRub == null) {
+                  throw bad(`Для новой складской позиции «${line.name}» укажите размер и цену упаковки`, 400)
+                }
                 const exact = (db
                   .prepare(`SELECT id, name, unit FROM stock_items WHERE active=1`)
                   .all() as { id: number; name: string; unit: Unit }[])
@@ -1334,14 +1367,22 @@ export const adminCostTechCards = new Hono()
                   throw bad(`Ингредиент «${line.name}» уже существует — сопоставьте его вместо создания дубля`, 409)
                 }
                 const createdAt = now()
+                const packagePriceKop = Math.round(line.newItemPackagePriceRub * 100)
                 stockItemId = Number(createItem.run(
                   line.name,
                   line.unit,
                   `Импорт ТТК: ${sourceName}`,
+                  line.newItemPackageQty,
+                  packagePriceKop,
                   createdAt,
                   createdAt,
                 ).lastInsertRowid)
-                createdStockItems.set(normalized, stockItemId)
+                addCreatedItemHistory.run(stockItemId, createdAt, packagePriceKop / line.newItemPackageQty)
+                createdStockItems.set(normalized, {
+                  id: stockItemId,
+                  packageQty: line.newItemPackageQty,
+                  packagePriceKop,
+                })
               }
             }
             return {

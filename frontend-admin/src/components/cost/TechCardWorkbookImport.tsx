@@ -5,7 +5,11 @@ import { api, uploadAdminFile } from '../../api/client'
 import { UNIT_LABELS } from '../../lib/costMath'
 import { Badge, Banner, Button, Card, Drawer, Field, Input, Select, Spinner, useToast } from '../../ui/kit'
 import { applyEspressoChoiceToLines, isEspressoCardName, isEspressoName } from './espressoMapping'
-import { applyStockItemChoiceToLines } from './stockItemMapping'
+import {
+  applyStockItemChoiceToLines,
+  applyStockItemPatchToLines,
+  stockItemMappingKey,
+} from './stockItemMapping'
 
 type Unit = 'kg' | 'l' | 'g' | 'ml' | 'pcs'
 type ImportUnit = 'g' | 'ml' | 'pcs'
@@ -85,7 +89,11 @@ type WorkbookPreview = {
   cards: CatalogCard[]
   products: Product[]
 }
-type LineDraft = PreviewLine & { choice: string }
+type LineDraft = PreviewLine & {
+  choice: string
+  newItemPackageQty: number | null
+  newItemPackagePriceRub: number | null
+}
 type RecipeDraft = Omit<PreviewRecipe, 'lines'> & {
   action: string
   newCardKind: 'dish' | 'semi' | 'modifier' | ''
@@ -171,7 +179,12 @@ function buildDrafts(preview: WorkbookPreview): RecipeDraft[] {
       productId: target?.productId ?? '',
       outputQty: recipe.kind === 'semi' ? null : 1,
       outputUnit: recipe.kind === 'semi' ? '' : 'pcs',
-      lines: recipe.lines.map((line) => ({ ...line, choice: defaultLineChoice(line) })),
+      lines: recipe.lines.map((line) => ({
+        ...line,
+        choice: defaultLineChoice(line),
+        newItemPackageQty: null,
+        newItemPackagePriceRub: null,
+      })),
       existingLineDecisions: Object.fromEntries(recipe.cardMatches.map((card) => [
         card.id,
         card.currentLines.map((line) => ({
@@ -224,6 +237,14 @@ function recipeErrors(recipe: RecipeDraft, preview: WorkbookPreview): string[] {
     if (!line.unit || !units.includes(line.unit)) errors.push(`${label}: подтвердите единицу измерения`)
     if (line.qty == null || !Number.isFinite(line.qty) || line.qty <= 0) errors.push(`${label}: укажите одно точное количество`)
     if (!line.choice) errors.push(`${label}: сопоставьте ингредиент или явно создайте новую позицию`)
+    if (line.choice === 'new') {
+      if (line.newItemPackageQty == null || !Number.isFinite(line.newItemPackageQty) || line.newItemPackageQty <= 0) {
+        errors.push(`${label}: укажите количество в упаковке новой позиции`)
+      }
+      if (line.newItemPackagePriceRub == null || !Number.isFinite(line.newItemPackagePriceRub) || line.newItemPackagePriceRub < 0) {
+        errors.push(`${label}: укажите цену упаковки новой позиции`)
+      }
+    }
     if (line.choice.startsWith('stock:')) {
       const item = preview.stockItems.find((candidate) => candidate.id === Number(line.choice.slice(6)))
       if (!item || item.unit !== line.unit) errors.push(`${label}: единица выбранного ингредиента не совпадает`)
@@ -286,6 +307,14 @@ export default function TechCardWorkbookImport({
     () => preview ? recipes.flatMap((recipe) => recipeErrors(recipe, preview).map((error) => `${recipe.name}: ${error}`)) : [],
     [recipes, preview],
   )
+  const newItemPriceOwners = new Map<string, { recipeIndex: number; lineIndex: number }>()
+  recipes.forEach((recipe, recipeIndex) => {
+    recipe.lines.forEach((line, lineIndex) => {
+      if (line.choice !== 'new') return
+      const key = stockItemMappingKey(line.ingredientName, line.unit)
+      if (key && !newItemPriceOwners.has(key)) newItemPriceOwners.set(key, { recipeIndex, lineIndex })
+    })
+  })
   const compositionSummary = useMemo(() => {
     const summary = { added: 0, changed: 0, kept: 0, deleted: 0 }
     if (!preview) return summary
@@ -346,6 +375,11 @@ export default function TechCardWorkbookImport({
         sourceLine.unit
         ? { name: sourceLine.ingredientName, unit: sourceLine.unit, choice }
         : undefined
+      const sharedNewItemPrice = sourceLine &&
+        sourceLine.choice === 'new' &&
+        ('newItemPackageQty' in patch || 'newItemPackagePriceRub' in patch)
+        ? { name: sourceLine.ingredientName, unit: sourceLine.unit }
+        : undefined
 
       const updated = current.map((recipe, i) => ({
         ...recipe,
@@ -368,6 +402,17 @@ export default function TechCardWorkbookImport({
             sharedStockChoice.name,
             sharedStockChoice.unit,
             sharedStockChoice.choice,
+          ),
+        }))
+      }
+      if (sharedNewItemPrice) {
+        return updated.map((recipe) => ({
+          ...recipe,
+          lines: applyStockItemPatchToLines(
+            recipe.lines,
+            sharedNewItemPrice.name,
+            sharedNewItemPrice.unit,
+            patch,
           ),
         }))
       }
@@ -449,6 +494,10 @@ export default function TechCardWorkbookImport({
                   unit: line.unit,
                   qty: Number(line.qty),
                   lineRole: line.lineRole,
+                  ...(line.choice === 'new' ? {
+                    newItemPackageQty: line.newItemPackageQty,
+                    newItemPackagePriceRub: line.newItemPackagePriceRub,
+                  } : {}),
                 }
               }),
           }
@@ -804,6 +853,8 @@ export default function TechCardWorkbookImport({
                           matches: [],
                           semiMatches: [],
                           choice: '',
+                          newItemPackageQty: null,
+                          newItemPackagePriceRub: null,
                         }] })}>
                           <Plus size={14} /> Строка
                         </Button>
@@ -819,6 +870,12 @@ export default function TechCardWorkbookImport({
                           selectedSemi.outputUnit !== line.unit
                         )
                         const lineError = (line.choice !== 'skip' && (!line.ingredientName.trim() || !line.unit || !line.qty || line.qty <= 0 || (selectedItem && selectedItem.unit !== line.unit) || (selectedSemi && (!selectedSemi.canBeChild || selectedSemi.outputUnit !== line.unit)))) || invalidEspressoLink
+                        const newItemKey = stockItemMappingKey(line.ingredientName, line.unit)
+                        const priceOwner = newItemKey ? newItemPriceOwners.get(newItemKey) : undefined
+                        const showNewItemPrice = line.choice === 'new' &&
+                          priceOwner != null &&
+                          priceOwner.recipeIndex === recipeIndex &&
+                          priceOwner.lineIndex === lineIndex
                         return (
                           <div key={`${line.sourceRow}-${lineIndex}`} className={`rounded-xl border p-2 ${lineError ? 'border-red-300 bg-red-50/30' : 'border-line'}`}>
                             <div className="mb-2 flex items-center gap-2 text-xs text-ink-secondary">
@@ -863,7 +920,43 @@ export default function TechCardWorkbookImport({
                                 </Select>
                               </Field>
                             </div>
-                            {line.choice === 'new' && <Banner tone="warn">Новая складская позиция будет создана без цены. Её себестоимость останется незаполненной до внесения цены.</Banner>}
+                            {line.choice === 'new' && (
+                              showNewItemPrice ? (
+                                <div className="mt-2 grid gap-2 rounded-lg border border-amber-200 bg-amber-50/60 p-3 sm:grid-cols-2">
+                                  <Field
+                                    label={`Количество в упаковке, ${UNIT_LABELS[line.unit ?? ''] ?? 'ед.'}`}
+                                    hint="Укажите размер упаковки в той же единице, что и ингредиент: например, 1000 мл."
+                                  >
+                                    <Input
+                                      type="number"
+                                      min="0"
+                                      step="any"
+                                      value={line.newItemPackageQty ?? ''}
+                                      onChange={(event) => updateLine(recipeIndex, lineIndex, {
+                                        newItemPackageQty: event.target.value ? Number(event.target.value) : null,
+                                      })}
+                                      aria-label={`Количество в упаковке: ${line.ingredientName}`}
+                                    />
+                                  </Field>
+                                  <Field label="Цена упаковки, ₽" hint="Себестоимость единицы будет рассчитана автоматически.">
+                                    <Input
+                                      type="number"
+                                      min="0"
+                                      step="any"
+                                      value={line.newItemPackagePriceRub ?? ''}
+                                      onChange={(event) => updateLine(recipeIndex, lineIndex, {
+                                        newItemPackagePriceRub: event.target.value === '' ? null : Number(event.target.value),
+                                      })}
+                                      aria-label={`Цена упаковки: ${line.ingredientName}`}
+                                    />
+                                  </Field>
+                                </div>
+                              ) : (
+                                <p className="mt-2 text-xs text-ink-secondary">
+                                  Размер и цена упаковки задаются один раз для всех строк «{line.ingredientName}» ({UNIT_LABELS[line.unit ?? ''] ?? 'единица не выбрана'}).
+                                </p>
+                              )
+                            )}
                             {invalidEspressoLink && <p className="text-xs font-medium text-bad">Укажите существующую техкарту Espresso. Эспрессо нельзя создать как складской ингредиент или пропустить.</p>}
                             {lineError && line.choice !== 'skip' && <p className="text-xs font-medium text-bad">Проверьте название, количество, единицу и выбранную позицию.</p>}
                             {line.matches.some((match) => !match.exact) && (

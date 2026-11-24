@@ -423,8 +423,26 @@ describe('techcard workbook preview and apply', () => {
         outputUnit: 'g',
         methodText: null,
         lines: [
-          { stockItemId: null, childCardId: null, name: 'Ингредиент новый QA', unit: 'g', qty: 5, lineRole: 'base' },
-          { stockItemId: null, childCardId: null, name: 'Ингредиент новый QA', unit: 'g', qty: 10, lineRole: 'base' },
+          {
+            stockItemId: null,
+            childCardId: null,
+            name: 'Ингредиент новый QA',
+            unit: 'g',
+            qty: 5,
+            lineRole: 'base',
+            newItemPackageQty: 1000,
+            newItemPackagePriceRub: 250,
+          },
+          {
+            stockItemId: null,
+            childCardId: null,
+            name: 'Ингредиент новый QA',
+            unit: 'g',
+            qty: 10,
+            lineRole: 'base',
+            newItemPackageQty: 1000,
+            newItemPackagePriceRub: 250,
+          },
         ],
       }],
     })
@@ -434,6 +452,14 @@ describe('techcard workbook preview and apply', () => {
     expect(card.json.card).toMatchObject({ name: 'Заготовка для теста QA', kind: 'semi', outputQty: 100, outputUnit: 'g', status: 'draft', importReviewCount: 1 })
     expect(card.json.card.lines).toHaveLength(2)
     expect(card.json.card.lines[0].stockItemId).toBe(card.json.card.lines[1].stockItemId)
+    const createdItem = db.prepare(
+      `SELECT package_qty AS packageQty, package_price_kop AS packagePriceKop, price_mode AS priceMode
+         FROM stock_items WHERE id=?`,
+    ).get(card.json.card.lines[0].stockItemId) as { packageQty: number; packagePriceKop: number; priceMode: string }
+    expect(createdItem).toEqual({ packageQty: 1000, packagePriceKop: 25000, priceMode: 'manual' })
+    expect(db.prepare(
+      `SELECT cost_kop AS costKop, source FROM stock_item_cost_history WHERE stock_item_id=?`,
+    ).get(card.json.card.lines[0].stockItemId)).toEqual({ costKop: 25, source: 'manual' })
     const ingredientCount = (db.prepare(
       `SELECT COUNT(*) AS count FROM stock_items WHERE name='Ингредиент новый QA' AND active=1`,
     ).get() as { count: number }).count
@@ -463,6 +489,8 @@ describe('techcard workbook preview and apply', () => {
             unit: 'ml',
             qty: 30,
             lineRole: 'base',
+            newItemPackageQty: 1000,
+            newItemPackagePriceRub: 120,
           }],
         },
         {
@@ -483,6 +511,8 @@ describe('techcard workbook preview and apply', () => {
             unit: 'ml',
             qty: 40,
             lineRole: 'base',
+            newItemPackageQty: 1000,
+            newItemPackagePriceRub: 120,
           }],
         },
       ],
@@ -521,6 +551,8 @@ describe('techcard workbook preview and apply', () => {
           unit: 'ml',
           qty: 25,
           lineRole: 'base',
+          newItemPackageQty: 1000,
+          newItemPackagePriceRub: 120,
         }],
       }],
     })
@@ -533,5 +565,37 @@ describe('techcard workbook preview and apply', () => {
       `SELECT COUNT(*) AS count FROM stock_items WHERE notes=?`,
     ).get(`Импорт ТТК: ${duplicateSourceName}`) as { count: number }).count
     expect(retryCreatedItemCount).toBe(0)
+
+    const conflictingSourceName = `shared-cream-conflict-${Date.now()}.xlsx`
+    const conflictingImport = await admin('POST', '/cost/tech-cards/import/confirm', {
+      sourceName: conflictingSourceName,
+      recipes: [120, 121].map((packagePriceRub, index) => ({
+        name: `Рафа конфликт сливки QA ${index + 1}`,
+        sourceSheet: 'Напитки',
+        sourceRow: 15 + index,
+        targetCardId: null,
+        expectedVersionId: null,
+        newCardKind: 'semi',
+        productId: null,
+        outputQty: 100,
+        outputUnit: 'ml',
+        methodText: null,
+        lines: [{
+          stockItemId: null,
+          childCardId: null,
+          name: 'Сливки конфликт QA',
+          unit: 'ml',
+          qty: 25,
+          lineRole: 'base',
+          newItemPackageQty: 1000,
+          newItemPackagePriceRub: packagePriceRub,
+        }],
+      })),
+    })
+    expect(conflictingImport.status).toBe(400)
+    const conflictingItems = (db.prepare(
+      `SELECT COUNT(*) AS count FROM stock_items WHERE notes=?`,
+    ).get(`Импорт ТТК: ${conflictingSourceName}`) as { count: number }).count
+    expect(conflictingItems).toBe(0)
   })
 })
