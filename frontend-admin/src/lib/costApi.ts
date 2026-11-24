@@ -3,6 +3,7 @@ import { api } from '../api/client'
 
 export type Unit = 'kg' | 'l' | 'pcs' | 'g' | 'ml'
 export type CardKind = 'dish' | 'semi' | 'modifier'
+export type PortionMode = 'proportional' | 'whole_batch'
 export type WriteOffMode = 'ingredients' | 'semi' | 'semi_then_ingredients' | 'none'
 
 export type Insight = { code: string; text: string; tone: 'bad' | 'warn' | 'info' }
@@ -21,6 +22,8 @@ export type CardListItem = {
   retailSource: 'catalog' | 'card' | 'markup'
   outputQty: number
   outputUnit: Unit
+  portionMode?: PortionMode
+  costRub?: number | null
   costPerUnitRub: number | null
   retailRub: number | null
   foodCostPct: number | null
@@ -63,6 +66,7 @@ export type TechCard = {
   kind: CardKind
   outputQty: number
   outputUnit: Unit
+  portionMode?: PortionMode
   productId: number | null
   /** Название и цена товара каталога (источник истины для розницы). */
   productName?: string | null
@@ -158,6 +162,7 @@ export type CardPayload = {
   kind?: CardKind
   outputQty?: number
   outputUnit?: Unit
+  portionMode?: PortionMode
   productId?: number | null
   methodText?: string | null
   writeOffMode?: WriteOffMode

@@ -179,6 +179,18 @@ describe('F2: строки и итоги карты', () => {
     expect(r.costKop).toBe(600)
   })
 
+  it('партия Espresso: каждые два шота списывают целые 18 г кофе', () => {
+    const costForShots = (shots: number) =>
+      resolveLine({
+        qtyBrutto: shots,
+        child: { costKop: 3132, outputQty: 2, outputUnit: 'pcs', portionMode: 'whole_batch' },
+      }).costKop
+
+    expect([costForShots(1), costForShots(2), costForShots(3), costForShots(4)]).toEqual([
+      3132, 3132, 6264, 6264,
+    ])
+  })
+
   it('строка без цены делает общий итог неизвестным, сохраняя известную стоимость строки', () => {
     const t = cardTotals([
       { qtyBrutto: 10, unitCostKop: 100 },

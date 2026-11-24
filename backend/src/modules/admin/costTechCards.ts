@@ -265,6 +265,7 @@ type CardRow = {
   kind: 'dish' | 'semi' | 'modifier'
   outputQty: number
   outputUnit: Unit
+  portionMode: 'proportional' | 'whole_batch'
   productId: number | null
   categoryId: number | null
   methodText: string | null
@@ -279,7 +280,8 @@ type CardRow = {
 function cardRow(id: number): CardRow | undefined {
   return db
     .prepare(
-      `SELECT id, name, kind, output_qty AS outputQty, output_unit AS outputUnit, product_id AS productId,
+      `SELECT id, name, kind, output_qty AS outputQty, output_unit AS outputUnit,
+              portion_mode AS portionMode, product_id AS productId,
               category_id AS categoryId, method_text AS methodText, status,
               write_off_mode AS writeOffMode, retail_price_kop AS retailPriceKop, markup_pct AS markupPct,
               created_at AS createdAt, updated_at AS updatedAt
@@ -379,6 +381,7 @@ function computeTotals(
               costKop: totalCostOf(l.childCardId, costs, memo, seen),
               outputQty: child.outputQty,
               outputUnit: child.outputUnit,
+              portionMode: child.portionMode,
             }
           : null,
       }
@@ -436,6 +439,7 @@ export function serializeCard(id: number, opts: { versionId?: number } = {}) {
     kind: card.kind,
     outputQty: card.outputQty,
     outputUnit: card.outputUnit,
+    portionMode: card.portionMode,
     productId: card.productId,
     /** Название товара каталога: без него карта в списке выглядит «ничьей». */
     productName: product?.name ?? null,
@@ -536,6 +540,7 @@ const cardZ = z.object({
   kind: z.enum(['dish', 'semi', 'modifier']).optional(),
   outputQty: z.number().positive().optional(),
   outputUnit: z.enum(['kg', 'l', 'pcs', 'g', 'ml']).optional(),
+  portionMode: z.enum(['proportional', 'whole_batch']).optional(),
   productId: z.number().int().positive().nullable().optional(),
   categoryId: z.number().int().positive().nullable().optional(),
   methodText: z.string().max(8000).nullable().optional(),
@@ -693,12 +698,33 @@ export function projectCard(cardId: number): { norms: number; costKop: number | 
   const totals = computeTotals(lines, unitCostMap(), new Map(), new Set([cardId]))
   const costPerUnit = costPerUnitKop(totals.costKop, card.outputQty)
 
-  const direct = lines.filter((l) => l.stockItemId)
+  const stockUsage = new Map<number, number>()
+  const addStock = (itemId: number, qty: number) => stockUsage.set(itemId, (stockUsage.get(itemId) ?? 0) + qty)
+  for (const line of lines) {
+    if (line.stockItemId) addStock(line.stockItemId, line.qtyBrutto)
+  }
+  const addBatchIngredients = (childCardId: number, requestedQty: number, seen: Set<number>) => {
+    if (seen.has(childCardId)) return
+    const child = cardRow(childCardId)
+    if (!child || child.portionMode !== 'whole_batch' || !(child.outputQty > 0)) return
+    const childVersion = activeVersion(childCardId)
+    if (!childVersion) return
+    seen.add(childCardId)
+    const batches = Math.ceil(requestedQty / child.outputQty)
+    for (const childLine of linesOf(childVersion.id)) {
+      if (childLine.stockItemId) addStock(childLine.stockItemId, childLine.qtyBrutto * batches)
+      else if (childLine.childCardId) addBatchIngredients(childLine.childCardId, childLine.qtyBrutto * batches, seen)
+    }
+    seen.delete(childCardId)
+  }
+  for (const line of lines) {
+    if (line.childCardId) addBatchIngredients(line.childCardId, line.qtyBrutto, new Set([cardId]))
+  }
   db.transaction(() => {
     if (card.productId) {
       db.prepare(`DELETE FROM product_stock_norms WHERE product_id=?`).run(card.productId)
       const ins = db.prepare(`INSERT OR REPLACE INTO product_stock_norms(product_id, stock_item_id, qty) VALUES(?,?,?)`)
-      for (const l of direct) ins.run(card.productId, l.stockItemId!, l.qtyBrutto)
+      for (const [itemId, qty] of stockUsage) ins.run(card.productId, itemId, qty)
       const mode =
         card.writeOffMode === 'ingredients' ? 'raw' : card.writeOffMode === 'none' ? 'none' : 'piece'
       db.prepare(
@@ -714,7 +740,7 @@ export function projectCard(cardId: number): { norms: number; costKop: number | 
       }
     }
   })()
-  return { norms: direct.length, costKop: costPerUnit }
+  return { norms: stockUsage.size, costKop: costPerUnit }
 }
 
 /* ─────────────────────────── маршруты ─────────────────────────── */
@@ -822,6 +848,8 @@ export const adminCostTechCards = new Hono()
         retailSource: c!.retailSource,
         outputQty: c!.outputQty,
         outputUnit: c!.outputUnit,
+        portionMode: c!.portionMode,
+        costRub: c!.costRub,
         costPerUnitRub: c!.costPerUnitRub,
         retailRub: c!.retailRub,
         foodCostPct: c!.foodCostPct,
@@ -853,20 +881,24 @@ export const adminCostTechCards = new Hono()
   .post('/cost/tech-cards', zValidator('json', cardZ), (c) => {
     requireWrite(c)
     const p = c.req.valid('json')
+    if (p.portionMode === 'whole_batch' && (p.kind ?? 'dish') !== 'semi') {
+      throw bad('Расход целыми партиями можно задать только для заготовки', 400)
+    }
     requireProductFor(p.kind ?? 'dish', p.productId)
     const t = now()
     const id = db.transaction(() => {
       const info = db
         .prepare(
-          `INSERT INTO tech_cards(name, kind, output_qty, output_unit, product_id, category_id, method_text,
+          `INSERT INTO tech_cards(name, kind, output_qty, output_unit, portion_mode, product_id, category_id, method_text,
                                   status, write_off_mode, retail_price_kop, markup_pct, created_at, updated_at)
-           VALUES(?,?,?,?,?,?,?,'draft',?,?,?,?,?)`,
+           VALUES(?,?,?,?,?,?,?,?,'draft',?,?,?,?,?)`,
         )
         .run(
           p.name,
           p.kind ?? 'dish',
           p.outputQty ?? 1,
           p.outputUnit ?? 'pcs',
+          p.portionMode ?? 'proportional',
           p.productId ?? null,
           p.categoryId ?? null,
           p.methodText ?? null,
@@ -892,6 +924,9 @@ export const adminCostTechCards = new Hono()
     const cur = cardRow(id)
     if (!cur) throw bad('Техкарта не найдена', 404)
     const p = c.req.valid('json')
+    if ((p.portionMode ?? cur.portionMode) === 'whole_batch' && (p.kind ?? cur.kind) !== 'semi') {
+      throw bad('Расход целыми партиями можно задать только для заготовки', 400)
+    }
     // Правка без привязки к товару не проходит — иначе карта снова «ничья».
     requireProductFor(
       p.kind ?? cur.kind,
@@ -900,7 +935,7 @@ export const adminCostTechCards = new Hono()
     const t = now()
     db.transaction(() => {
       db.prepare(
-        `UPDATE tech_cards SET name=?, kind=?, output_qty=?, output_unit=?, product_id=?, category_id=?,
+        `UPDATE tech_cards SET name=?, kind=?, output_qty=?, output_unit=?, portion_mode=?, product_id=?, category_id=?,
                                method_text=?, write_off_mode=?, retail_price_kop=?, markup_pct=?, updated_at=?
           WHERE id=?`,
       ).run(
@@ -908,6 +943,7 @@ export const adminCostTechCards = new Hono()
         p.kind ?? cur.kind,
         p.outputQty ?? cur.outputQty,
         p.outputUnit ?? cur.outputUnit,
+        p.portionMode ?? cur.portionMode,
         p.productId !== undefined ? p.productId : cur.productId,
         p.categoryId !== undefined ? p.categoryId : cur.categoryId,
         p.methodText !== undefined ? p.methodText : cur.methodText,

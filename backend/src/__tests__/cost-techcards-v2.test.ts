@@ -53,6 +53,56 @@ beforeEach(() => {
 })
 
 describe('F3: техкарты — создание, версии, публикация', () => {
+  it('списывает только полные партии эспрессо и переносит их расход на склад', async () => {
+    const beans = await createItem('Кофейные зёрна двойной партии QA', 'g', { manualCostKop: 174 })
+    const espressoBatch = await admin('POST', '/cost/tech-cards', {
+      name: 'Эспрессо партия QA',
+      kind: 'semi',
+      outputQty: 2,
+      outputUnit: 'pcs',
+      portionMode: 'whole_batch',
+      lines: [{ stockItemId: beans, qtyBrutto: 18 }],
+    })
+    expect(espressoBatch.status).toBe(200)
+    const batch = espressoBatch.json.card
+    expect(batch).toMatchObject({
+      outputQty: 2,
+      outputUnit: 'pcs',
+      portionMode: 'whole_batch',
+      costRub: 31.32,
+      costPerUnitRub: 15.66,
+    })
+
+    for (const [shots, expectedCost] of [[1, 31.32], [2, 31.32], [3, 62.64], [4, 62.64]]) {
+      const productId = makeProduct(`Напиток ${shots} шота партия QA`)
+      const drink = await admin('POST', '/cost/tech-cards', {
+        name: `Напиток ${shots} шота партия QA`,
+        kind: 'dish',
+        productId,
+        lines: [{ childCardId: batch.id, qtyBrutto: shots }],
+      })
+      expect(drink.status).toBe(200)
+      expect(drink.json.card.costPerUnitRub).toBe(expectedCost)
+      expect(drink.json.card.lines[0].lineCostRub).toBe(expectedCost)
+
+      const published = await admin('POST', `/cost/tech-cards/${drink.json.card.id}/publish`, {})
+      expect(published.status).toBe(200)
+      expect(published.json.projection.norms).toBe(1)
+      const norms = db
+        .prepare(`SELECT qty FROM product_stock_norms WHERE product_id=? AND stock_item_id=?`)
+        .get(productId, beans) as { qty: number } | undefined
+      expect(norms?.qty).toBe(Math.ceil(shots / 2) * 18)
+    }
+
+    const invalidDish = await admin('POST', '/cost/tech-cards', {
+      name: 'Некорректная партия QA',
+      kind: 'dish',
+      productId: makeProduct('Некорректная партия QA'),
+      portionMode: 'whole_batch',
+    })
+    expect(invalidDish.status).toBe(400)
+  })
+
   it('создаёт карту с заготовкой и считает себестоимость по брутто', async () => {
     const bean = await createItem('Кофе зерно QA', 'g', { manualCostKop: 200 })
     const milk = await createItem('Молоко QA', 'ml', { manualCostKop: 9 })

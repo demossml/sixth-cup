@@ -223,8 +223,13 @@ export type LineInput = {
   fromUnit?: Unit
   toUnit?: Unit
   meta?: ItemMeta
-  /** Или ссылка на заготовку: её себестоимость за единицу и норма закладки. */
-  child?: { costKop: number | null; outputQty: number; outputUnit: Unit } | null
+  /** Или ссылка на заготовку: её себестоимость, норма закладки и режим расхода. */
+  child?: {
+    costKop: number | null
+    outputQty: number
+    outputUnit: Unit
+    portionMode?: 'proportional' | 'whole_batch'
+  } | null
 }
 
 export type LineResolved = {
@@ -255,8 +260,11 @@ export function resolveLine(line: LineInput): LineResolved {
   const optional = line.lineRole === 'optional'
 
   if (line.child) {
-    const { costKop, outputQty } = line.child
+    const { costKop, outputQty, portionMode = 'proportional' } = line.child
     if (costKop == null || !(outputQty > 0)) return { yield: y, costKop: null, optional }
+    if (portionMode === 'whole_batch') {
+      return { yield: y, costKop: Math.ceil(y.brutto / outputQty) * costKop, optional }
+    }
     return { yield: y, costKop: (y.brutto / outputQty) * costKop, optional }
   }
 

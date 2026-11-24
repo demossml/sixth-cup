@@ -32,6 +32,7 @@ import {
   type CardPayload,
   type CardKind,
   type CostItem,
+  type PortionMode,
   type TechCard,
   type Unit,
   type WriteOffMode,
@@ -247,12 +248,12 @@ export default function TechCardsTab({
               {c.status === 'draft' && <Badge tone="warn">черновик</Badge>}
               {c.importReviewCount > 0 && <Badge tone="brand">Проверить импорт · {c.importReviewCount}</Badge>}
               {c.version && <span className="text-[11px] text-ink-tertiary">версия от {new Date(c.version.validFrom).toLocaleDateString('ru-RU')}</span>}
-              <span className="ml-auto text-sm font-semibold">{money(c.costPerUnitRub)}</span>
+              <span className="ml-auto text-sm font-semibold">
+                {money(c.portionMode === 'whole_batch' ? c.costRub : c.costPerUnitRub)}
+              </span>
             </div>
             <div className="flex flex-wrap items-center gap-3 text-[12px] text-ink-secondary">
-              <span>
-                норма: {c.outputQty} {UNIT_LABELS[c.outputUnit]}
-              </span>
+              <span>{c.portionMode === 'whole_batch' ? 'партия' : 'норма'}: {c.outputQty} {UNIT_LABELS[c.outputUnit]}</span>
               <span>цена: {money(c.retailRub)}</span>
               {c.productName && <span>товар: {c.productName}</span>}
               <span className={cx(c.foodCostPct != null && c.foodCostPct > 35 ? 'text-bad' : '')}>фудкост: {pct(c.foodCostPct)}</span>
@@ -316,6 +317,7 @@ function TechCardEditor({
   const [kind, setKind] = useState<CardKind>('dish')
   const [outputQty, setOutputQty] = useState(1)
   const [outputUnit, setOutputUnit] = useState<Unit>('pcs')
+  const [portionMode, setPortionMode] = useState<PortionMode>('proportional')
   const [writeOffMode, setWriteOffMode] = useState<WriteOffMode>('ingredients')
   const [productId, setProductId] = useState<number | ''>('')
   const [products, setProducts] = useState<{ id: number; name: string; price?: number }[]>([])
@@ -350,6 +352,7 @@ function TechCardEditor({
         setKind(card.kind)
         setOutputQty(card.outputQty)
         setOutputUnit(card.outputUnit)
+        setPortionMode(card.portionMode ?? 'proportional')
         setWriteOffMode(card.writeOffMode)
         setProductId(card.productId ?? '')
         setRetail(card.retailPriceRub ?? card.retailCalcRub ?? '')
@@ -373,7 +376,13 @@ function TechCardEditor({
       let cost: number | null = null
       if (l.childCardId) {
         const childCard = semiById.get(l.childCardId)
-        cost = childCard?.costPerUnitRub != null ? l.qtyBrutto * childCard.costPerUnitRub : null
+        if (childCard?.portionMode === 'whole_batch') {
+          cost = childCard.costRub != null
+            ? Math.ceil(l.qtyBrutto / childCard.outputQty) * childCard.costRub
+            : null
+        } else {
+          cost = childCard?.costPerUnitRub != null ? l.qtyBrutto * childCard.costPerUnitRub : null
+        }
       } else if (l.stockItemId) {
         cost = lineCostRub(n.netto > 0 ? l.qtyBrutto : l.qtyBrutto, itemById.get(l.stockItemId)?.costRub ?? null)
       }
@@ -410,6 +419,7 @@ function TechCardEditor({
         kind,
         outputQty,
         outputUnit,
+        portionMode: kind === 'semi' ? portionMode : 'proportional',
         writeOffMode,
         productId: typeof productId === 'number' ? productId : null,
         retailPriceRub: typeof retail === 'number' ? retail : null,
@@ -539,7 +549,14 @@ function TechCardEditor({
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Капучино 250 мл" />
           </Field>
           <Field label="Тип">
-            <Select value={kind} onChange={(e) => setKind(e.target.value as CardKind)}>
+            <Select
+              value={kind}
+              onChange={(e) => {
+                const nextKind = e.target.value as CardKind
+                setKind(nextKind)
+                if (nextKind !== 'semi') setPortionMode('proportional')
+              }}
+            >
               <option value="dish">Блюдо</option>
               <option value="semi">Заготовка</option>
               <option value="modifier">Модификатор</option>
@@ -573,6 +590,27 @@ function TechCardEditor({
               ))}
             </Select>
           </Field>
+          {kind === 'semi' && (
+            <Field
+              label="Расход при использовании"
+              hint={
+                portionMode === 'whole_batch'
+                  ? isEspressoCardName(name)
+                    ? '18 г кофе дают 36 г эспрессо (2 шота). Использование 1–2 шотов списывает 18 г, 3–4 шотов — 36 г.'
+                    : `Списываются целые партии: от 1 до ${outputQty} ${UNIT_LABELS[outputUnit]} — одна партия, дальше округление вверх.`
+                  : 'Расход компонентов рассчитывается пропорционально использованному количеству.'
+              }
+            >
+              <Select
+                value={portionMode}
+                onChange={(e) => setPortionMode(e.target.value as PortionMode)}
+                aria-label="Расход при использовании"
+              >
+                <option value="proportional">Пропорционально количеству</option>
+                <option value="whole_batch">Только целыми партиями</option>
+              </Select>
+            </Field>
+          )}
           <Field
             label="Товар каталога"
             hint={
@@ -622,7 +660,15 @@ function TechCardEditor({
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-medium">{item?.name ?? childCard?.name ?? '—'}</span>
                   {item && <span className="text-[11px] text-ink-tertiary">{COST_SOURCE_LABELS[item.costSource]} · {money(item.costRub)}/{UNIT_LABELS[item.unit]}</span>}
-                  {childCard && <span className="text-[11px] text-ink-tertiary">{childCard.kind === 'semi' ? 'заготовка' : 'техкарта'} · {money(childCard.costPerUnitRub)}/{UNIT_LABELS[childCard.outputUnit]}</span>}
+                  {childCard && (
+                    <span className="text-[11px] text-ink-tertiary">
+                      {childCard.kind === 'semi' ? 'заготовка' : 'техкарта'} · {
+                        childCard.portionMode === 'whole_batch'
+                          ? `целая партия ${childCard.outputQty} ${UNIT_LABELS[childCard.outputUnit]} · ${money(childCard.costRub)}`
+                          : `${money(childCard.costPerUnitRub)}/${UNIT_LABELS[childCard.outputUnit]}`
+                      }
+                    </span>
+                  )}
                   <Select
                     className="ml-auto w-auto"
                     value={row.lineRole}
@@ -731,8 +777,17 @@ function TechCardEditor({
             />
           </Field>
           <div>
-            <div className="text-[11px] uppercase tracking-wide text-ink-tertiary">Себестоимость порции</div>
-            <div className="text-lg font-bold">{money(computed.perUnit)}</div>
+            <div className="text-[11px] uppercase tracking-wide text-ink-tertiary">
+              {kind === 'semi' && portionMode === 'whole_batch' ? 'Себестоимость партии' : 'Себестоимость порции'}
+            </div>
+            <div className="text-lg font-bold">
+              {money(kind === 'semi' && portionMode === 'whole_batch' ? computed.total : computed.perUnit)}
+            </div>
+            {kind === 'semi' && portionMode === 'whole_batch' && (
+              <div className="text-[11px] text-ink-tertiary">
+                {outputQty} {UNIT_LABELS[outputUnit]} в партии · {money(computed.perUnit)} за единицу выхода
+              </div>
+            )}
             <div className="text-[11px] text-ink-tertiary">{computed.missing ? 'часть сырья без цены' : 'все цены есть'}</div>
           </div>
           <div>
@@ -917,7 +972,13 @@ function PickerDrawer({
               <span className="text-[11px] text-ink-tertiary">
                 {(row as CardListItem).outputQty} {(row as CardListItem).outputUnit}
               </span>
-              <span className="ml-auto">{money((row as CardListItem).costPerUnitRub)}</span>
+              <span className="ml-auto">
+                {money(
+                  (row as CardListItem).portionMode === 'whole_batch'
+                    ? (row as CardListItem).costRub
+                    : (row as CardListItem).costPerUnitRub,
+                )}
+              </span>
             </button>
           ) : (
             <button
