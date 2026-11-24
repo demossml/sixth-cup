@@ -321,6 +321,10 @@ function TechCardEditor({
   const [writeOffMode, setWriteOffMode] = useState<WriteOffMode>('ingredients')
   const [productId, setProductId] = useState<number | ''>('')
   const [products, setProducts] = useState<{ id: number; name: string; price?: number }[]>([])
+  const [createProductOpen, setCreateProductOpen] = useState(false)
+  const [newProductName, setNewProductName] = useState('')
+  const [newProductPrice, setNewProductPrice] = useState('')
+  const [creatingProduct, setCreatingProduct] = useState(false)
   const [retail, setRetail] = useState<number | ''>('')
   const [lines, setLines] = useState<DraftLine[]>([])
   const [items, setItems] = useState<CostItem[]>([])
@@ -402,6 +406,43 @@ function TechCardEditor({
 
   /** Блюдо и модификатор без товара каталога не сохраняем — иначе маржа врёт. */
   const canSave = kind === 'semi' || typeof productId === 'number'
+
+  const createCatalogProduct = async () => {
+    const productName = newProductName.trim()
+    const price = Number(newProductPrice)
+    if (!productName || productName.length > 60) {
+      toast.push('Укажите название товара до 60 символов', 'bad')
+      return
+    }
+    if (!newProductPrice.trim() || !Number.isInteger(price) || price < 0) {
+      toast.push('Укажите целую цену в рублях, не меньше 0', 'bad')
+      return
+    }
+
+    const existing = products.find((product) => product.name.trim().toLocaleLowerCase('ru-RU') === productName.toLocaleLowerCase('ru-RU'))
+    if (existing) {
+      setProductId(existing.id)
+      setCreateProductOpen(false)
+      toast.push(`Товар «${existing.name}» уже есть в каталоге и выбран`)
+      return
+    }
+
+    setCreatingProduct(true)
+    try {
+      const created = await api<{ id: number }>('/products', {
+        method: 'POST',
+        body: { name: productName, price, icon: 'Coffee', available: true },
+      })
+      setProducts((current) => [...current, { id: created.id, name: productName, price }])
+      setProductId(created.id)
+      setCreateProductOpen(false)
+      toast.push(`Товар «${productName}» создан и выбран. Сохраните техкарту, чтобы закрепить связь.`)
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Не удалось создать товар каталога', 'bad')
+    } finally {
+      setCreatingProduct(false)
+    }
+  }
 
   const save = async (opts: { publish?: boolean } = {}) => {
     if (!name.trim()) {
@@ -631,7 +672,58 @@ function TechCardEditor({
                 </option>
               ))}
             </Select>
+            {kind !== 'semi' && (
+              <div className="mt-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    setNewProductName(name.trim())
+                    setNewProductPrice(typeof retail === 'number' ? String(retail) : '')
+                    setCreateProductOpen((open) => !open)
+                  }}
+                >
+                  {createProductOpen ? 'Отменить создание' : 'Создать товар каталога'}
+                </Button>
+              </div>
+            )}
           </Field>
+          {createProductOpen && kind !== 'semi' && (
+            <div className="rounded-xl border border-line bg-surface-1 p-3 sm:col-span-2 lg:col-span-4">
+              <div className="mb-2 text-sm font-semibold">Новый товар каталога</div>
+              <p className="mb-3 text-xs text-ink-secondary">
+                Товар будет создан в каталоге и выбран для этой техкарты. После этого сохраните техкарту, чтобы закрепить связь.
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Название товара">
+                  <Input
+                    value={newProductName}
+                    onChange={(e) => setNewProductName(e.target.value)}
+                    maxLength={60}
+                    placeholder="Например, Флэт уайт 200 мл"
+                    aria-label="Название нового товара"
+                  />
+                </Field>
+                <Field label="Цена продажи, ₽" hint="Целое число рублей. Цена каталога будет источником фудкоста.">
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    min="0"
+                    step="1"
+                    value={newProductPrice}
+                    onChange={(e) => setNewProductPrice(e.target.value)}
+                    placeholder="Например, 220"
+                    aria-label="Цена нового товара"
+                  />
+                </Field>
+              </div>
+              <div className="mt-3 flex justify-end">
+                <Button type="button" loading={creatingProduct} onClick={() => void createCatalogProduct()}>
+                  Создать и выбрать товар
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       </Card>
 
