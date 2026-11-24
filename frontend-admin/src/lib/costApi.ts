@@ -286,6 +286,12 @@ export const costApi = {
   /** Новая позиция склада — чтобы не уходить со страницы себестоимости. */
   createItem: (body: { name: string; unit: Unit; kind?: 'raw' | 'unit' }) =>
     api<{ id: number }>('/stock/items', { method: 'POST', body }),
+  createItemWithPackage: (body: {
+    name: string
+    unit: Extract<Unit, 'g' | 'ml' | 'pcs'>
+    packageQty: number
+    packagePriceRub: number
+  }) => api<{ id: number }>('/cost/items', { method: 'POST', body }),
   updateItem: (id: number, body: {
     name?: string
     unit?: Unit

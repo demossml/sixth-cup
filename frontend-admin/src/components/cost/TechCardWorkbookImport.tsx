@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { AlertTriangle, CheckCircle2, FileText, Plus, XCircle } from 'lucide-react'
 
 import { api, uploadAdminFile } from '../../api/client'
+import { costApi } from '../../lib/costApi'
 import { UNIT_LABELS } from '../../lib/costMath'
 import { Badge, Banner, Button, Card, Drawer, Field, Input, Select, Spinner, useToast } from '../../ui/kit'
 import { applyEspressoChoiceToLines, isEspressoCardName, isEspressoName } from './espressoMapping'
@@ -297,6 +298,7 @@ export default function TechCardWorkbookImport({
   const [recipes, setRecipes] = useState<RecipeDraft[]>([])
   const [busy, setBusy] = useState(false)
   const [busyLabel, setBusyLabel] = useState('')
+  const [savingStockItemKey, setSavingStockItemKey] = useState<string | null>(null)
 
   const included = recipes.filter((recipe) => recipe.action !== 'skip')
   const espressoLineCount = recipes.reduce(
@@ -437,6 +439,55 @@ export default function TechCardWorkbookImport({
         }))
   }
 
+  const saveNewStockItem = async (line: LineDraft) => {
+    const mappingKey = stockItemMappingKey(line.ingredientName, line.unit)
+    const unit = line.unit
+    const name = line.ingredientName.trim()
+    if (
+      !mappingKey ||
+      !unit ||
+      name.length < 2 ||
+      line.newItemPackageQty == null ||
+      !Number.isFinite(line.newItemPackageQty) ||
+      line.newItemPackageQty <= 0 ||
+      line.newItemPackagePriceRub == null ||
+      !Number.isFinite(line.newItemPackagePriceRub) ||
+      line.newItemPackagePriceRub < 0
+    ) return
+
+    setSavingStockItemKey(mappingKey)
+    try {
+      const created = await costApi.createItemWithPackage({
+        name,
+        unit,
+        packageQty: line.newItemPackageQty,
+        packagePriceRub: line.newItemPackagePriceRub,
+      })
+      setPreview((current) => current ? {
+        ...current,
+        stockItems: [...current.stockItems, {
+          id: created.id,
+          name,
+          unit,
+        }],
+      } : current)
+      setRecipes((current) => current.map((recipe) => ({
+        ...recipe,
+        lines: applyStockItemChoiceToLines(
+          recipe.lines,
+          name,
+          unit,
+          stockChoice(created.id),
+        ),
+      })))
+      toast.push(`«${name}» сохранена на складе`, 'ok')
+    } catch (error) {
+      toast.push(error instanceof Error ? error.message : 'Не удалось сохранить позицию склада', 'bad')
+    } finally {
+      setSavingStockItemKey(null)
+    }
+  }
+
   const save = async () => {
     if (!preview || !included.length || errors.length) return
     const targetIds = included.filter((recipe) => recipe.action.startsWith('card:')).map((recipe) => Number(recipe.action.slice(5)))
@@ -530,7 +581,11 @@ export default function TechCardWorkbookImport({
             </div>
           </div>
           <Button variant="ghost" disabled={busy} onClick={() => { setPreview(null); setRecipes([]) }}>Выбрать другой файл</Button>
-          <Button disabled={busy || !included.length || errors.length > 0} loading={busy} onClick={() => void save()}>
+          <Button
+            disabled={busy || savingStockItemKey !== null || !included.length || errors.length > 0}
+            loading={busy}
+            onClick={() => void save()}
+          >
             Сохранить проверенные карты
           </Button>
         </>
@@ -931,6 +986,7 @@ export default function TechCardWorkbookImport({
                                       type="number"
                                       min="0"
                                       step="any"
+                                      disabled={savingStockItemKey === newItemKey}
                                       value={line.newItemPackageQty ?? ''}
                                       onChange={(event) => updateLine(recipeIndex, lineIndex, {
                                         newItemPackageQty: event.target.value ? Number(event.target.value) : null,
@@ -943,6 +999,7 @@ export default function TechCardWorkbookImport({
                                       type="number"
                                       min="0"
                                       step="any"
+                                      disabled={savingStockItemKey === newItemKey}
                                       value={line.newItemPackagePriceRub ?? ''}
                                       onChange={(event) => updateLine(recipeIndex, lineIndex, {
                                         newItemPackagePriceRub: event.target.value === '' ? null : Number(event.target.value),
@@ -956,6 +1013,32 @@ export default function TechCardWorkbookImport({
                                   Размер и цена упаковки задаются один раз для всех строк «{line.ingredientName}» ({UNIT_LABELS[line.unit ?? ''] ?? 'единица не выбрана'}).
                                 </p>
                               )
+                            )}
+                            {showNewItemPrice && (
+                              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                                <span className="text-xs text-ink-secondary">
+                                  Позицию можно сохранить на склад отдельно от импорта техкарт.
+                                </span>
+                                <Button
+                                  variant="secondary"
+                                  className="w-full sm:w-auto"
+                                  disabled={
+                                    savingStockItemKey !== null ||
+                                    line.ingredientName.trim().length < 2 ||
+                                    !line.unit ||
+                                    line.newItemPackageQty == null ||
+                                    !Number.isFinite(line.newItemPackageQty) ||
+                                    line.newItemPackageQty <= 0 ||
+                                    line.newItemPackagePriceRub == null ||
+                                    !Number.isFinite(line.newItemPackagePriceRub) ||
+                                    line.newItemPackagePriceRub < 0
+                                  }
+                                  loading={savingStockItemKey === newItemKey}
+                                  onClick={() => void saveNewStockItem(line)}
+                                >
+                                  Создать и сохранить позицию
+                                </Button>
+                              </div>
                             )}
                             {invalidEspressoLink && <p className="text-xs font-medium text-bad">Укажите существующую техкарту Espresso. Эспрессо нельзя создать как складской ингредиент или пропустить.</p>}
                             {lineError && line.choice !== 'skip' && <p className="text-xs font-medium text-bad">Проверьте название, количество, единицу и выбранную позицию.</p>}

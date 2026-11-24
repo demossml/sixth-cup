@@ -58,6 +58,54 @@ beforeEach(() => {
 })
 
 describe('techcard workbook preview and apply', () => {
+  it('saves a priced stock item independently and rejects duplicate names and units', async () => {
+    const name = `Новая позиция QA ${Date.now()}`
+    const saved = await admin('POST', '/cost/items', {
+      name,
+      unit: 'g',
+      packageQty: 1000,
+      packagePriceRub: 120,
+    })
+
+    expect(saved.status).toBe(201)
+    const id = saved.json.id as number
+    expect(db.prepare(
+      `SELECT name, unit, package_qty AS packageQty, package_price_kop AS packagePriceKop,
+              manual_cost_kop AS manualCostKop, price_mode AS priceMode
+         FROM stock_items WHERE id=?`,
+    ).get(id)).toMatchObject({
+      name,
+      unit: 'g',
+      packageQty: 1000,
+      packagePriceKop: 12000,
+      manualCostKop: null,
+      priceMode: 'manual',
+    })
+    expect(db.prepare(
+      `SELECT cost_kop AS costKop, source FROM stock_item_cost_history WHERE stock_item_id=?`,
+    ).get(id)).toMatchObject({ costKop: 12, source: 'manual' })
+
+    const espresso = await admin('POST', '/cost/items', {
+      name: 'Espresso',
+      unit: 'pcs',
+      packageQty: 2,
+      packagePriceRub: 0,
+    })
+    expect(espresso.status).toBe(400)
+
+    const duplicate = await admin('POST', '/cost/items', {
+      name: `${name}!!!`,
+      unit: 'g',
+      packageQty: 500,
+      packagePriceRub: 80,
+    })
+    expect(duplicate.status).toBe(409)
+    expect(db.prepare(`SELECT COUNT(*) AS count FROM stock_items WHERE unit='g' AND name=?`).get(name))
+      .toMatchObject({ count: 1 })
+    db.prepare(`DELETE FROM stock_item_cost_history WHERE stock_item_id=?`).run(id)
+    db.prepare(`DELETE FROM stock_items WHERE id=?`).run(id)
+  })
+
   it('previews every sheet without writing and then saves an existing card as a new version', async () => {
     const stockItem = await admin('POST', '/stock/items', { name: 'Сироп Ваниль QA', kind: 'raw', unit: 'ml' })
     const stockItemId = Number(stockItem.json.item?.id ?? stockItem.json.id)

@@ -1565,6 +1565,49 @@ export const adminCostTechCards = new Hono()
   )
 
   /** Ингредиенты = позиции склада + цена и её источник. */
+  .post(
+    '/cost/items',
+    zValidator(
+      'json',
+      z.object({
+        name: z.string().trim().min(2).max(120),
+        unit: z.enum(['g', 'ml', 'pcs']),
+        packageQty: z.number().positive().max(10_000_000),
+        packagePriceRub: z.number().nonnegative().max(10_000_000),
+      }),
+    ),
+    (c) => {
+      requireWrite(c)
+      const { name, unit, packageQty, packagePriceRub } = c.req.valid('json')
+      if (referencesEspressoName(name)) {
+        throw bad('Строку Espresso нужно сопоставить с существующей техкартой Espresso', 400)
+      }
+      const key = normalizeIngredientName(name)
+      const at = now()
+      const packagePriceKop = kop(packagePriceRub)!
+      const create = db.transaction(() => {
+        const existing = (db
+          .prepare(`SELECT id, name FROM stock_items WHERE active=1 AND unit=?`)
+          .all(unit) as { id: number; name: string }[])
+          .find((item) => normalizeIngredientName(item.name) === key)
+        if (existing) {
+          throw bad(`Ингредиент «${existing.name}» уже существует — выберите его вместо создания дубля`, 409)
+        }
+        const id = Number(db.prepare(
+          `INSERT INTO stock_items(name, kind, unit, min_qty, multiplicity, notes,
+                                   package_qty, package_price_kop, manual_cost_kop, price_mode,
+                                   active, created_at, updated_at)
+           VALUES(?, 'raw', ?, 0, 1, 'Создано при импорте техкарт', ?, ?, NULL, 'manual', 1, ?, ?)`,
+        ).run(name, unit, packageQty, packagePriceKop, at, at).lastInsertRowid)
+        db.prepare(
+          `INSERT INTO stock_item_cost_history(stock_item_id, at, cost_kop, source) VALUES(?,?,?,'manual')`,
+        ).run(id, at, packagePriceKop / packageQty)
+        return id
+      })
+      return c.json({ id: create() }, 201)
+    },
+  )
+
   .get('/cost/items', (c) => {
     const q = (c.req.query('q') || '').trim().toLowerCase()
     const onlyProblems = c.req.query('problems') === '1'
