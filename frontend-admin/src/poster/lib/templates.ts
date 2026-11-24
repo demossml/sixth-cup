@@ -1,3 +1,4 @@
+import { linkByNames, syncCatalogPrices, type Catalog } from "./catalog";
 import { uid, type Group, type MenuDoc, type Size, type Workspace } from "./model";
 import { seedWorkspace } from "./seed";
 
@@ -10,7 +11,22 @@ export interface MenuTemplate {
 }
 
 const A = { A5: { w: 148, h: 210 }, A4: { w: 210, h: 297 }, A3: { w: 297, h: 420 }, A2: { w: 420, h: 594 } };
-const blank = (): Group[] => [{ id: "tpl-blank", title: "Меню", style: "hero", columns: ["0.25", "0.35", "0.40"], items: [] }];
+const blank = (): Group[] => [{ id: "tpl-blank", title: "Меню", style: "hero", columns: ["0.20", "0.30", "0.40"], items: [] }];
+
+/**
+ * Линейка размеров в шаблонах зашита старой («0.25 / 0.35 / 0.40»). В каталоге теперь
+ * 200 / 300 / 400, поэтому подписи приводим к нему, иначе связка с базой не находит цены.
+ */
+function currentSizeLabels(groups: Group[]) {
+  for (const g of groups) {
+    g.columns = g.columns.map((c) => {
+      const t = String(c).trim();
+      if (t === "0.25") return "0.20";
+      if (t === "0.35") return "0.30";
+      return c;
+    });
+  }
+}
 
 let cache: MenuTemplate[] | null = null;
 export function menuTemplates(): MenuTemplate[] {
@@ -29,18 +45,27 @@ export function menuTemplates(): MenuTemplate[] {
 }
 
 /** Лист шаблона для превью: временное меню с его таблицами. */
-export function templatePreview(ws: Workspace, t: MenuTemplate): { ws: Workspace; doc: MenuDoc } {
+export function templatePreview(ws: Workspace, t: MenuTemplate, catalog?: Catalog | null): { ws: Workspace; doc: MenuDoc } {
+  const groups = structuredClone(t.groups);
+  currentSizeLabels(groups);
+  const preview: Workspace = { ...ws, groups };
+  if (catalog) {
+    linkByNames(groups, catalog);
+    syncCatalogPrices(preview, catalog);
+  }
   return {
-    ws: { ...ws, groups: t.groups },
-    doc: { id: `tpl-${t.id}`, kind: "menu", cafeId: "", name: "Шаблон", size: t.size, groupIds: t.groups.map((g) => g.id), createdAt: "" },
+    ws: preview,
+    doc: { id: `tpl-${t.id}`, kind: "menu", cafeId: "", name: "Шаблон", size: t.size, groupIds: groups.map((g) => g.id), createdAt: "" },
   };
 }
 
 /** Новое меню из шаблона: таблицы копируются со своими id, так что правки шаблон не трогают. Возвращает id листа. */
-export function createFromTemplate(ws: Workspace, t: MenuTemplate, cafeId: string): string {
+export function createFromTemplate(ws: Workspace, t: MenuTemplate, cafeId: string, catalog?: Catalog | null): string {
   const id = uid("d");
-  const groupIds = t.groups.map((g) => {
-    const copy: Group = structuredClone(g);
+  const groups = structuredClone(t.groups);
+  currentSizeLabels(groups);
+  const groupIds = groups.map((g) => {
+    const copy = g;
     copy.id = uid("g");
     for (const it of copy.items) {
       it.id = uid("i");
@@ -50,5 +75,10 @@ export function createFromTemplate(ws: Workspace, t: MenuTemplate, cafeId: strin
     return copy.id;
   });
   ws.documents.push({ id, kind: "menu", cafeId, name: "Новое меню", size: { ...t.size }, groupIds, template: t.id, createdAt: new Date().toISOString() });
+  // Новое меню сразу считается по базе: иначе шаблон приносит старые цены из seed.
+  if (catalog) {
+    linkByNames(groups, catalog);
+    syncCatalogPrices(ws, catalog);
+  }
   return id;
 }

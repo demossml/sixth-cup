@@ -3,6 +3,7 @@ import { useKeepOnScreen } from "./keepOnScreen";
 import { usePresence } from "./presence";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { docDue, printCount, printCountLabel, printStatus, type PrintStatus } from "@/lib/fingerprint";
+import { useCatalog } from "@/lib/client/catalog";
 import { createFromTemplate, menuTemplates, templatePreview, type MenuTemplate } from "@/lib/templates";
 import { SIZE_PRESETS, cafeLabel, cafeMenus, deepCopyMenu, menuFamily, removeFormat, removeMenu, sizeLabel, uid, type MenuDoc, type Size } from "@/lib/model";
 import { ALL, CafeTitle, useCafe } from "./cafe";
@@ -107,6 +108,7 @@ function MenuList({ go }: { go: Go }) {
 function TemplatePickerScreen({ go, onClose }: { go: Go; onClose: () => void }) {
   const { ws, fb, update } = useWs();
   const { cafes } = useCafe();
+  const { catalog } = useCatalog();
   const [target, setTarget] = useState(cafes[0]?.id ?? "");
   const closeBtn = useRef<HTMLButtonElement>(null);
   const [closing, close] = useClosing(onClose);
@@ -125,7 +127,7 @@ function TemplatePickerScreen({ go, onClose }: { go: Go; onClose: () => void }) 
   const create = (t: MenuTemplate) => {
     let id = "";
     update((w) => {
-      id = createFromTemplate(w, t, target || cafes[0].id);
+      id = createFromTemplate(w, t, target || cafes[0].id, catalog);
     });
     onClose();
     go(`menu/${id}/edit`);
@@ -152,7 +154,7 @@ function TemplatePickerScreen({ go, onClose }: { go: Go; onClose: () => void }) 
         <div className="tpl-body">
           <ul className="menu-grid">
             {menuTemplates().map((t) => {
-              const p = templatePreview(ws, t);
+              const p = templatePreview(ws, t, catalog);
               const made = ws.documents.filter((d) => d.kind === "menu" && d.template === t.id).map((d) => d.id);
               return (
                 <li key={t.id}>

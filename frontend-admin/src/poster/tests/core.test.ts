@@ -899,6 +899,37 @@ describe("шаблоны", () => {
     ws.groups.find((g) => g.id === doc.groupIds[0])!.items[0].name = "Другое";
     expect(tpl.groups[0].items[0].name).not.toBe("Другое");
   });
+
+  it("новое меню из шаблона сразу считается по каталогу, а не по старым ценам seed", () => {
+    const ws = seedWorkspace();
+    const catalog = {
+      products: [
+        {
+          id: "g:capp",
+          name: "Капучино",
+          category: "Кофе",
+          addon: false,
+          available: true,
+          milk: [],
+          sizes: [
+            { key: "p:200", label: "200 мл", price: 180 },
+            { key: "p:300", label: "300 мл", price: 210 },
+            { key: "p:400", label: "400 мл", price: 300 },
+          ],
+        },
+      ],
+    };
+    const tpl = menuTemplates()[0];
+    const id = createFromTemplate(ws, tpl, ws.cafes[0].id, catalog);
+    const doc = ws.documents.find((d) => d.id === id) as MenuDoc;
+    const group = ws.groups.find((g) => g.id === doc.groupIds[0])!;
+    expect(group.columns).toEqual(["0.20", "0.30", "0.40"]);
+    const cappuccino = group.items.find((it) => it.name === "Капучино")!;
+    expect(cappuccino.prices).toEqual([180, 210, 300]);
+    expect(cappuccino.link).toMatchObject({ ref: "g:capp", sizes: ["p:200", "p:300", "p:400"] });
+    // шаблон остаётся нетронутым со своими исходными ценами
+    expect(tpl.groups[0].columns).toEqual(["0.25", "0.35", "0.40"]);
+  });
 });
 
 describe("что изменилось с прошлой отправки", () => {
