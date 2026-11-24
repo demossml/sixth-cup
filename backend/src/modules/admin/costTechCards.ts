@@ -122,6 +122,29 @@ function findIngredientMatches(name: string, stockItems: {
     .slice(0, 5)
 }
 
+/** «Американо 200 мл» и товар «Американо» — одна позиция: объём в карте не делает новый товар. */
+function productNameKey(raw: string): string {
+  return normalizeName(raw).replace(/\d+/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+function findProductMatches(name: string, products: { id: number; name: string }[]) {
+  const exactKey = normalizeName(name)
+  const looseKey = productNameKey(name)
+  return products
+    .map((product) => {
+      const exact = normalizeName(product.name) === exactKey
+      const sameWithoutVolume = looseKey.length >= 3 && productNameKey(product.name) === looseKey
+      return {
+        ...product,
+        exact: exact || sameWithoutVolume,
+        score: exact || sameWithoutVolume ? 1 : ingredientNameSimilarity(name, product.name),
+      }
+    })
+    .filter((match) => match.score >= 0.3)
+    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name, 'ru'))
+    .slice(0, 5)
+}
+
 function findNameMatches<T extends { id: number; name: string }>(name: string, choices: T[]) {
   const key = normalizeName(name)
   return choices
@@ -1172,7 +1195,7 @@ export const adminCostTechCards = new Hono()
         }) : []
         return { ...match, currentVersionId: version?.id ?? null, currentLines }
       }),
-      productMatches: findNameMatches(recipe.name, products),
+      productMatches: findProductMatches(recipe.name, products),
       lines: recipe.lines.map((line) => ({
         ...line,
         matches: findIngredientMatches(line.ingredientName, stockItemsForMatching),
@@ -1256,7 +1279,12 @@ export const adminCostTechCards = new Hono()
         packagePriceKop: number | null
       }>()
       const createMissingProduct = (recipeName: string) => {
-        const productName = recipeName.trim().slice(0, 60).trim()
+        // Объём в названии карты — это размер порции, а не отдельный товар меню.
+        const withoutVolume = recipeName
+          .replace(/\s*[,(]?\s*\d+(?:[.,]\d+)?\s*(?:мл|ml|г|гр|g|л|l|шт\.?)\s*\)?\s*$/i, '')
+          .replace(/\s+\d{2,3}\s*$/, '')
+          .trim()
+        const productName = (withoutVolume || recipeName.trim()).slice(0, 60).trim()
         const key = normalizeName(productName)
         // «КАПУЧИНО 300 мл» и товар «Капучино» — одна позиция: цифры в названии карты это объём.
         const looseKey = key.replace(/\d+/g, ' ').replace(/\s+/g, ' ').trim()

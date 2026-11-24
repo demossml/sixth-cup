@@ -208,8 +208,12 @@ function buildDrafts(preview: WorkbookPreview): RecipeDraft[] {
             : outputRawUnit?.startsWith('шт')
               ? 'pcs'
               : recipe.lines[0]?.unit ?? 'pcs'
+    const batchUnit = recipe.lines.find((line) => line.unit)?.unit ?? 'pcs'
+    const batchQty = recipe.lines
+      .filter((line) => line.unit === batchUnit && line.qty != null && line.qty > 0)
+      .reduce((sum, line) => sum + (line.qty ?? 0), 0)
     const outputQty = outputValue == null
-      ? 1
+      ? (recipe.kind === 'semi' && batchQty > 0 ? Number(batchQty.toFixed(3)) : 1)
       : outputUnit === 'ml' && (outputRawUnit === 'л' || outputRawUnit === 'l') ||
           outputUnit === 'g' && (outputRawUnit === 'кг' || outputRawUnit === 'kg')
         ? outputValue * 1000
@@ -220,7 +224,7 @@ function buildDrafts(preview: WorkbookPreview): RecipeDraft[] {
       newCardKind: recipe.kind,
       productId: target?.productId ?? autoMatch?.product.id ?? '',
       outputQty: recipe.kind === 'semi' ? outputQty : 1,
-      outputUnit: recipe.kind === 'semi' ? outputUnit : 'pcs',
+      outputUnit: recipe.kind === 'semi' ? (outputValue == null ? batchUnit : outputUnit) : 'pcs',
       lines: recipe.lines.map((line, lineIndex) => ({
         ...line,
         choice: defaultLineChoice(
