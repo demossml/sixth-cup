@@ -82,7 +82,7 @@ describe('parseTechcardWorkbook', () => {
     ])
   })
 
-  it('normalizes shot-based espresso lines to the stock ingredient name', () => {
+  it('normalizes single, double, and counted espresso shots to the shared card name', () => {
     const bytes = workbookBytes({
       'Классика': [
         ['КАПУЧИНО'],
@@ -90,12 +90,18 @@ describe('parseTechcardWorkbook', () => {
         ['200мл'],
         ['Ингредиенты'],
         ['1. 2 шота эспрессо'],
+        ['2. Двойной эспрессо'],
+        ['3. 1 shot Espresso'],
+        ['4. Single Espresso'],
       ],
     })
 
     const { recipes } = parseTechcardWorkbook(bytes)
     expect(recipes[0]!.lines).toMatchObject([
-      { ingredientName: 'Эспрессо', qty: 2, unit: 'pcs', issues: [] },
+      { ingredientName: 'Espresso', qty: 2, unit: 'pcs', issues: [] },
+      { ingredientName: 'Espresso', qty: 2, unit: 'pcs', issues: [] },
+      { ingredientName: 'Espresso', qty: 1, unit: 'pcs', issues: [] },
+      { ingredientName: 'Espresso', qty: 1, unit: 'pcs', issues: [] },
     ])
   })
 

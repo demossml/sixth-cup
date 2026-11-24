@@ -64,6 +64,11 @@ type DraftLine = {
 
 const key = () => Math.random().toString(36).slice(2, 9)
 
+function isEspressoCardName(name: string): boolean {
+  const normalized = name.toLowerCase().replace(/ё/g, 'е').replace(/[^a-zа-я0-9]+/gi, '')
+  return normalized === 'espresso' || normalized === 'эспрессо'
+}
+
 function draftFromLine(l: CardLine): DraftLine {
   return {
     key: key(),
@@ -327,7 +332,9 @@ function TechCardEditor({
 
   useEffect(() => {
     costApi.items().then((r) => setItems(r.items)).catch(() => setItems([]))
-    costApi.cards({ kind: 'semi' }).then((r) => setSemiCards(r.cards)).catch(() => setSemiCards([]))
+    costApi.cards()
+      .then((r) => setSemiCards(r.cards.filter((candidate) => candidate.kind === 'semi' || isEspressoCardName(candidate.name))))
+      .catch(() => setSemiCards([]))
     api<{ products: { id: number; name: string }[] }>('/products')
       .then((r) => setProducts(r.products ?? []))
       .catch(() => setProducts([]))
@@ -365,8 +372,8 @@ function TechCardEditor({
       const n = lineNumbers({ brutto: l.qtyBrutto, lossColdPct: l.lossColdPct, lossHotPct: l.lossHotPct, netto: l.nettoInput, yieldQty: l.yieldInput })
       let cost: number | null = null
       if (l.childCardId) {
-        const semi = semiById.get(l.childCardId)
-        cost = semi?.costPerUnitRub != null ? l.qtyBrutto * semi.costPerUnitRub : null
+        const childCard = semiById.get(l.childCardId)
+        cost = childCard?.costPerUnitRub != null ? l.qtyBrutto * childCard.costPerUnitRub : null
       } else if (l.stockItemId) {
         cost = lineCostRub(n.netto > 0 ? l.qtyBrutto : l.qtyBrutto, itemById.get(l.stockItemId)?.costRub ?? null)
       }
@@ -598,24 +605,24 @@ function TechCardEditor({
               <Plus size={14} /> Ингредиент
             </Button>
             <Button variant="secondary" onClick={() => setPicker('semi')}>
-              <Plus size={14} /> Заготовка
+              <Plus size={14} /> Техкарта
             </Button>
           </div>
         </div>
 
-        {lines.length === 0 && <p className="text-sm text-ink-secondary">Пока пусто: добавьте ингредиент или заготовку.</p>}
+        {lines.length === 0 && <p className="text-sm text-ink-secondary">Пока пусто: добавьте ингредиент или техкарту.</p>}
 
         <div className="grid gap-2">
           {computed.rows.map((row, idx) => {
             const item = row.stockItemId ? itemById.get(row.stockItemId) : null
-            const semi = row.childCardId ? semiById.get(row.childCardId) : null
-            const unit = item ? UNIT_LABELS[item.unit] : semi ? UNIT_LABELS[semi.outputUnit] : ''
+            const childCard = row.childCardId ? semiById.get(row.childCardId) : null
+            const unit = item ? UNIT_LABELS[item.unit] : childCard ? UNIT_LABELS[childCard.outputUnit] : ''
             return (
               <div key={row.key} className="rounded-xl border border-line p-2.5">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-medium">{item?.name ?? semi?.name ?? '—'}</span>
+                  <span className="text-sm font-medium">{item?.name ?? childCard?.name ?? '—'}</span>
                   {item && <span className="text-[11px] text-ink-tertiary">{COST_SOURCE_LABELS[item.costSource]} · {money(item.costRub)}/{UNIT_LABELS[item.unit]}</span>}
-                  {semi && <span className="text-[11px] text-ink-tertiary">заготовка · {money(semi.costPerUnitRub)}/{UNIT_LABELS[semi.outputUnit]}</span>}
+                  {childCard && <span className="text-[11px] text-ink-tertiary">{childCard.kind === 'semi' ? 'заготовка' : 'техкарта'} · {money(childCard.costPerUnitRub)}/{UNIT_LABELS[childCard.outputUnit]}</span>}
                   <Select
                     className="ml-auto w-auto"
                     value={row.lineRole}
@@ -889,7 +896,7 @@ function PickerDrawer({
   }, [q, items, semis, mode])
 
   return (
-    <Drawer open={!!open} onClose={onClose} title={mode === 'semi' ? 'Добавить заготовку' : 'Добавить ингредиент'}>
+    <Drawer open={!!open} onClose={onClose} title={mode === 'semi' ? 'Добавить техкарту' : 'Добавить ингредиент'}>
       <div className="relative mb-3">
         <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-tertiary" />
         <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Поиск" className="pl-8" autoFocus />
@@ -904,6 +911,9 @@ function PickerDrawer({
               className="flex items-center gap-2 rounded-lg border border-line px-3 py-2 text-left text-sm hover:border-brand/40"
             >
               <span className="font-medium">{(row as CardListItem).name}</span>
+              <span className="text-[11px] text-ink-tertiary">
+                {(row as CardListItem).kind === 'semi' ? 'заготовка' : 'техкарта'}
+              </span>
               <span className="text-[11px] text-ink-tertiary">
                 {(row as CardListItem).outputQty} {(row as CardListItem).outputUnit}
               </span>

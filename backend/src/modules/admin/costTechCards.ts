@@ -53,12 +53,21 @@ const kop = (rub: number | null | undefined) => (rub == null ? null : Math.round
 const rub = (k: number | null | undefined) => (k == null || !Number.isFinite(k) ? null : k / 100)
 
 function normalizeIngredientName(name: string): string {
-  return name
+  const normalized = name
     .toLowerCase()
     .replace(/ё/g, 'е')
     .replace(/[^a-zа-я0-9]+/gi, ' ')
     .trim()
     .replace(/\s+/g, ' ')
+  return normalized === 'эспрессо' ? 'espresso' : normalized
+}
+
+function isEspressoName(name: string): boolean {
+  return normalizeIngredientName(name) === 'espresso'
+}
+
+function canBeChildCard(card: { kind: string; name: string }): boolean {
+  return card.kind === 'semi' || isEspressoName(card.name)
 }
 
 function ingredientNameSimilarity(a: string, b: string): number {
@@ -713,13 +722,14 @@ export function projectCard(cardId: number): { norms: number; costKop: number | 
 function normalizeName(raw: string): string {
   // `\b` в JS считается по ASCII, поэтому единицы выкидываем как токены, а не регэкспом.
   const units = new Set(['мл', 'л', 'г', 'гр', 'кг', 'шт'])
-  return raw
+  const normalized = raw
     .toLowerCase()
     .replace(/ё/g, 'е')
     .replace(/[^a-zа-я0-9]+/gi, ' ')
     .split(' ')
     .filter((t) => t && !units.has(t))
     .join(' ')
+  return normalized === 'эспрессо' ? 'espresso' : normalized
 }
 
 /**
@@ -1099,7 +1109,7 @@ export const adminCostTechCards = new Hono()
       lines: recipe.lines.map((line) => ({
         ...line,
         matches: findIngredientMatches(line.ingredientName, stockItems),
-        semiMatches: findNameMatches(line.ingredientName, cards.filter((card) => card.kind === 'semi')),
+        semiMatches: findNameMatches(line.ingredientName, cards.filter(canBeChildCard)),
       })),
     }))
     return c.json({
@@ -1107,7 +1117,7 @@ export const adminCostTechCards = new Hono()
       recipes,
       warnings: parsed.warnings,
       stockItems: stockItems.map(({ id, name, unit }) => ({ id, name, unit })),
-      cards,
+      cards: cards.map((card) => ({ ...card, canBeChild: canBeChildCard(card) })),
       products,
     })
   })
@@ -1186,6 +1196,9 @@ export const adminCostTechCards = new Hono()
               }
               if (decision.action === 'delete') return []
 
+              if (isEspressoName(decision.name) && decision.childCardId == null) {
+                throw bad('Эспрессо должно ссылаться на существующую техкарту Espresso', 400)
+              }
               if (decision.stockItemId != null) {
                 const stockItem = db
                   .prepare(`SELECT unit FROM stock_items WHERE id=? AND active=1`)
@@ -1196,9 +1209,12 @@ export const adminCostTechCards = new Hono()
                 }
               } else {
                 const child = decision.childCardId == null ? undefined : cardRow(decision.childCardId)
-                if (!child || child.kind !== 'semi') throw bad(`Заготовка #${decision.childCardId} не найдена`, 409)
+                if (!child || !canBeChildCard(child)) throw bad(`Техкарта-компонент #${decision.childCardId} не найдена`, 409)
+                if (isEspressoName(decision.name) && !isEspressoName(child.name)) {
+                  throw bad('Строка Espresso должна ссылаться на техкарту Espresso', 400)
+                }
                 if (child.outputUnit !== decision.unit) {
-                  throw bad(`Единица заготовки «${child.name}» не совпадает с «${decision.unit}»`, 409)
+                  throw bad(`Единица техкарты «${child.name}» не совпадает с «${decision.unit}»`, 409)
                 }
               }
 
@@ -1244,6 +1260,9 @@ export const adminCostTechCards = new Hono()
           const versionId = Number(version.lastInsertRowid)
           const lines: z.infer<typeof lineZ>[] = recipe.lines.map((line) => {
             let stockItemId = line.stockItemId
+            if (isEspressoName(line.name) && line.childCardId == null) {
+              throw bad('Эспрессо должно ссылаться на существующую техкарту Espresso', 400)
+            }
             if (stockItemId != null) {
               const stockItem = db
                 .prepare(`SELECT unit FROM stock_items WHERE id=? AND active=1`)
@@ -1254,9 +1273,12 @@ export const adminCostTechCards = new Hono()
               }
             } else if (line.childCardId != null) {
               const child = cardRow(line.childCardId)
-              if (!child || child.kind !== 'semi') throw bad(`Заготовка #${line.childCardId} не найдена`, 409)
+              if (!child || !canBeChildCard(child)) throw bad(`Техкарта-компонент #${line.childCardId} не найдена`, 409)
+              if (isEspressoName(line.name) && !isEspressoName(child.name)) {
+                throw bad('Строка Espresso должна ссылаться на техкарту Espresso', 400)
+              }
               if (child.outputUnit !== line.unit) {
-                throw bad(`Единица заготовки «${child.name}» не совпадает с «${line.unit}»`, 409)
+                throw bad(`Единица техкарты «${child.name}» не совпадает с «${line.unit}»`, 409)
               }
             } else {
               const normalized = `${line.unit}:${normalizeIngredientName(line.name)}`

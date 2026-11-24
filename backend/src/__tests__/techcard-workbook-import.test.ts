@@ -28,6 +28,21 @@ function workbookFile(): File {
   })
 }
 
+function espressoWorkbookFile(): File {
+  const workbook = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+    ['КОФЕ'],
+    ['Americano QA'],
+    ['200мл'],
+    ['Ингредиенты'],
+    ['1. 2 шота эспрессо'],
+  ]), 'Кофе')
+  const bytes = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer
+  return new File([new Uint8Array(bytes)], 'espresso-techcards.xlsx', {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  })
+}
+
 function makeProduct(name: string): number {
   const time = Date.now()
   return Number(db.prepare(
@@ -136,6 +151,122 @@ describe('techcard workbook preview and apply', () => {
     expect(ack.json.reviewed).toBe(1)
     const reviewed = await admin('GET', `/cost/tech-cards/${cardId}`)
     expect(reviewed.json.card.importReviewCount).toBe(0)
+  })
+
+  it('links imported espresso shots to the existing Espresso card and recalculates consumers when it changes', async () => {
+    const beans = await admin('POST', '/stock/items', {
+      name: 'Кофейные зёрна Espresso QA',
+      kind: 'raw',
+      unit: 'g',
+    })
+    const beansId = Number(beans.json.item?.id ?? beans.json.id)
+    await admin('PUT', `/cost/items/${beansId}`, { manualCostRub: 0.1 })
+
+    const espressoProductId = makeProduct('Espresso QA Product')
+    const espresso = await admin('POST', '/cost/tech-cards', {
+      name: 'Espresso',
+      kind: 'dish',
+      productId: espressoProductId,
+      outputQty: 1,
+      outputUnit: 'pcs',
+      lines: [{ stockItemId: beansId, qtyBrutto: 18 }],
+    })
+    const espressoId = espresso.json.card.id as number
+
+    const form = new FormData()
+    form.set('file', espressoWorkbookFile())
+    const previewResponse = await app.request('/api/admin/cost/tech-cards/import/preview', {
+      method: 'POST',
+      headers: { 'X-Admin-Token': config.adminToken },
+      body: form,
+    })
+    const preview = await previewResponse.json() as {
+      recipes: {
+        lines: {
+          ingredientName: string
+          qty: number
+          unit: string
+          semiMatches: { id: number; name: string; exact: boolean }[]
+        }[]
+      }[]
+      cards: { id: number; name: string; canBeChild: boolean }[]
+    }
+
+    expect(previewResponse.status).toBe(200)
+    expect(preview.recipes[0]!.lines[0]).toMatchObject({
+      ingredientName: 'Espresso',
+      qty: 2,
+      unit: 'pcs',
+      semiMatches: [{ id: espressoId, name: 'Espresso', exact: true }],
+    })
+    expect(preview.cards.find((card) => card.id === espressoId)).toMatchObject({ canBeChild: true })
+
+    const americanoProductId = makeProduct('Americano QA Product')
+    const stockMapping = await admin('POST', '/cost/tech-cards/import/confirm', {
+      sourceName: 'espresso-techcards.xlsx',
+      recipes: [{
+        name: 'Americano QA 200 мл',
+        sourceSheet: 'Кофе',
+        sourceRow: 3,
+        targetCardId: null,
+        expectedVersionId: null,
+        newCardKind: 'dish',
+        productId: americanoProductId,
+        outputQty: 1,
+        outputUnit: 'pcs',
+        methodText: null,
+        lines: [{
+          stockItemId: beansId,
+          childCardId: null,
+          name: 'Espresso',
+          unit: 'pcs',
+          qty: 2,
+          lineRole: 'base',
+        }],
+      }],
+    })
+    expect(stockMapping.status).toBe(400)
+
+    const confirm = await admin('POST', '/cost/tech-cards/import/confirm', {
+      sourceName: 'espresso-techcards.xlsx',
+      recipes: [{
+        name: 'Americano QA 200 мл',
+        sourceSheet: 'Кофе',
+        sourceRow: 3,
+        targetCardId: null,
+        expectedVersionId: null,
+        newCardKind: 'dish',
+        productId: americanoProductId,
+        outputQty: 1,
+        outputUnit: 'pcs',
+        methodText: null,
+        lines: [{
+          stockItemId: null,
+          childCardId: espressoId,
+          name: 'Espresso',
+          unit: 'pcs',
+          qty: 2,
+          lineRole: 'base',
+        }],
+      }],
+    })
+    expect(confirm.status).toBe(200)
+    const americanoId = confirm.json.cards[0].id as number
+
+    const before = await admin('GET', `/cost/tech-cards/${americanoId}`)
+    expect(before.json.card.lines).toMatchObject([{ childCardId: espressoId, stockItemId: null, qtyBrutto: 2 }])
+    expect(before.json.card.costPerUnitRub).toBe(3.6)
+
+    const newEspressoVersion = await admin('POST', `/cost/tech-cards/${espressoId}/versions`, {
+      validFrom: (espresso.json.card.version.validFrom as number) + 1,
+      note: 'updated espresso dose',
+    })
+    const changedEspresso = await admin('PUT', `/cost/tech-cards/${espressoId}?versionId=${newEspressoVersion.json.versionId}`, {
+      lines: [{ stockItemId: beansId, qtyBrutto: 20 }],
+    })
+    expect(changedEspresso.status).toBe(200)
+    const after = await admin('GET', `/cost/tech-cards/${americanoId}`)
+    expect(after.json.card.costPerUnitRub).toBe(4)
   })
 
   it('rejects uncertain or stale mappings atomically and leaves the existing recipe intact', async () => {

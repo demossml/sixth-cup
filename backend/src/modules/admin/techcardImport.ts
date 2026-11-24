@@ -365,9 +365,18 @@ function isSectionTitle(value: string): boolean {
 
 function parseWorkbookQuantity(value: string): { qty: number; unit: ParsedLine['unit']; name: string } | null {
   const clean = value.replace(/^\s*\d+[.)]\s*/, '').trim()
-  const shot = clean.match(/^(\d+(?:[.,]\d+)?)\s*шот(?:а|ов)?\s+.+$/i)
+  const shot = clean.match(/^(\d+(?:[.,]\d+)?)\s*(?:шот(?:а|ов)?|shots?)\s+(?:эспрессо|espresso)$/i)
   if (shot) {
-    return { qty: Number(shot[1]!.replace(',', '.')), unit: 'pcs', name: 'Эспрессо' }
+    return { qty: Number(shot[1]!.replace(',', '.')), unit: 'pcs', name: 'Espresso' }
+  }
+  const namedShot = clean.match(/^(одинарный|двойной|тройной|single|double|triple)\s+(?:эспрессо|espresso)$/i)
+  if (namedShot) {
+    const count = /^(?:одинарный|single)$/i.test(namedShot[1]!) ? 1 : /^(?:двойной|double)$/i.test(namedShot[1]!) ? 2 : 3
+    return { qty: count, unit: 'pcs', name: 'Espresso' }
+  }
+  const espressoQuantity = clean.match(/^(\d+(?:[.,]\d+)?)\s+(?:эспрессо|espresso)$/i)
+  if (espressoQuantity) {
+    return { qty: Number(espressoQuantity[1]!.replace(',', '.')), unit: 'pcs', name: 'Espresso' }
   }
   const quantity = clean.match(/^(.+?)\s+(\d+(?:[.,]\d+)?)\s*(кг|kg|г|гр|g|мл|ml|л|l|шт\.?|pcs)\s*$/i)
   if (!quantity) return null
