@@ -37,18 +37,23 @@ export function layoutMenu(ws: Workspace, doc: MenuDoc, fb: FontBook): Scene {
   // ниже этой линии содержимому нельзя: там сноска и поле, где принтер не печатает
   const limit = priceNote || allergenNote ? footBase - cap(F.size) - F.gapAbove : baseH - Math.max(M.bottomLimit, safe);
 
+  // Длинное название, которое налезает на цены, — тоже повод уменьшить текст: подпись целиком
+  // важнее кегля, а мелкий шрифт чинит и высоту, и ширину строки.
+  const nameClash = (p: { warnings: string[] }) => p.warnings.some((w) => w.includes(": название наезжает на цен"));
+  const fits = (p: { bottom: number; warnings: string[] }) => p.bottom <= limit && !nameClash(p);
+
   let fit = 1;
   let page = first;
-  if (first.bottom > limit) {
+  if (!fits(first)) {
     const at = (p: number) => build(p / 100);
     let lo = Math.round(FIT_MIN * 100);
     let hi = 99;
     page = at(lo);
-    if (page.bottom <= limit) {
+    if (fits(page)) {
       while (lo < hi) {
         const mid = Math.ceil((lo + hi) / 2);
         const r = at(mid);
-        if (r.bottom <= limit) {
+        if (fits(r)) {
           lo = mid;
           page = r;
         } else hi = mid - 1;

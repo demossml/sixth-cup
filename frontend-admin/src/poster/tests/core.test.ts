@@ -721,14 +721,30 @@ describe("таблицы: рамка «А», группы добавок", () =>
 });
 
 describe("колонки объёма", () => {
-  it("лишняя колонка, которая сталкивается с крупным заголовком, даёт предупреждение", () => {
+  it("лишняя колонка не сталкивается с крупным заголовком: текст листа уменьшается", () => {
     const ws = seedWorkspace();
     const doc = menus(ws)[1]; // «Не кофе» — самая широкая надпись
     const g = ws.groups.find((x) => x.id === doc.groupIds[0])!;
-    expect(layoutMenu(ws, doc, fb).warnings).toEqual([]);
+    expect(layoutMenu(ws, doc, fb)).toMatchObject({ fit: 1, warnings: [] });
     g.columns.push("0.50");
     for (const it of g.items) it.prices.push(300);
-    expect(layoutMenu(ws, doc, fb).warnings.join(" ")).toMatch(/наезжает на колонки объёма/);
+    const scene = layoutMenu(ws, doc, fb);
+    expect(scene.fit!).toBeLessThan(1);
+    expect(scene.warnings).toEqual([]);
+  });
+});
+
+describe("длинные названия", () => {
+  it("название, которое налезает на цены, уменьшает текст листа, а не печатается поверх цен", () => {
+    const ws = seedWorkspace();
+    const doc = menus(ws)[1]; // «Не кофе» — самая широкая таблица
+    const g = ws.groups.find((x) => x.id === doc.groupIds[0])!;
+    expect(layoutMenu(ws, doc, fb)).toMatchObject({ fit: 1, warnings: [] });
+    g.items[0].name = "Опаленный маршмеллоу";
+    const scene = layoutMenu(ws, doc, fb);
+    expect(scene.warnings.join(" ")).not.toMatch(/название наезжает/);
+    expect(scene.fit!).toBeLessThan(1);
+    expect(scene.fit!).toBeGreaterThanOrEqual(FIT_MIN);
   });
 });
 
