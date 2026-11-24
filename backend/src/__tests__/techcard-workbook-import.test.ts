@@ -218,7 +218,7 @@ describe('techcard workbook preview and apply', () => {
         lines: [{
           stockItemId: beansId,
           childCardId: null,
-          name: 'Espresso',
+          name: 'Эспрессо (двойной)',
           unit: 'pcs',
           qty: 2,
           lineRole: 'base',

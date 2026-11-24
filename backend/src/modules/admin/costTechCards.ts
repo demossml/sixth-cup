@@ -66,6 +66,10 @@ function isEspressoName(name: string): boolean {
   return normalizeIngredientName(name) === 'espresso'
 }
 
+function referencesEspressoName(name: string): boolean {
+  return normalizeIngredientName(name).split(' ').some((token) => token === 'espresso' || token === 'эспрессо')
+}
+
 function canBeChildCard(card: { kind: string; name: string }): boolean {
   return card.kind === 'semi' || isEspressoName(card.name)
 }
@@ -1196,7 +1200,7 @@ export const adminCostTechCards = new Hono()
               }
               if (decision.action === 'delete') return []
 
-              if (isEspressoName(decision.name) && decision.childCardId == null) {
+              if (referencesEspressoName(decision.name) && decision.childCardId == null) {
                 throw bad('Эспрессо должно ссылаться на существующую техкарту Espresso', 400)
               }
               if (decision.stockItemId != null) {
@@ -1210,7 +1214,7 @@ export const adminCostTechCards = new Hono()
               } else {
                 const child = decision.childCardId == null ? undefined : cardRow(decision.childCardId)
                 if (!child || !canBeChildCard(child)) throw bad(`Техкарта-компонент #${decision.childCardId} не найдена`, 409)
-                if (isEspressoName(decision.name) && !isEspressoName(child.name)) {
+                if (referencesEspressoName(decision.name) && !isEspressoName(child.name)) {
                   throw bad('Строка Espresso должна ссылаться на техкарту Espresso', 400)
                 }
                 if (child.outputUnit !== decision.unit) {
@@ -1260,7 +1264,7 @@ export const adminCostTechCards = new Hono()
           const versionId = Number(version.lastInsertRowid)
           const lines: z.infer<typeof lineZ>[] = recipe.lines.map((line) => {
             let stockItemId = line.stockItemId
-            if (isEspressoName(line.name) && line.childCardId == null) {
+            if (referencesEspressoName(line.name) && line.childCardId == null) {
               throw bad('Эспрессо должно ссылаться на существующую техкарту Espresso', 400)
             }
             if (stockItemId != null) {
@@ -1274,7 +1278,7 @@ export const adminCostTechCards = new Hono()
             } else if (line.childCardId != null) {
               const child = cardRow(line.childCardId)
               if (!child || !canBeChildCard(child)) throw bad(`Техкарта-компонент #${line.childCardId} не найдена`, 409)
-              if (isEspressoName(line.name) && !isEspressoName(child.name)) {
+              if (referencesEspressoName(line.name) && !isEspressoName(child.name)) {
                 throw bad('Строка Espresso должна ссылаться на техкарту Espresso', 400)
               }
               if (child.outputUnit !== line.unit) {

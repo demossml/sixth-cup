@@ -4,6 +4,7 @@ import { AlertTriangle, CheckCircle2, FileText, Plus, XCircle } from 'lucide-rea
 import { api, uploadAdminFile } from '../../api/client'
 import { UNIT_LABELS } from '../../lib/costMath'
 import { Badge, Banner, Button, Card, Drawer, Field, Input, Select, Spinner, useToast } from '../../ui/kit'
+import { applyEspressoChoiceToLines, isEspressoCardName, isEspressoName } from './espressoMapping'
 
 type Unit = 'kg' | 'l' | 'g' | 'ml' | 'pcs'
 type ImportUnit = 'g' | 'ml' | 'pcs'
@@ -99,15 +100,10 @@ const units: ImportUnit[] = ['g', 'ml', 'pcs']
 const stockChoice = (id: number) => `stock:${id}`
 const semiChoice = (id: number) => `semi:${id}`
 
-function isEspressoName(name: string): boolean {
-  const normalized = name.toLowerCase().replace(/ё/g, 'е').replace(/[^a-zа-я0-9]+/gi, '')
-  return normalized === 'espresso' || normalized === 'эспрессо'
-}
-
 function defaultLineChoice(line: PreviewLine): string {
   const exactSemi = line.semiMatches.filter((match) => match.exact && match.outputUnit === line.unit)
   if (isEspressoName(line.ingredientName)) {
-    const espressoCards = exactSemi.filter((match) => isEspressoName(match.name))
+    const espressoCards = exactSemi.filter((match) => isEspressoCardName(match.name))
     return espressoCards.length === 1 ? semiChoice(espressoCards[0]!.id) : ''
   }
   const exactStock = line.matches.filter((match) => match.exact && match.unit === line.unit)
@@ -206,7 +202,7 @@ function recipeErrors(recipe: RecipeDraft, preview: WorkbookPreview): string[] {
   const targetMatch = targetId == null ? null : recipe.cardMatches.find((card) => card.id === targetId)
   const kind = target?.kind ?? (recipe.action === 'create' ? recipe.newCardKind : null)
   if (kind !== 'semi' && !recipe.productId && !target?.productId) errors.push('Для карты блюда выберите товар каталога')
-  const espressoCards = preview.cards.filter((card) => card.canBeChild && isEspressoName(card.name))
+  const espressoCards = preview.cards.filter((card) => card.canBeChild && isEspressoCardName(card.name))
   for (const line of recipe.lines.filter((candidate) => isEspressoName(candidate.ingredientName))) {
     const selectedCard = line.choice.startsWith('semi:')
       ? preview.cards.find((card) => card.id === Number(line.choice.slice(5)))
@@ -215,7 +211,7 @@ function recipeErrors(recipe: RecipeDraft, preview: WorkbookPreview): string[] {
       errors.push('Не найдена активная техкарта Espresso. Создайте или проверьте её перед импортом; строка не будет сохранена как складской ингредиент.')
     } else if (line.choice === 'skip') {
       errors.push('Строку Espresso нельзя пропустить: она должна ссылаться на существующую техкарту.')
-    } else if (!selectedCard || !isEspressoName(selectedCard.name) || !selectedCard.canBeChild) {
+    } else if (!selectedCard || !isEspressoCardName(selectedCard.name) || !selectedCard.canBeChild) {
       errors.push('Строку Espresso сопоставьте с существующей техкартой Espresso, а не со складским ингредиентом.')
     }
   }
@@ -281,6 +277,10 @@ export default function TechCardWorkbookImport({
   const [busyLabel, setBusyLabel] = useState('')
 
   const included = recipes.filter((recipe) => recipe.action !== 'skip')
+  const espressoLineCount = recipes.reduce(
+    (count, recipe) => count + recipe.lines.filter((line) => isEspressoName(line.ingredientName)).length,
+    0,
+  )
   const errors = useMemo(
     () => preview ? recipes.flatMap((recipe) => recipeErrors(recipe, preview).map((error) => `${recipe.name}: ${error}`)) : [],
     [recipes, preview],
@@ -329,9 +329,31 @@ export default function TechCardWorkbookImport({
   }
 
   const updateLine = (recipeIndex: number, lineIndex: number, patch: Partial<LineDraft>) => {
-    setRecipes((current) => current.map((recipe, i) => i !== recipeIndex
-      ? recipe
-      : { ...recipe, lines: recipe.lines.map((line, j) => j === lineIndex ? { ...line, ...patch } : line) }))
+    setRecipes((current) => {
+      const sourceLine = current[recipeIndex]?.lines[lineIndex]
+      const choice = patch.choice
+      const selectedCard = choice?.startsWith('semi:')
+        ? preview?.cards.find((card) => card.id === Number(choice.slice(5)))
+        : undefined
+      const sharedEspressoChoice = sourceLine && isEspressoName(sourceLine.ingredientName) &&
+        selectedCard?.canBeChild && isEspressoCardName(selectedCard.name)
+        ? choice
+        : undefined
+
+      const updated = current.map((recipe, i) => ({
+        ...recipe,
+        lines: recipe.lines.map((line, j) => {
+          if (i === recipeIndex && j === lineIndex) return { ...line, ...patch }
+          return line
+        }),
+      }))
+      return sharedEspressoChoice
+        ? updated.map((recipe) => ({
+            ...recipe,
+            lines: applyEspressoChoiceToLines(recipe.lines, sharedEspressoChoice),
+          }))
+        : updated
+    })
   }
 
   const updateExistingLine = (
@@ -488,6 +510,11 @@ export default function TechCardWorkbookImport({
             <Badge tone="warn">Проверьте похожее название</Badge>
             <Badge tone="bad">Не хватает обязательных данных</Badge>
           </div>
+          {espressoLineCount > 0 && (
+            <Banner tone="brand">
+              Найдено строк Espresso: {espressoLineCount}. Выберите существующую техкарту Espresso один раз — выбор автоматически применится ко всем строкам Espresso во всех листах. Espresso не создаётся как складский ингредиент.
+            </Banner>
+          )}
           {errors.length > 0 && (
             <Banner tone="bad">
               Сохранение пока заблокировано: исправьте ошибки у включённых карт.
@@ -760,12 +787,13 @@ export default function TechCardWorkbookImport({
                         </Button>
                       </div>
                       {recipe.lines.map((line, lineIndex) => {
+                        const espressoLine = isEspressoName(line.ingredientName)
                         const selectedItem = line.choice.startsWith('stock:') ? preview.stockItems.find((item) => item.id === Number(line.choice.slice(6))) : null
                         const selectedSemi = line.choice.startsWith('semi:') ? preview.cards.find((card) => card.id === Number(line.choice.slice(5))) : null
                         const invalidEspressoLink = isEspressoName(line.ingredientName) && (
                           !selectedSemi ||
                           !selectedSemi.canBeChild ||
-                          !isEspressoName(selectedSemi.name) ||
+                          !isEspressoCardName(selectedSemi.name) ||
                           selectedSemi.outputUnit !== line.unit
                         )
                         const lineError = (line.choice !== 'skip' && (!line.ingredientName.trim() || !line.unit || !line.qty || line.qty <= 0 || (selectedItem && selectedItem.unit !== line.unit) || (selectedSemi && (!selectedSemi.canBeChild || selectedSemi.outputUnit !== line.unit)))) || invalidEspressoLink
@@ -791,19 +819,19 @@ export default function TechCardWorkbookImport({
                               </Field>
                               <Field label="Сопоставление">
                                 <Select value={line.choice} onChange={(event) => updateLine(recipeIndex, lineIndex, { choice: event.target.value })}>
-                                  <option value="">— выберите вручную —</option>
-                                  <option value="new">Создать позицию склада</option>
-                                  {preview.stockItems.map((item) => (
+                                  <option value="">{espressoLine ? '— выберите существующую техкарту Espresso —' : '— выберите вручную —'}</option>
+                                  {!espressoLine && <option value="new">Создать позицию склада</option>}
+                                  {!espressoLine && preview.stockItems.map((item) => (
                                     <option key={`stock-${item.id}`} value={stockChoice(item.id)} disabled={item.unit !== line.unit}>
                                       {item.name} ({UNIT_LABELS[item.unit]}){line.matches.some((match) => match.id === item.id && match.exact) ? ' · точное' : ''}
                                     </option>
                                   ))}
-                                  {preview.cards.filter((card) => card.canBeChild).map((card) => (
+                                  {preview.cards.filter((card) => card.canBeChild && (!espressoLine || isEspressoCardName(card.name))).map((card) => (
                                     <option key={`semi-${card.id}`} value={semiChoice(card.id)} disabled={card.outputUnit !== line.unit}>
                                       {card.kind === 'semi' ? 'Заготовка' : 'Техкарта'}: {card.name} ({UNIT_LABELS[card.outputUnit]})
                                     </option>
                                   ))}
-                                  <option value="skip">Не включать эту строку</option>
+                                  {!espressoLine && <option value="skip">Не включать эту строку</option>}
                                 </Select>
                               </Field>
                               <Field label="Вклад в техкарту">
