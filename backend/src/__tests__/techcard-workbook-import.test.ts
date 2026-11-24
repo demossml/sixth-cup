@@ -439,4 +439,99 @@ describe('techcard workbook preview and apply', () => {
     ).get() as { count: number }).count
     expect(ingredientCount).toBe(1)
   })
+
+  it('creates one warehouse item for the same ingredient reused across recipes', async () => {
+    const sourceName = `shared-cream-${Date.now()}.xlsx`
+    const result = await admin('POST', '/cost/tech-cards/import/confirm', {
+      sourceName,
+      recipes: [
+        {
+          name: 'Рафа с общими сливками QA 1',
+          sourceSheet: 'Напитки',
+          sourceRow: 4,
+          targetCardId: null,
+          expectedVersionId: null,
+          newCardKind: 'semi',
+          productId: null,
+          outputQty: 100,
+          outputUnit: 'ml',
+          methodText: null,
+          lines: [{
+            stockItemId: null,
+            childCardId: null,
+            name: 'Сливки 10% QA общий',
+            unit: 'ml',
+            qty: 30,
+            lineRole: 'base',
+          }],
+        },
+        {
+          name: 'Рафа с общими сливками QA 2',
+          sourceSheet: 'Напитки',
+          sourceRow: 8,
+          targetCardId: null,
+          expectedVersionId: null,
+          newCardKind: 'semi',
+          productId: null,
+          outputQty: 100,
+          outputUnit: 'ml',
+          methodText: null,
+          lines: [{
+            stockItemId: null,
+            childCardId: null,
+            name: 'сливки 10 % qa общий',
+            unit: 'ml',
+            qty: 40,
+            lineRole: 'base',
+          }],
+        },
+      ],
+    })
+
+    expect(result.status).toBe(200)
+    const stockItemCount = (db.prepare(
+      `SELECT COUNT(*) AS count FROM stock_items WHERE notes=?`,
+    ).get(`Импорт ТТК: ${sourceName}`) as { count: number }).count
+    expect(stockItemCount).toBe(1)
+
+    const cardIds = result.json.cards.map((card: { id: number }) => card.id)
+    const cards = await Promise.all(cardIds.map((id: number) => admin('GET', `/cost/tech-cards/${id}`)))
+    const stockItemIds = cards.map((card) => card.json.card.lines[0].stockItemId)
+    expect(stockItemIds[0]).toBeTruthy()
+    expect(stockItemIds[0]).toBe(stockItemIds[1])
+
+    const duplicateSourceName = `shared-cream-again-${Date.now()}.xlsx`
+    const duplicateAttempt = await admin('POST', '/cost/tech-cards/import/confirm', {
+      sourceName: duplicateSourceName,
+      recipes: [{
+        name: 'Ещё один раф с теми же сливками QA',
+        sourceSheet: 'Напитки',
+        sourceRow: 12,
+        targetCardId: null,
+        expectedVersionId: null,
+        newCardKind: 'semi',
+        productId: null,
+        outputQty: 100,
+        outputUnit: 'ml',
+        methodText: null,
+        lines: [{
+          stockItemId: null,
+          childCardId: null,
+          name: 'сливки 10 % qa общий',
+          unit: 'ml',
+          qty: 25,
+          lineRole: 'base',
+        }],
+      }],
+    })
+    expect(duplicateAttempt.status).toBe(409)
+    const stockItemCountAfterRetry = (db.prepare(
+      `SELECT COUNT(*) AS count FROM stock_items WHERE notes=?`,
+    ).get(`Импорт ТТК: ${sourceName}`) as { count: number }).count
+    expect(stockItemCountAfterRetry).toBe(1)
+    const retryCreatedItemCount = (db.prepare(
+      `SELECT COUNT(*) AS count FROM stock_items WHERE notes=?`,
+    ).get(`Импорт ТТК: ${duplicateSourceName}`) as { count: number }).count
+    expect(retryCreatedItemCount).toBe(0)
+  })
 })

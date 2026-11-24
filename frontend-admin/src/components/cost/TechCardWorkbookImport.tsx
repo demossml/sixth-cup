@@ -5,6 +5,7 @@ import { api, uploadAdminFile } from '../../api/client'
 import { UNIT_LABELS } from '../../lib/costMath'
 import { Badge, Banner, Button, Card, Drawer, Field, Input, Select, Spinner, useToast } from '../../ui/kit'
 import { applyEspressoChoiceToLines, isEspressoCardName, isEspressoName } from './espressoMapping'
+import { applyStockItemChoiceToLines } from './stockItemMapping'
 
 type Unit = 'kg' | 'l' | 'g' | 'ml' | 'pcs'
 type ImportUnit = 'g' | 'ml' | 'pcs'
@@ -339,6 +340,12 @@ export default function TechCardWorkbookImport({
         selectedCard?.canBeChild && isEspressoCardName(selectedCard.name)
         ? choice
         : undefined
+      const sharedStockChoice = sourceLine &&
+        !isEspressoName(sourceLine.ingredientName) &&
+        (choice === 'new' || choice?.startsWith('stock:')) &&
+        sourceLine.unit
+        ? { name: sourceLine.ingredientName, unit: sourceLine.unit, choice }
+        : undefined
 
       const updated = current.map((recipe, i) => ({
         ...recipe,
@@ -347,12 +354,24 @@ export default function TechCardWorkbookImport({
           return line
         }),
       }))
-      return sharedEspressoChoice
-        ? updated.map((recipe) => ({
-            ...recipe,
-            lines: applyEspressoChoiceToLines(recipe.lines, sharedEspressoChoice),
-          }))
-        : updated
+      if (sharedEspressoChoice) {
+        return updated.map((recipe) => ({
+          ...recipe,
+          lines: applyEspressoChoiceToLines(recipe.lines, sharedEspressoChoice),
+        }))
+      }
+      if (sharedStockChoice) {
+        return updated.map((recipe) => ({
+          ...recipe,
+          lines: applyStockItemChoiceToLines(
+            recipe.lines,
+            sharedStockChoice.name,
+            sharedStockChoice.unit,
+            sharedStockChoice.choice,
+          ),
+        }))
+      }
+      return updated
     })
   }
 
@@ -515,6 +534,9 @@ export default function TechCardWorkbookImport({
               Найдено строк Espresso: {espressoLineCount}. Выберите существующую техкарту Espresso один раз — выбор автоматически применится ко всем строкам Espresso во всех листах. Espresso не создаётся как складский ингредиент.
             </Banner>
           )}
+          <Banner tone="brand">
+            Выберите складскую позицию или «Создать позицию склада» один раз — выбор применится ко всем строкам с тем же названием и единицей измерения. Новая позиция создаётся на складе один раз; похожие названия и другие единицы автоматически не объединяются.
+          </Banner>
           {errors.length > 0 && (
             <Banner tone="bad">
               Сохранение пока заблокировано: исправьте ошибки у включённых карт.
