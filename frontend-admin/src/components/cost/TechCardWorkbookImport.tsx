@@ -45,7 +45,13 @@ type CardMatch = Match & {
   currentVersionId: number | null
   currentLines: CurrentLine[]
 }
-type IngredientMatch = Match & { unit: Unit; packageQty: number | null; packagePriceRub: number | null }
+type AutoMatchDecision = { id: number | null; confidence: 'high' | 'medium' | 'low'; reason: string }
+type IngredientMatch = Match & {
+  unit: Unit
+  packageQty: number | null
+  packagePriceRub: number | null
+  hasCost: boolean
+}
 type SemiMatch = Match & { kind: 'dish' | 'semi' | 'modifier'; productId: number | null; outputUnit: Unit }
 type PreviewLine = {
   sourceRow: number
@@ -72,7 +78,6 @@ type PreviewRecipe = {
   cardMatches: CardMatch[]
   productMatches: Match[]
 }
-type CatalogItem = { id: number; name: string; unit: Unit }
 type CatalogCard = {
   id: number
   name: string
@@ -82,11 +87,25 @@ type CatalogCard = {
   canBeChild: boolean
 }
 type Product = { id: number; name: string }
+type StockItem = {
+  id: number
+  name: string
+  unit: Unit
+  packageQty: number | null
+  packagePriceRub: number | null
+  hasCost: boolean
+}
 type WorkbookPreview = {
   sourceName: string
   recipes: PreviewRecipe[]
   warnings: string[]
-  stockItems: CatalogItem[]
+  autoMatches: {
+    provider: 'deepseek' | 'heuristic'
+    warning: string | null
+    recipes: { key: string; card: AutoMatchDecision; product: AutoMatchDecision }[]
+    lines: { recipeKey: string; lineIndex: number; stockItem: AutoMatchDecision; childCard: AutoMatchDecision }[]
+  }
+  stockItems: StockItem[]
   cards: CatalogCard[]
   products: Product[]
 }
@@ -104,26 +123,23 @@ type RecipeDraft = Omit<PreviewRecipe, 'lines'> & {
   lines: LineDraft[]
   existingLineDecisions: Record<number, ExistingLineDecision[]>
 }
-type SavedCards = { applied: number; cards: { id: number; name: string; changeKind: 'created' | 'updated' }[] }
+type SavedCards = {
+  applied: number
+  productsCreated: number
+  cards: { id: number; name: string; changeKind: 'created' | 'updated' }[]
+}
 
 const units: ImportUnit[] = ['g', 'ml', 'pcs']
 const stockChoice = (id: number) => `stock:${id}`
 const semiChoice = (id: number) => `semi:${id}`
 
-function defaultLineChoice(line: PreviewLine): string {
-  const exactSemi = line.semiMatches.filter((match) => match.exact && match.outputUnit === line.unit)
+function defaultLineChoice(line: PreviewLine, mapping: WorkbookPreview['autoMatches']['lines'][number] | undefined): string {
   if (isEspressoName(line.ingredientName)) {
-    const espressoCards = exactSemi.filter((match) => isEspressoCardName(match.name))
-    return espressoCards.length === 1 ? semiChoice(espressoCards[0]!.id) : ''
+    return mapping?.childCard.id != null ? semiChoice(mapping.childCard.id) : ''
   }
-  const exactStock = line.matches.filter((match) => match.exact && match.unit === line.unit)
-  if (exactStock.length === 1) return stockChoice(exactStock[0]!.id)
-  return exactSemi.length === 1 ? semiChoice(exactSemi[0]!.id) : ''
-}
-
-function defaultRecipeAction(recipe: PreviewRecipe): string {
-  const exact = recipe.cardMatches.filter((match) => match.exact)
-  return exact.length === 1 ? `card:${exact[0]!.id}` : 'skip'
+  if (mapping?.stockItem.id != null) return stockChoice(mapping.stockItem.id)
+  if (mapping?.childCard.id != null) return semiChoice(mapping.childCard.id)
+  return 'new'
 }
 
 function compositionDiff(recipe: RecipeDraft, current: CurrentLine[], preview: WorkbookPreview) {
@@ -170,19 +186,47 @@ function lineLabel(line: CurrentLine | LineDraft, preview: WorkbookPreview): str
 }
 
 function buildDrafts(preview: WorkbookPreview): RecipeDraft[] {
+  const usedCardIds = new Set<number>()
   return preview.recipes.map((recipe) => {
-    const action = defaultRecipeAction(recipe)
+    const autoMatch = preview.autoMatches.recipes.find((candidate) => candidate.key === recipe.key)
+    const suggestedCardId = autoMatch?.card.id
+    const cardId = suggestedCardId != null && !usedCardIds.has(suggestedCardId) ? suggestedCardId : null
+    if (cardId != null) usedCardIds.add(cardId)
+    const action = cardId == null ? 'create' : `card:${cardId}`
     const target = action.startsWith('card:') ? recipe.cardMatches.find((match) => match.id === Number(action.slice(5))) : undefined
+    const parsedOutput = recipe.outputLabel?.match(/(\d+(?:[.,]\d+)?)\s*(мл|ml|л|l|г|гр|g|кг|kg|шт)?/i)
+    const outputValue = parsedOutput ? Number(parsedOutput[1]!.replace(',', '.')) : null
+    const outputRawUnit = parsedOutput?.[2]?.toLowerCase()
+    const outputUnit: Unit = outputRawUnit === 'л' || outputRawUnit === 'l'
+      ? 'ml'
+      : outputRawUnit === 'кг' || outputRawUnit === 'kg'
+        ? 'g'
+        : outputRawUnit === 'г' || outputRawUnit === 'гр' || outputRawUnit === 'g'
+          ? 'g'
+          : outputRawUnit === 'мл' || outputRawUnit === 'ml'
+            ? 'ml'
+            : outputRawUnit?.startsWith('шт')
+              ? 'pcs'
+              : recipe.lines[0]?.unit ?? 'pcs'
+    const outputQty = outputValue == null
+      ? 1
+      : outputUnit === 'ml' && (outputRawUnit === 'л' || outputRawUnit === 'l') ||
+          outputUnit === 'g' && (outputRawUnit === 'кг' || outputRawUnit === 'kg')
+        ? outputValue * 1000
+        : outputValue
     return {
       ...recipe,
       action,
       newCardKind: recipe.kind,
-      productId: target?.productId ?? '',
-      outputQty: recipe.kind === 'semi' ? null : 1,
-      outputUnit: recipe.kind === 'semi' ? '' : 'pcs',
-      lines: recipe.lines.map((line) => ({
+      productId: target?.productId ?? autoMatch?.product.id ?? '',
+      outputQty: recipe.kind === 'semi' ? outputQty : 1,
+      outputUnit: recipe.kind === 'semi' ? outputUnit : 'pcs',
+      lines: recipe.lines.map((line, lineIndex) => ({
         ...line,
-        choice: defaultLineChoice(line),
+        choice: defaultLineChoice(
+          line,
+          preview.autoMatches.lines.find((candidate) => candidate.recipeKey === recipe.key && candidate.lineIndex === lineIndex),
+        ),
         newItemPackageQty: null,
         newItemPackagePriceRub: null,
       })),
@@ -215,8 +259,6 @@ function recipeErrors(recipe: RecipeDraft, preview: WorkbookPreview): string[] {
   const targetId = recipe.action.startsWith('card:') ? Number(recipe.action.slice(5)) : null
   const target = targetId == null ? null : preview.cards.find((card) => card.id === targetId)
   const targetMatch = targetId == null ? null : recipe.cardMatches.find((card) => card.id === targetId)
-  const kind = target?.kind ?? (recipe.action === 'create' ? recipe.newCardKind : null)
-  if (kind !== 'semi' && !recipe.productId && !target?.productId) errors.push('Для карты блюда выберите товар каталога')
   const espressoCards = preview.cards.filter((card) => card.canBeChild && isEspressoCardName(card.name))
   for (const line of recipe.lines.filter((candidate) => isEspressoName(candidate.ingredientName))) {
     const selectedCard = line.choice.startsWith('semi:')
@@ -238,14 +280,11 @@ function recipeErrors(recipe: RecipeDraft, preview: WorkbookPreview): string[] {
     if (!line.unit || !units.includes(line.unit)) errors.push(`${label}: подтвердите единицу измерения`)
     if (line.qty == null || !Number.isFinite(line.qty) || line.qty <= 0) errors.push(`${label}: укажите одно точное количество`)
     if (!line.choice) errors.push(`${label}: сопоставьте ингредиент или явно создайте новую позицию`)
-    if (line.choice === 'new') {
-      if (line.newItemPackageQty == null || !Number.isFinite(line.newItemPackageQty) || line.newItemPackageQty <= 0) {
-        errors.push(`${label}: укажите количество в упаковке новой позиции`)
-      }
-      if (line.newItemPackagePriceRub == null || !Number.isFinite(line.newItemPackagePriceRub) || line.newItemPackagePriceRub < 0) {
-        errors.push(`${label}: укажите цену упаковки новой позиции`)
-      }
-    }
+    if (
+      line.choice === 'new' &&
+      line.newItemPackagePriceRub != null &&
+      (line.newItemPackageQty == null || !Number.isFinite(line.newItemPackageQty) || line.newItemPackageQty <= 0)
+    ) errors.push(`${label}: укажите количество упаковки, чтобы рассчитать введённую цену`)
     if (line.choice.startsWith('stock:')) {
       const item = preview.stockItems.find((candidate) => candidate.id === Number(line.choice.slice(6)))
       if (!item || item.unit !== line.unit) errors.push(`${label}: единица выбранного ингредиента не совпадает`)
@@ -317,6 +356,36 @@ export default function TechCardWorkbookImport({
       if (key && !newItemPriceOwners.has(key)) newItemPriceOwners.set(key, { recipeIndex, lineIndex })
     })
   })
+  const creationSummary = useMemo(() => {
+    const positions = new Set<string>()
+    const products = new Set<string>()
+    let cards = 0
+    let missingPrices = 0
+    if (!preview) return { positions: 0, products: 0, cards: 0, missingPrices: 0 }
+    for (const recipe of included) {
+      const targetId = recipe.action.startsWith('card:') ? Number(recipe.action.slice(5)) : null
+      const target = targetId == null ? null : preview.cards.find((card) => card.id === targetId)
+      if (recipe.action === 'create') cards++
+      const kind = target?.kind ?? (recipe.action === 'create' ? recipe.newCardKind : null)
+      if (kind !== 'semi' && !recipe.productId && !target?.productId) {
+        // «Капучино 300 мл» и «Капучино 400 мл» дадут один товар — цифры в названии карты это объём.
+        products.add(recipe.name.toLowerCase().replace(/[^a-zа-я0-9]+/gi, ' ').replace(/\d+/g, ' ').replace(/\s+/g, ' ').trim())
+      }
+      recipe.lines.forEach((line) => {
+        if (line.choice !== 'new') {
+          if (!line.choice.startsWith('stock:')) return
+          const item = preview.stockItems.find((candidate) => candidate.id === Number(line.choice.slice(6)))
+          if (item && !item.hasCost) missingPrices++
+          return
+        }
+        const key = stockItemMappingKey(line.ingredientName, line.unit)
+        if (key) positions.add(key)
+        if (line.newItemPackagePriceRub == null) missingPrices++
+      })
+    }
+    return { positions: positions.size, products: products.size, cards, missingPrices }
+  }, [included, preview])
+
   const compositionSummary = useMemo(() => {
     const summary = { added: 0, changed: 0, kept: 0, deleted: 0 }
     if (!preview) return summary
@@ -443,25 +512,19 @@ export default function TechCardWorkbookImport({
     const mappingKey = stockItemMappingKey(line.ingredientName, line.unit)
     const unit = line.unit
     const name = line.ingredientName.trim()
-    if (
-      !mappingKey ||
-      !unit ||
-      name.length < 2 ||
-      line.newItemPackageQty == null ||
-      !Number.isFinite(line.newItemPackageQty) ||
-      line.newItemPackageQty <= 0 ||
-      line.newItemPackagePriceRub == null ||
-      !Number.isFinite(line.newItemPackagePriceRub) ||
-      line.newItemPackagePriceRub < 0
-    ) return
+    if (!mappingKey || !unit || name.length < 2) return
+    const packageQty = line.newItemPackageQty != null && line.newItemPackageQty > 0 ? line.newItemPackageQty : 1
+    const packagePriceRub = line.newItemPackagePriceRub != null && line.newItemPackagePriceRub >= 0
+      ? line.newItemPackagePriceRub
+      : 0
 
     setSavingStockItemKey(mappingKey)
     try {
       const created = await costApi.createItemWithPackage({
         name,
         unit,
-        packageQty: line.newItemPackageQty,
-        packagePriceRub: line.newItemPackagePriceRub,
+        packageQty,
+        packagePriceRub,
       })
       setPreview((current) => current ? {
         ...current,
@@ -469,6 +532,9 @@ export default function TechCardWorkbookImport({
           id: created.id,
           name,
           unit,
+          packageQty,
+          packagePriceRub,
+          hasCost: packagePriceRub > 0,
         }],
       } : current)
       setRecipes((current) => current.map((recipe) => ({
@@ -579,6 +645,10 @@ export default function TechCardWorkbookImport({
               Состав: добавится {compositionSummary.added}, изменится {compositionSummary.changed},
               {' '}останется {compositionSummary.kept}, удалится {compositionSummary.deleted}
             </div>
+            <div>
+              Создастся: карт {creationSummary.cards}, товаров {creationSummary.products}, позиций склада {creationSummary.positions}
+              {creationSummary.missingPrices > 0 ? `; без цены ${creationSummary.missingPrices}` : ''}
+            </div>
           </div>
           <Button variant="ghost" disabled={busy} onClick={() => { setPreview(null); setRecipes([]) }}>Выбрать другой файл</Button>
           <Button
@@ -586,7 +656,7 @@ export default function TechCardWorkbookImport({
             loading={busy}
             onClick={() => void save()}
           >
-            Сохранить проверенные карты
+            Сохранить всё и создать недостающее
           </Button>
         </>
       ) : (
@@ -599,7 +669,7 @@ export default function TechCardWorkbookImport({
       {!preview ? (
         <div className="space-y-3">
           <Banner tone="warn">
-            Файл сначала только анализируется. Составы не изменятся, пока вы не проверите сопоставление каждой включённой карты и не нажмёте «Сохранить проверенные карты».
+            Файл сначала только анализируется. ИИ сама сопоставит карты, товары и ингредиенты; вы проверяете жёлтые строки и нажимаете «Сохранить всё и создать недостающее».
           </Banner>
           <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-line p-4 text-sm hover:bg-surface-2">
             <FileText size={18} />
@@ -625,7 +695,19 @@ export default function TechCardWorkbookImport({
       ) : (
         <div className="space-y-3">
           <Banner tone="brand">
-            {preview.sourceName}: листов обработано {new Set(preview.recipes.map((recipe) => recipe.sourceSheet)).size}, карт найдено {recipes.length}. Точные совпадения подставлены как варианты; похожие названия не связываются автоматически.
+            {preview.sourceName}: листов обработано {new Set(preview.recipes.map((recipe) => recipe.sourceSheet)).size}, карт найдено {recipes.length}.
+            {' '}
+            {preview.autoMatches.provider === 'deepseek'
+              ? 'ИИ сопоставила карты, товары и ингредиенты сама — проверьте только жёлтые строки.'
+              : 'ИИ недоступна, сопоставление выполнено по названиям — проверьте жёлтые строки.'}
+          </Banner>
+          {preview.autoMatches.warning && <Banner tone="warn">{preview.autoMatches.warning}</Banner>}
+          <Banner tone="brand">
+            Будет создано автоматически: карт {creationSummary.cards}, товаров меню {creationSummary.products},
+            {' '}складских позиций {creationSummary.positions}.
+            {creationSummary.missingPrices > 0
+              ? ` Без цены останется ${creationSummary.missingPrices}: они сохранятся с нулевой ценой и жёлтой отметкой — заполните позже в «Себестоимость → Ингредиенты».`
+              : ' Все цены известны.'}
           </Banner>
           {preview.warnings.map((warning) => <Banner key={warning} tone="warn">{warning}</Banner>)}
           <div className="flex flex-wrap gap-2 text-xs">
@@ -635,11 +717,11 @@ export default function TechCardWorkbookImport({
           </div>
           {espressoLineCount > 0 && (
             <Banner tone="brand">
-              Найдено строк Espresso: {espressoLineCount}. Выберите существующую техкарту Espresso один раз — выбор автоматически применится ко всем строкам Espresso во всех листах. Espresso не создаётся как складский ингредиент.
+              Найдено строк Espresso: {espressoLineCount}. Техкарта Espresso подставляется автоматически во все строки; складской ингредиент Espresso не создаётся.
             </Banner>
           )}
           <Banner tone="brand">
-            Выберите складскую позицию или «Создать позицию склада» один раз — выбор применится ко всем строкам с тем же названием и единицей измерения. Новая позиция создаётся на складе один раз; похожие названия и другие единицы автоматически не объединяются.
+            Одинаковые ингредиенты сводятся к одной складской позиции: выбор и цена применяются ко всем строкам с тем же названием и единицей измерения.
           </Banner>
           {errors.length > 0 && (
             <Banner tone="bad">
@@ -657,7 +739,31 @@ export default function TechCardWorkbookImport({
                   {tone === 'bad' ? <XCircle size={16} className="text-bad" /> : tone === 'ok' ? <CheckCircle2 size={16} className="text-ok" /> : <AlertTriangle size={16} className="text-ink-tertiary" />}
                   <Badge tone={tone === 'neutral' ? 'neutral' : tone}>{tone === 'bad' ? 'Нужна проверка' : tone === 'ok' ? 'Готово к сохранению' : 'Пропущено'}</Badge>
                   <Badge tone="neutral">{recipe.sourceSheet}, строка {recipe.sourceRow}</Badge>
+                  {recipe.action !== 'skip' && (() => {
+                    const auto = preview.autoMatches.recipes.find((candidate) => candidate.key === recipe.key)
+                    if (!auto) return null
+                    return (
+                      <Badge tone={auto.card.confidence === 'high' ? 'ok' : auto.card.confidence === 'medium' ? 'warn' : 'neutral'}>
+                        ИИ: карта {auto.card.id == null ? 'будет создана' : auto.card.confidence === 'high' ? 'совпала' : 'похожа'}
+                      </Badge>
+                    )
+                  })()}
                 </div>
+                {recipe.action !== 'skip' && (() => {
+                  const auto = preview.autoMatches.recipes.find((candidate) => candidate.key === recipe.key)
+                  if (!auto) return null
+                  const messages = [
+                    auto.card.id == null ? `Новая карта: ${auto.card.reason}` : auto.card.confidence === 'high' ? null : auto.card.reason,
+                    auto.product.id == null && recipe.newCardKind !== 'semi' ? 'Товар меню будет создан с нулевой ценой — заполните позже в «Меню → Товары».' : auto.product.reason,
+                  ].filter((message): message is string => Boolean(message))
+                  if (!messages.length) return null
+                  const uncertain = auto.card.confidence !== 'high' || auto.product.confidence !== 'high'
+                  return (
+                    <Banner tone={uncertain ? 'warn' : 'brand'}>
+                      {messages.join(' ')}
+                    </Banner>
+                  )
+                })()}
                 <div className="grid gap-2 lg:grid-cols-3">
                   <Field label="Название в файле">
                     <Input value={recipe.name} onChange={(event) => updateRecipe(recipeIndex, { name: event.target.value })} />
@@ -725,7 +831,12 @@ export default function TechCardWorkbookImport({
                   const target = targetId == null ? null : preview.cards.find((card) => card.id === targetId)
                   const kind = target?.kind ?? (recipe.action === 'create' ? recipe.newCardKind : '')
                   return recipe.action !== 'skip' && kind !== 'semi' ? (
-                    <Field label="Товар каталога" hint="Не выбирайте похожий товар наугад: связь влияет на фудкост и продажи.">
+                    <Field
+                      label="Товар каталога"
+                      hint={recipe.productId === '' && !target?.productId
+                        ? 'Товар не выбран — он создастся автоматически с нулевой ценой.'
+                        : 'Связь влияет на фудкост и продажи: проверьте, если название в каталоге похожее.'}
+                    >
                       <Select value={recipe.productId} onChange={(event) => updateRecipe(recipeIndex, { productId: event.target.value ? Number(event.target.value) : '' })}>
                         <option value="">— выберите товар —</option>
                         {preview.products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
@@ -801,7 +912,7 @@ export default function TechCardWorkbookImport({
                             )}
                             {decision.action === 'delete' && (
                               <div className="text-sm font-medium text-red-900">
-                                Будет удалено только после нажатия «Сохранить проверенные карты».
+                                Будет удалено только после нажатия «Сохранить всё и создать недостающее».
                               </div>
                             )}
                             {decision.action === 'edit' && (
@@ -925,6 +1036,14 @@ export default function TechCardWorkbookImport({
                           selectedSemi.outputUnit !== line.unit
                         )
                         const lineError = (line.choice !== 'skip' && (!line.ingredientName.trim() || !line.unit || !line.qty || line.qty <= 0 || (selectedItem && selectedItem.unit !== line.unit) || (selectedSemi && (!selectedSemi.canBeChild || selectedSemi.outputUnit !== line.unit)))) || invalidEspressoLink
+                        const autoLine = preview.autoMatches.lines.find((candidate) => candidate.recipeKey === recipe.key && candidate.lineIndex === lineIndex)
+                        const autoDecision = espressoLine ? autoLine?.childCard : autoLine?.stockItem ?? autoLine?.childCard
+                        const needsPrice = line.choice === 'new'
+                          ? line.newItemPackagePriceRub == null
+                          : Boolean(selectedItem && !selectedItem.hasCost)
+                        const matchReason = autoDecision && autoDecision.confidence !== 'high' && line.choice !== 'skip'
+                          ? autoDecision.reason
+                          : null
                         const newItemKey = stockItemMappingKey(line.ingredientName, line.unit)
                         const priceOwner = newItemKey ? newItemPriceOwners.get(newItemKey) : undefined
                         const showNewItemPrice = line.choice === 'new' &&
@@ -932,12 +1051,24 @@ export default function TechCardWorkbookImport({
                           priceOwner.recipeIndex === recipeIndex &&
                           priceOwner.lineIndex === lineIndex
                         return (
-                          <div key={`${line.sourceRow}-${lineIndex}`} className={`rounded-xl border p-2 ${lineError ? 'border-red-300 bg-red-50/30' : 'border-line'}`}>
+                          <div key={`${line.sourceRow}-${lineIndex}`} className={`rounded-xl border p-2 ${lineError ? 'border-red-300 bg-red-50/30' : needsPrice || matchReason ? 'border-amber-300 bg-amber-50/40' : 'border-line'}`}>
                             <div className="mb-2 flex items-center gap-2 text-xs text-ink-secondary">
                               <span className="font-medium">Excel, строка {line.sourceRow}:</span>
                               <span className="break-all">{line.sourceText}</span>
                               {line.issues.map((issue) => <span key={issue} className="text-bad">{issue}</span>)}
                             </div>
+                            {(needsPrice || matchReason) && (
+                              <div className="mb-2 space-y-1 text-xs text-amber-900">
+                                {needsPrice && (
+                                  <p>
+                                    {line.choice === 'new'
+                                      ? 'Цена не указана — позиция сохранится с нулевой ценой. Впишите цену упаковки здесь или заполните позже в «Себестоимость → Ингредиенты».'
+                                      : 'У этой складской позиции нет цены — себестоимость останется нулевой до заполнения.'}
+                                  </p>
+                                )}
+                                {matchReason && <p>{matchReason}</p>}
+                              </div>
+                            )}
                             <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-5">
                               <Field label="Ингредиент или техкарта">
                                 <Input value={line.ingredientName} onChange={(event) => updateLine(recipeIndex, lineIndex, { ingredientName: event.target.value })} />
@@ -1017,7 +1148,7 @@ export default function TechCardWorkbookImport({
                             {showNewItemPrice && (
                               <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                                 <span className="text-xs text-ink-secondary">
-                                  Позицию можно сохранить на склад отдельно от импорта техкарт.
+                                  Позиция создастся и при сохранении всей книги; отдельная кнопка — чтобы завести её сразу.
                                 </span>
                                 <Button
                                   variant="secondary"
@@ -1025,13 +1156,7 @@ export default function TechCardWorkbookImport({
                                   disabled={
                                     savingStockItemKey !== null ||
                                     line.ingredientName.trim().length < 2 ||
-                                    !line.unit ||
-                                    line.newItemPackageQty == null ||
-                                    !Number.isFinite(line.newItemPackageQty) ||
-                                    line.newItemPackageQty <= 0 ||
-                                    line.newItemPackagePriceRub == null ||
-                                    !Number.isFinite(line.newItemPackagePriceRub) ||
-                                    line.newItemPackagePriceRub < 0
+                                    !line.unit
                                   }
                                   loading={savingStockItemKey === newItemKey}
                                   onClick={() => void saveNewStockItem(line)}

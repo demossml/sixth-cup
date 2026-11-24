@@ -19,6 +19,7 @@ import {
   type ParsedRecipe,
 } from './techcardImport'
 import { parseIngredientImport, type IngredientImportCandidate } from './ingredientImport'
+import { autoMapTechcardWorkbook } from './techcardAutoMapping'
 import {
   allocateOverheads,
   cardInsights,
@@ -88,6 +89,7 @@ type ImportMatch = {
   unit: Unit
   packageQty: number | null
   packagePriceRub: number | null
+  hasCost: boolean
   exact: boolean
   score: number
 }
@@ -98,6 +100,7 @@ function findIngredientMatches(name: string, stockItems: {
   unit: Unit
   packageQty: number | null
   packagePriceKop: number | null
+  hasCost?: boolean
 }[]): ImportMatch[] {
   const key = normalizeIngredientName(name)
   return stockItems
@@ -109,6 +112,7 @@ function findIngredientMatches(name: string, stockItems: {
         unit: item.unit,
         packageQty: item.packageQty,
         packagePriceRub: rub(item.packagePriceKop),
+        hasCost: item.hasCost ?? false,
         exact,
         score: exact ? 1 : ingredientNameSimilarity(name, item.name),
       }
@@ -562,21 +566,17 @@ const techCardWorkbookLineZ = z.object({
 }).refine((line) => !(line.stockItemId && line.childCardId), {
   message: 'Строка не может ссылаться одновременно на ингредиент и заготовку',
 }).superRefine((line, ctx) => {
-  if (line.stockItemId == null && line.childCardId == null) {
-    if (line.newItemPackageQty == null) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['newItemPackageQty'],
-        message: 'Для новой складской позиции укажите размер упаковки',
-      })
-    }
-    if (line.newItemPackagePriceRub == null) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['newItemPackagePriceRub'],
-        message: 'Для новой складской позиции укажите цену упаковки',
-      })
-    }
+  if (
+    line.stockItemId == null &&
+    line.childCardId == null &&
+    line.newItemPackagePriceRub != null &&
+    line.newItemPackageQty == null
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['newItemPackageQty'],
+      message: 'Для указанной цены упаковки задайте её количество',
+    })
   }
 })
 
@@ -621,9 +621,6 @@ const techCardWorkbookRecipeZ = z.object({
 }).superRefine((recipe, ctx) => {
   if (recipe.targetCardId == null && recipe.newCardKind == null) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['newCardKind'], message: 'Выберите существующую карту или тип новой' })
-  }
-  if (recipe.targetCardId == null && recipe.newCardKind !== 'semi' && !recipe.productId) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['productId'], message: 'Для новой карты выберите товар каталога' })
   }
   if (recipe.targetCardId == null && (recipe.outputQty == null || recipe.outputUnit == null)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['outputQty'], message: 'Для новой карты укажите выход и единицу измерения' })
@@ -1121,12 +1118,23 @@ export const adminCostTechCards = new Hono()
     }
     if (!parsed.recipes.length) throw bad('В книге не найдены техкарты', 400)
 
+    const stockItemCosts = unitCostMap()
     const stockItems = db
       .prepare(
         `SELECT id, name, unit, package_qty AS packageQty, package_price_kop AS packagePriceKop
            FROM stock_items WHERE active=1 ORDER BY name COLLATE NOCASE`,
       )
-      .all() as { id: number; name: string; unit: Unit; packageQty: number | null; packagePriceKop: number | null }[]
+      .all() as {
+      id: number
+      name: string
+      unit: Unit
+      packageQty: number | null
+      packagePriceKop: number | null
+    }[]
+    const stockItemsForMatching = stockItems.map((item) => ({
+      ...item,
+      hasCost: stockItemCosts.get(item.id)?.costKop != null,
+    }))
     const cards = db
       .prepare(`SELECT id, name, kind, product_id AS productId, output_unit AS outputUnit
                   FROM tech_cards WHERE status<>'archived' ORDER BY name COLLATE NOCASE`)
@@ -1167,15 +1175,54 @@ export const adminCostTechCards = new Hono()
       productMatches: findNameMatches(recipe.name, products),
       lines: recipe.lines.map((line) => ({
         ...line,
-        matches: findIngredientMatches(line.ingredientName, stockItems),
+        matches: findIngredientMatches(line.ingredientName, stockItemsForMatching),
         semiMatches: findNameMatches(line.ingredientName, cards.filter(canBeChildCard)),
       })),
     }))
+    const mappingInputs = recipes.map((recipe) => ({
+      key: recipe.key,
+      name: recipe.name,
+      cards: recipe.cardMatches.map(({ id, name, score }) => ({ id, name, score })),
+      products: recipe.productMatches.map(({ id, name, score }) => ({ id, name, score })),
+      lines: recipe.lines.map((line, lineIndex) => {
+        const isEspresso = referencesEspressoName(line.ingredientName)
+        const stockMatches = isEspresso ? [] : line.matches
+          .filter((match) => match.unit === line.unit)
+          .map(({ id, name, score }) => ({ id, name, score }))
+        const childCards = line.semiMatches
+          .filter((match) => {
+            const card = cards.find((candidate) => candidate.id === match.id)
+            return card != null &&
+              canBeChildCard(card) &&
+              card.outputUnit === line.unit &&
+              (!isEspresso || isEspressoName(card.name))
+          })
+          .map(({ id, name, score }) => ({ id, name, score }))
+        return {
+          recipeKey: recipe.key,
+          lineIndex,
+          name: line.ingredientName,
+          unit: line.unit,
+          isEspresso,
+          stockItems: stockMatches,
+          childCards,
+        }
+      }),
+    }))
+    const autoMatches = await autoMapTechcardWorkbook(mappingInputs)
     return c.json({
       sourceName: file.name,
       recipes,
       warnings: parsed.warnings,
-      stockItems: stockItems.map(({ id, name, unit }) => ({ id, name, unit })),
+      autoMatches,
+      stockItems: stockItemsForMatching.map(({ id, name, unit, packageQty, packagePriceKop, hasCost }) => ({
+        id,
+        name,
+        unit,
+        packageQty,
+        packagePriceRub: rub(packagePriceKop),
+        hasCost,
+      })),
       cards: cards.map((card) => ({ ...card, canBeChild: canBeChildCard(card) })),
       products,
     })
@@ -1188,6 +1235,8 @@ export const adminCostTechCards = new Hono()
       requireWrite(c)
       const { sourceName, recipes } = c.req.valid('json')
       const affected: { id: number; name: string; changeKind: 'created' | 'updated' }[] = []
+      const createdProductsByName = new Map<string, number>()
+      let productsCreated = 0
       const createItem = db.prepare(
         `INSERT INTO stock_items(name, kind, unit, min_qty, multiplicity, notes,
                                  package_qty, package_price_kop, manual_cost_kop, price_mode,
@@ -1201,7 +1250,39 @@ export const adminCostTechCards = new Hono()
         `INSERT INTO tech_card_import_markers(card_id, source_name, source_sheet, source_row, change_kind, created_at)
          VALUES(?,?,?,?,?,?)`,
       )
-      const createdStockItems = new Map<string, { id: number; packageQty: number; packagePriceKop: number }>()
+      const createdStockItems = new Map<string, {
+        id: number
+        packageQty: number | null
+        packagePriceKop: number | null
+      }>()
+      const createMissingProduct = (recipeName: string) => {
+        const productName = recipeName.trim().slice(0, 60).trim()
+        const key = normalizeName(productName)
+        // «КАПУЧИНО 300 мл» и товар «Капучино» — одна позиция: цифры в названии карты это объём.
+        const looseKey = key.replace(/\d+/g, ' ').replace(/\s+/g, ' ').trim()
+        const created = createdProductsByName.get(key) ?? createdProductsByName.get(looseKey)
+        if (created) return created
+        const existing = (db.prepare(`SELECT id, name FROM products`).all() as { id: number; name: string }[])
+          .find((product) => {
+            const productKey = normalizeName(product.name)
+            if (productKey === key) return true
+            return looseKey.length >= 3 &&
+              productKey.replace(/\d+/g, ' ').replace(/\s+/g, ' ').trim() === looseKey
+          })
+        if (existing) return existing.id
+        const at = now()
+        const sortOrder = ((db.prepare(`SELECT COALESCE(MAX(sort_order), -1) AS max FROM products`).get() as { max: number }).max) + 1
+        const inserted = db.prepare(
+          `INSERT INTO products(name, price, icon, available, description, sort_order, created_at, updated_at,
+                                counts_as_cup, free_eligible, tax, measure, cost_price_kopecks, catalog_source)
+           VALUES(?, 0, 'Coffee', 0, ?, ?, ?, ?, 0, 0, 'NO_VAT', 'шт', 0, 'SIXTH_CUP')`,
+        ).run(productName, 'Создано при импорте техкарты; укажите цену и проверьте перед публикацией.', sortOrder, at, at)
+        const id = Number(inserted.lastInsertRowid)
+        createdProductsByName.set(key, id)
+        if (looseKey) createdProductsByName.set(looseKey, id)
+        productsCreated++
+        return id
+      }
 
       db.transaction(() => {
         recipes.forEach((recipe, index) => {
@@ -1294,7 +1375,9 @@ export const adminCostTechCards = new Hono()
                 lineRole: decision.lineRole,
               }]
             })
-            const productId = recipe.productId ?? existing.productId
+            const productId = kind === 'semi'
+              ? null
+              : recipe.productId ?? existing.productId ?? createMissingProduct(recipe.name)
             requireProductFor(kind, productId)
             if (productId !== existing.productId) {
               db.prepare(`UPDATE tech_cards SET product_id=?, updated_at=? WHERE id=?`).run(productId, now(), cardId)
@@ -1305,18 +1388,21 @@ export const adminCostTechCards = new Hono()
             changeKind = 'updated'
           } else {
             kind = recipe.newCardKind!
-            requireProductFor(kind, recipe.productId)
+            const productId = kind === 'semi' ? null : recipe.productId ?? createMissingProduct(recipe.name)
+            requireProductFor(kind, productId)
             const createdAt = now() + index
             const inserted = db.prepare(
               `INSERT INTO tech_cards(name, kind, output_qty, output_unit, product_id, method_text,
                                       status, write_off_mode, created_at, updated_at)
                VALUES(?,?,?,?,?,?,'draft','ingredients',?,?)`,
-            ).run(recipe.name, kind, recipe.outputQty, recipe.outputUnit, recipe.productId, recipe.methodText, createdAt, createdAt)
+            ).run(recipe.name, kind, recipe.outputQty, recipe.outputUnit, productId, recipe.methodText, createdAt, createdAt)
             cardId = Number(inserted.lastInsertRowid)
             changeKind = 'created'
           }
 
-          const versionTime = now() + index
+          // Версия должна быть активной сразу: `activeVersion` берёт valid_from<=now(), а порядок
+          // при равном времени задаёт id — иначе карта на миг остаётся без состава.
+          const versionTime = now()
           const version = db.prepare(
             `INSERT INTO tech_card_versions(card_id, valid_from, note, created_at) VALUES(?,?,?,?)`,
           ).run(cardId, versionTime, `Импорт из ${sourceName} · ${recipe.sourceSheet}:${recipe.sourceRow}`, versionTime)
@@ -1356,33 +1442,38 @@ export const adminCostTechCards = new Hono()
                 }
                 stockItemId = createdInBatch.id
               } else {
-                if (line.newItemPackageQty == null || line.newItemPackagePriceRub == null) {
-                  throw bad(`Для новой складской позиции «${line.name}» укажите размер и цену упаковки`, 400)
-                }
                 const exact = (db
                   .prepare(`SELECT id, name, unit FROM stock_items WHERE active=1`)
                   .all() as { id: number; name: string; unit: Unit }[])
                   .find((item) => item.unit === line.unit && normalizeIngredientName(item.name) === normalizeIngredientName(line.name))
                 if (exact) {
-                  throw bad(`Ингредиент «${line.name}» уже существует — сопоставьте его вместо создания дубля`, 409)
+                  stockItemId = exact.id
+                } else {
+                  const createdAt = now()
+                  const packagePriceKop = line.newItemPackagePriceRub == null
+                    ? null
+                    : Math.round(line.newItemPackagePriceRub * 100)
+                  const notes = packagePriceKop == null
+                    ? `Импорт ТТК: ${sourceName} · цена не указана`
+                    : `Импорт ТТК: ${sourceName}`
+                  stockItemId = Number(createItem.run(
+                    line.name,
+                    line.unit,
+                    notes,
+                    line.newItemPackageQty,
+                    packagePriceKop,
+                    createdAt,
+                    createdAt,
+                  ).lastInsertRowid)
+                  if (packagePriceKop != null && line.newItemPackageQty != null) {
+                    addCreatedItemHistory.run(stockItemId, createdAt, packagePriceKop / line.newItemPackageQty)
+                  }
+                  createdStockItems.set(normalized, {
+                    id: stockItemId,
+                    packageQty: line.newItemPackageQty ?? null,
+                    packagePriceKop,
+                  })
                 }
-                const createdAt = now()
-                const packagePriceKop = Math.round(line.newItemPackagePriceRub * 100)
-                stockItemId = Number(createItem.run(
-                  line.name,
-                  line.unit,
-                  `Импорт ТТК: ${sourceName}`,
-                  line.newItemPackageQty,
-                  packagePriceKop,
-                  createdAt,
-                  createdAt,
-                ).lastInsertRowid)
-                addCreatedItemHistory.run(stockItemId, createdAt, packagePriceKop / line.newItemPackageQty)
-                createdStockItems.set(normalized, {
-                  id: stockItemId,
-                  packageQty: line.newItemPackageQty,
-                  packagePriceKop,
-                })
               }
             }
             return {
@@ -1402,7 +1493,7 @@ export const adminCostTechCards = new Hono()
           if (card) affected.push({ id: cardId, name: card.name, changeKind })
         })
       })()
-      return c.json({ applied: affected.length, cards: affected })
+      return c.json({ applied: affected.length, productsCreated, cards: affected })
     },
   )
 

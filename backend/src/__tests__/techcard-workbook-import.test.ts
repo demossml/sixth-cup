@@ -106,6 +106,56 @@ describe('techcard workbook preview and apply', () => {
     db.prepare(`DELETE FROM stock_items WHERE id=?`).run(id)
   })
 
+  it('creates missing product, stock item and card automatically and leaves unknown prices empty', async () => {
+    const sourceName = `auto-create-${Date.now()}.xlsx`
+    const result = await admin('POST', '/cost/tech-cards/import/confirm', {
+      sourceName,
+      recipes: [{
+        name: `Латте авто QA ${Date.now()}`,
+        sourceSheet: 'Авто',
+        sourceRow: 3,
+        targetCardId: null,
+        expectedVersionId: null,
+        newCardKind: 'dish',
+        productId: null,
+        outputQty: 1,
+        outputUnit: 'pcs',
+        methodText: null,
+        lines: [{
+          stockItemId: null,
+          childCardId: null,
+          name: `Сливки авто QA ${Date.now()}`,
+          unit: 'ml',
+          qty: 30,
+          lineRole: 'base',
+        }],
+      }],
+    })
+
+    expect(result.status).toBe(200)
+    expect(result.json.productsCreated).toBe(1)
+    const card = await admin('GET', `/cost/tech-cards/${result.json.cards[0].id}`)
+    expect(card.json.card.productId).toBeTruthy()
+    const createdItem = db.prepare(
+      `SELECT package_price_kop AS packagePriceKop, price_mode AS priceMode
+         FROM stock_items WHERE id=?`,
+    ).get(card.json.card.lines[0].stockItemId) as { packagePriceKop: number | null; priceMode: string }
+    expect(createdItem).toEqual({ packagePriceKop: null, priceMode: 'manual' })
+    const product = db.prepare(`SELECT price, available FROM products WHERE id=?`).get(card.json.card.productId) as
+      { price: number; available: number }
+    expect(product).toEqual({ price: 0, available: 0 })
+
+    const stockItemId = card.json.card.lines[0].stockItemId as number
+    const cardId = result.json.cards[0].id as number
+    db.prepare(`DELETE FROM tech_card_import_markers WHERE card_id=?`).run(cardId)
+    db.prepare(`DELETE FROM tech_card_lines WHERE version_id IN (SELECT id FROM tech_card_versions WHERE card_id=?)`).run(cardId)
+    db.prepare(`DELETE FROM tech_card_versions WHERE card_id=?`).run(cardId)
+    db.prepare(`DELETE FROM tech_cards WHERE id=?`).run(cardId)
+    db.prepare(`DELETE FROM stock_item_cost_history WHERE stock_item_id=?`).run(stockItemId)
+    db.prepare(`DELETE FROM stock_items WHERE id=?`).run(stockItemId)
+    db.prepare(`DELETE FROM products WHERE id=?`).run(card.json.card.productId as number)
+  })
+
   it('previews every sheet without writing and then saves an existing card as a new version', async () => {
     const stockItem = await admin('POST', '/stock/items', { name: 'Сироп Ваниль QA', kind: 'raw', unit: 'ml' })
     const stockItemId = Number(stockItem.json.item?.id ?? stockItem.json.id)
@@ -141,7 +191,13 @@ describe('techcard workbook preview and apply', () => {
         }[]
         lines: { ingredientName: string; qty: number; unit: string; matches: { id: number; exact: boolean }[] }[]
       }[]
-      stockItems: { id: number }[]
+      stockItems: { id: number; hasCost: boolean }[]
+      autoMatches: {
+        provider: 'deepseek' | 'heuristic'
+        warning: string | null
+        recipes: { key: string; card: { id: number | null; confidence: string }; product: { id: number | null } }[]
+        lines: { recipeKey: string; lineIndex: number; stockItem: { id: number | null } }[]
+      }
     }
 
     expect(previewResponse.status).toBe(200)
@@ -156,6 +212,12 @@ describe('techcard workbook preview and apply', () => {
       currentLines: [{ lineId: existingLineId, lossColdPct: 5, lossHotPct: 2 }],
     })
     expect(preview.stockItems).toHaveLength(2)
+    // ИИ выключена в тестах: сопоставление идёт по названиям, но результат уже подставлен.
+    expect(preview.autoMatches.provider).toBe('heuristic')
+    expect(preview.autoMatches.warning).toBeNull()
+    expect(preview.autoMatches.recipes[0]!.card).toMatchObject({ id: cardId, confidence: 'high' })
+    expect(preview.autoMatches.lines[0]).toMatchObject({ lineIndex: 0, stockItem: { id: stockItemId } })
+    expect(preview.stockItems.find((item) => item.id === milkId)?.hasCost).toBe(false)
     expect(db.prepare(`SELECT COUNT(*) AS count FROM tech_card_versions WHERE card_id=?`).get(cardId)).toMatchObject({ count: 1 })
 
     const confirm = await admin('POST', '/cost/tech-cards/import/confirm', {
@@ -604,7 +666,10 @@ describe('techcard workbook preview and apply', () => {
         }],
       }],
     })
-    expect(duplicateAttempt.status).toBe(409)
+    expect(duplicateAttempt.status).toBe(200)
+    const reusedCardId = duplicateAttempt.json.cards[0].id as number
+    const reused = await admin('GET', `/cost/tech-cards/${reusedCardId}`)
+    expect(reused.json.card.lines[0].stockItemId).toBe(stockItemIds[0])
     const stockItemCountAfterRetry = (db.prepare(
       `SELECT COUNT(*) AS count FROM stock_items WHERE notes=?`,
     ).get(`Импорт ТТК: ${sourceName}`) as { count: number }).count

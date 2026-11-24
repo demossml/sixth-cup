@@ -430,7 +430,7 @@ function TechcardImport({ onImported }: { onImported: (summary: string) => void 
   return (
     <div className="space-y-3">
       <Banner tone="warn">
-        Для Excel-техкарт сначала выполняется проверка каждого листа и сопоставления со складом. Действующие карты не меняются до явного сохранения проверенных строк.
+        Для Excel-техкарт сначала выполняется проверка листов: ИИ сама сопоставляет карты, товары и ингредиенты. Действующие карты не меняются до нажатия «Сохранить всё и создать недостающее».
       </Banner>
       <Button onClick={() => setOpen(true)}><FileText size={14} /> Проверить Excel и импортировать</Button>
       {open && (
@@ -440,7 +440,10 @@ function TechcardImport({ onImported }: { onImported: (summary: string) => void 
             setOpen(false)
             const created = result.cards.filter((card) => card.changeKind === 'created').length
             const updated = result.cards.length - created
-            const summary = `Сохранено карт: новых ${created}, обновлено ${updated}`
+            const summary = [
+              `Сохранено карт: новых ${created}, обновлено ${updated}`,
+              result.productsCreated > 0 ? `создано товаров: ${result.productsCreated}` : null,
+            ].filter(Boolean).join(', ')
             toast.push(`${summary}. Они отмечены для проверки.`, 'ok')
             onImported(summary)
           }}
