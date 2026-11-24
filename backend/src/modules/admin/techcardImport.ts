@@ -21,6 +21,29 @@ export type ParsedRecipe = {
   lines: ParsedLine[]
 }
 
+export type WorkbookRecipeLine = {
+  sourceRow: number
+  sourceText: string
+  ingredientName: string
+  qty: number | null
+  unit: ParsedLine['unit'] | null
+  lineRole: ParsedLine['lineRole']
+  issues: string[]
+}
+
+export type WorkbookRecipe = {
+  key: string
+  name: string
+  baseName: string
+  outputLabel: string | null
+  sourceSheet: string
+  sourceRow: number
+  kind: 'dish' | 'semi'
+  methodText: string | null
+  lines: WorkbookRecipeLine[]
+  issues: string[]
+}
+
 const UNIT_MAP: Record<string, 'g' | 'ml' | 'pcs'> = {
   г: 'g',
   гр: 'g',
@@ -329,4 +352,181 @@ export function parseTechcardBuffer(data: ArrayBuffer, filename: string): Parsed
   if (wide.length) return wide
   // flatten rows to text
   return parseTechcardText(rows.map((r) => r.join('\t')).join('\n'))
+}
+
+function isWorkbookHeader(value: string): boolean {
+  return /^(ингредиенты|способ\s+приготовления|заготовка)\s*$/i.test(value.trim())
+}
+
+function isSectionTitle(value: string): boolean {
+  const letters = value.replace(/[^А-ЯA-Z]/g, '')
+  return letters.length >= 3 && value === value.toLocaleUpperCase('ru-RU')
+}
+
+function parseWorkbookQuantity(value: string): { qty: number; unit: ParsedLine['unit']; name: string } | null {
+  const clean = value.replace(/^\s*\d+[.)]\s*/, '').trim()
+  const shot = clean.match(/^(\d+(?:[.,]\d+)?)\s*шот(?:а|ов)?\s+.+$/i)
+  if (shot) {
+    return { qty: Number(shot[1]!.replace(',', '.')), unit: 'pcs', name: 'Эспрессо' }
+  }
+  const quantity = clean.match(/^(.+?)\s+(\d+(?:[.,]\d+)?)\s*(кг|kg|г|гр|g|мл|ml|л|l|шт\.?|pcs)\s*$/i)
+  if (!quantity) return null
+  const parsed = parseQtyUnit(`${quantity[2]} ${quantity[3]}`)
+  if (!parsed) return null
+  return { ...parsed, name: cleanIngName(quantity[1]!) }
+}
+
+function workbookLine(sheet: string, row: number, sourceText: string): WorkbookRecipeLine {
+  const source = sourceText.replace(/^\s*\d+[.)]\s*/, '').trim()
+  const optional = /\(опц\.?\)|опционально/i.test(source)
+  const range = source.match(/^(.+?)\s+(\d+(?:[.,]\d+)?\s*[-–—/]\s*\d+(?:[.,]\d+)?\s*(?:кг|kg|г|гр|g|мл|ml|л|l|шт\.?|pcs))\s*$/i)
+  const measured = parseWorkbookQuantity(source)
+  const ingredientName = cleanIngName((range?.[1] ?? measured?.name ?? source).replace(/\(опц\.?\)|опционально/gi, '').replace(/\s+/g, ' '))
+  const issues: string[] = []
+  if (range) {
+    issues.push(`Диапазон количества «${range[2]}» — укажите одно точное значение`)
+  } else if (!measured) {
+    issues.push('Не удалось однозначно определить количество и единицу измерения')
+  }
+  return {
+    sourceRow: row,
+    sourceText,
+    ingredientName: measured?.name ?? ingredientName,
+    qty: range ? null : measured?.qty ?? null,
+    unit: range ? null : measured?.unit ?? null,
+    lineRole: optional ? 'optional' : 'base',
+    issues,
+  }
+}
+
+function volumeFromWorkbook(value: string): { label: string; issue?: string } | null {
+  const normalized = value.trim().replace(/\s+/g, '')
+  const range = normalized.match(/^(\d+(?:[.,]\d+)?\s*[-–—/]\s*\d+(?:[.,]\d+)?)\s*(мл|ml|л|l)$/i)
+  if (range) return { label: normalized, issue: `Неоднозначный выход «${value.trim()}»` }
+  const match = normalized.match(/^(\d+(?:[.,]\d+)?)(мл|ml|л|l)$/i)
+  if (!match) return null
+  const amount = Number(match[1]!.replace(',', '.'))
+  const unit = match[2]!.toLowerCase()
+  const ml = unit === 'л' || unit === 'l' ? amount * 1000 : amount
+  return { label: `${ml} мл` }
+}
+
+/**
+ * Parses each worksheet independently, including the vertical, merged-cell
+ * layout used by the 6.7 recipe workbook. Ambiguous source lines are preserved
+ * with blocking issues instead of being silently dropped or guessed.
+ */
+export function parseTechcardWorkbook(data: ArrayBuffer): { recipes: WorkbookRecipe[]; warnings: string[] } {
+  const req = createRequire(import.meta.url)
+  const XLSX = req('xlsx') as typeof import('xlsx')
+  const workbook = XLSX.read(Buffer.from(data), { type: 'buffer', cellDates: true })
+  const recipes: WorkbookRecipe[] = []
+  const warnings: string[] = []
+
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName]
+    if (!sheet) continue
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: false }) as unknown[][]
+    const cells = rows.map((row) => row.map((cell) => String(cell ?? '').trim()))
+    const sheetRecipeStart = recipes.length
+    let baseName: string | null = null
+    let current: WorkbookRecipe | null = null
+    let prep: WorkbookRecipe | null = null
+
+    const startRecipe = (name: string, label: string | null, sourceRow: number, kind: WorkbookRecipe['kind'] = 'dish') => {
+      const recipe: WorkbookRecipe = {
+        key: `${sheetName}:${sourceRow}:${recipes.length}`,
+        name: label ? `${name} ${label}` : name,
+        baseName: name,
+        outputLabel: label,
+        sourceSheet: sheetName,
+        sourceRow,
+        kind,
+        methodText: null,
+        lines: [],
+        issues: [],
+      }
+      recipes.push(recipe)
+      return recipe
+    }
+
+    for (let index = 0; index < cells.length; index++) {
+      const row = cells[index] ?? []
+      const first = row[0] ?? ''
+      const method = row[2] ?? ''
+      const preparation = row[4] ?? ''
+      const rowNumber = index + 1
+      const numbered = /^\s*\d+[.)]\s*/.test(first)
+      const volume = volumeFromWorkbook(first)
+      const isRecipeTitle =
+        !!first &&
+        !numbered &&
+        !volume &&
+        !isWorkbookHeader(first) &&
+        !isSectionTitle(first) &&
+        !/^важно\b/i.test(first) &&
+        !parseQtyUnit(first)
+
+      if (isRecipeTitle) {
+        baseName = first
+        current = null
+        if (prep && !preparation) prep = null
+      }
+
+      if (preparation && /^заготовка$/i.test(preparation)) {
+        prep = startRecipe(
+          `Заготовка для ${baseName ?? sheetName}`,
+          null,
+          rowNumber,
+          'semi',
+        )
+        continue
+      }
+      if (prep && preparation) {
+        if (!/^(заготовка)$/i.test(preparation) && !/^(измельчаем|смешиваем|готовим|перемешиваем|пересыпаем|взбиваем|храним|варим)(?:\s|$)/i.test(preparation)) {
+          prep.lines.push(workbookLine(sheetName, rowNumber, preparation))
+        } else {
+          prep.methodText = [prep.methodText, preparation].filter(Boolean).join('\n').slice(0, 4000)
+        }
+      }
+
+      if (volume) {
+        if (baseName) {
+          current = startRecipe(baseName, volume.label, rowNumber)
+          if (volume.issue) current.issues.push(volume.issue)
+        }
+        continue
+      }
+
+      if (!first || isWorkbookHeader(first) || isSectionTitle(first) || /^важно\b/i.test(first)) {
+        if (current && method && !/способ\s+приготовления/i.test(method)) {
+          current.methodText = [current.methodText, method].filter(Boolean).join('\n').slice(0, 4000)
+        }
+        continue
+      }
+
+      if (numbered) {
+        if (current) current.lines.push(workbookLine(sheetName, rowNumber, first))
+        else warnings.push(`${sheetName}, строка ${rowNumber}: найден состав без названия карты`)
+        if (current && method && !/способ\s+приготовления/i.test(method)) {
+          current.methodText = [current.methodText, method].filter(Boolean).join('\n').slice(0, 4000)
+        }
+        continue
+      }
+
+      if (isRecipeTitle || parseQtyUnit(first) || isSectionTitle(first)) continue
+    }
+
+    for (const recipe of recipes.slice(sheetRecipeStart)) {
+      if (!recipe.lines.length) recipe.issues.push('В карте не найден состав ингредиентов')
+      for (const line of recipe.lines) {
+        if (line.issues.length) recipe.issues.push(`Строка ${line.sourceRow}: ${line.issues.join('; ')}`)
+      }
+    }
+    if (recipes.length === sheetRecipeStart) {
+      warnings.push(`На листе «${sheetName}» не распознано ни одной карты`)
+    }
+  }
+
+  return { recipes, warnings }
 }

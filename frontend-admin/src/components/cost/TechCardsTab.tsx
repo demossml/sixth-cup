@@ -23,7 +23,7 @@ import {
   cx,
   useToast,
 } from '../../ui/kit'
-import { Plus, RefreshCw, Search, Trash2, Layers, ArrowLeft, History, Sparkles, Copy, Printer } from 'lucide-react'
+import { Plus, RefreshCw, Search, Trash2, Layers, ArrowLeft, History, Sparkles, Copy, Printer, Upload } from 'lucide-react'
 
 import {
   costApi,
@@ -37,6 +37,7 @@ import {
   type WriteOffMode,
 } from '../../lib/costApi'
 import { api } from '../../api/client'
+import TechCardWorkbookImport from './TechCardWorkbookImport'
 import {
   COST_SOURCE_LABELS,
   KIND_LABELS,
@@ -115,6 +116,7 @@ export default function TechCardsTab({
   const [problemsOnly, setProblemsOnly] = useState(false)
   const [editing, setEditing] = useState<number | 'new' | null>(initialCardId ?? null)
   const [bulkOpen, setBulkOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
   const [totals, setTotals] = useState<{ cards: number; problems: number; withoutProduct: number } | null>(null)
   const [linking, setLinking] = useState(false)
 
@@ -191,6 +193,9 @@ export default function TechCardsTab({
         <Button variant="secondary" onClick={() => setBulkOpen(true)}>
           <Copy size={14} /> Заменить ингредиент
         </Button>
+        <Button variant="secondary" onClick={() => setImportOpen(true)}>
+          <Upload size={14} /> Импорт Excel
+        </Button>
       </div>
 
       {error && <ErrorBox message={error.message} />}
@@ -226,12 +231,16 @@ export default function TechCardsTab({
             key={c.id}
             type="button"
             onClick={() => setEditing(c.id)}
-            className="flex w-full flex-col gap-1 rounded-xl border border-line bg-white p-3 text-left transition hover:border-brand/40 hover:shadow-soft"
+            className={cx(
+              'flex w-full flex-col gap-1 rounded-xl border p-3 text-left transition hover:border-brand/40 hover:shadow-soft',
+              c.importReviewCount > 0 ? 'border-amber-300 bg-amber-50/60' : 'border-line bg-white',
+            )}
           >
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-semibold text-ink">{c.name}</span>
               <Badge tone="neutral">{KIND_LABELS[c.kind] ?? c.kind}</Badge>
               {c.status === 'draft' && <Badge tone="warn">черновик</Badge>}
+              {c.importReviewCount > 0 && <Badge tone="brand">Проверить импорт · {c.importReviewCount}</Badge>}
               {c.version && <span className="text-[11px] text-ink-tertiary">версия от {new Date(c.version.validFrom).toLocaleDateString('ru-RU')}</span>}
               <span className="ml-auto text-sm font-semibold">{money(c.costPerUnitRub)}</span>
             </div>
@@ -267,6 +276,18 @@ export default function TechCardsTab({
       )}
 
       <BulkReplaceDrawer open={bulkOpen} onClose={() => { setBulkOpen(false); load() }} />
+      {importOpen && (
+        <TechCardWorkbookImport
+          onClose={() => setImportOpen(false)}
+          onSaved={(result) => {
+            setImportOpen(false)
+            load()
+            const created = result.cards.filter((card) => card.changeKind === 'created').length
+            const updated = result.cards.length - created
+            toast.push(`Сохранено: новых карт ${created}, обновлено ${updated}. Изменённые карты отмечены для проверки.`, 'ok')
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -428,6 +449,21 @@ function TechCardEditor({
     }
   }
 
+  const markImportReviewed = async () => {
+    if (!card || card.importReviewCount < 1) return
+    setBusy(true)
+    try {
+      await api(`/cost/tech-cards/${card.id}/import-reviewed`, { method: 'POST', body: {} })
+      const fresh = await costApi.card(card.id)
+      setCard(fresh.card)
+      toast.push('Проверка импортированных изменений отмечена')
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : 'Не удалось отметить карту проверенной', 'bad')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   // F13: печатная карта открывается в новой вкладке — кухня печатает и уходит.
   const openPrint = () => {
     if (!card) return
@@ -480,6 +516,15 @@ function TechCardEditor({
           </Button>
         </div>
       </div>
+
+      {card && card.importReviewCount > 0 && (
+        <Banner tone="warn">
+          В эту техкарту импортированы изменения. Проверьте состав и сопоставления; действующую карту можно опубликовать отдельно.
+          <Button className="ml-2" variant="secondary" loading={busy} onClick={() => void markImportReviewed()}>
+            Отметить проверенной
+          </Button>
+        </Banner>
+      )}
 
       <Card className="mb-3">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

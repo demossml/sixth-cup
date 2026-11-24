@@ -54,6 +54,7 @@ const card = (over: Partial<TechCard> = {}): TechCard => ({
   overheadSharePct: null,
   overheadBreakdownRub: [],
   missingPrices: false,
+  importReviewCount: 0,
   insights: [],
   lines: [line()],
   ...over,

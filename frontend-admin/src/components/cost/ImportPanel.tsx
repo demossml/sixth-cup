@@ -5,6 +5,7 @@ import { Badge, Banner, Button, Card, Drawer, Field, Input, Select, Spinner, cx,
 import { AlertTriangle, CheckCircle2, FileText, Upload, XCircle } from 'lucide-react'
 import { UNIT_LABELS } from '../../lib/costMath'
 import { extractPdfText } from '../../lib/ingredientImportFiles'
+import TechCardWorkbookImport from './TechCardWorkbookImport'
 
 type ImportMatch = {
   id: number
@@ -39,15 +40,6 @@ type IngredientPreview = {
   provider: 'deepseek' | 'heuristic'
   sourceName: string | null
   unparsedLines: string[]
-}
-
-type LegacyImportResult = {
-  parsed: number
-  cardsCreated: number
-  cardsUpdated: number
-  linesAdded: number
-  itemsCreated: number
-  itemsWithoutPrice?: string[]
 }
 
 const COST_UNITS = ['g', 'ml', 'pcs'] as const
@@ -433,70 +425,26 @@ function IngredientReview({
 
 function TechcardImport({ onImported }: { onImported: (summary: string) => void }) {
   const toast = useToast()
-  const [source, setSource] = useState<'text' | 'file'>('text')
-  const [text, setText] = useState('')
-  const [file, setFile] = useState<File | null>(null)
-  const [busy, setBusy] = useState(false)
-  const describeImport = (result: LegacyImportResult) => [
-    `Техкарт: ${result.parsed}`,
-    `создано: ${result.cardsCreated}`,
-    `обновлено: ${result.cardsUpdated}`,
-    `строк: ${result.linesAdded}`,
-    `ингредиентов: ${result.itemsCreated}`,
-  ].join(' · ')
-
-  const runText = async () => {
-    setBusy(true)
-    try {
-      const result = await api<LegacyImportResult>('/cost/import/techcards-text', {
-        method: 'POST',
-        body: { text },
-      })
-      onImported(describeImport(result))
-    } catch (error) {
-      toast.push(error instanceof Error ? error.message : 'Не удалось импортировать техкарты', 'bad')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const runFile = async () => {
-    if (!file) return
-    setBusy(true)
-    try {
-      const result = await uploadAdminFile<LegacyImportResult>('/cost/import/techcards-file', file)
-      onImported(describeImport(result))
-    } catch (error) {
-      toast.push(error instanceof Error ? error.message : 'Не удалось импортировать файл', 'bad')
-    } finally {
-      setBusy(false)
-    }
-  }
+  const [open, setOpen] = useState(false)
 
   return (
     <div className="space-y-3">
       <Banner tone="warn">
-        Импорт техкарт сохраняет черновики сразу. Для нового прайса или списка ингредиентов выберите вкладку «Ингредиенты» — там сначала будет проверка.
+        Для Excel-техкарт сначала выполняется проверка каждого листа и сопоставления со складом. Действующие карты не меняются до явного сохранения проверенных строк.
       </Banner>
-      <div className="seg-wrap">
-        <button type="button" className={cx('seg-item', source === 'text' && 'is-on')} onClick={() => setSource('text')}>Вставить текст</button>
-        <button type="button" className={cx('seg-item', source === 'file' && 'is-on')} onClick={() => setSource('file')}>Excel / CSV</button>
-      </div>
-      {source === 'text' ? (
-        <>
-          <textarea
-            className="min-h-[140px] w-full rounded-xl border border-line p-3 font-mono text-sm"
-            placeholder={'КАПУЧИНО 200\nкофе молотый — 10 г\nмолоко — 150 мл'}
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-          />
-          <Button disabled={busy || !text.trim()} loading={busy} onClick={() => void runText()}>Импортировать техкарты</Button>
-        </>
-      ) : (
-        <div className="space-y-2">
-          <input type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" disabled={busy} onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
-          <Button disabled={busy || !file} loading={busy} onClick={() => void runFile()}>Импортировать файл</Button>
-        </div>
+      <Button onClick={() => setOpen(true)}><FileText size={14} /> Проверить Excel и импортировать</Button>
+      {open && (
+        <TechCardWorkbookImport
+          onClose={() => setOpen(false)}
+          onSaved={(result) => {
+            setOpen(false)
+            const created = result.cards.filter((card) => card.changeKind === 'created').length
+            const updated = result.cards.length - created
+            const summary = `Сохранено карт: новых ${created}, обновлено ${updated}`
+            toast.push(`${summary}. Они отмечены для проверки.`, 'ok')
+            onImported(summary)
+          }}
+        />
       )}
     </div>
   )

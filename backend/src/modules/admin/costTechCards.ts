@@ -11,7 +11,13 @@ import { z } from 'zod'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
 import { stockItemLinks } from './stock'
-import { parseTechcardBuffer, parseTechcardText, spreadsheetToText, type ParsedRecipe } from './techcardImport'
+import {
+  parseTechcardBuffer,
+  parseTechcardText,
+  parseTechcardWorkbook,
+  spreadsheetToText,
+  type ParsedRecipe,
+} from './techcardImport'
 import { parseIngredientImport, type IngredientImportCandidate } from './ingredientImport'
 import {
   allocateOverheads,
@@ -95,6 +101,18 @@ function findIngredientMatches(name: string, stockItems: {
       }
     })
     .filter((match) => match.score >= 0.35)
+    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name, 'ru'))
+    .slice(0, 5)
+}
+
+function findNameMatches<T extends { id: number; name: string }>(name: string, choices: T[]) {
+  const key = normalizeName(name)
+  return choices
+    .map((choice) => {
+      const exact = normalizeName(choice.name) === key
+      return { ...choice, exact, score: exact ? 1 : ingredientNameSimilarity(name, choice.name) }
+    })
+    .filter((match) => match.score >= 0.3)
     .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name, 'ru'))
     .slice(0, 5)
 }
@@ -419,6 +437,9 @@ export function serializeCard(id: number, opts: { versionId?: number } = {}) {
     methodText: card.methodText,
     createdAt: card.createdAt,
     updatedAt: card.updatedAt,
+    importReviewCount: (db
+      .prepare(`SELECT COUNT(*) AS count FROM tech_card_import_markers WHERE card_id=? AND reviewed_at IS NULL`)
+      .get(card.id) as { count: number }).count,
     version: version ? { id: version.id, validFrom: version.validFrom, note: version.note } : null,
     versions: versions.map((v) => ({ id: v.id, validFrom: v.validFrom, note: v.note, active: v.id === version?.id })),
     costRub: rub(totals.costKop),
@@ -509,6 +530,53 @@ const cardZ = z.object({
   retailPriceRub: z.number().nonnegative().nullable().optional(),
   markupPct: z.number().min(0).max(10000).optional(),
   lines: z.array(lineZ).optional(),
+})
+
+const techCardWorkbookLineZ = z.object({
+  stockItemId: z.number().int().positive().nullable(),
+  childCardId: z.number().int().positive().nullable(),
+  name: z.string().trim().min(1).max(120),
+  unit: z.enum(['g', 'ml', 'pcs']),
+  qty: z.number().positive().max(10_000_000),
+  lineRole: z.enum(['base', 'optional']),
+}).refine((line) => !(line.stockItemId && line.childCardId), {
+  message: 'Строка не может ссылаться одновременно на ингредиент и заготовку',
+})
+
+const techCardWorkbookRecipeZ = z.object({
+  name: z.string().trim().min(2).max(160),
+  sourceSheet: z.string().trim().min(1).max(100),
+  sourceRow: z.number().int().positive(),
+  targetCardId: z.number().int().positive().nullable(),
+  newCardKind: z.enum(['dish', 'semi', 'modifier']).nullable(),
+  productId: z.number().int().positive().nullable(),
+  outputQty: z.number().positive().nullable(),
+  outputUnit: z.enum(['kg', 'l', 'pcs', 'g', 'ml']).nullable(),
+  methodText: z.string().max(8000).nullable(),
+  lines: z.array(techCardWorkbookLineZ).min(1).max(200),
+}).superRefine((recipe, ctx) => {
+  if (recipe.targetCardId == null && recipe.newCardKind == null) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['newCardKind'], message: 'Выберите существующую карту или тип новой' })
+  }
+  if (recipe.targetCardId == null && recipe.newCardKind !== 'semi' && !recipe.productId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['productId'], message: 'Для новой карты выберите товар каталога' })
+  }
+  if (recipe.targetCardId == null && (recipe.outputQty == null || recipe.outputUnit == null)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['outputQty'], message: 'Для новой карты укажите выход и единицу измерения' })
+  }
+  if (recipe.targetCardId != null && recipe.newCardKind != null) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['newCardKind'], message: 'Для существующей карты тип задавать не нужно' })
+  }
+})
+
+const techCardWorkbookConfirmZ = z.object({
+  sourceName: z.string().trim().min(1).max(200),
+  recipes: z.array(techCardWorkbookRecipeZ).min(1).max(500),
+}).superRefine(({ recipes }, ctx) => {
+  const targets = recipes.flatMap((recipe) => recipe.targetCardId == null ? [] : [recipe.targetCardId])
+  if (new Set(targets).size !== targets.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['recipes'], message: 'Нельзя импортировать несколько строк файла в одну карту за один раз' })
+  }
 })
 
 /**
@@ -711,6 +779,7 @@ export const adminCostTechCards = new Hono()
         fullCostPerUnitRub: c!.fullCostPerUnitRub,
         fullFoodCostPct: c!.fullFoodCostPct,
         linesCount: c!.lines.length,
+        importReviewCount: c!.importReviewCount,
         version: c!.version ? { id: c!.version.id, validFrom: c!.version.validFrom } : null,
         insights: c!.insights,
       })),
@@ -919,6 +988,203 @@ export const adminCostTechCards = new Hono()
       .all(id)
     return c.json({ usage, parents: itemRows.length })
   })
+
+  .post('/cost/tech-cards/:id/import-reviewed', (c) => {
+    requireWrite(c)
+    const id = Number(c.req.param('id'))
+    if (!cardRow(id)) throw bad('Техкарта не найдена', 404)
+    const result = db
+      .prepare(`UPDATE tech_card_import_markers SET reviewed_at=? WHERE card_id=? AND reviewed_at IS NULL`)
+      .run(now(), id)
+    return c.json({ reviewed: result.changes })
+  })
+
+  .post('/cost/tech-cards/import/preview', async (c) => {
+    requireWrite(c)
+    const body = await c.req.parseBody()
+    const file = body.file
+    if (!file || typeof file === 'string') throw bad('Выберите Excel-файл', 400)
+    if (file.size > 15 * 1024 * 1024) throw bad('Файл больше 15 МБ', 400)
+    if (!/\.xlsx?$/i.test(file.name)) throw bad('Поддерживаются только файлы XLSX и XLS', 400)
+
+    let parsed: ReturnType<typeof parseTechcardWorkbook>
+    try {
+      parsed = parseTechcardWorkbook(await file.arrayBuffer())
+    } catch (error) {
+      throw bad(`Не удалось разобрать Excel: ${error instanceof Error ? error.message : 'неизвестная ошибка'}`, 400)
+    }
+    if (!parsed.recipes.length) throw bad('В книге не найдены техкарты', 400)
+
+    const stockItems = db
+      .prepare(
+        `SELECT id, name, unit, package_qty AS packageQty, package_price_kop AS packagePriceKop
+           FROM stock_items WHERE active=1 ORDER BY name COLLATE NOCASE`,
+      )
+      .all() as { id: number; name: string; unit: Unit; packageQty: number | null; packagePriceKop: number | null }[]
+    const cards = db
+      .prepare(`SELECT id, name, kind, product_id AS productId, output_unit AS outputUnit
+                  FROM tech_cards WHERE status<>'archived' ORDER BY name COLLATE NOCASE`)
+      .all() as {
+      id: number
+      name: string
+      kind: 'dish' | 'semi' | 'modifier'
+      productId: number | null
+      outputUnit: Unit
+    }[]
+    const products = db
+      .prepare(`SELECT id, name FROM products ORDER BY name COLLATE NOCASE`)
+      .all() as { id: number; name: string }[]
+
+    const recipes = parsed.recipes.map((recipe) => ({
+      ...recipe,
+      cardMatches: findNameMatches(recipe.name, cards.filter((card) => card.kind === recipe.kind)).map((match) => {
+        const version = activeVersion(match.id)
+        const currentLines = version ? linesOf(version.id).map((line) => {
+          const item = line.stockItemId ? itemById(line.stockItemId) : undefined
+          const child = line.childCardId ? cardRow(line.childCardId) : undefined
+          return {
+            stockItemId: line.stockItemId,
+            childCardId: line.childCardId,
+            name: item?.name ?? child?.name ?? 'Неизвестный ингредиент',
+            unit: item?.unit ?? child?.outputUnit ?? null,
+            qtyBrutto: line.qtyBrutto,
+            lineRole: line.lineRole,
+          }
+        }) : []
+        return { ...match, currentLines }
+      }),
+      productMatches: findNameMatches(recipe.name, products),
+      lines: recipe.lines.map((line) => ({
+        ...line,
+        matches: findIngredientMatches(line.ingredientName, stockItems),
+        semiMatches: findNameMatches(line.ingredientName, cards.filter((card) => card.kind === 'semi')),
+      })),
+    }))
+    return c.json({
+      sourceName: file.name,
+      recipes,
+      warnings: parsed.warnings,
+      stockItems: stockItems.map(({ id, name, unit }) => ({ id, name, unit })),
+      cards,
+      products,
+    })
+  })
+
+  .post(
+    '/cost/tech-cards/import/confirm',
+    zValidator('json', techCardWorkbookConfirmZ),
+    (c) => {
+      requireWrite(c)
+      const { sourceName, recipes } = c.req.valid('json')
+      const affected: { id: number; name: string; changeKind: 'created' | 'updated' }[] = []
+      const createItem = db.prepare(
+        `INSERT INTO stock_items(name, kind, unit, min_qty, multiplicity, notes,
+                                 active, created_at, updated_at)
+         VALUES(?, 'raw', ?, 0, 1, ?, 1, ?, ?)`,
+      )
+      const createMarker = db.prepare(
+        `INSERT INTO tech_card_import_markers(card_id, source_name, source_sheet, source_row, change_kind, created_at)
+         VALUES(?,?,?,?,?,?)`,
+      )
+      const createdStockItems = new Map<string, number>()
+
+      db.transaction(() => {
+        recipes.forEach((recipe, index) => {
+          let cardId: number
+          let changeKind: 'created' | 'updated'
+          let kind: 'dish' | 'semi' | 'modifier'
+
+          if (recipe.targetCardId != null) {
+            const existing = cardRow(recipe.targetCardId)
+            if (!existing) throw bad(`Техкарта #${recipe.targetCardId} больше не найдена`, 409)
+            if (existing.status === 'archived') throw bad(`Техкарта «${existing.name}» архивирована`, 409)
+            cardId = existing.id
+            kind = existing.kind
+            const productId = recipe.productId ?? existing.productId
+            requireProductFor(kind, productId)
+            if (productId !== existing.productId) {
+              db.prepare(`UPDATE tech_cards SET product_id=?, updated_at=? WHERE id=?`).run(productId, now(), cardId)
+            }
+            if (recipe.methodText) {
+              db.prepare(`UPDATE tech_cards SET method_text=?, updated_at=? WHERE id=?`).run(recipe.methodText, now(), cardId)
+            }
+            changeKind = 'updated'
+          } else {
+            kind = recipe.newCardKind!
+            requireProductFor(kind, recipe.productId)
+            const createdAt = now() + index
+            const inserted = db.prepare(
+              `INSERT INTO tech_cards(name, kind, output_qty, output_unit, product_id, method_text,
+                                      status, write_off_mode, created_at, updated_at)
+               VALUES(?,?,?,?,?,?,'draft','ingredients',?,?)`,
+            ).run(recipe.name, kind, recipe.outputQty, recipe.outputUnit, recipe.productId, recipe.methodText, createdAt, createdAt)
+            cardId = Number(inserted.lastInsertRowid)
+            changeKind = 'created'
+          }
+
+          const versionTime = now() + index
+          const version = db.prepare(
+            `INSERT INTO tech_card_versions(card_id, valid_from, note, created_at) VALUES(?,?,?,?)`,
+          ).run(cardId, versionTime, `Импорт из ${sourceName} · ${recipe.sourceSheet}:${recipe.sourceRow}`, versionTime)
+          const versionId = Number(version.lastInsertRowid)
+          const lines: z.infer<typeof lineZ>[] = recipe.lines.map((line) => {
+            let stockItemId = line.stockItemId
+            if (stockItemId != null) {
+              const stockItem = db
+                .prepare(`SELECT unit FROM stock_items WHERE id=? AND active=1`)
+                .get(stockItemId) as { unit: Unit } | undefined
+              if (!stockItem) throw bad(`Ингредиент #${stockItemId} не найден или выключен`, 409)
+              if (stockItem.unit !== line.unit) {
+                throw bad(`Единица «${line.name}» изменилась: выберите позицию с единицей ${line.unit}`, 409)
+              }
+            } else if (line.childCardId != null) {
+              const child = cardRow(line.childCardId)
+              if (!child || child.kind !== 'semi') throw bad(`Заготовка #${line.childCardId} не найдена`, 409)
+              if (child.outputUnit !== line.unit) {
+                throw bad(`Единица заготовки «${child.name}» не совпадает с «${line.unit}»`, 409)
+              }
+            } else {
+              const normalized = `${line.unit}:${normalizeIngredientName(line.name)}`
+              const createdInBatch = createdStockItems.get(normalized)
+              if (createdInBatch) {
+                stockItemId = createdInBatch
+              } else {
+                const exact = (db
+                  .prepare(`SELECT id, name, unit FROM stock_items WHERE active=1`)
+                  .all() as { id: number; name: string; unit: Unit }[])
+                  .find((item) => item.unit === line.unit && normalizeIngredientName(item.name) === normalizeIngredientName(line.name))
+                if (exact) {
+                  throw bad(`Ингредиент «${line.name}» уже существует — сопоставьте его вместо создания дубля`, 409)
+                }
+                const createdAt = now()
+                stockItemId = Number(createItem.run(
+                  line.name,
+                  line.unit,
+                  `Импорт ТТК: ${sourceName}`,
+                  createdAt,
+                  createdAt,
+                ).lastInsertRowid)
+                createdStockItems.set(normalized, stockItemId)
+              }
+            }
+            return {
+              stockItemId,
+              childCardId: line.childCardId,
+              qtyBrutto: line.qty,
+              lossColdPct: 0,
+              lossHotPct: 0,
+              lineRole: line.lineRole,
+            }
+          })
+          replaceLines(versionId, lines)
+          createMarker.run(cardId, sourceName, recipe.sourceSheet, recipe.sourceRow, changeKind, versionTime)
+          const card = cardRow(cardId)
+          if (card) affected.push({ id: cardId, name: card.name, changeKind })
+        })
+      })()
+      return c.json({ applied: affected.length, cards: affected })
+    },
+  )
 
   .post('/cost/items/import/preview', async (c) => {
     requireWrite(c)

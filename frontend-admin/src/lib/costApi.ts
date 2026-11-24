@@ -30,6 +30,7 @@ export type CardListItem = {
   fullCostPerUnitRub: number | null
   fullFoodCostPct: number | null
   linesCount: number
+  importReviewCount: number
   version: { id: number; validFrom: number } | null
   insights: Insight[]
 }
@@ -92,6 +93,7 @@ export type TechCard = {
   /** Из чего складываются постоянные в этой порции. */
   overheadBreakdownRub: { kind: OverheadKind; perUnitRub: number | null }[]
   missingPrices: boolean
+  importReviewCount: number
   insights: Insight[]
   lines: CardLine[]
 }
