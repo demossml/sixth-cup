@@ -130,6 +130,16 @@ type SavedCards = {
 }
 
 const units: ImportUnit[] = ['g', 'ml', 'pcs']
+
+/** Строка, которую нельзя записать: количество или единицу не удалось определить. */
+function isLineIncomplete(line: Pick<LineDraft, 'ingredientName' | 'unit' | 'qty'>): boolean {
+  return line.ingredientName.trim().length < 2 ||
+    !line.unit ||
+    !units.includes(line.unit) ||
+    line.qty == null ||
+    !Number.isFinite(line.qty) ||
+    line.qty <= 0
+}
 const stockChoice = (id: number) => `stock:${id}`
 const semiChoice = (id: number) => `semi:${id}`
 
@@ -192,7 +202,15 @@ function buildDrafts(preview: WorkbookPreview): RecipeDraft[] {
     const suggestedCardId = autoMatch?.card.id
     const cardId = suggestedCardId != null && !usedCardIds.has(suggestedCardId) ? suggestedCardId : null
     if (cardId != null) usedCardIds.add(cardId)
-    const action = cardId == null ? 'create' : `card:${cardId}`
+    // Импортировать нечего (нет состава или ни у одной строки нет количества) — карту пропускаем,
+    // чтобы она не блокировала сохранение остальных. Включить её можно вручную после правки.
+    const hasUsableLine = recipe.lines.some((line) =>
+      line.ingredientName.trim().length >= 2 &&
+      line.unit != null &&
+      line.qty != null &&
+      Number.isFinite(line.qty) &&
+      line.qty > 0)
+    const action = !hasUsableLine ? 'skip' : cardId == null ? 'create' : `card:${cardId}`
     const target = action.startsWith('card:') ? recipe.cardMatches.find((match) => match.id === Number(action.slice(5))) : undefined
     const parsedOutput = recipe.outputLabel?.match(/(\d+(?:[.,]\d+)?)\s*(мл|ml|л|l|г|гр|g|кг|kg|шт)?/i)
     const outputValue = parsedOutput ? Number(parsedOutput[1]!.replace(',', '.')) : null
@@ -277,12 +295,13 @@ function recipeErrors(recipe: RecipeDraft, preview: WorkbookPreview): string[] {
     }
   }
   const selectedLines = recipe.lines.filter((line) => line.choice !== 'skip')
+  const completeLines = selectedLines.filter((line) => !isLineIncomplete(line))
   if (!selectedLines.length) errors.push('Добавьте или выберите хотя бы один ингредиент')
-  for (const [index, line] of selectedLines.entries()) {
+  if (selectedLines.length && !completeLines.length) {
+    errors.push('Ни у одной строки не определено количество — впишите его или пропустите карту')
+  }
+  for (const [index, line] of completeLines.entries()) {
     const label = `Строка ${index + 1}`
-    if (line.ingredientName.trim().length < 2) errors.push(`${label}: укажите ингредиент`)
-    if (!line.unit || !units.includes(line.unit)) errors.push(`${label}: подтвердите единицу измерения`)
-    if (line.qty == null || !Number.isFinite(line.qty) || line.qty <= 0) errors.push(`${label}: укажите одно точное количество`)
     if (!line.choice) errors.push(`${label}: сопоставьте ингредиент или явно создайте новую позицию`)
     if (
       line.choice === 'new' &&
@@ -389,6 +408,17 @@ export default function TechCardWorkbookImport({
     }
     return { positions: positions.size, products: products.size, cards, missingPrices }
   }, [included, preview])
+
+  const skippedRows = useMemo(() => {
+    const rows: string[] = []
+    for (const recipe of included) {
+      for (const line of recipe.lines) {
+        if (line.choice === 'skip' || !isLineIncomplete(line)) continue
+        rows.push(`${recipe.name}: ${line.sourceText || line.ingredientName || 'строка без названия'}`)
+      }
+    }
+    return rows
+  }, [included])
 
   const compositionSummary = useMemo(() => {
     const summary = { added: 0, changed: 0, kept: 0, deleted: 0 }
@@ -604,7 +634,7 @@ export default function TechCardWorkbookImport({
             methodText: recipe.methodText,
             existingLines,
             lines: recipe.lines
-              .filter((line) => line.choice !== 'skip')
+              .filter((line) => line.choice !== 'skip' && !isLineIncomplete(line))
               .map((line) => {
                 const stock = line.choice.startsWith('stock:') ? Number(line.choice.slice(6)) : null
                 const semi = line.choice.startsWith('semi:') ? Number(line.choice.slice(5)) : null
@@ -727,6 +757,14 @@ export default function TechCardWorkbookImport({
           <Banner tone="brand">
             Одинаковые ингредиенты сводятся к одной складской позиции: выбор и цена применяются ко всем строкам с тем же названием и единицей измерения.
           </Banner>
+          {skippedRows.length > 0 && (
+            <Banner tone="warn">
+              Не сохранится строк без количества или единицы: {skippedRows.length}. Впишите их в предпросмотре — тогда они попадут в карты; иначе карты сохранятся без них.
+              <ul className="mt-1 list-disc pl-5">
+                {skippedRows.slice(0, 8).map((row) => <li key={row}>{row}</li>)}
+              </ul>
+            </Banner>
+          )}
           {errors.length > 0 && (
             <Banner tone="bad">
               Сохранение пока заблокировано: исправьте ошибки у включённых карт.
@@ -1039,7 +1077,8 @@ export default function TechCardWorkbookImport({
                           !isEspressoCardName(selectedSemi.name) ||
                           selectedSemi.outputUnit !== line.unit
                         )
-                        const lineError = (line.choice !== 'skip' && (!line.ingredientName.trim() || !line.unit || !line.qty || line.qty <= 0 || (selectedItem && selectedItem.unit !== line.unit) || (selectedSemi && (!selectedSemi.canBeChild || selectedSemi.outputUnit !== line.unit)))) || invalidEspressoLink
+                        const incompleteLine = line.choice !== 'skip' && isLineIncomplete(line)
+                        const lineError = (line.choice !== 'skip' && ((selectedItem && selectedItem.unit !== line.unit) || (selectedSemi && (!selectedSemi.canBeChild || selectedSemi.outputUnit !== line.unit)))) || invalidEspressoLink
                         const autoLine = preview.autoMatches.lines.find((candidate) => candidate.recipeKey === recipe.key && candidate.lineIndex === lineIndex)
                         const autoDecision = espressoLine ? autoLine?.childCard : autoLine?.stockItem ?? autoLine?.childCard
                         const needsPrice = line.choice === 'new'
@@ -1055,14 +1094,17 @@ export default function TechCardWorkbookImport({
                           priceOwner.recipeIndex === recipeIndex &&
                           priceOwner.lineIndex === lineIndex
                         return (
-                          <div key={`${line.sourceRow}-${lineIndex}`} className={`rounded-xl border p-2 ${lineError ? 'border-red-300 bg-red-50/30' : needsPrice || matchReason ? 'border-amber-300 bg-amber-50/40' : 'border-line'}`}>
+                          <div key={`${line.sourceRow}-${lineIndex}`} className={`rounded-xl border p-2 ${lineError ? 'border-red-300 bg-red-50/30' : incompleteLine || needsPrice || matchReason ? 'border-amber-300 bg-amber-50/40' : 'border-line'}`}>
                             <div className="mb-2 flex items-center gap-2 text-xs text-ink-secondary">
                               <span className="font-medium">Excel, строка {line.sourceRow}:</span>
                               <span className="break-all">{line.sourceText}</span>
                               {line.issues.map((issue) => <span key={issue} className="text-bad">{issue}</span>)}
                             </div>
-                            {(needsPrice || matchReason) && (
+                            {(incompleteLine || needsPrice || matchReason) && (
                               <div className="mb-2 space-y-1 text-xs text-amber-900">
+                                {incompleteLine && (
+                                  <p>Количество или единица не распознаны — строка не сохранится, пока вы их не укажете.</p>
+                                )}
                                 {needsPrice && (
                                   <p>
                                     {line.choice === 'new'
