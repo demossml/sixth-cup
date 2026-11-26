@@ -59,7 +59,13 @@ describe('GET /api/devices/catalog: toppings / modifier products / upsell', () =
     expect(byId(nut).isModifier).toBe(true)
     expect(byId(nut).hideFromMenu).toBe(true)
     expect(byId(bun).isModifier).toBe(false)
-    const upsellIds = byId(cap).upsell.map((u: any) => u.id)
+    // Рекомендации теперь только по явной настройке точки (по умолчанию выключено).
+    expect(byId(cap).upsell).toEqual([])
+    const { setCashierUpsell } = await import('../lib/cashierUpsell')
+    setCashierUpsell({ enabled: true, defaultProductIds: [bun, nut], byProductId: {} }, STORE)
+    const withUpsell = (await (await app.request(`/api/devices/catalog?storeUuid=${STORE}`)).json()) as { products: any[] }
+    const capAfter = withUpsell.products.find((p) => p.id === cap)
+    const upsellIds = capAfter.upsell.map((u: any) => u.id)
     expect(upsellIds).toContain(bun)
     expect(upsellIds).not.toContain(nut)
   })

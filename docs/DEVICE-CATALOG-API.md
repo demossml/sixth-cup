@@ -40,6 +40,9 @@ X-Evotor-Device-UUID: <terminal>
   "ok": true,
   "generatedAt": 1710000000,
   "storeUuid": "...",
+  "upsellEnabled": false,
+  "upsell": { "enabled": false, "defaults": [] },
+  "upsellDefault": [],
   "categories": [{ "id": 1, "name": "Напитки", "sortOrder": 0 }],
   "products": [
     {
@@ -59,11 +62,33 @@ X-Evotor-Device-UUID: <terminal>
       "recipe": "…",
       "description": "… #focus",
       "toppings": [{ "id": 3, "name": "Сироп", "price": 30, "priceRub": 30, "groupKey": "syrup", "maxCount": 2 }],
-      "upsell": [{ "id": 9, "name": "Круассан", "price": 130, "imageUrl": "…", "evotorUuid": "…" }]
+      "upsell": []
     }
   ]
 }
 ```
+
+### Рекомендации на кассе (`upsell`)
+
+Настройка живёт **на точку** (`storeUuid`) и управляется в админке: Касса → карточка точки →
+«Рекомендации на кассе». По умолчанию **выключено**.
+
+| Состояние | Корень ответа | `products[].upsell` |
+|---|---|---|
+| `enabled: false` (по умолчанию) | `upsell: { enabled: false, defaults: [] }`, `upsellEnabled: false`, `upsellDefault: []` | `[]` у каждого товара |
+| `enabled: true` | `upsell: { enabled: true, defaults: [...] }` + те же поля плоско | список товаров, до 6 |
+
+- `upsell.defaults` — «к любому заказу», порядок = порядок в админке (до 12).
+- `products[i].upsell` — склейка «рекомендовать вместе с этим» + общий список, без самого товара, до 6.
+  Склейка нужна старым APK, которые читают только `products[].upsell`.
+- Формат элемента: `{ id, name, price, imageUrl, evotorUuid }` — как у `products[]`, чтобы касса могла
+  сразу положить позицию в чек.
+- Автопул «все товары, которые не чашка» **удалён**: раньше `upsell` заполнялся сам и не отключался.
+- Добавки (категория «Добавки», модификаторы схем) в рекомендации не попадают — это
+  `toppings` / `config.addons`, отдельный механизм.
+- `#upsell` в `description` товара Эвотора **больше не читается**: источник правды — настройка точки.
+- «Фокус» (`featured`, `#focus`/`#combo`) этим флагом не управляется.
+- Пока `enabled: false`, касса списки не получает вовсе — это работает и на старых APK.
 
 `featured` true, если в description есть `#focus`/`#combo` или в названии « + ».  
 На кассе: `groupName = Evotor parent || categoryName`; блок «Фокус» по `featured` (+ soft-focus).
@@ -132,6 +157,8 @@ need to be migrated. Ensure the Evotor cabinet URL mask remains `https://app\.67
 - Схема добавок берётся как `COALESCE(products.modifier_scheme_id, product_groups.modifier_scheme_id)` — схема, назначенная на группу размеров, действует на все варианты.
 - `products[].isModifier` / `hideFromMenu` = `true` для товаров, одноимённых с добавкой («Орех», «Миндальное»). Товар остаётся в `products[]` (нужен uuid), касса скрывает плитку по флагам.
 - `upsell[]` («Добавить к заказу») не содержит товаров-добавок. `countsAsCup` / `freeEligible` не менялись.
+  С версии с настройкой рекомендаций список приходит **только** из админки (Касса → Рекомендации) и пуст,
+  пока рубильник точки выключен; см. раздел «Рекомендации на кассе» выше.
 
 
 ## Multi-store (несколько касс / точек)

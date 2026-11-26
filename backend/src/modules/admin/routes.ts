@@ -40,6 +40,14 @@ import {
   saveVolumeScheme,
 } from '../catalog/volumeScheme'
 import { getCashierMenu, hasStoreMenu, resetStoreMenu, setCashierMenu } from '../../lib/cashierMenu'
+import {
+  getCashierUpsell,
+  hasStoreUpsell,
+  resetCashierUpsell,
+  setCashierUpsell,
+  UPSELL_DEFAULTS_MAX,
+  UPSELL_PER_PRODUCT_MAX,
+} from '../../lib/cashierUpsell'
 import { randomBytes } from 'node:crypto'
 import { Hono } from 'hono'
 import { createMiddleware } from 'hono/factory'
@@ -63,6 +71,7 @@ import {
   schemeItemsFromOptions,
   itemsPayloadToOptions,
   convertLegacyItemsToOptions,
+  listAddonProductIds,
 } from '../catalog/addonScheme'
 import { db } from '../../db'
 import { bad } from '../../lib/errors'
@@ -584,6 +593,94 @@ export const adminRoutes = new Hono()
     const storeUuid = (c.req.query('storeUuid') || '').slice(0, 64)
     if (!storeUuid) throw bad('Укажите точку', 400)
     return c.json({ ok: true, ...resetStoreMenu(storeUuid) })
+  })
+
+  /**
+   * Рекомендации на кассе (upsell) — блок «Добавить к заказу» на терминале.
+   * Настройка на точку; без storeUuid читается общая (наследство точек без своей настройки).
+   * Не влияет на молоко, сиропы и добавки к напитку — это отдельные схемы.
+   */
+  .get('/cashier/upsell', (c) => {
+    const storeUuid = (c.req.query('storeUuid') || '').slice(0, 64) || null
+    const cfg = getCashierUpsell(storeUuid)
+    // Справочник товаров для выбора: доступные, без служебных (модификаторы/группы).
+    const addonIds = listAddonProductIds(db)
+    const rows = db.prepare(`
+      SELECT id, name, price, image_url AS imageUrl, category_id AS categoryId
+      FROM products
+      WHERE available=1 AND COALESCE(is_group,0)=0
+      ORDER BY sort_order, id
+    `).all() as { id: number; name: string; price: number; imageUrl: string | null; categoryId: number | null }[]
+    const products = rows
+      .filter((p) => !addonIds.has(Number(p.id)))
+      .map((p) => ({ id: Number(p.id), name: String(p.name), price: Number(p.price), imageUrl: p.imageUrl, categoryId: p.categoryId != null ? Number(p.categoryId) : null }))
+    const byId = new Map(products.map((p) => [p.id, p]))
+    const missingDefault = cfg.defaultProductIds.filter((id) => !byId.has(id))
+    return c.json({
+      storeUuid,
+      own: storeUuid ? hasStoreUpsell(storeUuid) : true,
+      enabled: cfg.enabled,
+      defaultProductIds: cfg.defaultProductIds,
+      byProductId: cfg.byProductId,
+      defaults: cfg.defaultProductIds.map((id) => byId.get(id)).filter(Boolean),
+      /** id из настройки, которых больше нет в продаже, — в админке покажем предупреждение. */
+      missingDefault,
+      limit: { defaults: UPSELL_DEFAULTS_MAX, perProduct: UPSELL_PER_PRODUCT_MAX },
+      products,
+    })
+  })
+
+  .put(
+    '/cashier/upsell',
+    zValidator('json', z.object({
+      storeUuid: z.string().min(1).max(64).optional(),
+      enabled: z.boolean(),
+      defaultProductIds: z.array(z.number().int().positive()).max(UPSELL_DEFAULTS_MAX).optional(),
+      byProductId: z.record(z.string(), z.array(z.number().int().positive()).max(UPSELL_PER_PRODUCT_MAX)).optional(),
+    })),
+    (c) => {
+      const { storeUuid, ...patch } = c.req.valid('json')
+      // Служебные товары (добавки/модификаторы) в рекомендации не годятся: мягко отфильтровываем.
+      const addonIds = listAddonProductIds(db)
+      const known = new Map<number, string>()
+      for (const r of db.prepare('SELECT id, name FROM products WHERE available=1 AND COALESCE(is_group,0)=0').all() as { id: number; name: string }[]) {
+        known.set(Number(r.id), String(r.name))
+      }
+      const skipped: string[] = []
+      const checkIds = (ids: number[], where: string): number[] => {
+        const out: number[] = []
+        for (const raw of ids) {
+          const id = Number(raw)
+          const name = known.get(id)
+          if (!name) throw bad(`Товар #${id} не найден или недоступен (${where})`, 400)
+          if (addonIds.has(id)) { skipped.push(`#${id} «${name}» — это добавка`); continue }
+          out.push(id)
+        }
+        return out
+      }
+      const defaultProductIds = patch.defaultProductIds !== undefined
+        ? checkIds(patch.defaultProductIds, 'к любому заказу')
+        : undefined
+      let byProductId: Record<string, number[]> | undefined
+      if (patch.byProductId !== undefined) {
+        byProductId = {}
+        for (const [key, list] of Object.entries(patch.byProductId)) {
+          const pid = Number(key)
+          if (!known.has(pid)) throw bad(`Товар #${key} не найден или недоступен (рекомендации к товару)`, 400)
+          const ids = checkIds(list, `к товару #${key}`).filter((id) => id !== pid)
+          if (ids.length) byProductId[String(pid)] = ids
+        }
+      }
+      const saved = setCashierUpsell({ enabled: patch.enabled, defaultProductIds, byProductId }, storeUuid ?? null)
+      return c.json({ ok: true, storeUuid: storeUuid ?? null, ...saved, skipped })
+    },
+  )
+
+  /** Сброс точки на общую настройку (или общей — к «выключено и пусто»). */
+  .delete('/cashier/upsell', (c) => {
+    const storeUuid = (c.req.query('storeUuid') || '').slice(0, 64)
+    if (!storeUuid) throw bad('Укажите точку', 400)
+    return c.json({ ok: true, ...resetCashierUpsell(storeUuid) })
   })
 
   .get('/categories', (c) => {

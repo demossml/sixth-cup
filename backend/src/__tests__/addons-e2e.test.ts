@@ -43,6 +43,10 @@ const catalog = async (storeUuid = STORE) => {
 /** Стабильная часть ответа каталога: без generatedAt, чтобы фикстура не «старела». */
 const snap = (j: any) => ({
   storeUuid: j.storeUuid,
+  // Рубильник рекомендаций: по умолчанию выключен, списки пустые — фиксируем в эталоне APK.
+  upsellEnabled: j.upsellEnabled,
+  upsell: j.upsell,
+  upsellDefault: j.upsellDefault,
   addonCategoryIds: j.addonCategoryIds,
   categories: j.categories,
   products: j.products,

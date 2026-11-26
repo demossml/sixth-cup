@@ -28,6 +28,7 @@ import { allowLogIngest, entryZ, ingest } from '../logs/routes'
 import { clientIp } from '../../lib/clientIp'
 import { staffDeviceRoutes } from '../staff/deviceRoutes'
 import { getCashierMenu } from '../../lib/cashierMenu'
+import { getCashierUpsell, UPSELL_PER_PRODUCT_MAX } from '../../lib/cashierUpsell'
 import { formatQueueNumber, issueQueueNumber } from '../queue/numbers'
 
 /** Сколько живёт код регистрации. 15 минут — успеть дойти до терминала, но не «навсегда». */
@@ -697,19 +698,37 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         itemsByScheme.set(it.schemeId, arr)
       }
 
-      // upsell candidates: available products not counting as cup (food/extra), max pool
-      const upsellPool = products
-        .filter((p) => !p.countsAsCup)
-        .filter((p) => Number(p.isGroup) !== 1)
-        .filter((p) => !modifierProductIds.has(Number(p.id)))
-        .slice(0, 20)
-        .map((p) => ({
-          id: Number(p.id),
-          name: String(p.name),
-          price: Number(p.price),
-          imageUrl: deviceImageUrl(p.imageUrl as string | null),
-          evotorUuid: uuidByProduct.get(Number(p.id)) || null,
-        }))
+      // Рекомендации на кассе — явные списки из админки (Касса → Рекомендации).
+      // Пока рубильник точки выключен, каталог отдаёт пустые списки: старые APK тоже молчат.
+      // Автопул «все товары, не считающиеся чашкой» больше не используется: он подсовывал
+      // на кассу что угодно и не отключался.
+      const upsellCfg = getCashierUpsell(storeUuid)
+      const upsellCandidates = new Map<number, { id: number; name: string; price: number; imageUrl: string | null; evotorUuid: string | null }>()
+      if (upsellCfg.enabled) {
+        for (const p of products) {
+          const id = Number(p.id)
+          if (modifierProductIds.has(id) || Number(p.isGroup) === 1) continue
+          upsellCandidates.set(id, {
+            id,
+            name: String(p.name),
+            price: Number(p.price),
+            imageUrl: deviceImageUrl(p.imageUrl as string | null),
+            evotorUuid: uuidByProduct.get(id) || null,
+          })
+        }
+      }
+      /** Товары по id в заданном порядке; пропавшие/скрытые на точке — просто пропускаем. */
+      const resolveUpsell = (ids: number[] | undefined, exclude?: number) => {
+        const out: { id: number; name: string; price: number; imageUrl: string | null; evotorUuid: string | null }[] = []
+        for (const raw of ids ?? []) {
+          const id = Number(raw)
+          if (id === exclude || out.some((u) => u.id === id)) continue
+          const item = upsellCandidates.get(id)
+          if (item) out.push(item)
+        }
+        return out
+      }
+      const upsellDefaults = resolveUpsell(upsellCfg.defaultProductIds)
 
       // Category names for chips on the cashier (Evotor parent groups may be empty).
       const catRows = db.prepare(
@@ -745,7 +764,16 @@ export const deviceRoutes = new Hono<DeviceEnv>()
           effectiveCache.set(effKey, schemeId)
         }
         const toppings = buildCatalogToppings(db, schemeId, uuidByProduct, toppingsCache)
-        const upsell = upsellPool.filter((u) => u.id !== id).slice(0, 6)
+        // «Рекомендовать вместе с этим» + общий список: склеиваем, чтобы и старые APK
+        // (читают только product.upsell) видели рекомендации. Выключено — пусто.
+        const upsell = upsellCfg.enabled
+          ? [
+              ...resolveUpsell(upsellCfg.byProductId[String(id)], id),
+              ...upsellDefaults.filter((u) => u.id !== id),
+            ]
+              .filter((u, i, all) => all.findIndex((x) => x.id === u.id) === i)
+              .slice(0, UPSELL_PER_PRODUCT_MAX)
+          : []
         const milkSchemeId = p.milkSchemeId != null ? Number(p.milkSchemeId) : null
         let milk = milkCache.get(milkSchemeId)
         if (milk === undefined) {
@@ -925,6 +953,10 @@ export const deviceRoutes = new Hono<DeviceEnv>()
         generatedAt: Math.floor(Date.now() / 1000),
         storeUuid: storeUuid || null,
         features: { serverCatalog },
+        // Рекомендации на кассе: рубильник точки и общий список. При false списки пустые.
+        upsell: { enabled: upsellCfg.enabled, defaults: upsellDefaults },
+        upsellEnabled: upsellCfg.enabled,
+        upsellDefault: upsellDefaults,
         notReadySummary,
         categories,
         menu,

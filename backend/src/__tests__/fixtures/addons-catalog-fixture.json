@@ -1,5 +1,11 @@
 {
   "storeUuid": "store-fixture",
+  "upsellEnabled": false,
+  "upsell": {
+    "enabled": false,
+    "defaults": []
+  },
+  "upsellDefault": [],
   "addonCategoryIds": [
     1,
     4
@@ -53,15 +59,7 @@
       "sizeValue": null,
       "sizeUnit": null,
       "toppings": [],
-      "upsell": [
-        {
-          "id": 8,
-          "name": "Круассан",
-          "price": 90,
-          "imageUrl": null,
-          "evotorUuid": "uuid-croissant"
-        }
-      ],
+      "upsell": [],
       "isModifier": true,
       "isGroup": false,
       "parentProductId": null,
@@ -103,15 +101,7 @@
       "sizeValue": null,
       "sizeUnit": null,
       "toppings": [],
-      "upsell": [
-        {
-          "id": 8,
-          "name": "Круассан",
-          "price": 90,
-          "imageUrl": null,
-          "evotorUuid": "uuid-croissant"
-        }
-      ],
+      "upsell": [],
       "isModifier": true,
       "isGroup": false,
       "parentProductId": null,
@@ -153,15 +143,7 @@
       "sizeValue": null,
       "sizeUnit": null,
       "toppings": [],
-      "upsell": [
-        {
-          "id": 8,
-          "name": "Круассан",
-          "price": 90,
-          "imageUrl": null,
-          "evotorUuid": "uuid-croissant"
-        }
-      ],
+      "upsell": [],
       "isModifier": true,
       "isGroup": false,
       "parentProductId": null,
@@ -203,15 +185,7 @@
       "sizeValue": null,
       "sizeUnit": null,
       "toppings": [],
-      "upsell": [
-        {
-          "id": 8,
-          "name": "Круассан",
-          "price": 90,
-          "imageUrl": null,
-          "evotorUuid": "uuid-croissant"
-        }
-      ],
+      "upsell": [],
       "isModifier": true,
       "isGroup": false,
       "parentProductId": null,
@@ -409,15 +383,7 @@
           "notReadyReason": null
         }
       ],
-      "upsell": [
-        {
-          "id": 8,
-          "name": "Круассан",
-          "price": 90,
-          "imageUrl": null,
-          "evotorUuid": "uuid-croissant"
-        }
-      ],
+      "upsell": [],
       "isModifier": false,
       "isGroup": false,
       "parentProductId": null,
@@ -615,15 +581,7 @@
           "notReadyReason": null
         }
       ],
-      "upsell": [
-        {
-          "id": 8,
-          "name": "Круассан",
-          "price": 90,
-          "imageUrl": null,
-          "evotorUuid": "uuid-croissant"
-        }
-      ],
+      "upsell": [],
       "isModifier": false,
       "isGroup": false,
       "parentProductId": null,
@@ -821,15 +779,7 @@
           "notReadyReason": null
         }
       ],
-      "upsell": [
-        {
-          "id": 8,
-          "name": "Круассан",
-          "price": 90,
-          "imageUrl": null,
-          "evotorUuid": "uuid-croissant"
-        }
-      ],
+      "upsell": [],
       "isModifier": false,
       "isGroup": false,
       "parentProductId": null,

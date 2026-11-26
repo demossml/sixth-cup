@@ -6,6 +6,7 @@ import { ago, fmtDateTime } from '../lib/format'
 import { Badge, Banner, Button, Card, ConfirmDialog, EmptyState, ErrorBox, Field, Input, PageHeader, Spinner, StatusDot, Toggle, useToast } from '../ui/kit'
 import { HelpLink } from '../components/HelpLink'
 import CashierMenuPanel from './cash/CashierMenuPanel'
+import CashierUpsellPanel from './cash/CashierUpsellPanel'
 import StoreProfile, { type LocalStore } from '../components/StoreProfile'
 import type { Tone } from '../ui/kit'
 
@@ -122,6 +123,7 @@ function StoreCard({ s, health, now, local, linkOptions, onChanged }: {
         </ul>
       )}
       <CashierMenuPanel storeUuid={s.uuid} storeName={s.name ?? s.uuid.slice(0, 8)} />
+      <CashierUpsellPanel storeUuid={s.uuid} storeName={s.name ?? s.uuid.slice(0, 8)} />
 
       <ConfirmDialog
         open={purge}
@@ -455,6 +457,7 @@ export default function Cash() {
       {stores.data && !list.length && <Card><EmptyState title="Точек нет" text="Эвотор не вернул ни одной точки. Добавьте токен ниже или проверьте EVOTOR_API_TOKEN." /></Card>}
       <div className="mb-3">
         <CashierMenuPanel storeUuid={null} />
+        <CashierUpsellPanel storeUuid={null} />
       </div>
       <div className="grid gap-3 lg:grid-cols-2">
         {list.map((s) => (
